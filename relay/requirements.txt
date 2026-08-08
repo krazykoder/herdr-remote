@@ -1,0 +1,8 @@
+# Union of PEP 723 deps across relay/*.py — for a shared venv.
+# `uv run relay/<script>.py` does not need this file.
+websockets>=14.0
+zeroconf>=0.80.0
+pywebpush>=2.0.0
+py-vapid>=1.9.0
+python-telegram-bot>=21.0
+textual>=3.0.0

@@ -1,0 +1,257 @@
+# Phase 2 — Architecture: Onboarding & Workflow
+
+## Purpose of Phase 2 (Architecture)
+
+Phase 2 exists to **convert exploratory intent into committed system structure**.
+
+This phase:
+- Synthesizes Phase-1 concepts
+- Resolves ambiguity
+- Freezes architectural decisions
+- Establishes invariants and boundaries
+
+Architecture is the point where **thinking becomes reality**.
+
+Once decisions are made here, downstream phases must obey them.
+
+---
+
+## What Architecture Documents Are
+
+### Layman meaning
+- The system blueprint
+- The “rules of the game”
+- What everyone else can safely rely on
+
+### Technical meaning
+- Authoritative design artifacts
+- Invariant definitions
+- Explicit module boundaries and responsibilities
+
+Architecture documents:
+- Are internally consistent
+- Are deliberately constrained
+- Change rarely and intentionally
+
+---
+
+## What Architecture Documents Are NOT
+
+Architecture documents are NOT:
+- Exploratory notes
+- Brainstorming artifacts
+- Specs of behavior
+- Implementation instructions
+
+If a document is:
+- still ambiguous
+- still exploratory
+- still debating alternatives
+
+…it does **not** belong in Phase 2.
+
+---
+
+## Ownership & Authority
+
+**Primary owner:** Architect  
+**Primary model:** Claude Opus 4.5  
+
+Only the Architect may:
+- Define or change architecture contracts
+- Define module boundaries
+- Approve architectural changes
+- Generate specs and briefs
+
+Other roles may provide input, but not decisions.
+
+---
+
+## Inputs to Phase 2 (What the Architect Consumes)
+
+Phase 2 consumes **all artifacts from Phase 1**, located under:
+/docs/01_concepts/
+
+However, inputs are **not equal**.  
+They are interpreted with an **authority gradient**.
+
+### Authority Gradient for Phase-1 Inputs
+
+1. `mental_flow/`
+   - Narrative intent of the system
+   - Answers: *What is this system trying to be?*
+   - Primary anchor for synthesis
+
+2. `mental_flow/mental_modules/`
+   - Focused conceptual refinements
+   - Indicate where deeper thinking occurred
+   - Reveal implicit responsibilities and seams
+
+3. `ideas/`
+   - Refined conceptual insights
+   - Signals, not instructions
+
+4. `risks/`
+   - Early warning signals
+   - Inform safeguards and boundaries
+
+5. `constraints/`
+   - Hard limits
+   - Must always be respected
+
+Nothing in Phase 1 is binding.
+Everything is subject to decision in Phase 2.
+
+---
+
+## Outputs of Phase 2 (Authoritative Artifacts)
+
+All Phase-2 outputs live under:
+/docs/02_architecture/
+
+### Required Documents
+02_architecture/
+    README.md                     <– this document
+    ARCHITECTURE_CONTRACT.md      <– system invariants & forbidden actions
+    module_map.md                 <– module boundaries & responsibilities
+    decision_log/
+        DR_001.md                  <– architectural decisions & tradeoffs
+
+---
+
+## Architecture Contract (Core Artifact)
+
+The **Architecture Contract** defines:
+- Invariants that must always hold
+- What is forbidden
+- What other phases may safely assume
+
+Examples:
+- Immutability guarantees
+- Ownership rules
+- Determinism requirements
+- Dependency constraints
+
+Violating a contract is a **system-level error**.
+
+---
+
+## Module Map
+
+The module map defines:
+- Module boundaries
+- Responsibilities and non-responsibilities
+- Allowed dependencies
+- Data ownership at a high level
+
+It does NOT define:
+- Execution order
+- Internal algorithms
+- Function-level APIs
+
+---
+
+## Decision Log (ADR)
+
+Every meaningful architectural choice should be logged.
+
+Each ADR records:
+- Context
+- Options considered
+- Decision made
+- Rationale
+- Consequences
+
+This preserves architectural memory and prevents decision drift.
+
+---
+
+## Architecture Change Classification
+
+All proposed changes after Phase 2 begins must be classified:
+
+### Class A — Feature-Only
+- No invariant changes
+- No boundary changes
+
+Action:
+- Proceed to specs & briefs
+
+---
+
+### Class B — Architectural Extension (Compatible)
+- Adds new capabilities
+- Preserves existing invariants
+
+Action:
+- Update Architecture Contract (additive)
+- Update Module Map
+- Regenerate affected specs & briefs
+- Mandatory targeted audit
+
+---
+
+### Class C — Architectural Mutation (Breaking)
+- Changes invariants or assumptions
+- Breaks compatibility
+
+Action:
+- Explicit architecture revision
+- Contract version bump
+- Spec regeneration
+- Brief regeneration
+- Mandatory re-audit
+
+Only the Architect may classify changes.
+
+---
+
+## Versioning Rules (Architecture)
+
+- Exactly one **active** contract and module map
+- Active documents have **no version suffix**
+- Superseded versions are renamed:
+    ARCHITECTURE_CONTRACT_v2.md
+    module_map_v2.md
+Old versions are never edited.
+
+---
+
+## How Phase 2 Ends (Handoff to Phase 3)
+
+Phase 2 is complete when:
+- Architecture Contract is stable
+- Module Map is clear
+- Major decisions are logged
+- No unresolved architectural ambiguity remains
+
+At this point:
+- Specs may be authored
+- Briefs may be generated
+- Implementation may begin
+
+Downstream phases must not reinterpret architecture.
+
+---
+
+## Strict Phase Boundary Rules
+
+Phase 2 must NOT:
+- Edit Phase-1 concept documents
+- Carry ambiguity forward
+- Delegate decisions to implementers
+- Treat ideas as requirements
+
+Phase boundaries are explicit and enforced.
+
+---
+
+## One-Line Rule (Memorize This)
+
+**Phase 1 explores intent.  
+Phase 2 commits to structure.  
+Everything after obeys.**
+
+---
+
+## End of Document

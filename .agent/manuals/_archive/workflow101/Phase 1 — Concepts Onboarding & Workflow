@@ -1,0 +1,248 @@
+# Phase 1 — Concepts: Onboarding & Workflow
+
+## Purpose of Phase 1 (Concepts)
+
+Phase 1 exists to **externalize and refine thinking before decisions are made**.
+
+This phase captures:
+- How the system is imagined end-to-end
+- Conceptual stages and responsibilities
+- Assumptions, risks, and unknowns
+- Progressive refinements of ideas
+
+Phase 1 is **not about choosing the right design**.  
+It is about **making thinking explicit, structured, and evolvable**.
+
+All outputs from this phase are **inputs to architecture**, not constraints on it.
+
+---
+
+## What Concept Documents Are
+
+### Layman meaning
+- Structured thinking notes
+- Written versions of “what’s in my head”
+- Clarified intuition
+
+### Technical meaning
+- Exploratory, non-binding design artifacts
+- Pre-architecture inputs
+- Intentionally incomplete and revisable
+
+Concept documents:
+- May evolve rapidly
+- May contain uncertainty
+- May be refined multiple times
+- May later be discarded
+
+---
+
+## What Concept Documents Are NOT
+
+Concept documents are NOT:
+- Architecture
+- Contracts
+- Specs
+- Implementation plans
+- Execution workflows
+- APIs, schemas, or data models
+
+If a document defines:
+- invariants
+- execution order
+- interfaces
+- module boundaries
+
+…it does **not** belong in Phase 1.
+
+---
+
+## Ownership & Models
+
+**Primary owner:** Strategist  
+**Primary model:** Agent (Gemini) Pro Thinking  
+
+Agent (Gemini’s) role in Phase 1:
+- Read existing concepts
+- Refine and expand thinking
+- Surface gaps, risks, and assumptions
+- Generate *new* conceptual artifacts
+
+Agent (Gemini) is **not** an editor of canonical files.
+
+---
+
+## Directory Structure (Canonical for Phase 1)
+
+All Phase 1 artifacts live under:
+/docs/01_concepts/
+
+### Reference structure
+01_concepts/
+    README.md                 <– this document
+    mental_flow/              <– the core narrative of the system
+        README.md               <– big-picture conceptual story
+        mental_<module_name>/         <-- focused conceptual lenses
+            <document>.md
+            <refinement_docs>.md
+    ideas/                    <– refined ideas generated from the flow (NOT competing alternatives)
+    risks/                    <– known unknowns & complexity cliffs
+    constraints/              <– technical or product constraints
+
+This structure is intentional and enforced.
+
+---
+
+## Mental Flow (The Anchor)
+
+`mental_flow/` represents the **single, evolving narrative** of how the system
+is conceptually imagined from start to finish.
+
+It answers questions like:
+- What stages exist conceptually?
+- What kind of thinking happens at each stage?
+- How information *might* move or loop?
+
+It does **not** define:
+- execution order
+- runtime behavior
+- system boundaries
+
+Think of mental flow as **a story, not a pipeline**.
+
+---
+
+## Mental Modules (Conceptual Lenses)
+
+`mental_modules/` lives **under** `mental_flow/` by design.
+
+Mental modules:
+- Are *lenses* applied to the mental flow
+- Represent areas that deserve deeper thinking
+- Refine specific parts of the narrative
+
+Examples:
+- Parameter generation
+- Analysis and feedback
+- Multi-level algorithm selection
+- Persistence and reproducibility
+
+Mental modules:
+- Do NOT imply code modules
+- Do NOT imply runtime stages
+- Exist to structure thinking, not execution
+
+---
+
+## Ideas Directory (IMPORTANT REDEFINITION)
+
+`ideas/` is **not** for competing or alternative system designs.
+
+`ideas/` is where **refined ideas emerge** from:
+- mental flow
+- mental modules
+- Agent (Gemini)-assisted exploration
+
+Think of `ideas/` as:
+> “Crystallized insights that feel worth preserving.”
+
+Typical contents:
+- Refined conceptual patterns
+- Clarified mechanisms
+- Named ideas that may influence architecture later
+
+An idea in this directory:
+- Is more mature than raw thinking
+- Is still non-binding
+- May later influence architecture decisions
+
+---
+
+## How Agent (Gemini) Is Expected to Work in Phase 1
+
+Agent (Gemini) should follow this pattern:
+
+1. **Read** the current mental flow and mental modules
+2. **Identify** gaps, tensions, or unclear areas
+3. **Generate** one of the following:
+   - A new refined idea (goes in `ideas/`)
+   - A new refinement doc under an existing mental module
+   - A proposal for improving an existing document (not an edit)
+
+### Agent (Gemini) must NOT:
+- Modify files in place
+- Rename or version documents
+- Declare any document “final”
+- Collapse exploration prematurely
+
+Agent (Gemini) outputs are **suggestions or artifacts**, not canon.
+
+---
+
+## How Canonical Documents Are Updated
+
+You (or the Architect later) decide what becomes canonical.
+
+Typical promotion flow:
+- Agent (Gemini) generates a refinement
+- You review it
+- If accepted:
+  - It becomes a new file
+  - Or replaces the current file (with versioning)
+- If rejected:
+  - It is marked as rejected or ignored
+
+Agent (Gemini) never promotes content by itself.
+
+---
+
+## Status Markers (Recommended)
+
+> Status: Active
+> Last updated: YYYY-MM-DD
+> Notes: Optional context on recent changes
+
+Minimal Version Control (Intentional & Lightweight)
+
+Each concept area maintains exactly one active document.
+
+Active Document Rule
+	•	The current document has no version suffix
+	•	It reflects best-known thinking at that time
+
+Historical Versioning Rule
+
+When meaningfully revised:
+	1.	Rename the old document with a version suffix
+	2.	Create a new document with no suffix
+
+Version format:
+<name>_v10.md
+<name>_v11.md
+
+Rules:
+	•	Versions increase monotonically
+	•	Old versions are never edited
+	•	History preserves reasoning, not polish
+How Phase 1 Ends (Handoff to Architecture)
+
+Phase 1 is considered complete when:
+	•	The mental flow feels coherent
+	•	Key mental modules are articulated
+	•	Refined ideas are captured
+	•	Major risks and constraints are explicit
+
+At this point, all Phase 1 artifacts are handed to the Architect
+as raw but structured input.
+
+The Architect will:
+	•	Read skeptically
+	•	Synthesize selectively
+	•	Decide what becomes real
+
+⸻
+
+One-Line Rule (Memorize This)
+
+Phase 1 organizes thinking.
+Phase 2 commits to reality.
