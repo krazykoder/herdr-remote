@@ -2,6 +2,59 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## global agent instructions
+
+- Never manually modify CHANGELOG.md files or any files that are marked as auto-generated
+- When making technical decisions, do not give much weight to development cost.
+  Instead, prefer quality, simplicity, robustness, scalability, and long term maintainability.
+- When doing bug fixes, always start with reproducing the bug in an E2E setting as closely aligned with how an end user would experience it as possible.
+  This makes sure you find the real problem so your fix will actually solve it.
+- When end-to-end testing a product, be picky about the UI you see and be obsessed with pixel perfection.
+  If something clearly looks off, even if it is not directly related to what you are doing, try to get it fixed along the way.
+- Apply that same high standard to engineering excellence: lint, test failures, and test flakiness.
+  If you see one, even if it is not caused by what you are working on right now, still get it fixed.
+
+## Workflow Structure
+
+Development artifacts live in `.workflow/`, organized by phase. The phase manuals in
+`.agent/manuals/phases/` (`01_Concepts.md` … `06_Reviews.md`) define what belongs in each.
+
+| Directory | Contents |
+|-----------|----------|
+| `01_concepts/` | Ideas, requirements, mental models, synthesis |
+| `01_discovery/` | Exploration and research notes |
+| `02_architecture/` | Architecture docs, `decision_log/`, `feature_log/`, `frontend/` |
+| `03_specs/` | Specifications |
+| `04_implementation_plans/` | Plans handed to implementer agents |
+| `05_implementation/` | Implementation walkthroughs |
+| `05_tickets/` | Tickets |
+| `06_reviews/` | Reviews |
+| `07_dev_notes/` | Working notes, `FAQ/`, `data/`, `drafts/` |
+
+`_archive/` and `archive/` subdirectories hold superseded documents — do not delete, move.
+
+## Environment Setup
+
+Python 3.13 with a venv at `.venv313/` in the repo root.
+
+```bash
+source .venv313/bin/activate
+# or, to recreate:
+uv venv --python 3.13 .venv313
+uv pip install -r relay/requirements.txt
+```
+
+`relay/requirements.txt` is the union of the PEP 723 dependency headers across `relay/*.py`.
+It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py` does not need it.
+
+```bash
+# Run tests (tests/ has no __init__.py, so -t must point at it)
+.venv313/bin/python -m unittest discover -s tests -t tests
+```
+
+External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only),
+`node`/`npx` (demo worker only).
+
 ## Project Overview
 
 herdr-remote is a multi-client system for monitoring and approving [herdr](https://herdr.dev) AI agents remotely. It provides a WebSocket relay that bridges the herdr CLI with phone, desktop, Telegram, and terminal clients.
