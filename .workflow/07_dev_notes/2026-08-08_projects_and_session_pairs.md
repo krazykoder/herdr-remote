@@ -18,9 +18,9 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 
 | Path | Role today | Change |
 |---|---|---|
-| `relay/herdr_relay.py:176` `get_agents_from_host` | Only source of pane state | `[MODIFY]` add `project_id` |
-| `relay/herdr_relay.py:247` `_poll_once` | Poll, diff, broadcast | `[MODIFY]` pair health validation |
-| `relay/herdr_relay.py:437` `handle_client` | Client command switch | `[MODIFY]` 3 new commands |
+| `relay/herdr_relay.py:176` `get_agents_from_host` | Only source of pane state | `[MODIFY]` resolve configured `project_id` |
+| `relay/herdr_relay.py` startup | Loads relay configuration | `[MODIFY]` load and validate configured Projects |
+| `relay/herdr_relay.py:437` `handle_client` | Client command switch and connection setup | `[MODIFY]` send Projects and handle `start_agent` |
 | `relay/herdr_relay.py:523` `send_text` length guard | Caps client text at 1000 chars | `[MODIFY]` raise cap (§6.4) |
 | `relay/herdr_relay.py:530` `create_tab` | Tab creation | `[DELETE]` superseded by `start_agent` |
 | `relay/agent_state.py` | Snapshot/merge helpers | `[MODIFY]` add `project_id` to field tuple |
@@ -40,35 +40,54 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 
 | # | Finding | Consequence |
 |---|---|---|
-| G1 | `get_agents_from_host:195` filters `if p.get("agent")` — the relay only ever sees panes that *already* have an agent | A Project with no running agent is invisible. Accepted: Projects are discovered from live panes, so "start an agent in a repo herdr has never opened" is out of scope by construction. |
-| G2 | `create_tab:535` calls `run_herdr(...)` with **no `remote=`** | Pre-existing bug: tab creation always targets the local host, silently wrong for `HERDR_REMOTES`. Only caller is `web/index.html:509`. Being deleted, so the bug dies with it. |
-| G3 | No state is pushed on client connect | A new client shows an empty list for up to `POLL_INTERVAL` (2s). Pairs make this required rather than cosmetic — pair state changes rarely, so a client that misses the broadcast waits indefinitely. |
+| G1 | `get_agents_from_host:195` filters `if p.get("agent")` — live panes alone cannot represent empty Projects | Projects must come from trusted configuration, not agent discovery. |
+| G2 | `create_tab:535` calls `run_herdr(...)` with **no `remote=`** | Pre-existing bug: tab creation always targets the local host, silently wrong for `HERDR_REMOTES`. Only caller is `web/index.html:509`. Deleting it removes the instance but not the trap — `start_agent` is the same shape of call and must thread the Project's configured host through `remote=` (§5). |
+| G3 | Nothing is pushed to a client on connect (`handle_client:461`) | Tolerable at a 2s poll for `agents`. Not tolerable for `projects`, which has no poll behind it, so connect-time push becomes required (§4.2). |
 | G4 | `herdr` CLI already exposes every primitive needed | `agent start <name> [--cwd] [--tab] [--split right\|down]`, `pane split`, `pane send-text`, `tab create`. No new external machinery. |
 | G5 | Pane IDs are reusable | A pinned pair can outlive its panes and end up pointing at a *different* agent. Drives the fingerprint design in §3.2. |
 | G6 | `send_text` caps client text at 1000 chars (`:523`) | Fine for typing. Too small for a pasted diff or a block of pane output, which is exactly what transfer moves. Drives §6.4. |
+| G7 | Relay and every client key pane state by bare `pane_id` (`herdr_relay.py:72-74`, `agent_state.py:33`, `web/index.html:531`) | **Pre-existing bug, not a limitation of this proposal.** `_poll_once:251-253` writes `pane_remote_map`, `known_panes` and `agent_cache` keyed on bare `pane_id` while iterating every host, so on a collision the last host polled wins. `respond`, `send_text`, `send_keys` and `read_pane` then resolve `remote` from that map (`:479`, `:491`, `:503`, `:526`) and **route to the wrong machine today**, with no pairs involved. herdr pane IDs are per-server counters (`w8:t1` form), so two hosts each starting fresh collide immediately — this is likely under `HERDR_REMOTES`, not theoretical. The real fix is a protocol-wide `(host, pane_id)` identity, which is Class C and out of scope here. Until then: v1 pairs must be **same-host**, and the frontend's duplicate-ID check (§3.3) refuses the ambiguous case rather than pretending to resolve it. |
 
 ---
 
 ## 2. Concept: Project
 
-**A Project is the grouping of agents by code root directory.** It is deliberately *not* herdr's workspace.
+**A Project is a configured launch target and grouping root.** It exists with zero live sessions and is deliberately *not* herdr's workspace.
 
 herdr's `workspace_id` and `tab_id` remain on the pane snapshot as raw metadata. They are not a user-facing concept in herdr-remote and the workspace/tab chip strips (`web/index.html:447-472`) are removed.
 
-**Resolution rule (D1):** raw `cwd`, no git.
+**Configuration (D1):** `HERDR_PROJECTS_FILE` points to trusted JSON loaded by relay startup.
 
+```json
+[
+  {"id":"herdr-remote","label":"herdr-remote","cwd":"/Users/towshif/code/python/herdr-remote","host":"local"},
+  {"id":"charts","label":"Charts","cwd":"/Users/towshif/code/js/charts.TS","host":"local"}
+]
 ```
-project_id = f"{host}:{cwd}"        # stable grouping key
-project    = basename(cwd)           # display label — already exists at :189
-```
 
-`project_id` includes `host` so the same path on two SSH remotes does not collapse into one Project.
+`id` matches `^[a-z0-9_-]{1,64}$`, is unique, and is what browser sends. `cwd` must be absolute. `host` is `local` or configured `HERDR_REMOTES`; relay rejects invalid file at startup. Client never supplies path or host.
 
-**Label collisions.** Two Projects can share a basename (`~/a/web` and `~/b/web`). Resolution is presentational and belongs in the client: when two visible `project_id`s produce the same label, extend each label leftward by one path segment until unique. No relay involvement.
+### 2.1 Session grouping
 
-**Known limits of raw-cwd grouping** (accepted, revisit in Phase 5):
-- An agent started in `repo/relay` and one in `repo/web` are two Projects.
-- A `herdr worktree create` sibling is its own Project.
+For every live pane, relay matches `host` and `cwd` against configured Projects. A Project matches when cwd equals its root or is below it at a path boundary. Overlapping roots use longest match. This is lexical; no git subprocesses or remote resolution.
+
+- Agent started locally in herdr from configured Project root: **grouped under that Project.**
+- Agent started locally from subdirectory of configured Project root: **grouped under that Project**; longest root wins.
+- Agent outside every configured root: shown under **Other sessions**, never hidden.
+
+An unmatched pane carries **no `project_id` field at all** — the key is absent rather than `null` or `""`. This matters for `agent_state.py`: `complete_agent_update_message:24` treats empty values as "keep the previous value" for required fields, and `apply_agent_message:49` merges with `dict.update`, so a `null` would be indistinguishable from "unchanged" and could resurrect a stale grouping after a pane's cwd changes. Absent is unambiguous. The frontend buckets every agent without a `project_id` into **Other sessions**.
+
+The path-boundary test is exact-or-descendant: `cwd == root` or `cwd.startswith(root + "/")`. Plain `startswith` is wrong — it groups `/code/herdr-remote-old` under `/code/herdr-remote`.
+
+Symlinks are not resolved in v1. Configure canonical paths when they matter.
+
+### 2.2 Browser workflow
+
+1. Browser receives configured Projects and renders every Project card, including zero-session cards.
+2. User chooses Project and starts raw `claude` or `codex`; relay resolves configured cwd and host.
+3. Live sessions appear below Project. User leaves them standalone or selects two and creates named local Pair.
+4. Pair adds transfer shortcut only. User can unpair or create another pair at any time.
+5. Closing session leaves Project visible and makes affected local pairs stale.
 
 ---
 
@@ -76,24 +95,23 @@ project    = basename(cwd)           # display label — already exists at :189
 
 **A Session Pair is two pinned agent panes the user works across.** Canonical case: architect Claude + reviewer codex.
 
-**Definition (D2):** explicit, user-pinned, persisted in the relay. Members may live in different tabs, different Projects, and on different hosts.
+**Definition (D2):** explicit, user-pinned, stored in this browser. Members may live in different tabs and Projects, but must share a host (§3.1, G7).
 
-The pair is a **binding, not a channel**. It does not move text — §6 does, and it does so entirely in the frontend. What the pair provides is durable, cross-device identity: pin on the desktop, and the phone shows the same pairing.
+The pair is a **frontend binding, not a channel**. It does not move text — §6 does. It makes a known partner easy to select and never leaves this browser.
 
 ### 3.1 Persistence
 
-`pairs.json`, stored next to `push_subs.json` in `LOG_DIR` (`:54`), same load/save pattern as `_load_push_subs` / `_save_push_subs`.
+`localStorage`, under one versioned frontend key. The relay stores no pair data and exposes no pair protocol.
 
 ```json
 {
   "version": 1,
   "pairs": [
     {
-      "id": "p_a1b2c3d4",
-      "created": "2026-08-08T12:00:00Z",
+      "id": "p_a1b2c3d4", "name": "Architecture review",
       "members": [
-        {"pane_id": "%14", "host": "local",  "role": "architect", "agent": "claude", "cwd": "/Users/t/code/herdr-remote"},
-        {"pane_id": "%22", "host": "devbox", "role": "reviewer",  "agent": "codex",  "cwd": "/srv/herdr-remote"}
+        {"pane_id": "w8:t1:p1", "host": "local", "role": "architect", "agent": "claude", "cwd": "/Users/t/code/herdr-remote"},
+        {"pane_id": "w8:t1:p2", "host": "local", "role": "reviewer",  "agent": "codex",  "cwd": "/Users/t/code/herdr-remote"}
       ]
     }
   ]
@@ -102,40 +120,41 @@ The pair is a **binding, not a channel**. It does not move text — §6 does, an
 
 `agent`, `cwd` and `host` are the **identity fingerprint**, captured at pin time. They are not display data — they exist to detect pane-ID reuse (G5).
 
-### 3.2 Derived health — computed each poll, never persisted
+`role` is a display label, defaulting to the agent name and renameable by the user. It exists because §6.2 attributes the transferred text (`feedback from architect (claude):`) — without it the receiving agent is told only which tool produced the text, not what job it was doing. Frontend state only; it never reaches a shell.
+
+**Both members must share a `host`.** Cross-host pairs are refused at creation time — not for lack of ambition, but because G7 means the relay cannot reliably route to a colliding pane ID, and a pair that silently retargets another machine is the worst failure this feature can produce. Same-host is a v1 constraint that lifts for free once pane identity becomes `(host, pane_id)`.
+
+### 3.2 Derived health — computed from each snapshot
 
 | State | Condition | Effect |
 |---|---|---|
-| `healthy` | Both `pane_id`s in `known_panes` **and** each member's live `agent` + `cwd` + `host` match the stored fingerprint | Pair usable |
-| `stale` | A member's `pane_id` is absent from `known_panes` | Pair shown greyed; transfer UI disabled |
-| `broken` | A member's `pane_id` is present but the fingerprint no longer matches | Pair flagged; transfer UI disabled until re-pinned |
+| `healthy` | Both members match one live snapshot agent by `pane_id`, `host`, `agent`, and `cwd`, and neither `pane_id` is duplicated | Pair usable |
+| `stale` | A member has no matching live agent or its `pane_id` is duplicated | Pair shown greyed; transfer UI disabled |
 
-Neither state auto-deletes the pair. A `stale` pair recovers on its own if the pane returns (relay restart, SSH blip). A `broken` pair requires an explicit re-pin, because that pane ID now belongs to something else.
+Neither state auto-deletes the pair. A stale pair recovers if its agent pane returns; otherwise user re-pairs it.
 
 > This is the load-bearing safety property of the feature: **the UI must never offer to paste into a pane other than the one the user pinned.**
 
 ### 3.3 Limits
 
-- Exactly 2 members in v1. `members` is a list so 3+ is a later additive change.
-- Max 32 pairs. A pane may belong to at most one pair.
-
-### 3.4 Roles
-
-`role` is a free-form slug, `^[a-z0-9_-]{1,32}$`, defaulting to the agent name. It is relay-side label data only — it never reaches a shell.
+- Exactly 2 members in v1, both on the same host.
+- Max 32 pairs per browser.
+- A pair is usable only when both fingerprints match the current snapshot and both pane IDs are unique across it. This refuses ambiguous bare `pane_id`s (G7).
+- **A pane may belong to at most one pair.** Allowing a pane in several pairs makes "resolve the other member" (§6.3) ambiguous, and the resolution — a pair picker in the transfer flow — buys nothing in v1 while adding a step to the one action this feature exists for. Pinning a pane that is already paired replaces the old pair after a confirm.
 
 ---
 
 ## 4. Protocol Delta
 
-All additive. Unknown `type` values are already ignored by every client.
+`projects` and `start_agent` are new. Pairing is local frontend state.
 
 ### 4.1 Client → Server
 
 | type | Fields | Guards |
 |---|---|---|
-| `pair_create` | `members: [{pane_id, role}, {pane_id, role}]` | exactly 2; both in `known_panes`; neither already paired; role matches slug regex; `len(pairs) < 32` |
-| `pair_delete` | `pair_id` | pair exists |
-| `start_agent` | `name`, `project_id`, `mode: "tab" \| "split"`, optional `pair_with: pane_id` | `name` in `HERDR_START_AGENTS`; `project_id` in the discovered Project set; **no argv, no env, no cwd, no prompt accepted from the client** |
+| `start_agent` | `name`, `project_id`, `mode: "tab" \| "split"`, optional `split_from: pane_id` | `name` in `HERDR_START_AGENTS`; `project_id` in configured Projects; for `split`, `split_from` is a live pane on that Project's host; **no argv, no env, no cwd, no prompt accepted from the client** |
+
+For `mode: "split"` the relay resolves the target tab itself from `agent_cache[split_from]["tab_id"]` (`:193`); the client sends `split_from` and nothing else. A `split_from` on a different host than the Project is refused — `herdr agent start --tab` addresses a tab on one server.
 
 There is no `transfer` command. Transfer is frontend-only (§6) and rides the existing `send_text`.
 
@@ -143,14 +162,16 @@ There is no `transfer` command. Transfer is frontend-only (§6) and rides the ex
 
 | type | Payload | When |
 |---|---|---|
-| `pairs` | `{pairs: [...]}` with derived `state` on each | On connect, on any pair mutation, and whenever a pair's derived state changes |
-| `command_result` | Existing shape (`:516`) | Reused for `pair_*` and `start_agent` |
+| `projects` | `{projects: [{id, label, host}]}` | On client connect |
 
-### 4.3 Connect-time state push
+`projects` intentionally omits `cwd`; browser does not need it.
 
-Fixes G3. On accepting a client in `handle_client`, immediately send the cached `agents` snapshot and the current `pairs` list before entering the receive loop.
+Two consequences of sending this only on connect, both accepted for v1 and both worth stating so they are not discovered as bugs:
 
-### 4.4 Removals
+- **The relay currently pushes nothing on connect.** `handle_client:461` adds the socket to `clients` and drops straight into the receive loop; the first `agents` snapshot arrives on the next poll tick, up to `POLL_INTERVAL` (2s) later. `projects` has no poll behind it, so connect-time push is now load-bearing rather than a nicety. Send the cached `agents` snapshot at the same moment — it costs one line and removes the empty-list flash the app has today.
+- **Projects are fixed for the life of the relay process.** Editing `HERDR_PROJECTS_FILE` requires a restart, and connected clients will not see the change. Acceptable while the file is hand-maintained; if it starts changing often, re-read on `SIGHUP` and re-broadcast, which is additive.
+
+### 4.3 Removals
 
 `create_tab` (`:530-538`) and `web/index.html:506-511` are deleted. Sole caller is the web app; `start_agent` supersedes it. This also disposes of G2.
 
@@ -160,27 +181,29 @@ Fixes G3. On accepting a client in `handle_client`, immediately send the cached 
 
 **A new agent is started raw.** The relay runs the agent and stops there — no seed prompt, no wait-for-ready, no post-start input. The user drives the agent from the frontend afterwards using the instruction shortcuts in §6.1 (D5).
 
-```bash
-# mode: "tab"
-herdr agent start <name> --cwd <project cwd> --focus
+```python
+# The Project's configured host decides where this runs.
+# remote=None for host "local"; remote=<ssh target> otherwise.
+run_herdr("agent", "start", name, "--cwd", project.cwd, "--focus",
+          remote=None if project.host == "local" else project.host)
 
-# mode: "split" — new pane beside an existing one
-herdr agent start <name> --cwd <project cwd> --tab <tab_id of pair_with pane> --split right --focus
+# mode: "split" — new pane beside an existing one.
+# tab_id is resolved by the relay from agent_cache[split_from]["tab_id"] (:193).
+# The client never sends a tab_id.
+run_herdr("agent", "start", name, "--cwd", project.cwd,
+          "--tab", tab_id, "--split", "right", "--focus",
+          remote=None if project.host == "local" else project.host)
 ```
 
+> **The `remote=` argument is mandatory, not optional.** G2 is exactly this bug in `create_tab:535` — a `run_herdr` call that omits `remote=` silently targets the local host and is wrong under `HERDR_REMOTES`. Deleting `create_tab` removes the instance, not the trap. `start_agent` is the same shape of call and will reintroduce it verbatim unless the Project's configured host is threaded through. For `mode: "split"`, `split_from` must live on that same host (§4.1) — a split cannot cross hosts, because `herdr agent start --tab` addresses a tab on one server.
+
 That is the whole operation. It returns as soon as the pane exists; the agent appears on the next poll like any other. Because nothing is sent to the agent, the readiness problem does not arise and `run_herdr`'s existing 15s timeout (`:166`) is sufficient — no `asyncio.to_thread`, no `herdr wait agent-status`.
-
-### 5.1 Pairing on start
-
-`pair_with: <pane_id>` starts the new agent with `--split right` in the existing pane's tab and pins the pair in the same action. This is the intended route to an architect/reviewer setup: start the first agent in a Project, then start the second with `pair_with` pointing at it.
-
-Roles default to the two agent names (§3.4) and are renameable afterwards.
 
 ---
 
 ## 6. Instruction Shortcuts and Transfer
 
-**Transfer is copy-and-paste in the frontend.** No relay command, no server-side composition, no preset table in Python. The user selects text in one pane's view, picks an instruction shortcut, and the frontend prefills the partner pane's composer. Every step is a deliberate action (D3).
+**Transfer is copy-and-paste in the frontend.** No relay command, no server-side composition, no preset table in Python. The user selects text in one pane's view, picks an instruction shortcut, and the frontend switches to the paired pane and prefills its composer. Every step is a deliberate action (D3).
 
 ### 6.1 Instruction shortcuts
 
@@ -209,7 +232,7 @@ The frontend builds:
 ```
 {instruction}
 
-feedback from {from_role} ({from_agent}):
+feedback from {from_role} ({from_agent}):     # role per §3.1, defaults to agent name
 <<<TRANSFER
 {text}
 TRANSFER>>>
@@ -219,7 +242,7 @@ TRANSFER>>>
 
 ### 6.3 Prefill, do not auto-send
 
-The composed text lands in the partner pane's composer (`termInput`, `web/index.html:566`) and stops there. The user reads it and presses send. This is the "every step manual" rule at its most literal, and it is also the last checkpoint before one agent's output enters another agent's context.
+The transfer action captures the current text selection, resolves the other healthy pair member, switches `activePane` to it, then places the composed text in `termInput` (`web/index.html:566`) and stops. The user reads it and presses send. The existing UI has one composer, not one per pane; switching first is what makes "partner composer" precise. This is the "every step manual" rule at its most literal, and it is also the last checkpoint before one agent's output enters another agent's context.
 
 Sending then reuses the existing path unchanged: `send_text`, then `send_keys ["Enter"]` (`web/index.html:568-569`).
 
@@ -253,7 +276,7 @@ Written plainly and deliberately. Moving transfer to the frontend removes one re
 
 - The client sends an **agent name** and a `project_id`. Never an argv, never an env, never a path, never prompt text.
 - `name` must appear in `HERDR_START_AGENTS` (default: `claude,codex`).
-- `project_id` must already exist in the discovered Project set. The relay looks up the `cwd` itself; a client-supplied path is never honoured. Starting an agent in a repo herdr has never opened is out of scope by design (G1).
+- `project_id` must exist in configured Projects. Relay looks up cwd and host itself; client-supplied paths and hosts are never honoured.
 - Every start is audited via the existing `audit()` helper, recording `name`, `project_id` and `mode`.
 
 ### 7.2 Transfer is still a prompt-injection path, now human-gated
@@ -277,13 +300,9 @@ The relay binds `0.0.0.0` (`:596`) and `HERDR_RELAY_TOKEN` is **optional** today
 HERDR_ENABLE_WRITE_EXT=1 without HERDR_RELAY_TOKEN  ->  exit(1) with a clear message
 ```
 
-`start_agent`, `pair_create` and `pair_delete` are all gated on `HERDR_ENABLE_WRITE_EXT`; the default is off, so an existing deployment gains no new surface until the operator opts in and sets a token. The raised `send_text` cap (§6.4) is **not** gated — it applies to an existing command and is a size change, not a new capability.
+`start_agent` is gated on `HERDR_ENABLE_WRITE_EXT`; the default is off, so an existing deployment gains no new surface until the operator opts in and sets a token. The raised `send_text` cap (§6.4) is **not** gated — it applies to an existing command and is a size change, not a new capability.
 
 Confirmed during discovery: the token check in `process_request` (`:334-347`) runs **before** the WebSocket upgrade check (`:349-355`), so WebSocket connections are already covered by it.
-
-### 7.4 Pane ID reuse
-
-Covered by the fingerprint validation in §3.2. Called out separately because a stale pair silently retargeting a different agent is the failure mode with the worst consequences and the least visibility — and with transfer in the frontend, the pair is what tells the UI where to paste.
 
 ---
 
@@ -291,11 +310,10 @@ Covered by the fingerprint validation in §3.2. Called out separately because a 
 
 | Phase | Scope | Touches | Gate |
 |---|---|---|---|
-| **P1 — Projects** | `project_id` on snapshot; web app groups by Project; workspace/tab chips and `create_tab` deleted | `herdr_relay.py`, `agent_state.py`, `web/index.html` | Two agents in different repos group into two Projects; one repo with two agents groups into one; colliding basenames disambiguate; `tests/test_agent_state.py` extended |
-| **P2 — Start agent** | `start_agent` (raw run, no seeding) + allowlists + `HERDR_ENABLE_WRITE_EXT` + token requirement | `herdr_relay.py`, `web/index.html` | Start refused for unlisted name, unknown `project_id`, and missing token; `mode: "split"` lands beside `pair_with`; audit line present on success |
-| **P3 — Pairs** | `pairs.json`, `pair_create`/`pair_delete`, poll-time health validation, `pairs` broadcast, connect-time state push | `herdr_relay.py`, `web/index.html` | Pair survives relay restart and appears on a second device; killing a member yields `stale`; replacing a pane so the fingerprint mismatches yields `broken` and disables the transfer UI |
-| **P4 — Transfer UI** | Pane text selection, shortcut dropdown, partner-composer prefill; `send_text` cap raised | `web/index.html`, one constant in `herdr_relay.py` | §6.4(b) newline check passes; a 3000-char selection transfers intact; prefill never auto-sends; oversize text still refused |
-| **P5 — Deferred** | Auto-relay with per-pair opt-in and hop cap; 3+ member pairs; git/worktree-aware Projects; server-side instruction presets shared across clients | — | Not specced. Auto-relay requires its own threat model. |
+| **P1 — Projects** | Load `HERDR_PROJECTS_FILE`; emit `projects` and the cached `agents` snapshot on connect; resolve each live pane by longest configured root; web app renders zero-session Project cards; workspace/tab chips and `create_tab` deleted | `herdr_relay.py`, `agent_state.py`, `web/index.html`, tests | Root and subdirectory sessions group under configured Project; `/code/x-old` does **not** group under `/code/x`; unmatched session appears under Other sessions with no `project_id` key; zero-session Project appears; a fresh client renders without an empty-list flash |
+| **P2 — Start agent** | `start_agent` (raw run, no seeding) + allowlists + `HERDR_ENABLE_WRITE_EXT` + token requirement | `herdr_relay.py`, `web/index.html`, tests | Start works from zero-session configured Project; refused for unlisted name, unknown `project_id`, and missing token; **a start on a Project with `host != "local"` reaches that host** (the G2 regression test); `mode: "split"` lands beside `split_from` and is refused cross-host; audit line present on success |
+| **P3 — Local pairs + transfer UI** | `localStorage` pairs, pair editor, selection, shortcut dropdown, partner-composer prefill; `send_text` cap raised | `web/index.html`, one constant in `herdr_relay.py` | Pair survives page reload; cross-host pin refused; pinning an already-paired pane replaces after confirm; stale or duplicated fingerprint disables transfer; a 3000-char selection transfers intact; prefill never auto-sends; oversize text still refused |
+| **P4 — Deferred** | Authenticated last-write-wins frontend-preferences sync; auto-relay with per-pair opt-in and hop cap; 3+ member groups; git/worktree-aware Projects; server-side instruction presets shared across clients | — | Not specced. Sync requires an authenticated user/profile model; auto-relay requires its own threat model. |
 
 Each phase is independently shippable. P3 does not depend on P2.
 
@@ -307,10 +325,10 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 
 | ID | Decision |
 |---|---|
-| D1 | Project key is raw `cwd`, no git resolution |
-| D2 | Session Pairs are explicitly pinned and persisted in the relay, not derived from herdr layout |
+| D1 | Projects are trusted configured `{id, cwd, host}` launch targets; grouping uses longest lexical cwd-root match |
+| D2 | Session Pairs are named, fingerprinted frontend state; relay sync is deferred |
 | D3 | Every step is manual in v1; transfer is frontend copy-paste with no relay command |
-| D4 | `start_agent` is restricted to allowlisted agent names in already-discovered Projects |
+| D4 | `start_agent` is restricted to allowlisted agent names in configured Projects |
 | D5 | Agents start raw — no seed prompt; instruction shortcuts are frontend-side path references |
 
 ---
@@ -318,6 +336,6 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 ## 10. Open Questions for Phase 3 (Specs)
 
 1. **Multi-line delivery** (§6.4b) — must be settled by experiment before the transfer spec is frozen. It is the only thing in this proposal that could force a design change rather than a parameter change.
-2. **Pair discoverability** — should the relay *suggest* a pair when two agent panes share a `tab_id`, as a one-tap pin? Cheap, and it removes most of the pinning friction.
+2. **Pair creation UI** — confirm whether the pair editor lives on agent cards, terminal header, or both.
 3. **Project ordering in the client** — most-recently-blocked first, or stable alphabetical? Affects whether the list moves under the user's thumb on mobile.
-4. **Shortcut portability** — shortcuts start as a `const` in `web/index.html`, which means they do not follow the user to the Telegram or Swift clients. Promote to a relay-served list if that becomes a real complaint (listed under P5).
+4. **Pair sync** — keep deferred until named local pairs prove useful; then add authenticated, last-write-wins frontend-preferences sync.
