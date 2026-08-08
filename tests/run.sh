@@ -73,10 +73,14 @@ echo "12. web app no hardcoded secrets"
 ! grep -q "c4a2385e" "$WEB" && ! grep -q "graffold" "$WEB"
 assert_eq "$?" "0" "no secrets in web app"
 
+echo "13. web app supports GitHub Pages project paths"
+grep -q "new URL('sw.js', document.baseURI)" "$WEB" && grep -q "self.registration.scope" "$DIR/web/sw.js"
+assert_eq "$?" "0" "service worker assets resolve from app scope"
+
 # --- macOS app ---
 echo ""
 echo "=== macOS app ==="
-echo "13. Swift sources parse"
+echo "14. Swift sources parse"
 if command -v swiftc >/dev/null 2>&1; then
   swiftc -parse "$DIR/herdi-mac/Sources/Agent.swift" "$DIR/herdi-mac/Sources/RelayConnection.swift" 2>/dev/null
   assert_eq "$?" "0" "core Swift parses"
@@ -84,18 +88,18 @@ else
   PASS=$((PASS+1)); echo "  skip: swiftc not available"
 fi
 
-echo "14. build.sh and dmg.sh present"
+echo "15. build.sh and dmg.sh present"
 [ -x "$DIR/herdi-mac/build.sh" ] && [ -f "$DIR/herdi-mac/dmg.sh" ]
 assert_eq "$?" "0" "build scripts present"
 
-echo "15. updater points to correct repo"
+echo "16. updater points to correct repo"
 grep -q "dcolinmorgan/herdr-remote" "$DIR/herdi-mac/Sources/Updater.swift"
 assert_eq "$?" "0" "updater repo correct"
 
 # --- Demo worker ---
 echo ""
 echo "=== Demo worker ==="
-echo "16. demo worker syntax"
+echo "17. demo worker syntax"
 if [ -f "$DIR/demo-worker/src/index.js" ]; then
   node --check "$DIR/demo-worker/src/index.js" 2>/dev/null
   assert_eq "$?" "0" "demo worker parses"
@@ -106,19 +110,19 @@ fi
 # --- Integration ---
 echo ""
 echo "=== Integration ==="
-echo "17. README links to herdr-demo.pages.dev"
+echo "18. README links to herdr-demo.pages.dev"
 grep -q "herdr-demo.pages.dev" "$DIR/README.md"
 assert_eq "$?" "0" "demo URL correct"
 
-echo "18. README links to herdr-push"
+echo "19. README links to herdr-push"
 grep -q "dcolinmorgan/herdr-push" "$DIR/README.md"
 assert_eq "$?" "0" "plugin link present"
 
-echo "19. installer service behavior"
+echo "20. installer service behavior"
 "$DIR/tests/install-service.sh"
 assert_eq "$?" "0" "installer handles Telegram service lifecycle"
 
-echo "20. LICENSE is AGPL"
+echo "21. LICENSE is AGPL"
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$DIR/LICENSE"
 assert_eq "$?" "0" "AGPL license"
 
