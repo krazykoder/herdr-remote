@@ -46,7 +46,7 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 | G4 | `herdr` CLI already exposes every primitive needed | `agent start <name> [--cwd] [--tab] [--split right\|down]`, `pane split`, `pane send-text`, `tab create`. No new external machinery. |
 | G5 | Pane IDs are reusable | A pinned pair can outlive its panes and end up pointing at a *different* agent. Drives the fingerprint design in §3.2. |
 | G6 | `send_text` caps client text at 1000 chars (`:523`) | Fine for typing. Too small for a pasted diff or a block of pane output, which is exactly what transfer moves. Drives §6.4. |
-| G7 | Relay and every client key pane state by bare `pane_id` (`herdr_relay.py:72-74`, `agent_state.py:33`, `web/index.html:531`) | **Pre-existing bug, not a limitation of this proposal.** `_poll_once:251-253` writes `pane_remote_map`, `known_panes` and `agent_cache` keyed on bare `pane_id` while iterating every host, so on a collision the last host polled wins. `respond`, `send_text`, `send_keys` and `read_pane` then resolve `remote` from that map (`:479`, `:491`, `:503`, `:526`) and **route to the wrong machine today**, with no pairs involved. herdr pane IDs are per-server counters (`w8:t1` form), so two hosts each starting fresh collide immediately — this is likely under `HERDR_REMOTES`, not theoretical. The real fix is a protocol-wide `(host, pane_id)` identity, which is Class C and out of scope here. Until then: v1 pairs must be **same-host**, and the frontend's duplicate-ID check (§3.3) refuses the ambiguous case rather than pretending to resolve it. |
+| G7 | Relay and every client key pane state by bare `pane_id` (`herdr_relay.py:72-74`, `agent_state.py:33`, `web/index.html:531`) | **Pre-existing bug, not a limitation of this proposal.** `_poll_once:251-253` writes `pane_remote_map`, `known_panes` and `agent_cache` keyed on bare `pane_id` while iterating every host, so on a collision the last host polled wins. `respond`, `send_text`, `send_keys` and `read_pane` then resolve `remote` from that map (`:479`, `:491`, `:503`, `:526`) and **route to the wrong machine today**, with no pairs involved. herdr pane IDs are per-server counters (`w8:p1` form; `w8:t1` is a tab ID), so two hosts each starting fresh collide immediately — this is likely under `HERDR_REMOTES`, not theoretical. The real fix is a protocol-wide `(host, pane_id)` identity, which is Class C and out of scope here. Until then: v1 pairs must be **same-host**, and the frontend's duplicate-ID check (§3.3) refuses the ambiguous case rather than pretending to resolve it. |
 
 ---
 
@@ -110,8 +110,8 @@ The pair is a **frontend binding, not a channel**. It does not move text — §6
     {
       "id": "p_a1b2c3d4", "name": "Architecture review",
       "members": [
-        {"pane_id": "w8:t1:p1", "host": "local", "role": "architect", "agent": "claude", "cwd": "/Users/t/code/herdr-remote"},
-        {"pane_id": "w8:t1:p2", "host": "local", "role": "reviewer",  "agent": "codex",  "cwd": "/Users/t/code/herdr-remote"}
+        {"pane_id": "w8:p1", "host": "local", "role": "architect", "agent": "claude", "cwd": "/Users/t/code/herdr-remote"},
+        {"pane_id": "w8:p2", "host": "local", "role": "reviewer",  "agent": "codex",  "cwd": "/Users/t/code/herdr-remote"}
       ]
     }
   ]
