@@ -6,6 +6,8 @@
 **Source proposal:** `.workflow/07_dev_notes/2026-08-08_workspace_and_session_pair_proposal.md`
 **Classification:** **Class B** — additive protocol extension, backward compatible. No existing message shape changes.
 
+**Guiding constraint:** reuse the existing architecture wherever possible, and keep **every step manual in v1**. The relay gains as little as it can; the frontend holds the controls.
+
 ---
 
 ## 1. Proof of Discovery
@@ -18,16 +20,18 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 |---|---|---|
 | `relay/herdr_relay.py:176` `get_agents_from_host` | Only source of pane state | `[MODIFY]` add `project_id` |
 | `relay/herdr_relay.py:247` `_poll_once` | Poll, diff, broadcast | `[MODIFY]` pair health validation |
-| `relay/herdr_relay.py:437` `handle_client` | Client command switch | `[MODIFY]` 4 new commands |
+| `relay/herdr_relay.py:437` `handle_client` | Client command switch | `[MODIFY]` 3 new commands |
+| `relay/herdr_relay.py:523` `send_text` length guard | Caps client text at 1000 chars | `[MODIFY]` raise cap (§6.4) |
 | `relay/herdr_relay.py:530` `create_tab` | Tab creation | `[DELETE]` superseded by `start_agent` |
 | `relay/agent_state.py` | Snapshot/merge helpers | `[MODIFY]` add `project_id` to field tuple |
 | `web/index.html:427-511` | `render` / `renderWorkspaces` / `createTab` | `[MODIFY]` Projects replace workspace chips |
+| `web/index.html:531-573` | Terminal view, `sendText` | `[MODIFY]` selection, shortcuts, transfer UI |
 | `relay/herdr_tui.py`, `relay/herdr_telegram.py`, `herdi-mac/`, `herdi-ios/` | Consume `agents` snapshot | **No change** — additive fields, unknown types ignored |
 
 ### Invariants that must survive
 
 1. **`known_panes` gate on every write command.** Enforced at `:473`, `:488`, `:497`, `:520`. New write commands inherit it.
-2. **Allowlist-shaped write surface.** `SAFE_RESPONSES` (`:76`), `SAFE_KEYS` (`:77`), `send_text` 1000-char cap (`:523`). New commands extend this pattern; they do not introduce free-form execution.
+2. **Allowlist-shaped write surface.** `SAFE_RESPONSES` (`:76`), `SAFE_KEYS` (`:77`), `send_text` length cap (`:523`). New commands extend this pattern; they do not introduce free-form execution.
 3. **`audit()` on every write.** `:481`, `:505`, `:528`, `:534`.
 4. **Route order in `process_request`.** The comment at `:366` is load-bearing: event push (`?d=`) must be handled before any static route, or events are silently dropped while the caller still gets 200. New routes go below.
 5. **Snapshot fields are additive-only.** Five clients consume `agents`; `apply_agent_message` (`agent_state.py:33`) merges by `pane_id`.
@@ -36,12 +40,12 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 
 | # | Finding | Consequence |
 |---|---|---|
-| G1 | `get_agents_from_host:195` filters `if p.get("agent")` — the relay only ever sees panes that *already* have an agent | A Project with no running agent is invisible. Acceptable for v1 (Projects are discovered from live panes), but it means "start an agent in a brand-new repo" is out of scope by construction. |
+| G1 | `get_agents_from_host:195` filters `if p.get("agent")` — the relay only ever sees panes that *already* have an agent | A Project with no running agent is invisible. Accepted: Projects are discovered from live panes, so "start an agent in a repo herdr has never opened" is out of scope by construction. |
 | G2 | `create_tab:535` calls `run_herdr(...)` with **no `remote=`** | Pre-existing bug: tab creation always targets the local host, silently wrong for `HERDR_REMOTES`. Only caller is `web/index.html:509`. Being deleted, so the bug dies with it. |
-| G3 | No state is pushed on client connect | A new client shows an empty list for up to `POLL_INTERVAL` (2s). Pairs make this worse — pair state changes rarely, so a connect-time push becomes required, not just nice. |
-| G4 | `herdr` CLI already exposes every primitive needed | `agent start <name> [--cwd] [--tab] [--split right\|down]`, `pane split`, `pane send-text`, `pane rename`, `tab create`. No new external machinery. |
+| G3 | No state is pushed on client connect | A new client shows an empty list for up to `POLL_INTERVAL` (2s). Pairs make this required rather than cosmetic — pair state changes rarely, so a client that misses the broadcast waits indefinitely. |
+| G4 | `herdr` CLI already exposes every primitive needed | `agent start <name> [--cwd] [--tab] [--split right\|down]`, `pane split`, `pane send-text`, `tab create`. No new external machinery. |
 | G5 | Pane IDs are reusable | A pinned pair can outlive its panes and end up pointing at a *different* agent. Drives the fingerprint design in §3.2. |
-| G6 | `herdr agent start` returns as soon as the pane exists, before the agent TUI accepts input | Seeding a start prompt immediately after the call drops it. Needs `herdr wait agent-status --status idle`, which can run 30s — longer than `run_herdr`'s shared 15s timeout at `:166`, so it cannot reuse that helper on the event loop. Drives §5.2. |
+| G6 | `send_text` caps client text at 1000 chars (`:523`) | Fine for typing. Too small for a pasted diff or a block of pane output, which is exactly what transfer moves. Drives §6.4. |
 
 ---
 
@@ -51,14 +55,14 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 
 herdr's `workspace_id` and `tab_id` remain on the pane snapshot as raw metadata. They are not a user-facing concept in herdr-remote and the workspace/tab chip strips (`web/index.html:447-472`) are removed.
 
-**Resolution rule (decided, see D1):** raw `cwd`, no git.
+**Resolution rule (D1):** raw `cwd`, no git.
 
 ```
 project_id = f"{host}:{cwd}"        # stable grouping key
 project    = basename(cwd)           # display label — already exists at :189
 ```
 
-`project_id` includes `host` so that the same path on two SSH remotes does not collapse into one Project.
+`project_id` includes `host` so the same path on two SSH remotes does not collapse into one Project.
 
 **Label collisions.** Two Projects can share a basename (`~/a/web` and `~/b/web`). Resolution is presentational and belongs in the client: when two visible `project_id`s produce the same label, extend each label leftward by one path segment until unique. No relay involvement.
 
@@ -70,9 +74,11 @@ project    = basename(cwd)           # display label — already exists at :189
 
 ## 3. Concept: Session Pair
 
-**A Session Pair is two pinned agent panes that can hand text to each other under human control.** Canonical case: architect Claude + reviewer codex.
+**A Session Pair is two pinned agent panes the user works across.** Canonical case: architect Claude + reviewer codex.
 
-**Definition (decided, see D2):** explicit, user-pinned, persisted in the relay. Members may live in different tabs, different Projects, and on different hosts.
+**Definition (D2):** explicit, user-pinned, persisted in the relay. Members may live in different tabs, different Projects, and on different hosts.
+
+The pair is a **binding, not a channel**. It does not move text — §6 does, and it does so entirely in the frontend. What the pair provides is durable, cross-device identity: pin on the desktop, and the phone shows the same pairing.
 
 ### 3.1 Persistence
 
@@ -98,15 +104,15 @@ project    = basename(cwd)           # display label — already exists at :189
 
 ### 3.2 Derived health — computed each poll, never persisted
 
-| State | Condition | Transfers |
+| State | Condition | Effect |
 |---|---|---|
-| `healthy` | Both `pane_id`s in `known_panes` **and** each member's live `agent` + `cwd` + `host` match the stored fingerprint | Allowed |
-| `stale` | A member's `pane_id` is absent from `known_panes` | Refused |
-| `broken` | A member's `pane_id` is present but the fingerprint no longer matches | Refused |
+| `healthy` | Both `pane_id`s in `known_panes` **and** each member's live `agent` + `cwd` + `host` match the stored fingerprint | Pair usable |
+| `stale` | A member's `pane_id` is absent from `known_panes` | Pair shown greyed; transfer UI disabled |
+| `broken` | A member's `pane_id` is present but the fingerprint no longer matches | Pair flagged; transfer UI disabled until re-pinned |
 
-Neither `stale` nor `broken` auto-deletes the pair — a `stale` pair recovers on its own if the pane comes back (relay restart, SSH blip). A `broken` pair requires an explicit re-pin, because the pane ID now belongs to something else.
+Neither state auto-deletes the pair. A `stale` pair recovers on its own if the pane returns (relay restart, SSH blip). A `broken` pair requires an explicit re-pin, because that pane ID now belongs to something else.
 
-> This is the load-bearing safety property of the whole feature: **a transfer must never be delivered to a pane other than the one the user pinned.**
+> This is the load-bearing safety property of the feature: **the UI must never offer to paste into a pane other than the one the user pinned.**
 
 ### 3.3 Limits
 
@@ -129,8 +135,9 @@ All additive. Unknown `type` values are already ignored by every client.
 |---|---|---|
 | `pair_create` | `members: [{pane_id, role}, {pane_id, role}]` | exactly 2; both in `known_panes`; neither already paired; role matches slug regex; `len(pairs) < 32` |
 | `pair_delete` | `pair_id` | pair exists |
-| `transfer` | `pair_id`, `to_pane`, `text`, and one of `instruction_id` \| `instruction` | pair `healthy`; `to_pane` is a member of *this* pair; `len(text) <= 4000`; `instruction_id` in preset table, or custom `instruction` `<= 500` chars |
-| `start_agent` | `name`, `project_id`, `mode: "tab" \| "split"`, `prompt_id: "architect" \| "reviewer" \| "none"`, optional `pair_with: pane_id` | `name` in `HERDR_START_AGENTS`; `project_id` in the discovered Project set; `prompt_id` one of exactly three values; **no `argv`, no `env`, no `cwd`, no prompt text accepted from the client** |
+| `start_agent` | `name`, `project_id`, `mode: "tab" \| "split"`, optional `pair_with: pane_id` | `name` in `HERDR_START_AGENTS`; `project_id` in the discovered Project set; **no argv, no env, no cwd, no prompt accepted from the client** |
+
+There is no `transfer` command. Transfer is frontend-only (§6) and rides the existing `send_text`.
 
 ### 4.2 Server → Client
 
@@ -149,78 +156,55 @@ Fixes G3. On accepting a client in `handle_client`, immediately send the cached 
 
 ---
 
-## 5. Agent Start Prompts
+## 5. Starting Agents
 
-A newly started agent is seeded with a role prompt. There are exactly **three** choices, and the client picks one by ID — the prompt text itself never crosses the wire.
-
-| `prompt_id` | Meaning |
-|---|---|
-| `architect` | Seed the agent as the Architect side of a pair |
-| `reviewer` | Seed the agent as the Reviewer side of a pair |
-| `none` | Start the agent bare, send nothing |
-
-`none` is a first-class option, not a fallback: starting a plain agent in a Project is the common case and must not require dismissing a prompt picker.
-
-### 5.1 Prompt table
-
-Server-side, same shape as the transfer presets in §6.1.
-
-> **⚠ PLACEHOLDER — prompt text to be supplied by the operator.** The three keys below are frozen; the strings are not. Do not invent copy for them. The Implementer wires the table and the lookup; the text lands via `HERDR_PROMPTS_FILE` or a follow-up edit.
-
-```python
-START_PROMPTS = {
-    "architect": "<<TBD — architect seed prompt>>",
-    "reviewer":  "<<TBD — reviewer seed prompt>>",
-    "none":      None,   # explicit: send nothing
-}
-```
-
-The keys are the contract; the values are prompt-engineering copy and will be retuned far more often than the code around them. An optional `HERDR_PROMPTS_FILE` JSON override loads over both `START_PROMPTS` and `TRANSFER_PRESETS` at startup, so tuning does not require editing the relay. Unknown keys in the override are ignored; the built-in dict is the schema.
-
-Until real copy is supplied, a `<<TBD …>>` value behaves exactly like `none` — the pane starts and nothing is sent, and the relay logs a warning naming the unset key. It must never send the placeholder string to an agent.
-
-### 5.2 Seeding sequence
-
-`herdr agent start` returns as soon as the pane exists — the agent TUI is not yet accepting input. Seeding must wait for readiness, and herdr already provides the primitive:
+**A new agent is started raw.** The relay runs the agent and stops there — no seed prompt, no wait-for-ready, no post-start input. The user drives the agent from the frontend afterwards using the instruction shortcuts in §6.1 (D5).
 
 ```bash
-herdr agent start <name> --cwd <project cwd> [--tab <tab_id> | --split right] --focus
-herdr wait agent-status <pane_id> --status idle --timeout 30000
-herdr pane send-text <pane_id> "<START_PROMPTS[prompt_id]>"
-herdr pane send-keys <pane_id> Enter
+# mode: "tab"
+herdr agent start <name> --cwd <project cwd> --focus
+
+# mode: "split" — new pane beside an existing one
+herdr agent start <name> --cwd <project cwd> --tab <tab_id of pair_with pane> --split right --focus
 ```
 
-The wait must not block the event loop — `run_herdr` is a synchronous `subprocess.run` with a 15s timeout (`:166`), so a 30s wait needs `asyncio.to_thread` or a dedicated task. Do not raise the shared timeout; other callers depend on it staying short.
+That is the whole operation. It returns as soon as the pane exists; the agent appears on the next poll like any other. Because nothing is sent to the agent, the readiness problem does not arise and `run_herdr`'s existing 15s timeout (`:166`) is sufficient — no `asyncio.to_thread`, no `herdr wait agent-status`.
 
-On `prompt_id == "none"`, steps 2–4 are skipped entirely and the command returns as soon as the pane exists.
+### 5.1 Pairing on start
 
-If the wait times out, the pane still exists and is reported normally on the next poll — the relay returns `command_result` with `ok: true` and `seeded: false` rather than pretending the seed landed. The operator can then type into the pane directly.
+`pair_with: <pane_id>` starts the new agent with `--split right` in the existing pane's tab and pins the pair in the same action. This is the intended route to an architect/reviewer setup: start the first agent in a Project, then start the second with `pair_with` pointing at it.
 
-### 5.3 Pairing on start
-
-`pair_with: <pane_id>` starts the new agent with `--split right` in the existing pane's tab and pins the pair in one action. This is the intended path to an architect/reviewer setup: start the architect with `prompt_id: "architect"`, then start the reviewer with `prompt_id: "reviewer"` and `pair_with` pointing at the architect's pane.
-
-Roles on the resulting pair default to the two `prompt_id` values. When either side used `none`, the role falls back to the agent name (§3.4).
+Roles default to the two agent names (§3.4) and are renameable afterwards.
 
 ---
 
-## 6. Transfer Semantics
+## 6. Instruction Shortcuts and Transfer
 
-### 6.1 Instruction presets
+**Transfer is copy-and-paste in the frontend.** No relay command, no server-side composition, no preset table in Python. The user selects text in one pane's view, picks an instruction shortcut, and the frontend prefills the partner pane's composer. Every step is a deliberate action (D3).
 
-Server-side table, mirroring the `SAFE_RESPONSES` pattern — the client sends an ID, not the text:
+### 6.1 Instruction shortcuts
 
-```python
-TRANSFER_PRESETS = {
-    "review":    "Review, edit, fix; then propose next steps.",
-    "implement": "Proceed to implement.",
-    "architect": "@system architect ; /ponytail /caveman",
-}
+A dropdown in the terminal view inserts a shortcut string at the top of the composer. Shortcuts live in a `const` array in `web/index.html` alongside the rest of the app — single file, no build step, consistent with how the app already carries its themes and key presets.
+
+Prompts are referenced by **path**, not pasted inline. The agent resolves the file itself, so the relay and the frontend never carry prompt copy:
+
+```
+@.agent/prompts/System_Prompt_2_Architect.md
 ```
 
-A custom `instruction` string is accepted, capped at 500 chars, and recorded in the audit log.
+Starter set, from the source proposal:
+
+| Shortcut | Inserted text |
+|---|---|
+| Review | `Review, edit, fix; then propose next steps.` |
+| Implement | `Proceed to implement.` |
+| Architect | `@.agent/prompts/System_Prompt_2_Architect.md ; /ponytail /caveman` |
+
+The set is editable by the operator; the frontend treats it as data, not as a fixed list.
 
 ### 6.2 Composed payload
+
+The frontend builds:
 
 ```
 {instruction}
@@ -233,14 +217,22 @@ TRANSFER>>>
 
 **The fence is not decoration.** Without it, transferred pane content containing a line like `Proceed to implement` is indistinguishable from the operator's own instruction. The delimiter gives the receiving agent an unambiguous boundary for the quoted region.
 
-### 6.3 Delivery — open implementation question
+### 6.3 Prefill, do not auto-send
 
-Delivery is `pane send-text <to_pane> <composed>` followed by `pane send-keys <to_pane> Enter`, the same two-step the web app already uses at `web/index.html:568-569`.
+The composed text lands in the partner pane's composer (`termInput`, `web/index.html:566`) and stops there. The user reads it and presses send. This is the "every step manual" rule at its most literal, and it is also the last checkpoint before one agent's output enters another agent's context.
 
-**The payload is multi-line, and agent TUIs treat Enter as submit.** Whether embedded newlines submit early depends on whether `herdr pane send-text` emits a bracketed paste. The `herdr agent` help text distinguishes `agent send` ("writes literal text") from `pane run` ("command text plus Enter"), which suggests it does — but the Implementer must verify rather than assume:
+Sending then reuses the existing path unchanged: `send_text`, then `send_keys ["Enter"]` (`web/index.html:568-569`).
+
+### 6.4 The `send_text` cap — open implementation question
+
+Two things have to be settled against a live agent pane before this is built.
+
+**(a) Length.** `send_text` refuses text over 1000 chars (`:523`). A pasted diff blows through that. Raise the cap to 4000 — one constant, and the guard stays in place, because an unbounded write is a genuine abuse vector, not a formality. The alternative, chunking client-side into sub-1000 sends, is rejected: it risks a partial payload landing in the agent if a chunk fails midway.
+
+**(b) Newlines.** The payload is multi-line and agent TUIs treat Enter as submit. Whether embedded newlines submit early depends on whether `herdr pane send-text` emits a bracketed paste. The `herdr agent` help distinguishes `agent send` ("writes literal text") from `pane run` ("command text plus Enter"), which suggests it does — verify rather than assume:
 
 ```bash
-# With a live agent pane open, against a scratch pane:
+# Against a scratch pane with a live agent:
 herdr pane send-text <pane_id> $'line one\nline two\nline three'
 herdr pane read <pane_id> --lines 20
 # PASS: all three lines sit unsubmitted in the agent's composer.
@@ -253,27 +245,27 @@ On FAIL, the fallback is per-line `send-text` with `M-Enter` (Alt+Enter — newl
 
 ## 7. Security
 
-This section is written plainly and deliberately. Two of the four new commands widen the relay's write surface in ways the existing allowlists do not cover.
+Written plainly and deliberately. Moving transfer to the frontend removes one relay-side vector but does not remove the underlying risk — it relocates it to a place where a human is structurally required to look at it.
 
 ### 7.1 `start_agent` spawns a process from a network request
 
 `herdr agent start` accepts `-- <argv...>`, which is arbitrary command execution. The mitigations are structural, not advisory:
 
-- The client sends an **agent name**, never an argv, never an env, never a path.
+- The client sends an **agent name** and a `project_id`. Never an argv, never an env, never a path, never prompt text.
 - `name` must appear in `HERDR_START_AGENTS` (default: `claude,codex`).
 - `project_id` must already exist in the discovered Project set. The relay looks up the `cwd` itself; a client-supplied path is never honoured. Starting an agent in a repo herdr has never opened is out of scope by design (G1).
-- `prompt_id` selects from three server-side strings (§5.1). Prompt text is never accepted from the client — a client-supplied seed prompt would be an unreviewed instruction injected into a fresh agent with the operator's credentials.
-- Every start is audited via the existing `audit()` helper, recording `name`, `project_id`, `mode` and `prompt_id`.
+- Every start is audited via the existing `audit()` helper, recording `name`, `project_id` and `mode`.
 
-### 7.2 `transfer` is a prompt-injection channel
+### 7.2 Transfer is still a prompt-injection path, now human-gated
 
-Agent A's pane content may contain text A fetched from the internet. `transfer` moves that text into agent B's prompt. Containment:
+Agent A's pane content may contain text A fetched from the internet. Transfer moves that text into agent B's prompt. The relay no longer participates, so containment is structural rather than enforced:
 
-- **Human-initiated on every hop.** No auto-relay in v1 (D3). The operator sees the text before it moves.
-- Destination is restricted to the *other member of the same pair* — text cannot be fanned into arbitrary panes.
-- Payload capped at 4000 chars; instructions come from a server-side preset table.
-- Fenced payload (§6.2) so the receiving agent can see the boundary.
-- Audited with truncated detail, reusing the existing 120-char truncation at `:101`.
+- **The user selects the text.** Only a selection moves, never a whole scrollback.
+- **The composer is prefilled, not sent** (§6.3). The operator sees the exact payload and presses send.
+- The payload is fenced (§6.2) so the receiving agent can see the boundary.
+- The `send_text` cap (§6.4) still bounds the volume, and the existing `audit()` at `:528` still records it.
+
+No auto-relay in v1 (D3). Deferring it is what keeps a human on every hop.
 
 ### 7.3 Authentication must become mandatory for these commands
 
@@ -285,13 +277,13 @@ The relay binds `0.0.0.0` (`:596`) and `HERDR_RELAY_TOKEN` is **optional** today
 HERDR_ENABLE_WRITE_EXT=1 without HERDR_RELAY_TOKEN  ->  exit(1) with a clear message
 ```
 
-`start_agent`, `pair_create`, `pair_delete` and `transfer` are all gated on `HERDR_ENABLE_WRITE_EXT`; the default is off, so an existing deployment gains no new surface until the operator opts in and sets a token.
+`start_agent`, `pair_create` and `pair_delete` are all gated on `HERDR_ENABLE_WRITE_EXT`; the default is off, so an existing deployment gains no new surface until the operator opts in and sets a token. The raised `send_text` cap (§6.4) is **not** gated — it applies to an existing command and is a size change, not a new capability.
 
 Confirmed during discovery: the token check in `process_request` (`:334-347`) runs **before** the WebSocket upgrade check (`:349-355`), so WebSocket connections are already covered by it.
 
 ### 7.4 Pane ID reuse
 
-Covered by the fingerprint validation in §3.2. Called out separately here because a stale pair silently retargeting a different agent is the failure mode with the worst consequences and the least visibility.
+Covered by the fingerprint validation in §3.2. Called out separately because a stale pair silently retargeting a different agent is the failure mode with the worst consequences and the least visibility — and with transfer in the frontend, the pair is what tells the UI where to paste.
 
 ---
 
@@ -299,11 +291,11 @@ Covered by the fingerprint validation in §3.2. Called out separately here becau
 
 | Phase | Scope | Touches | Gate |
 |---|---|---|---|
-| **P1 — Projects** | `project_id` on snapshot; web app groups by Project; workspace/tab chips and `create_tab` deleted | `herdr_relay.py`, `agent_state.py`, `web/index.html` | Two agents in different repos group into two Projects; one repo with two agents groups into one; `tests/test_agent_state.py` extended |
-| **P2 — Start agent** | `start_agent` + allowlists + three-option `prompt_id` seeding + `HERDR_ENABLE_WRITE_EXT` + token requirement | `herdr_relay.py`, `web/index.html` | Start refused for unlisted name, unknown `project_id`, unknown `prompt_id`, and missing token; `architect`/`reviewer` land their seed prompt after the agent reaches idle; `none` starts a bare agent and sends nothing; a seed timeout returns `seeded: false` with the pane still alive; audit line present on success |
-| **P3 — Pairs** | `pairs.json`, `pair_create`/`pair_delete`, poll-time health validation, `pairs` broadcast, connect-time state push | `herdr_relay.py`, `web/index.html` | Pair survives relay restart; killing a member yields `stale`; replacing a pane so the fingerprint mismatches yields `broken` and refuses transfer |
-| **P4 — Transfer** | `transfer`, presets, fence, caps; pane text selection in the web app | `herdr_relay.py`, `web/index.html` | §6.3 delivery check passes; oversize payload and unknown `instruction_id` both refused; audit line present |
-| **P5 — Deferred** | Auto-relay with per-pair opt-in and hop cap; 3+ member pairs; worktree-aware Projects | — | Not specced. Requires its own threat model. |
+| **P1 — Projects** | `project_id` on snapshot; web app groups by Project; workspace/tab chips and `create_tab` deleted | `herdr_relay.py`, `agent_state.py`, `web/index.html` | Two agents in different repos group into two Projects; one repo with two agents groups into one; colliding basenames disambiguate; `tests/test_agent_state.py` extended |
+| **P2 — Start agent** | `start_agent` (raw run, no seeding) + allowlists + `HERDR_ENABLE_WRITE_EXT` + token requirement | `herdr_relay.py`, `web/index.html` | Start refused for unlisted name, unknown `project_id`, and missing token; `mode: "split"` lands beside `pair_with`; audit line present on success |
+| **P3 — Pairs** | `pairs.json`, `pair_create`/`pair_delete`, poll-time health validation, `pairs` broadcast, connect-time state push | `herdr_relay.py`, `web/index.html` | Pair survives relay restart and appears on a second device; killing a member yields `stale`; replacing a pane so the fingerprint mismatches yields `broken` and disables the transfer UI |
+| **P4 — Transfer UI** | Pane text selection, shortcut dropdown, partner-composer prefill; `send_text` cap raised | `web/index.html`, one constant in `herdr_relay.py` | §6.4(b) newline check passes; a 3000-char selection transfers intact; prefill never auto-sends; oversize text still refused |
+| **P5 — Deferred** | Auto-relay with per-pair opt-in and hop cap; 3+ member pairs; git/worktree-aware Projects; server-side instruction presets shared across clients | — | Not specced. Auto-relay requires its own threat model. |
 
 Each phase is independently shippable. P3 does not depend on P2.
 
@@ -316,15 +308,16 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 | ID | Decision |
 |---|---|
 | D1 | Project key is raw `cwd`, no git resolution |
-| D2 | Session Pairs are explicitly pinned and persisted, not derived from herdr layout |
-| D3 | No auto-relay in v1; every transfer is human-initiated |
+| D2 | Session Pairs are explicitly pinned and persisted in the relay, not derived from herdr layout |
+| D3 | Every step is manual in v1; transfer is frontend copy-paste with no relay command |
 | D4 | `start_agent` is restricted to allowlisted agent names in already-discovered Projects |
-| D5 | Start prompts are three server-side IDs — `architect`, `reviewer`, `none` — with `none` a first-class choice |
+| D5 | Agents start raw — no seed prompt; instruction shortcuts are frontend-side path references |
 
 ---
 
 ## 10. Open Questions for Phase 3 (Specs)
 
-1. **Multi-line delivery** (§6.3) — must be settled by experiment before the transfer spec is frozen. It gates the seed prompts in §5.2 as well, though those are single-line today.
-2. **Pair discoverability** — should the relay *suggest* a pair when two agent panes share a `tab_id`, as a one-tap pin? Cheap, and it recovers most of the ergonomics of the derived-pair design without its state model.
+1. **Multi-line delivery** (§6.4b) — must be settled by experiment before the transfer spec is frozen. It is the only thing in this proposal that could force a design change rather than a parameter change.
+2. **Pair discoverability** — should the relay *suggest* a pair when two agent panes share a `tab_id`, as a one-tap pin? Cheap, and it removes most of the pinning friction.
 3. **Project ordering in the client** — most-recently-blocked first, or stable alphabetical? Affects whether the list moves under the user's thumb on mobile.
+4. **Shortcut portability** — shortcuts start as a `const` in `web/index.html`, which means they do not follow the user to the Telegram or Swift clients. Promote to a relay-served list if that becomes a real complaint (listed under P5).
