@@ -15,6 +15,17 @@ from projects import (
     public_projects,
     resolve_workspace_remote,
 )
+from start_agent import (
+    ROLES,
+    StartAgentConfigError,
+    agent_start_args,
+    dig,
+    load_start_agents,
+    pane_rename_args,
+    tab_create_args,
+    validate_start_request,
+    workspace_create_args,
+)
 
 try:
     from websockets.asyncio.server import serve
@@ -69,6 +80,23 @@ try:
     PROJECTS = load_projects(os.environ.get("HERDR_PROJECTS_FILE", ""), valid_hosts=REMOTES)
 except ProjectConfigError as e:
     print(f"herdr-remote: bad Projects config: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Write extensions (P2 start_agent) spawn processes on this machine and on any configured
+# SSH target. The relay binds 0.0.0.0, so enabling them without a shared secret would hand
+# process spawn to anyone on the LAN. Refuse to boot rather than run that way.
+WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
+if WRITE_EXT and not AUTH_TOKEN:
+    print(
+        "herdr-remote: HERDR_ENABLE_WRITE_EXT=1 requires HERDR_RELAY_TOKEN to be set",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+try:
+    START_AGENTS = load_start_agents(os.environ.get("HERDR_START_AGENTS", ""))
+except StartAgentConfigError as e:
+    print(f"herdr-remote: bad start agent allowlist: {e}", file=sys.stderr)
     sys.exit(1)
 
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
@@ -272,6 +300,66 @@ def pane_guard(pane_id):
     if pane_id in ambiguous_panes:
         return "ambiguous pane_id (same id on multiple hosts)"
     return None
+
+
+def _herdr_json(*args, remote=None):
+    """Run a herdr command that returns JSON. Returns (data, error)."""
+    where = " ".join(args[:2])
+    try:
+        result = run_herdr_result(*args, remote=remote)
+    except Exception as e:
+        return None, f"herdr {where} failed: {e}"
+    if result.returncode != 0:
+        return None, f"herdr {where} exited {result.returncode}"
+    try:
+        return json.loads(result.stdout), None
+    except json.JSONDecodeError:
+        return None, f"herdr {where} returned malformed JSON"
+
+
+def start_agent_exec(plan):
+    """Run a validated start plan. Returns (pane_id, error).
+
+    Blocking; call through asyncio.to_thread. Never claims success after a partial
+    operation — a created workspace or tab may remain as empty native layout, but no
+    session is reported unless the agent actually started (spec §3).
+    """
+    remote = plan["remote"]
+    placement = plan["placement"]
+
+    if placement == "new_workspace":
+        data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
+        if err:
+            return None, err
+        workspace_id = dig(data, "result", "workspace", "workspace_id")
+        if not workspace_id:
+            return None, "workspace create returned no workspace_id"
+        args = agent_start_args(plan["name"], plan["cwd"], "workspace", workspace_id)
+    elif placement == "new_tab":
+        data, err = _herdr_json(*tab_create_args(plan["workspace_id"]), remote=remote)
+        if err:
+            return None, err
+        tab_id = dig(data, "result", "tab", "tab_id")
+        if not tab_id:
+            return None, "tab create returned no tab_id"
+        args = agent_start_args(plan["name"], plan["cwd"], "tab", tab_id)
+    else:  # split — the source pane's tab already exists
+        args = agent_start_args(plan["name"], plan["cwd"], "tab", plan["tab_id"], split=True)
+
+    data, err = _herdr_json(*args, remote=remote)
+    if err:
+        return None, err
+    pane_id = dig(data, "result", "agent", "pane_id")
+    if not pane_id:
+        return None, "agent start returned no pane_id"
+
+    try:
+        rename = run_herdr_result(*pane_rename_args(pane_id, plan["label"]), remote=remote)
+    except Exception as e:
+        return None, f"agent started as {pane_id} but pane rename failed: {e}"
+    if rename.returncode != 0:
+        return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
+    return pane_id, None
 
 
 async def _poll_once():
@@ -499,6 +587,12 @@ async def handle_client(ws):
         # Projects must arrive before the cached snapshot so the client can group it.
         if PROJECTS:
             await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
+            # Presence of start_options is the browser's feature gate. Without Projects a
+            # start can never resolve a cwd, so the control would only ever error (spec §3).
+            if WRITE_EXT:
+                await ws.send(json.dumps({
+                    "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+                }))
             await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
         async for raw in ws:
             try:
@@ -585,6 +679,33 @@ async def handle_client(ws):
                 audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
                 run_herdr("tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
                 await ws.send(json.dumps({"type": "tab_created", "ok": True}))
+            elif msg_type == "start_agent":
+                # The connection itself is already authenticated when a token is set
+                # (process_request rejects the handshake), and the relay refuses to boot
+                # with WRITE_EXT and no token — so reaching here means both hold.
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
+                if start_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": start_err}))
+                    continue
+                detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
+                          f"placement={plan['placement']} host={plan['remote'] or 'local'}")
+                log.info("Start agent from %s (%s): %s", ip, device, detail)
+                audit("start_agent", ip, device, "", detail)
+                # Up to three herdr calls, each with a 15s timeout — off the event loop.
+                pane_id, exec_err = await asyncio.to_thread(start_agent_exec, plan)
+                if exec_err:
+                    log.warning("Start agent failed (%s): %s", detail, exec_err)
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": exec_err}))
+                    continue
+                log.info("Start agent ok: pane=%s label=%r", pane_id, plan["label"])
+                await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                          "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
                 if sub and sub not in push_subscriptions:

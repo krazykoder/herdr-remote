@@ -120,6 +120,8 @@ cd herdi-ios && xcodegen generate
 | `HERDR_RELAY_TOKEN` | Optional shared secret for auth |
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
+| `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Requires `HERDR_RELAY_TOKEN` or the relay refuses to boot |
+| `HERDR_START_AGENTS` | Comma-separated agent allowlist for Start session (default: `codex,claude,pi`) |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 

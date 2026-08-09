@@ -4,7 +4,8 @@
 **Architecture:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs.md` §§2–5
 **Decisions:** D1, D4, D6, D8
 **Classification:** Class B — additive protocol extension.
-**Status:** Proposed
+**Status:** Implemented — `relay/start_agent.py`, `tests/test_start_agent.py`, `relay/herdr_relay.py`, `web/index.html`.
+A1–A11 pass under the two-host fake-herdr harness with the write gate off and on.
 
 ## 1. Goal
 

@@ -128,6 +128,31 @@ export HERDR_RELAY_TOKEN="$(openssl rand -hex 32)"
 uv run relay/herdr_relay.py
 ```
 
+## Remote Start Session
+
+Off by default. Starting an agent from a phone spawns a process on the relay's machine or on a
+configured SSH target, so it is opt-in and requires a token — the relay **refuses to start**
+with the flag set and no `HERDR_RELAY_TOKEN`.
+
+```bash
+export HERDR_PROJECTS_FILE="$HOME/.config/herdr-remote/projects.json"
+export HERDR_RELAY_TOKEN="$(openssl rand -hex 32)"
+export HERDR_ENABLE_WRITE_EXT=1
+export HERDR_START_AGENTS="claude,codex"   # optional; default codex,claude,pi
+```
+
+A Project is a trusted launch target from the Projects config:
+
+```json
+[{"id":"charts","label":"Charts","cwd":"~/code/js/charts.TS","host":"local"}]
+```
+
+The client sends only an agent name, a role, a Project ID, and where to place the session. The
+relay resolves cwd and host from the config — never from the client — and runs the agent with a
+fixed argv. `HERDR_START_AGENTS` limits **what** can be launched; the write flag plus the token
+limit **who** can launch it. Without the flag the browser is never told the feature exists and
+shows no Start session control.
+
 ## Requirements
 
 - macOS 14+ (menu bar app)
