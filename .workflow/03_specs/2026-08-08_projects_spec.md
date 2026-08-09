@@ -58,7 +58,9 @@ With Projects disabled, preserve current workspace/tab UI and `create_tab` behav
 
 ### 4.1 `projects`
 
-On each client connect, relay sends these two messages in order, inside `handle_client`’s existing `try` block:
+**Only when Projects are configured.** With `HERDR_PROJECTS_FILE` unset the connect path is untouched — no `projects`, no cached snapshot — so a legacy deployment sees the exact wire it saw before P1. There is nothing to group without Projects, and an empty `projects: []` would be a new message on a wire that A4 requires to be unchanged.
+
+When Projects exist, relay sends these two messages in order, inside `handle_client`’s existing `try` block:
 
 ```json
 {"type":"projects","projects":[{"id":"charts","label":"Charts","host":"local"}]}
@@ -100,8 +102,8 @@ On every poll, recompute pane IDs present on more than one host. For these IDs, 
 | A1 | Pane cwd equals or is below configured root | Correct `project_id`; longest root wins |
 | A2 | Pane cwd is sibling prefix/wrong host, or an `agent_event` arrives | Snapshot omits `project_id`; update contains no `project_id`; pane stays/shows under Other sessions until next snapshot as applicable |
 | A3 | Zero-session configured Project | Visible card with “No sessions” |
-| A4 | Config disabled | Existing workspace/tab navigation and `create_tab` remain available |
-| A5 | Fresh client connects | Receives `projects`, then cached `agents` |
+| A4 | Config disabled | Existing workspace/tab navigation and `create_tab` remain available; connect sends nothing, as before P1 |
+| A5 | Fresh client connects, Projects configured | Receives `projects`, then cached `agents` |
 | A6 | Invalid config or relative config-file path | Relay exits non-zero naming path/entry |
 | A7 | Same pane ID on two hosts | All four pane commands refuse; neither host is touched |
 | A8 | Collision ends | Commands recover within one poll interval |

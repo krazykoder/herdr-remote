@@ -67,9 +67,11 @@ The client never supplies cwd, host, env, argv, tab ID, or prompt text.
 
 | Placement | Relay calls |
 |---|---|
-| New workspace | `workspace create --cwd <configured cwd> --label <Project label> --focus`; parse `result.workspace_id`; `agent start <name> --cwd <cwd> --workspace <id> --focus` |
-| New tab | `tab create --workspace <id> --focus`; parse `result.tab_id`; `agent start <name> --cwd <cwd> --tab <id> --focus` |
-| Split | Resolve source `tab_id`; `agent start <name> --cwd <cwd> --tab <id> --split right --focus` |
+| New workspace | `workspace create --cwd <configured cwd> --label <Project label> --focus`; parse `result.workspace.workspace_id`; `agent start <name> --cwd <cwd> --workspace <id> --focus -- <name>` |
+| New tab | `tab create --workspace <id> --focus`; parse `result.tab.tab_id`; `agent start <name> --cwd <cwd> --tab <id> --focus -- <name>` |
+| Split | Resolve source `tab_id`; `agent start <name> --cwd <cwd> --tab <id> --split right --focus -- <name>` |
+
+`herdr agent start` requires argv after `--`. Relay supplies the one fixed argv element from the already allowlisted `name`; the browser still sends no argv.
 
 Every call passes `remote=None` for `local`, otherwise configured SSH target. Commands use `run_herdr_result`; non-zero exits, malformed JSON, or missing returned IDs return `command_result {command:"start_agent", ok:false}`. Do not report success after a partial operation: created workspace/tab may remain as native empty layout, but no session is claimed.
 
@@ -98,6 +100,6 @@ Successful calls audit `name`, `project_id`, role, and placement, then reply `co
 | A10 | Write extension disabled | No `start_options` on connect; no Start session control rendered |
 | A11 | New tab where the chosen `workspace_id` is also reported by a second host | Refused as ambiguous; no tab created on either host |
 
-## 6. Blocked on verification
+## 6. CLI verification record
 
-The relay-call table in §3 assumes four CLI signatures nobody has run: `workspace create --cwd --label`, `tab create --workspace`, `agent start --workspace`, and `pane rename` with a spaced label — plus the `result.<name>` shape of each returned ID. Discovery confirmed the commands exist, not these flags. **Run the checks in architecture §5 before implementing this spec.** A missing `--label` or a rename that rejects spaces changes the design here, not a constant.
+Verified locally on 2026-08-08 using an unfocused `/tmp` scratch workspace: `workspace create --cwd --label`, `tab create --workspace`, `agent start --workspace`, and `pane rename "Architect 1"` all work. Returned IDs are nested as recorded in §3; `agent start` requires `-- <argv...>`, supplied as fixed `-- <name>`. P2 is no longer blocked on CLI signatures.

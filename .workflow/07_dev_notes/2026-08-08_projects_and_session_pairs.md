@@ -246,18 +246,9 @@ run_herdr("agent", "start", name, "--cwd", project.cwd,
 
 `create_workspace` uses `herdr workspace create --cwd <project cwd> --label <project label> --focus`; `create_tab` uses `herdr tab create --workspace <id> --focus`. Both parse and validate their returned ID before starting an agent. If either command fails, relay returns an error and does not pretend a session exists. No prompt is sent, so readiness does not arise and `run_herdr`'s existing 15s timeout remains sufficient.
 
-After `agent start`, relay parses returned `pane_id`, allocates role label from live same-Project pane labels, and calls `herdr pane rename <pane_id> <Role N>` on same host. New-tab placement also creates tab with `<Role N>` label. If naming fails, command reports `ok:false`: agent may be alive, but user is told the named-session request did not complete.
+After `agent start`, relay parses `result.agent.pane_id`, allocates role label from live same-Project pane labels, and calls `herdr pane rename <pane_id> <Role N>` on same host. New-tab placement also creates tab with `<Role N>` label. If naming fails, command reports `ok:false`: agent may be alive, but user is told the named-session request did not complete.
 
-> **Four unverified CLI contracts block P2, not P1.** Everything above assumes flag and output shapes nobody has run. Discovery (G4) confirmed the *commands* exist; it did not confirm these *signatures*. Verify before the P2 spec is frozen, against a scratch host:
->
-> ```bash
-> herdr workspace create --cwd /tmp --label Scratch --focus   # accepts --cwd and --label? returns result.workspace_id?
-> herdr tab create --workspace <id> --focus                   # returns result.tab_id?
-> herdr agent start claude --cwd /tmp --workspace <id> --focus # returns result.pane_id? is --workspace valid alongside --cwd?
-> herdr pane rename <pane_id> "Architect 1"                    # accepts a label with a space?
-> ```
->
-> A missing `--label`, a rename that rejects spaces, or an ID that is not in `result.<name>` changes the P2 design, not just a parameter. This is the P2 counterpart of the §6.4b bracketed-paste question, and it is the same class of risk: a spec frozen on an assumed CLI surface.
+> **P2 CLI contracts verified 2026-08-08.** An unfocused `/tmp` scratch workspace confirmed `workspace create --cwd --label` → `result.workspace.workspace_id`, `tab create --workspace` → `result.tab.tab_id`, `agent start --workspace` → `result.agent.pane_id`, and `pane rename <pane_id> "Architect 1"`. `agent start` requires `-- <argv...>`; relay supplies fixed `-- <name>` from its allowlist. The browser continues to send no argv.
 
 ---
 
@@ -323,6 +314,8 @@ herdr pane read <pane_id> --lines 20
 ```
 
 On FAIL, the fallback is per-line `send-text` with `M-Enter` (Alt+Enter — newline without submit in Claude Code and codex) between lines, which requires adding `M-Enter` to `SAFE_KEYS` (`:77`). Do not fall back to flattening newlines into spaces; the payload is usually code or diffs.
+
+**Attempt record, 2026-08-08:** the command was sent to an unfocused scratch Codex pane and then an existing idle Codex pane. The scratch pane exited before it could be read; both `pane read` and `agent read` returned no visible text for the existing pane. Result: **INCONCLUSIVE**. A visible live terminal must repeat the check and record PASS or FAIL before P3 begins; `C-c` was sent once to clear any unsent test input from the existing pane.
 
 ---
 
@@ -403,7 +396,7 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 Two are **experiments, not judgement calls** — each can force a design change rather than a parameter change, and each needs a live herdr. Neither blocks P1.
 
 1. **Multi-line delivery** (§6.4b) — does `herdr pane send-text` bracket-paste? Required P3 preflight; record result before P3 implementation.
-2. **Layout CLI signatures** (§5 callout) — do `workspace create --cwd --label`, `tab create`, `agent start --workspace`, and `pane rename` accept these flags and return IDs at `result.<name>`? Blocks the P2 start spec.
+2. ~~**Layout CLI signatures**~~ — **verified 2026-08-08:** nested result paths plus required fixed `-- <name>` argv are recorded in §5 and the P2 spec.
 3. **Pair creation UI** — confirm whether the pair editor lives on agent cards, terminal header, or both.
 4. ~~**Project ordering in the client**~~ — **resolved (D7):** configured file order, never reordered by activity.
 5. **Pair sync** — keep deferred until named local pairs prove useful; then add authenticated, last-write-wins frontend-preferences sync.
