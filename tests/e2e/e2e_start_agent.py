@@ -209,6 +209,9 @@ async def gate_on_run():
             check("A9 pane renamed",
                   log_lines("pane rename") == ["local pane rename local:pNew Architect 2"],
                   log_lines("pane rename"))
+            check("L1 the workspace's shell pane is closed, so the agent gets the full tab",
+                  log_lines("pane close") == ["local pane close local:pShell"],
+                  log_lines("pane close"))
 
             # --- A1 new workspace, remote project ---
             open(LOG, "w").close()
@@ -236,6 +239,9 @@ async def gate_on_run():
                   log_lines("agent start") ==
                   ["box agent start Agent 1 --cwd /srv/relay --tab box:tNew --focus -- claude"],
                   log_lines("agent start"))
+            check("L1 the new tab's shell pane is closed too",
+                  log_lines("pane close") == ["box pane close box:pShell"],
+                  log_lines("pane close"))
 
             # --- A3 split beside a live pane (local) ---
             open(LOG, "w").close()
@@ -248,6 +254,8 @@ async def gate_on_run():
                   ["local agent start Architect 2 --cwd /work/charts --tab w1:t1 --split right --focus -- claude"]
                   and not log_lines("tab create"),
                   log_lines("agent start") + log_lines("tab create"))
+            check("L2 split closes nothing — the sibling pane is the user's own",
+                  not log_lines("pane close"), log_lines("pane close"))
     finally:
         stop_relay(proc)
 
@@ -266,6 +274,19 @@ async def failure_run():
             check("A7 no pane_id claimed", "pane_id" not in r, r)
             await asyncio.sleep(0.3)
             check("A7 no rename attempted", not log_lines("pane rename"), log_lines("pane rename"))
+            check("L3 the workspace created for the failed start is rolled back",
+                  log_lines("workspace close") == ["local workspace close local:wNew"],
+                  log_lines("workspace close"))
+            check("L3 the shell pane is not closed on the way out — the rollback takes it",
+                  not log_lines("pane close"), log_lines("pane close"))
+
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_tab", "workspace_id": "w1"})
+            check("L3 new tab failure reported as not ok", r.get("ok") is False, r)
+            await asyncio.sleep(0.3)
+            check("L3 the tab created for the failed start is rolled back",
+                  log_lines("tab close") == ["local tab close local:tNew"], log_lines("tab close"))
     finally:
         stop_relay(proc)
 

@@ -394,6 +394,19 @@ def live_agent_names(remote=None):
     return {a["name"] for a in agents if isinstance(a, dict) and a.get("name")}
 
 
+def _rollback_layout(rollback, remote):
+    """Close a workspace or tab this relay created seconds ago for an agent that never started.
+
+    Only ever called with an id the relay just minted, so nothing of the user's can be inside it.
+    Without this a failed start left an empty shell workspace behind on every attempt.
+    """
+    if not rollback:
+        return
+    _, err = _herdr_json(*rollback, remote=remote)
+    if err:
+        log.warning("Could not roll back %s after a failed start: %s", " ".join(rollback), err)
+
+
 def start_agent_exec(plan):
     """Run a validated start plan. Returns (pane_id, error).
 
@@ -407,6 +420,12 @@ def start_agent_exec(plan):
     # label, and a collision fails the start after a workspace or tab already exists.
     plan["label"] = unique_agent_name(plan["label"], live_agent_names(remote))
 
+    # A new workspace or tab is born holding one shell pane, and `agent start` anchored to that
+    # container splits it rather than reusing it — so every session came up at half width beside
+    # an idle shell. Remember the shell to close it once the agent pane exists, and to roll the
+    # whole container back if the agent never starts.
+    shell_pane = rollback = None
+
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
         if err:
@@ -414,6 +433,8 @@ def start_agent_exec(plan):
         workspace_id = dig(data, "result", "workspace", "workspace_id")
         if not workspace_id:
             return None, "workspace create returned no workspace_id"
+        shell_pane = dig(data, "result", "root_pane", "pane_id")
+        rollback = ("workspace", "close", workspace_id)
         args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "workspace", workspace_id)
     elif placement == "new_tab":
         data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
@@ -422,16 +443,29 @@ def start_agent_exec(plan):
         tab_id = dig(data, "result", "tab", "tab_id")
         if not tab_id:
             return None, "tab create returned no tab_id"
+        shell_pane = dig(data, "result", "root_pane", "pane_id")
+        rollback = ("tab", "close", tab_id)
         args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", tab_id)
-    else:  # split — the source pane's tab already exists
+    else:  # split — the source pane's tab already exists, and its sibling is the user's own
         args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", plan["tab_id"], split=True)
 
     data, err = _herdr_json(*args, remote=remote)
     if err:
+        _rollback_layout(rollback, remote)
         return None, err
     pane_id = dig(data, "result", "agent", "pane_id")
     if not pane_id:
+        _rollback_layout(rollback, remote)
         return None, "agent start returned no pane_id"
+
+    # After the agent pane exists, never before: the shell is the container's only other pane, so
+    # closing it first would take the tab or workspace down with it.
+    if shell_pane and shell_pane != pane_id:
+        _, close_err = _herdr_json("pane", "close", shell_pane, remote=remote)
+        if close_err:
+            # The session is up and usable; it is only sharing the tab. Say so, do not fail it.
+            log.warning("Started %s but could not close the empty shell pane %s: %s",
+                        pane_id, shell_pane, close_err)
 
     try:
         rename = run_herdr_result(*pane_rename_args(pane_id, plan["label"]), remote=remote)

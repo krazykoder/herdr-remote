@@ -94,6 +94,20 @@ The client never supplies cwd, host, env, argv, tab ID, or prompt text.
 The `<name>` positional in those `agent start` rows is the session name per the 2026-08-09
 amendment, not the agent binary; the binary remains the fixed argv element after `--`.
 
+> **Amended 2026-08-09 — the shell pane.** `workspace create` and `tab create` each return a
+> `root_pane`, and `agent start` anchored to that container *splits* it rather than reusing it. The
+> table's two-call sequences therefore produced a half-width agent beside an idle shell on every
+> New workspace and New tab start. The relay now closes `result.root_pane.pane_id` immediately
+> after the agent's own pane exists — never before, since the shell is the container's only other
+> pane and closing it first takes the container down. Split closes nothing: its sibling is a pane
+> the user chose. A shell that will not close is logged and the start still reports `ok:true`; the
+> session is up, only sharing the tab.
+>
+> §3's "created workspace/tab may remain as native empty layout" is repealed. A `agent start` that
+> fails after the relay created a container now closes that container, because the relay minted the
+> id seconds earlier and nothing of the user's can be inside it. Without the rollback every failed
+> start left an empty workspace behind.
+
 `herdr agent start` requires argv after `--`. Relay supplies the one fixed argv element from the already allowlisted `name`; the browser still sends no argv.
 
 Every call passes `remote=None` for `local`, otherwise configured SSH target. Commands use `run_herdr_result`; non-zero exits, malformed JSON, or missing returned IDs return `command_result {command:"start_agent", ok:false}`. Do not report success after a partial operation: created workspace/tab may remain as native empty layout, but no session is claimed.
