@@ -67,8 +67,7 @@ GET and serves it `no-cache`. Editing `relay/` needs a relay restart.
 and execs locally, which is what lets one machine present two hosts — the only way to
 reproduce the pane-ID and workspace-ID collisions the relay's guards exist for.
 
-External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only),
-`node`/`npx` (demo worker only).
+External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only).
 
 ## Project Overview
 
@@ -96,7 +95,6 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
 | `web/index.html` | Mobile/desktop web app (single file) | HTML/CSS/JS |
-| `demo-worker/` | Cloudflare Worker mock relay for demos | JS |
 | `herdi-mac/` | macOS menu bar app | Swift (SPM) |
 | `herdi-ios/` | iOS app with widgets + Live Activities | Swift (XcodeGen) |
 
@@ -116,9 +114,6 @@ HERDI_TG_TOKEN="..." HERDI_TG_CHAT_ID="..." uv run relay/herdr_telegram.py
 
 # Terminal TUI
 uv run relay/herdr_tui.py
-
-# Demo worker (Cloudflare)
-cd demo-worker && npx wrangler dev
 
 # macOS app
 cd herdi-mac && ./build.sh
@@ -155,5 +150,4 @@ Messages are JSON with a `type` field:
 ## Deployment
 
 - Web app: Cloudflare Pages (push to main deploys `web/`)
-- Demo worker: `npx wrangler deploy` from `demo-worker/`
 - macOS app: `herdi-mac/build.sh` produces `dist/Herdi.app`

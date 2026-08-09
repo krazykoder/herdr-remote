@@ -2,8 +2,6 @@
 
 Agent dashboard for [herdr](https://herdr.dev) -- menu bar, phone, Telegram. Zero config locally, free tunnel for remote.
 
-**[Try the live demo](https://herdr-demo.pages.dev)**
-
 ## Install (10 seconds)
 
 Download [Herdi.app](https://github.com/dcolinmorgan/herdr-remote/releases/latest) and drag to Applications.
@@ -42,7 +40,7 @@ herdr plugin install dcolinmorgan/herdr-push
 cd herdr-remote/relay && ./start.sh
 ```
 
-Open [herdr-demo.pages.dev](https://herdr-demo.pages.dev) on your phone, paste the tunnel URL.
+Open your relay's tunnel URL on your phone.
 
 ## Telegram Bot
 
@@ -178,4 +176,4 @@ shows no Start session control.
 
 ### v0.5.0
 
-Telegram bot (`/agents /read /send /reply /trust /interrupt`), demo bot, linux setup script.
+Telegram bot (`/agents /read /send /reply /trust /interrupt`) and Linux setup script.

@@ -245,3 +245,12 @@ test('shortcuts reference prompts by path and never inline their copy', () => {
 });
 
 test('MAX_PAIRS is the documented limit', () => assert.equal(MAX_PAIRS, 32));
+
+test('localhost is eligible for same-origin relay auto-connect', () => {
+  const autoDetect = HTML.slice(HTML.indexOf('const autoRelayUrl'), HTML.indexOf('const urlToken'));
+  assert.ok(!autoDetect.includes("location.hostname.includes('localhost')"));
+});
+
+test('web app ships no external demo relay', () => {
+  assert.doesNotMatch(HTML, /herdr-demo|herdr-remote-demo|tryDemo/);
+});

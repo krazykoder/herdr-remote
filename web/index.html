@@ -1207,10 +1207,8 @@
 
     // Settings — auto-detect relay when served from same origin
     const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-    const DEMO_RELAY = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
-    const isDemo = location.hostname.includes('herdr-demo.pages.dev');
-    const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io') && !location.hostname.includes('localhost');
-    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+    const isSelfRelay = !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io');
+    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
     const urlToken = new URLSearchParams(location.search).get('token');
     if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
     const savedToken = localStorage.getItem('herdr_relay_token') || '';
@@ -1264,7 +1262,7 @@
 
     // Connection
     function connect() {
-      let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+      let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
       if (!url) { showSetup(); return; }
       if (ws) ws.close();
       // start_options is a per-connection capability advertisement, never cached state.
@@ -1296,7 +1294,6 @@
     <p style="font-size:1.5rem;margin-bottom:12px">🐑</p>
     <p><strong>herdr-remote</strong></p>
     <p style="margin-top:8px">Monitor & approve agents from your phone</p>
-    <p style="margin-top:16px"><button onclick="tryDemo()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Try Demo</button></p>
     <p style="margin-top:16px;font-size:0.75rem;color:var(--muted);text-align:left;max-width:280px;margin-left:auto;margin-right:auto">
       <strong>Connect your own:</strong><br>
       1. Run: <code style="font-size:0.7rem">cd relay && ./start.sh</code><br>
@@ -1304,13 +1301,6 @@
     </p>
   </div>`;
     }
-    function tryDemo() {
-      localStorage.setItem('herdr_relay_url', 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev');
-      localStorage.removeItem('herdr_relay_token');
-      document.getElementById('relayUrl').value = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
-      connect();
-    }
-
     function handleMessage(msg) {
       if (msg.type === 'error') {
         showToast(msg.message || 'The relay refused that.');
