@@ -775,7 +775,8 @@ right is `active` / `idle` from `status === 'working'`, both blank with no pane.
 
 `paneStampAt` is set in the `pane_content` handler **only when the incoming text differs** from
 what is displayed. `refreshPane` polls every 3s, so stamping on arrival would show "now"
-permanently. It is nulled on open and on close, or a new pane inherits the last one's time.
+permanently. It is nulled on open and on close; a newly opened pane starts blank until its first
+content change is observed.
 
 **Slim tabs.** The tab's contents move into a `<span class="pill">`; the button keeps
 `min-height: 44px` and now paints nothing, and the pill is 28px with the border, fill, radius and

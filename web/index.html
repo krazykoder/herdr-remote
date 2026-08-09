@@ -1708,7 +1708,7 @@
       const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
       const on = !!a && a.status === 'working';
       document.getElementById('statusBarLeft').textContent =
-        activePane && paneStampAt ? fmtStamp(paneStampAt) : '';
+        a && paneStampAt ? fmtStamp(paneStampAt) : '';
       const right = document.getElementById('statusBarRight');
       right.textContent = a ? (on ? 'active' : 'idle') : '';
       right.classList.toggle('on', on);
