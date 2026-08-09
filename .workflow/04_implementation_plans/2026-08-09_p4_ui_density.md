@@ -1,9 +1,9 @@
-# Implementation Plan — Phase 1: Web UI Density & Shell Layout
+# Implementation Plan — P4: Web UI Density & Shell Layout
 
 **Spec:** `.workflow/03_specs/2026-08-09_ui_density_spec.md` §§S1–S5, S8
 **Architecture:** `.workflow/02_architecture/2026-08-09_ui_shell_layout.md`
 **Decision:** `.workflow/02_architecture/decision_log/2026-08-09_app_shell_no_document_scroll.md`
-**Followed by:** `.workflow/04_implementation_plans/2026-08-09_fullscreen_pwa_plan.md` (Phase 2 —
+**Followed by:** `.workflow/04_implementation_plans/2026-08-09_p5_fullscreen_pwa.md` (P5 —
 fullscreen + PWA; both are wanted, and both land on top of this shell)
 **Classification:** Class A — feature-only. `web/index.html` only; no relay change in this phase.
 **Status:** Ready for implementation
@@ -14,7 +14,7 @@ Make `web/index.html` an app shell that owns exactly one viewport, delete the tw
 offsets that put the desktop composer below the fold, reclaim ~130px of vertical space on mobile, and
 add a persisted text-size control.
 
-Phase 2 (fullscreen, PWA installability) depends on this shell being correct first: a standalone
+P5 (fullscreen, PWA installability) depends on this shell being correct first: a standalone
 launch with a document that still scrolls would ship the same bug without a URL bar to blame.
 
 Line numbers below refer to the pre-change file. Apply edits **bottom-up** within a file so earlier
@@ -44,10 +44,10 @@ BEFORE                                   AFTER
 └──────────────────────────────────────┘ │ [/] [ Type…            ] [⚡][⌨][➤]  │  50px
 ┊ composer clipped, doc scrolls 20px   ┊ └──────────────────────────────────────┘
 ┊ [ chrome url bar — never collapses ] ┊    no document scroll
-└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    (url bar addressed in Phase 2)
+└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    (url bar addressed in P5)
 ```
 
-The ⛶ fullscreen control shown in the architecture doc's mockup arrives in Phase 2; the term-header
+The ⛶ fullscreen control shown in the architecture doc's mockup arrives in P5; the term-header
 in this phase is back · dot · title · refresh.
 
 ### Desktop ≥768px, after
@@ -83,7 +83,7 @@ in this phase is back · dot · title · refresh.
 ### `[MODIFY]` head (lines 6–9)
 
 `interactive-widget=resizes-content` makes the on-screen keyboard resize the shell instead of
-covering the composer — part of the height model, not of Phase 2. The pre-paint script satisfies
+covering the composer — part of the height model, not of P5. The pre-paint script satisfies
 S5.5; a deferred one flashes default-sized text.
 
 ```html
@@ -93,14 +93,23 @@ S5.5; a deferred one flashes default-sized text.
 ```
 
 `viewport-fit=cover` is deliberately **not** added here — it only pays off with the standalone
-status-bar handling in Phase 2, and adding it alone puts content under the iOS status bar.
+status-bar handling in P5, and adding it alone puts content under the iOS status bar.
 
-### `[MODIFY]` `body` (lines 60–70)
+### `[MODIFY]` `html` and `body` (lines 60–70)
 
 `min-height` → `height`, plus `overflow:hidden`. `100vh` precedes `100dvh` as the pre-iOS-15.4
 fallback.
 
+`html` carries `overflow: hidden` because the document-level rubber-band scroll on iOS originates
+there, not on `body`; `height: 100%` gives `body` a definite containing block on browsers that
+predate `dvh`.
+
 ```css
+    html {
+      height: 100%;
+      overflow: hidden;
+    }
+
     body {
       font-family: -apple-system, system-ui, -webkit-system-font, sans-serif;
       background: var(--bg);
@@ -289,6 +298,26 @@ so they must be hidden explicitly (S2.1).
       document.getElementById('agentListView').style.display = '';
 ```
 
+### `[MODIFY]` desktop navigation while terminal is open
+
+The desktop app header remains visible, so its Settings and Timeline buttons remain clickable. Their
+handlers must close the terminal before showing the selected panel; otherwise the new flex siblings
+stack and violate S2.3.
+
+```js
+function toggleSettings() {
+  if (activePane) closeTerminal();
+  // existing settings toggle logic
+}
+
+function toggleTimeline() {
+  if (activePane) closeTerminal();
+  // existing timeline toggle logic
+}
+```
+
+The terminal is exclusive on every viewport. A subsequent pane selection opens it again.
+
 ### `[NEW]` text size control
 
 Markup, as a new `.setting-group` after the Push Notifications group (line 873):
@@ -371,6 +400,7 @@ Manual, with the relay running:
 | M12 | A− at 12px, A+ at 22px | Respective button disabled |
 | M13 | 12px, then check nav keys and composer | Key and input sizes unchanged; hit areas ≥44px |
 | M14 | 380px-wide viewport | No control clipped or overlapping |
+| M15 | Desktop terminal open → click Settings, then Timeline | Terminal closes before selected panel appears; views never stack |
 
 ## Acceptance criteria
 

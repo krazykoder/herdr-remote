@@ -3,7 +3,7 @@
 **Date:** 2026-08-09
 **Architecture:** `.workflow/02_architecture/2026-08-09_ui_shell_layout.md`
 **Classification:** Class A
-**Status:** Draft — awaiting implementation
+**Status:** Draft — corrected and ready for implementation
 
 Behaviour only. Selectors and line numbers live in the plans, not here.
 
@@ -13,8 +13,8 @@ reproduce the clipped composer with nothing left to blame.
 
 | Phase | Spec sections | Plan |
 |---|---|---|
-| 1 — Shell, density, text size | S1–S5, S8 | `.workflow/04_implementation_plans/2026-08-09_ui_density_plan.md` |
-| 2 — Fullscreen, PWA installability | S6, S7, S8 | `.workflow/04_implementation_plans/2026-08-09_fullscreen_pwa_plan.md` |
+| 1 — Shell, density, text size | S1–S5, S8 | `.workflow/04_implementation_plans/2026-08-09_p4_ui_density.md` |
+| 2 — Fullscreen, PWA installability | S6, S7, S8 | `.workflow/04_implementation_plans/2026-08-09_p5_fullscreen_pwa.md` |
 
 ---
 
@@ -58,8 +58,8 @@ active, on every supported viewport, both orientations.
 **S2.2** Closing a pane restores the agent list, and only the agent list.
 
 **S2.3** Toggling settings or timeline while a pane is open is not reachable on mobile (the app header
-is hidden per S3.1) and, on desktop, closes the terminal first is *not* required — the terminal
-remains active and the toggled panel does not appear over it.
+is hidden per S3.1). On desktop, the action first closes the terminal, then opens the selected panel;
+two flex panes are never simultaneously visible.
 
 > Rationale: with the terminal as a flex sibling rather than a fixed overlay, two simultaneously
 > visible panes would stack rather than overlay. Previously this was masked, not handled.
@@ -110,7 +110,7 @@ existing `herdr_*` key convention.
 - `localStorage` unavailable (private mode, storage disabled): the control still works for the
   session; persistence is skipped without throwing.
 
-## S6 — Fullscreen · *Phase 2*
+## S6 — Fullscreen · *P5*
 
 **S6.1** A fullscreen toggle is rendered in the terminal header **only** where the Fullscreen API is
 available on the document element. It is absent, not disabled, elsewhere — notably iPhone Safari.
@@ -121,13 +121,13 @@ reflects the current state.
 **S6.3** A rejected fullscreen request (user denial, unsupported context) leaves the UI unchanged and
 raises nothing to the user.
 
-## S7 — PWA installability · *Phase 2*
+## S7 — PWA installability · *P5*
 
 **S7.1** The manifest is served as a real file at a same-origin path, from both the relay and
 Cloudflare Pages, with `Content-Type: application/manifest+json`.
 
-**S7.2** The manifest declares `name`, `short_name`, `start_url`, `scope`, `display: standalone`,
-`background_color`, `theme_color`, and at least one icon.
+**S7.2** The manifest declares `name`, `short_name`, relative `start_url: "./"`, relative
+`scope: "./"`, `display: standalone`, `background_color`, `theme_color`, and 192px/512px PNG icons.
 
 **S7.3** Chrome reports the app as installable (Lighthouse "Installable" / DevTools → Application →
 Manifest shows no blocking errors).
@@ -137,8 +137,20 @@ obscured by the status bar or home indicator.
 
 **S7.5** Adding the manifest route must not shadow or reorder any existing relay route.
 
-**Known gap (accepted, tracked):** iOS uses `apple-touch-icon` (PNG only) for the home-screen icon and
-ignores manifest icons. Until a PNG is added, iOS uses a page screenshot. Functionality is unaffected.
+**S7.6** The iOS home-screen icon is a committed 180px PNG referenced by `apple-touch-icon`; it is
+not deferred.
+
+**S7.7 — pending a decision, do not implement yet.** Whether the external listener serves static
+shell assets without a token is **Class B and unresolved**:
+`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
+recommended resolution installs the PWA from the Cloudflare Pages origin and changes no relay access
+control, in which case this clause is struck. If instead the exception is accepted, it reads: on the
+external listener, static shell assets are public, while WebSocket upgrades, event push, VAPID/API
+requests, and all other relay paths still require the token; LAN behaviour is unchanged.
+
+**S7.8** The relay serves the manifest and icons from an allowlisted static-asset map on whichever
+listeners already serve `/index.html`. This is independent of S7.7 — the LAN listener runs token-free
+under `HERDR_LAN_OPEN=1` and needs these assets regardless.
 
 ## S8 — Non-regressions
 

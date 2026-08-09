@@ -1,15 +1,21 @@
 # Architecture — Web App Shell Layout & Density
 
 **Date:** 2026-08-09
-**Scope:** `web/index.html`, `web/manifest.webmanifest` (new), `relay/herdr_relay.py` (one static route)
+**Scope:** `web/index.html`, `web/manifest.webmanifest` and `web/icons/` (new), `relay/herdr_relay.py` (allowlisted static assets)
 **Classification:** **Class A** — feature-only. No WebSocket protocol change, no message type added or
-altered, no relay state change. The single relay edit is an additive static file route.
+altered, no relay state change. The relay edits are additive allowlisted static-asset routes.
 **Spec:** `.workflow/03_specs/2026-08-09_ui_density_spec.md`
 **Plans:**
-- Phase 1 — shell, density, text size: `.workflow/04_implementation_plans/2026-08-09_ui_density_plan.md`
-- Phase 2 — fullscreen, PWA installability: `.workflow/04_implementation_plans/2026-08-09_fullscreen_pwa_plan.md`
+- P4 — shell, density, text size: `.workflow/04_implementation_plans/2026-08-09_p4_ui_density.md`
+- P5 — fullscreen, PWA installability: `.workflow/04_implementation_plans/2026-08-09_p5_fullscreen_pwa.md`
 
-§§5–6 below (browser chrome, PWA) are Phase 2. They land on top of the Phase 1 shell, not beside it:
+> **One carve-out, and it is not Class A.** Serving the shell *without a token on the external
+> listener* amends a frozen access-control invariant and is tracked separately as **Class B,
+> Proposed**: `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
+> P5 cannot ship its auth section until that entry is signed off. Everything else in this document is
+> unaffected by the outcome.
+
+§§5–6 below (browser chrome, PWA) are P5. They land on top of the P4 shell, not beside it:
 a standalone or fullscreen launch inherits the same layout, so removing the chrome first would only
 hide the clipped composer rather than fix it.
 
@@ -52,7 +58,7 @@ only the block delimited by `// --- P3 pair logic (pure) ---`; nothing in this c
 
 ## 3. Contract — the shell invariant
 
-> **The document never scrolls. `body` is exactly one viewport tall, and every scrollable region is a
+> **The document never scrolls. `html` and `body` are exactly one viewport tall, and every scrollable region is a
 > flex child with `min-height: 0` and its own `overflow-y: auto`.**
 
 This is now binding for `web/index.html`. Consequences that follow from it, and must not be
@@ -115,7 +121,7 @@ re-litigated per-feature:
 ```
 
 Reclaimed: 69 (app header) + 34 (instruction row) + ~30 (padding trim) ≈ **130px**, roughly six extra
-terminal lines at the default size. The ⛶ control is Phase 2; after Phase 1 the term-header reads
+terminal lines at the default size. The ⛶ control is P5; after P4 the term-header reads
 back · dot · title · refresh.
 
 ### 4.3 Mobile — agent list
@@ -186,7 +192,7 @@ bar stays put in a normal browser tab. Ranked options:
 | Option | Platform | Verdict |
 |---|---|---|
 | Install as PWA (`display:standalone`) | iOS + Android | **Adopted.** No browser chrome at all. Manifest and metas mostly exist; §6 closes the gaps. |
-| Fullscreen API on a user gesture | Android only | **Adopted, feature-detected.** iPhone Safari does not implement element fullscreen; the button is not rendered there. |
+| Fullscreen API on a user gesture | Android, iPadOS, desktop | **Adopted, feature-detected.** iPhone Safari does not implement element fullscreen; the button is not rendered there. |
 | `100dvh` sizing | all | **Adopted.** Layout stays correct whether the bar is shown or hidden, so nothing is ever clipped either way. |
 | Scroll-jacking (1px overscroll spacer to force a collapse) | — | **Rejected.** Fragile across iOS versions and it reintroduces the document scroll this contract forbids. |
 
@@ -203,12 +209,22 @@ Gaps closed by this change:
 
 1. The manifest is a `data:` URL. A relative `start_url` cannot resolve against a `data:` base, so
    Chrome refuses installability and Android users get a plain shortcut that keeps the URL bar.
-   → ship `web/manifest.webmanifest` as a real file, plus a relay static route (Cloudflare Pages
-   serves it from `web/` with no extra work).
-2. No `icons` array — also required for Android installability. → point at the existing `logo.svg`.
-3. iOS ignores manifest icons and wants `<link rel="apple-touch-icon">` as a **PNG**; SVG is not
-   supported. Without it the home-screen icon is a page screenshot. → left as an explicit optional
-   item in the plan, since it introduces the repo's first binary web asset.
+   → ship `web/manifest.webmanifest` as a real file. Use relative `manifest.webmanifest`, `./` start
+   and scope URLs so relay-root and project-path hosting both work.
+2. Android installability requires 192px and 512px icons. → ship PNGs under `web/icons/` and serve
+   them through the relay's allowlisted static-asset map; Cloudflare Pages serves them directly.
+3. iOS ignores manifest icons and wants `<link rel="apple-touch-icon">` as a **PNG**. → ship a
+   180px PNG as part of P5; the iOS icon is not optional.
+
+4. Over the external listener the shell's sub-resources 401. The browser — not the app's JavaScript —
+   issues the manifest, service-worker, and icon requests, and they do not inherit the document's
+   `?token=` query string; a standalone launch navigates to `start_url` with no token at all. Note
+   this already breaks `sw.js` registration, and therefore push, over the tunnel today: P5 surfaces
+   a pre-existing bug rather than introducing one. **Unresolved** — three options, recommendation,
+   and cost are in
+   `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
+   recommendation is to install from the Cloudflare Pages origin and change no relay access control;
+   the relay's allowlisted static routes are still needed for the token-free LAN listener.
 
 `viewport-fit=cover` is added alongside these so the composer can hug the home indicator; it pairs
 with `padding-top: env(safe-area-inset-top)` on `body`, required because the status bar style is
