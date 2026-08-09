@@ -191,6 +191,10 @@ A Project is a trusted launch target from the Projects config:
 [{"id":"charts","label":"Charts","cwd":"~/code/js/charts.TS","host":"local"}]
 ```
 
+The dialog's **Name** field is optional: left blank the relay names the session `Role N`, and
+either way it appends a short suffix rather than failing when that name is already in use on the
+host.
+
 The client sends only an agent name, a role, a Project ID, and where to place the session. The
 relay resolves cwd and host from the config — never from the client — and runs the agent with a
 fixed argv. `HERDR_START_AGENTS` limits **what** can be launched; the write flag plus the token

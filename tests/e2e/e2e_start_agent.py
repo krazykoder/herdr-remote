@@ -11,7 +11,7 @@ locally, which is what lets one machine present two hosts — the only way to re
 pane-ID and workspace-ID collisions the guards exist for. Override the port with
 HERDR_E2E_PORT; the interpreter must have `websockets` (the repo venv does).
 """
-import asyncio, json, os, signal, socket, subprocess, sys, time
+import asyncio, json, os, re, signal, socket, subprocess, sys, time
 from websockets.asyncio.client import connect
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -204,7 +204,7 @@ async def gate_on_run():
                   log_lines("workspace create"))
             check("A1 agent start carries fixed argv on local",
                   log_lines("agent start") ==
-                  ["local agent start claude --cwd /work/charts --workspace local:wNew --focus -- claude"],
+                  ["local agent start Architect 2 --cwd /work/charts --workspace local:wNew --focus -- claude"],
                   log_lines("agent start"))
             check("A9 pane renamed",
                   log_lines("pane rename") == ["local pane rename local:pNew Architect 2"],
@@ -219,7 +219,7 @@ async def gate_on_run():
             check("A1 remote calls all landed on box",
                   log_lines("workspace create") == ["box workspace create --cwd /srv/relay --label Relay --focus"]
                   and log_lines("agent start") ==
-                  ["box agent start codex --cwd /srv/relay --workspace box:wNew --focus -- codex"],
+                  ["box agent start Reviewer 2 --cwd /srv/relay --workspace box:wNew --focus -- codex"],
                   log_lines("workspace create") + log_lines("agent start"))
             check("A1 nothing ran on local", not [l for l in log_lines("create") if l.startswith("local")])
 
@@ -234,7 +234,7 @@ async def gate_on_run():
                   log_lines("tab create"))
             check("A2 agent anchored to the returned tab id",
                   log_lines("agent start") ==
-                  ["box agent start claude --cwd /srv/relay --tab box:tNew --focus -- claude"],
+                  ["box agent start Agent 1 --cwd /srv/relay --tab box:tNew --focus -- claude"],
                   log_lines("agent start"))
 
             # --- A3 split beside a live pane (local) ---
@@ -245,7 +245,7 @@ async def gate_on_run():
             await asyncio.sleep(0.3)
             check("A3 split reuses the source pane's tab, no tab created",
                   log_lines("agent start") ==
-                  ["local agent start claude --cwd /work/charts --tab w1:t1 --split right --focus -- claude"]
+                  ["local agent start Architect 2 --cwd /work/charts --tab w1:t1 --split right --focus -- claude"]
                   and not log_lines("tab create"),
                   log_lines("agent start") + log_lines("tab create"))
     finally:
@@ -282,6 +282,85 @@ async def failure_run():
                   r.get("ok") is False and "workspace_id" in r.get("error", ""), r)
             await asyncio.sleep(0.3)
             check("A6 no agent started", not log_lines("agent start"), log_lines("agent start"))
+    finally:
+        stop_relay(proc)
+
+
+async def naming_run():
+    """N1-N5: the session name — client-supplied, collision-proof, and honestly reported.
+
+    The herdr agent name is unique per host, so passing the allowlisted binary name there let
+    the first start of an agent work and every later one fail agent_name_taken.
+    """
+    proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
+                       HERDR_START_AGENTS="claude")
+    try:
+        async with connect(url()) as ws:
+            await drain_to_agents(ws)
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_workspace",
+                               "label": "Backend"})
+            check("N1 client label accepted", r.get("ok") is True and r.get("label") == "Backend", r)
+            await asyncio.sleep(0.3)
+            check("N1 label is the herdr agent name, binary stays in argv",
+                  log_lines("agent start") ==
+                  ["local agent start Backend --cwd /work/charts --workspace local:wNew --focus -- claude"],
+                  log_lines("agent start"))
+
+            for label, bad, want in [
+                ("N2 empty label refused", "   ", "label is empty"),
+                ("N2 dash-leading label refused", "--focus", "label cannot start with '-'"),
+                ("N2 control characters refused", "a\nb", "label contains control characters"),
+                ("N2 over-long label refused", "x" * 33, "label is longer than 32 characters"),
+            ]:
+                r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                                   "project_id": "charts", "placement": "new_workspace",
+                                   "label": bad})
+                check(label, r.get("ok") is False and r.get("error") == want, r)
+    finally:
+        stop_relay(proc)
+
+    # A name already held by a live agent — the case that produced "exited 1" on every start
+    # after the first, because pane list never reports the name that herdr enforces.
+    proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
+                       HERDR_START_AGENTS="claude", FAKE_TAKEN_NAMES="Backend,Architect 2")
+    try:
+        async with connect(url()) as ws:
+            await drain_to_agents(ws)
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_workspace",
+                               "label": "Backend"})
+            got = r.get("label", "")
+            check("N3 taken name starts anyway under a suffixed name",
+                  r.get("ok") is True and re.fullmatch(r"Backend-[A-HJ-NP-Z2-9]{5}", got), r)
+            await asyncio.sleep(0.3)
+            check("N3 the suffixed name is what herdr was asked for",
+                  log_lines("agent start") ==
+                  [f"local agent start {got} --cwd /work/charts --workspace local:wNew --focus -- claude"],
+                  log_lines("agent start"))
+
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_workspace"})
+            check("N4 a taken derived name is suffixed too",
+                  r.get("ok") is True and re.fullmatch(r"Architect 2-[A-HJ-NP-Z2-9]{5}", r.get("label", "")), r)
+    finally:
+        stop_relay(proc)
+
+    # herdr refuses with a JSON error body on stdout and a non-zero exit. Reporting only the exit
+    # code turned every distinct refusal into the same unactionable "exited 1".
+    proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
+                       HERDR_START_AGENTS="claude", FAKE_FAIL="agent start",
+                       FAKE_FAIL_MODE="error_json")
+    try:
+        async with connect(url()) as ws:
+            await drain_to_agents(ws)
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_workspace"})
+            check("N5 herdr's own refusal reaches the client",
+                  r.get("ok") is False and "agent name is already used" in r.get("error", ""), r)
     finally:
         stop_relay(proc)
 
@@ -441,6 +520,7 @@ async def main():
     await gate_off_run()
     await gate_on_run()
     await failure_run()
+    await naming_run()
     dual_boot_gate_run()
     await lan_open_run()
     await dual_listener_run()

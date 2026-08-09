@@ -14,6 +14,7 @@ from start_agent import (
     load_start_agents,
     next_role_label,
     tab_create_args,
+    unique_agent_name,
     validate_pane_label,
     validate_start_request,
 )
@@ -222,16 +223,69 @@ class ArgsTests(unittest.TestCase):
         self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--label", "Architect 1", "--focus"))
 
     def test_argv_is_the_allowlisted_name(self):
-        args = agent_start_args("claude", "/work/charts", "workspace", "w3")
+        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
         self.assertEqual(args[-2:], ("--", "claude"))
-        self.assertEqual(args[:3], ("agent", "start", "claude"))
         self.assertIn("--workspace", args)
         self.assertNotIn("--split", args)
 
+    def test_herdr_agent_name_is_the_label_not_the_binary(self):
+        # The binary name there is what made every start after the first fail agent_name_taken.
+        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
+        self.assertEqual(args[:3], ("agent", "start", "Architect 1"))
+
     def test_split_adds_right(self):
-        args = agent_start_args("codex", "/work/charts", "tab", "t1", split=True)
+        args = agent_start_args("codex", "Agent 2", "/work/charts", "tab", "t1", split=True)
         self.assertEqual(args[args.index("--split") + 1], "right")
         self.assertIn("--tab", args)
+
+
+class UniqueAgentNameTests(unittest.TestCase):
+    def test_free_name_is_returned_unchanged(self):
+        self.assertEqual(unique_agent_name("Architect 1", {"codex", "claude"}), "Architect 1")
+
+    def test_taken_name_gets_a_random_suffix(self):
+        out = unique_agent_name("Architect 1", {"Architect 1"})
+        self.assertNotEqual(out, "Architect 1")
+        self.assertRegex(out, r"^Architect 1-[A-HJ-NP-Z2-9]{5}$")
+
+    def test_suffix_keeps_the_name_inside_the_label_limit(self):
+        out = unique_agent_name("X" * 32, {"X" * 32})
+        self.assertLessEqual(len(out), 32)
+        self.assertEqual(validate_pane_label(out)[1], "")
+
+    def test_retries_past_a_taken_suffix(self):
+        # Every 5-char suffix but one is taken, so the loop must keep drawing rather than
+        # return a colliding name.
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        import itertools
+        taken = {"A"} | {"A-" + "".join(c) for c in itertools.product(alphabet, repeat=2)}
+        out = unique_agent_name("A", taken)
+        self.assertNotIn(out, taken)
+
+
+class ClientLabelTests(unittest.TestCase):
+    def test_client_label_overrides_the_derived_one(self):
+        plan, err = validate_start_request(start(label="Backend"), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertEqual(plan["label"], "Backend")
+
+    def test_absent_label_is_derived(self):
+        plan, err = validate_start_request(start(), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertEqual(plan["label"], "Architect 2")
+
+    def test_empty_label_is_refused_rather_than_silently_derived(self):
+        _, err = validate_start_request(start(label="  "), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "label is empty")
+
+    def test_label_starting_with_a_dash_is_refused(self):
+        # It reaches herdr as a positional; a leading dash would parse as a flag.
+        _, err = validate_start_request(start(label="--focus"), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "label cannot start with '-'")
+
+    def test_control_characters_are_refused(self):
+        _, err = validate_start_request(start(label="a\nb"), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "label contains control characters")
 
 
 class DigTests(unittest.TestCase):

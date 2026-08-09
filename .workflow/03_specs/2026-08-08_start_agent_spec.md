@@ -25,6 +25,19 @@ New workspace is available on every Project card, including zero-session Project
 
 Relay names new pane `Role N`, where `N` is the lowest unused positive number among live same-Project labels matching that Role. New-tab placement uses same label for created tab. Naming is cosmetic: no pair is created, no routing changes, and no prompt is sent. If pane renaming fails after agent start, return `ok:false` and state that agent may already be running.
 
+> **Amended 2026-08-09 — the session name.** The dialog now carries an optional **Name** field,
+> and `start_agent` an optional `label`. Present, it is the session name; absent, the relay derives
+> `Role N` exactly as below. It is validated by `validate_pane_label` — 1–32 characters, no control
+> characters, and no leading `-`, which would reach herdr as a flag.
+>
+> That name is also the **herdr agent name**, not just the pane label. P2 passed the allowlisted
+> binary name there, and herdr enforces agent names unique per host, so the first start of an agent
+> succeeded and every later one failed `agent_name_taken`. Before creating anything the relay reads
+> the live names with `herdr agent list` — `pane list`, which the poll loop uses, does not report
+> them — and appends a five-character suffix (`Backend-3F5YA`) when the chosen name is taken. The
+> suffix is random rather than a counter because the read set is a snapshot: two starts inside one
+> poll interval both see it before either lands. `command_result` returns the final `label`.
+
 `N` is derived by parsing live pane labels, which has two accepted consequences: two starts issued inside one poll interval can both choose the same `N`, and a pane renamed by the user in herdr leaves the sequence. Neither is worth a reservation table — the label is a convenience, never an identifier, and nothing in the protocol resolves a session by it.
 
 On success, close dialog and wait for normal poll snapshot. Browser does not invent a session locally. On error, keep dialog open and show relay error. No initial prompt is sent.
@@ -77,6 +90,9 @@ The client never supplies cwd, host, env, argv, tab ID, or prompt text.
 | New workspace | `workspace create --cwd <configured cwd> --label <Project label> --focus`; parse `result.workspace.workspace_id`; `agent start <name> --cwd <cwd> --workspace <id> --focus -- <name>` |
 | New tab | `tab create --workspace <id> --focus`; parse `result.tab.tab_id`; `agent start <name> --cwd <cwd> --tab <id> --focus -- <name>` |
 | Split | Resolve source `tab_id`; `agent start <name> --cwd <cwd> --tab <id> --split right --focus -- <name>` |
+
+The `<name>` positional in those `agent start` rows is the session name per the 2026-08-09
+amendment, not the agent binary; the binary remains the fixed argv element after `--`.
 
 `herdr agent start` requires argv after `--`. Relay supplies the one fixed argv element from the already allowlisted `name`; the browser still sends no argv.
 

@@ -5,11 +5,17 @@ Pure module — no I/O, no subprocess, no relay state. Everything that decides *
 start is allowed lives here so it is testable without herdr.
 See .workflow/03_specs/2026-08-08_start_agent_spec.md
 """
+import random
 import re
 
 from projects import ambiguous_pane_ids, resolve_workspace_remote
 
 ROLES = ("architect", "reviewer", "agent")
+# Collision suffix: "-XBEOE". Random rather than a counter because the taken set is a snapshot —
+# two starts inside one poll interval both read it before either lands. I and O are out so a
+# name read off a phone screen is not retyped as 1 or 0.
+SUFFIX_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+SUFFIX_LEN = 5
 DEFAULT_START_AGENTS = ["codex", "claude", "pi"]
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
@@ -18,7 +24,7 @@ PLACEMENTS = {
     "new_tab": "workspace_id",
     "split": "split_from",
 }
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement"}
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label"}
 
 
 class StartAgentConfigError(Exception):
@@ -71,6 +77,23 @@ def next_role_label(role, project_id, agents):
     return f"{prefix} {n}"
 
 
+def unique_agent_name(desired, taken):
+    """Return `desired`, or the next free "<base> N", so a start never hits agent_name_taken.
+
+    A herdr agent name is unique per host and `pane list` does not report it, so the label the
+    relay derives from live *pane labels* can collide with an agent name that no longer matches
+    its label — a user rename moves the label and leaves the name behind. The result is bounded
+    to 32 characters to stay inside validate_pane_label's limit.
+    """
+    if desired not in taken:
+        return desired
+    base = desired[:32 - SUFFIX_LEN - 1].rstrip()
+    while True:
+        candidate = f"{base}-{''.join(random.choices(SUFFIX_ALPHABET, k=SUFFIX_LEN))}"
+        if candidate not in taken:
+            return candidate
+
+
 def _project_remote(project):
     """herdr's remote= convention: None for local, otherwise the SSH target."""
     return None if project["host"] == "local" else project["host"]
@@ -106,6 +129,16 @@ def validate_start_request(msg, projects, agents, allowed):
     if required and not msg.get(required):
         return None, f"{required} required for {placement}"
 
+    # The one free-text field a start may carry. Absent means "name it for me"; present it
+    # becomes both the pane label and the herdr agent name, so it is bounded like any other
+    # client-supplied argv element rather than trusted.
+    if "label" in msg:
+        label, label_err = validate_pane_label(msg["label"])
+        if label_err:
+            return None, label_err
+    else:
+        label = next_role_label(role, project["id"], agents)
+
     remote = _project_remote(project)
     plan = {
         "name": name,
@@ -115,7 +148,7 @@ def validate_start_request(msg, projects, agents, allowed):
         "cwd": project["cwd"],
         "remote": remote,
         "placement": placement,
-        "label": next_role_label(role, project["id"], agents),
+        "label": label,
     }
 
     if placement == "new_tab":
@@ -163,12 +196,16 @@ def tab_create_args(workspace_id, label):
     return ("tab", "create", "--workspace", workspace_id, "--label", label, "--focus")
 
 
-def agent_start_args(name, cwd, anchor_kind, anchor_id, split=False):
+def agent_start_args(name, label, cwd, anchor_kind, anchor_id, split=False):
     """herdr agent start requires argv after `--`; the relay supplies the allowlisted name.
+
+    The positional is herdr's *agent name*, which is unique per host — passing the binary name
+    there let the first start of an agent succeed and every later one fail agent_name_taken.
+    The session label goes there instead; `name` stays the allowlisted binary in argv.
 
     anchor_kind is "workspace" or "tab" — never a client-supplied value.
     """
-    args = ["agent", "start", name, "--cwd", cwd, f"--{anchor_kind}", anchor_id]
+    args = ["agent", "start", label, "--cwd", cwd, f"--{anchor_kind}", anchor_id]
     if split:
         args += ["--split", "right"]
     args += ["--focus", "--", name]
@@ -195,6 +232,9 @@ def validate_pane_label(raw):
         return "", "label is longer than 32 characters"
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in label):
         return "", "label contains control characters"
+    # A start passes the label to herdr as a positional, so a leading dash would be read as a flag.
+    if label.startswith("-"):
+        return "", "label cannot start with '-'"
     return label, ""
 
 

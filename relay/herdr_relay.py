@@ -20,6 +20,7 @@ from start_agent import (
     StartAgentConfigError,
     agent_start_args,
     dig,
+    unique_agent_name,
     load_start_agents,
     pane_rename_args,
     validate_pane_label,
@@ -347,6 +348,21 @@ def pane_guard(pane_id):
     return None
 
 
+def _herdr_reason(result):
+    """herdr reports a refusal as a JSON error body on stdout alongside a non-zero exit.
+
+    Reporting only the exit code turned every distinct refusal — a taken agent name, a missing
+    workspace, a bad cwd — into the same unactionable "exited 1" in the log and on the phone.
+    """
+    try:
+        message = (json.loads(result.stdout) or {}).get("error", {}).get("message", "")
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        message = ""
+    if not message:
+        message = (result.stderr or "").strip().splitlines()[-1] if (result.stderr or "").strip() else ""
+    return message
+
+
 def _herdr_json(*args, remote=None):
     """Run a herdr command that returns JSON. Returns (data, error)."""
     where = " ".join(args[:2])
@@ -355,11 +371,27 @@ def _herdr_json(*args, remote=None):
     except Exception as e:
         return None, f"herdr {where} failed: {e}"
     if result.returncode != 0:
-        return None, f"herdr {where} exited {result.returncode}"
+        reason = _herdr_reason(result)
+        return None, f"herdr {where}: {reason}" if reason else f"herdr {where} exited {result.returncode}"
     try:
         return json.loads(result.stdout), None
     except json.JSONDecodeError:
         return None, f"herdr {where} returned malformed JSON"
+
+
+def live_agent_names(remote=None):
+    """The herdr agent names in use on one host. Best effort — an empty set on failure.
+
+    `pane list`, which the poll loop uses, does not report the agent name, and the name is what
+    herdr enforces uniqueness on. A miss here is not fatal: the start still runs, and a real
+    collision comes back as herdr's own agent_name_taken through _herdr_json.
+    """
+    data, err = _herdr_json("agent", "list", remote=remote)
+    if err:
+        log.warning("Could not list agent names on %s: %s", remote or "local", err)
+        return set()
+    agents = ((data or {}).get("result") or {}).get("agents") or []
+    return {a["name"] for a in agents if isinstance(a, dict) and a.get("name")}
 
 
 def start_agent_exec(plan):
@@ -371,6 +403,9 @@ def start_agent_exec(plan):
     """
     remote = plan["remote"]
     placement = plan["placement"]
+    # Settle the name before anything is created: it is the herdr agent name as well as the pane
+    # label, and a collision fails the start after a workspace or tab already exists.
+    plan["label"] = unique_agent_name(plan["label"], live_agent_names(remote))
 
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
@@ -379,7 +414,7 @@ def start_agent_exec(plan):
         workspace_id = dig(data, "result", "workspace", "workspace_id")
         if not workspace_id:
             return None, "workspace create returned no workspace_id"
-        args = agent_start_args(plan["name"], plan["cwd"], "workspace", workspace_id)
+        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "workspace", workspace_id)
     elif placement == "new_tab":
         data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
         if err:
@@ -387,9 +422,9 @@ def start_agent_exec(plan):
         tab_id = dig(data, "result", "tab", "tab_id")
         if not tab_id:
             return None, "tab create returned no tab_id"
-        args = agent_start_args(plan["name"], plan["cwd"], "tab", tab_id)
+        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", tab_id)
     else:  # split — the source pane's tab already exists
-        args = agent_start_args(plan["name"], plan["cwd"], "tab", plan["tab_id"], split=True)
+        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", plan["tab_id"], split=True)
 
     data, err = _herdr_json(*args, remote=remote)
     if err:

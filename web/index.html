@@ -1044,6 +1044,8 @@
         <label class="start-field">Role<select id="startRole"></select></label>
         <label class="start-field">Agent<select id="startAgent"></select></label>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
+        <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"
+            autocomplete="off" placeholder="Auto — Role N" /></label>
         <div id="startTargetRow"></div>
         <p id="startError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
         <button id="startSubmit" onclick="submitStart()"
@@ -1316,7 +1318,13 @@
       else if (msg.type === 'command_result' && msg.command === 'start_agent') {
         document.getElementById('startSubmit').disabled = false;
         // The session appears on the next poll snapshot; the browser invents nothing.
-        if (msg.ok) closeStart();
+        if (msg.ok) {
+          // Say so when the relay had to rename around a collision — otherwise the pane shows up
+          // under a name the user never typed and reads as the wrong session.
+          const asked = document.getElementById('startName').value.trim();
+          if (asked && msg.label && msg.label !== asked) showToast(`Name taken — started as "${msg.label}"`);
+          closeStart();
+        }
         else setStartError(msg.error || 'start failed');
       }
       else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
@@ -1553,6 +1561,7 @@
       fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
       fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
       fillSelect('startPlacement', [['new_workspace', 'New workspace'], ['new_tab', 'New tab'], ['split', 'Split']]);
+      document.getElementById('startName').value = '';  // blank means "let the relay name it"
       setStartError('');
       document.getElementById('startSubmit').disabled = false;
       renderStartTarget();  // may disable submit again when the Project has no live target
@@ -1597,6 +1606,10 @@
         project_id: startProjectId,
         placement: placement,
       };
+      // Omitted, not empty: the relay derives "Role N" when the field is absent, and an empty
+      // string is a label it would reject.
+      const name = document.getElementById('startName').value.trim();
+      if (name) msg.label = name;
       if (placement !== 'new_workspace') {
         const target = document.getElementById('startTarget');
         if (!target || !target.value) { setStartError('Select a target first'); return; }
