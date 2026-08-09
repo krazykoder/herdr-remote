@@ -72,7 +72,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .chip-add { border: 2px dashed var(--border); background: transparent; color: var(--muted); font-size: 1rem; padding: 4px 12px; }
 .chip-add:hover { border-color: var(--blue); color: var(--blue); }
 .start-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.start-field select { padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.start-field select, .start-field input { padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-transform: none; letter-spacing: normal; font-weight: 400; }
 .start-field select:disabled { opacity: 0.5; }
 #startSubmit:disabled { opacity: 0.5; cursor: default; }
 .agent .info { flex: 1; }
@@ -91,7 +91,17 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .quick-actions button { padding: 10px 14px; border-radius: 8px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex: 1; min-width: 70px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-yes { background: var(--green); color: #fff; } .btn-trust { background: var(--blue); color: #fff; } .btn-no { background: var(--red); color: #fff; }
 .term-input { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
-.term-input input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; font-family: monospace; min-width: 0; }
+.term-input input, .term-input textarea { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; font-family: monospace; min-width: 0; }
+.term-input textarea { resize: none; overflow-y: auto; line-height: 1.4; max-height: 8.4em; }
+.term-input { align-items: flex-end; }
+.pair-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 0.7rem; flex-shrink: 0; }
+.pair-strip .pair-name { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The reason a pair went stale gets its own line — truncated to "is no lo…" it is useless. */
+.pair-strip .pair-reason { flex-basis: 100%; color: var(--orange); }
+.pair-strip button { padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.7rem; cursor: pointer; flex-shrink: 0; }
+.pair-strip button.transfer { border-color: var(--blue); color: var(--blue); font-weight: 600; }
+.pair-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 0.65rem; padding: 4px 8px; cursor: pointer; flex-shrink: 0; }
+.pair-btn.paired { border-color: var(--blue); color: var(--blue); }
 .term-input button:last-child { padding: 10px 14px; border-radius: 6px; border: none; background: var(--blue); color: #fff; font-weight: 700; font-size: 16px; flex-shrink: 0; }
 .term-keys { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; flex-direction: column; background: var(--surface); flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom, 8px); }
 .nav-key { padding: 10px 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; min-height: 44px; display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; }
@@ -187,11 +197,13 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
     <span class="title" id="termTitle"></span>
     <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></button>
   </div>
+  <!-- Pair strip — absent unless the active pane belongs to a pair -->
+  <div class="pair-strip" id="pairStrip" style="display:none"></div>
   <div class="term-content" id="termContent">Loading…</div>
   <div class="quick-actions" id="quickActions"></div>
   <div class="term-input">
     <button onclick="openCommandPalette()" aria-label="Commands" style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
-    <input id="termInput" placeholder="Type…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <textarea id="termInput" rows="1" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
     <button onclick="toggleQuickDock()" aria-label="Quick actions" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></button>
     <button onclick="toggleKeysDock()" aria-label="Keys" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg></button>
     <button onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
@@ -252,6 +264,9 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
         <button class="nav-key" onclick="quickSend('skip')">skip</button>
         <button class="nav-key" onclick="quickSend('commit and push')">commit & push</button>
       </div>
+      <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:8px 0 4px">Instructions</p>
+      <!-- These insert at the cursor and never send — unlike Confirm and Common above. -->
+      <div id="shortcutRow" style="display:grid;gap:4px"></div>
     </div>
   </div>
 </div>
@@ -288,6 +303,44 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
   </div>
 </div>
 
+<!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
+<div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-size:0.8rem;font-weight:600;flex:1">Pair · <span id="pairSource"></span></span>
+      <button onclick="closePair()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+      <div id="pairCandidates"></div>
+      <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
+        <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
+        <label class="start-field">This pane's role<input id="pairRoleA" maxlength="32" type="text" /></label>
+        <label class="start-field">Partner's role<input id="pairRoleB" maxlength="32" type="text" /></label>
+      </div>
+      <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+      <button id="pairSubmit" onclick="savePair()" style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Save pair</button>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
+<div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-size:0.8rem;font-weight:600;flex:1">Transfer to <span id="transferTarget"></span></span>
+      <button onclick="closeTransfer()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+      <p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0">Instruction</p>
+      <div id="transferShortcuts" style="display:flex;flex-direction:column;gap:6px"></div>
+      <p style="font-size:0.7rem;color:var(--muted);margin:0">The payload is placed in the composer for you to read. Nothing is sent.</p>
+      <pre id="transferPreview" style="margin:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);font-size:0.65rem;max-height:22vh;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>
+    </div>
+  </div>
+</div>
+
 <script>
 
 let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
@@ -297,6 +350,83 @@ let activeTab = null;
 let projects = [], activeProject = null;
 // Absence of start_options is the feature gate: no message, no Start session control.
 let startOptions = null, startProjectId = null;
+// Pairs live only in this browser. The relay has no pair message and stores no pair data.
+let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
+
+// --- P3 pair logic (pure) --- start
+// Pure, dependency-free, and extracted verbatim by tests/test_pairs.js. Keep it that way:
+// anything here that touches the DOM, ws, or localStorage breaks the tests silently.
+const PAIRS_KEY = 'herdr_pairs';
+const PAIRS_VERSION = 1;
+const MAX_PAIRS = 32;
+const SEND_TEXT_MAX = 4000;      // matches the relay cap in herdr_relay.py
+const FENCE_OPEN = '<<<TRANSFER';
+const FENCE_CLOSE = 'TRANSFER>>>';
+
+const SHORTCUTS = [
+  {label: 'Review', text: 'Review, edit, fix; then propose next steps.'},
+  {label: 'Implement', text: 'Proceed to implement.'},
+  {label: 'Architect prompt', text: '@.agent/prompts/System_Prompt_2_Architect.md ; /ponytail /caveman'},
+];
+
+// A corrupt blob must not brick the terminal view — it loads as no pairs at all.
+function parsePairs(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch (e) { return []; }
+  if (!data || data.version !== PAIRS_VERSION || !Array.isArray(data.pairs)) return [];
+  return data.pairs.filter(p => p && typeof p.id === 'string' && Array.isArray(p.members) &&
+    p.members.length === 2 && p.members.every(m => m && m.pane_id));
+}
+
+function newPairId() {
+  // Not crypto.randomUUID(): it is undefined in a non-secure context, and the relay serves
+  // this page over plain HTTP on a LAN address. Uniqueness among <=32 local entries is enough.
+  return 'p_' + Math.random().toString(36).slice(2, 10);
+}
+
+// All four fields, because herdr reuses a pane_id after a pane closes. A matching pane_id
+// with a different cwd is a different session, and pasting into it is the worst failure here.
+function memberMatches(m, a) {
+  return a.pane_id === m.pane_id && (a.host || 'local') === (m.host || 'local') &&
+         a.agent === m.agent && (a.cwd || '') === (m.cwd || '');
+}
+
+function pairHealth(pair, list) {
+  for (const m of pair.members) {
+    if (list.filter(a => a.pane_id === m.pane_id).length > 1)
+      return {state: 'stale', reason: `${m.pane_id} is reported by more than one host`};
+    if (!list.some(a => memberMatches(m, a)))
+      return {state: 'stale', reason: `${m.role || m.agent} (${m.pane_id}) is no longer running`};
+  }
+  return {state: 'healthy', reason: ''};
+}
+
+function pairFor(list, paneId) {
+  return list.find(p => p.members.some(m => m.pane_id === paneId)) || null;
+}
+
+function memberOf(pair, paneId) { return pair.members.find(m => m.pane_id === paneId); }
+function partnerOf(pair, paneId) { return pair.members.find(m => m.pane_id !== paneId); }
+
+// Same host only: a bare pane_id cannot be routed unambiguously across hosts.
+function pairCandidates(list, source) {
+  return list.filter(a => a.pane_id !== source.pane_id &&
+                          (a.host || 'local') === (source.host || 'local'));
+}
+
+function composeTransfer(instruction, fromRole, fromAgent, text) {
+  if (!text) return {error: 'Select some text in the pane first'};
+  // Refuse rather than escape: the fence is what tells the receiving agent where the
+  // quoted region ends, and a selection that forges it destroys that boundary.
+  if (text.split('\n').some(l => l.startsWith(FENCE_OPEN) || l.startsWith(FENCE_CLOSE)))
+    return {error: 'Selection contains a transfer fence marker — trim it and retry'};
+  const body = (instruction ? instruction + '\n\n' : '') +
+    `feedback from ${fromRole} (${fromAgent}):\n${FENCE_OPEN}\n${text}\n${FENCE_CLOSE}`;
+  if (body.length > SEND_TEXT_MAX)
+    return {error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less`};
+  return {text: body};
+}
+// --- P3 pair logic (pure) --- end
 
 // Settings — auto-detect relay when served from same origin
 const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -470,6 +600,7 @@ function handleMessage(msg) {
 
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+  renderPairStrip();  // pair health is recomputed from every snapshot, never cached
   if (projects.length) { renderProjects(); return; }
   const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
   if (workspaces.length <= 1) {
@@ -689,6 +820,197 @@ function submitStart() {
   ws.send(JSON.stringify(msg));
 }
 
+// --- Pairs (storage and UI) ---
+
+function loadPairs() { pairs = parsePairs(localStorage.getItem(PAIRS_KEY) || ''); }
+function savePairs() {
+  localStorage.setItem(PAIRS_KEY, JSON.stringify({version: PAIRS_VERSION, pairs: pairs}));
+}
+
+function fingerprint(a, role) {
+  return {pane_id: a.pane_id, host: a.host || 'local', role: role,
+          agent: a.agent, cwd: a.cwd || ''};
+}
+
+function paneLabel(a) { return a.label || a.project || a.agent; }
+
+// warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
+// a failure teaches the user to ignore the colour.
+function setPairError(text, warn) {
+  const el = document.getElementById('pairError');
+  el.textContent = text || '';
+  el.style.color = warn ? 'var(--orange)' : 'var(--red)';
+  el.style.display = text ? 'block' : 'none';
+}
+
+function openPairDialog(paneId, ev) {
+  if (ev) ev.stopPropagation();
+  pairSource = agents.find(a => a.pane_id === paneId);
+  if (!pairSource) return;
+  pairPartner = null;
+  document.getElementById('pairSource').textContent = paneLabel(pairSource);
+  document.getElementById('pairFields').style.display = 'none';
+  setPairError('');
+  renderPairCandidates();
+  document.getElementById('pairSheet').style.display = 'block';
+}
+
+function closePair() {
+  document.getElementById('pairSheet').style.display = 'none';
+  pairSource = null; pairPartner = null;
+}
+
+function renderPairCandidates() {
+  const box = document.getElementById('pairCandidates');
+  const submit = document.getElementById('pairSubmit');
+  const candidates = pairCandidates(agents, pairSource);
+  if (!candidates.length) {
+    box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>`;
+    submit.disabled = true;
+    return;
+  }
+  box.innerHTML = `<p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px">Partner</p>` +
+    candidates.map(a => {
+      const existing = pairFor(pairs, a.pane_id);
+      const note = existing ? ` <span style="color:var(--orange)">· in "${escapeHtml(existing.name)}"</span>` : '';
+      const on = pairPartner && pairPartner.pane_id === a.pane_id;
+      return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneLabel(a))} · ${escapeHtml(a.agent)}${note}</button>`;
+    }).join('');
+  submit.disabled = !pairPartner;
+}
+
+function choosePartner(paneId) {
+  pairPartner = agents.find(a => a.pane_id === paneId);
+  if (!pairPartner) return;
+  document.getElementById('pairName').value =
+    `${paneLabel(pairSource)} ↔ ${paneLabel(pairPartner)}`.slice(0, 64);
+  document.getElementById('pairRoleA').value = pairSource.agent;
+  document.getElementById('pairRoleB').value = pairPartner.agent;
+  document.getElementById('pairFields').style.display = 'flex';
+  // Name what is being replaced — a silent replacement is how a user loses a pair they meant to keep.
+  const clashes = [pairSource, pairPartner].map(p => pairFor(pairs, p.pane_id)).filter(Boolean);
+  const names = [...new Set(clashes.map(p => p.name))];
+  setPairError(names.length ? `Saving replaces the existing pair ${names.map(n => `"${n}"`).join(' and ')}.` : '', true);
+  renderPairCandidates();
+}
+
+function savePair() {
+  if (!pairSource || !pairPartner) return;
+  const name = document.getElementById('pairName').value.trim();
+  if (!name) { setPairError('Pair name is required'); return; }
+  const roleA = document.getElementById('pairRoleA').value.trim() || pairSource.agent;
+  const roleB = document.getElementById('pairRoleB').value.trim() || pairPartner.agent;
+  const ids = [pairSource.pane_id, pairPartner.pane_id];
+  const kept = pairs.filter(p => !p.members.some(m => ids.includes(m.pane_id)));
+  if (kept.length >= MAX_PAIRS) { setPairError(`Already at ${MAX_PAIRS} pairs — remove one first`); return; }
+  pairs = kept.concat([{id: newPairId(), name: name.slice(0, 64),
+    members: [fingerprint(pairSource, roleA), fingerprint(pairPartner, roleB)]}]);
+  savePairs();
+  closePair();
+  render();
+  renderPairStrip();
+}
+
+function unpair() {
+  const pair = pairFor(pairs, activePane);
+  if (!pair || !confirm(`Remove the pair "${pair.name}"?`)) return;
+  pairs = pairs.filter(p => p.id !== pair.id);
+  savePairs();
+  render();
+  renderPairStrip();
+}
+
+// The strip is absent, not disabled, when there is no pair — and the transfer control is
+// absent whenever the pair is stale, so the UI can never offer an unverified target.
+function renderPairStrip() {
+  const strip = document.getElementById('pairStrip');
+  const pair = activePane ? pairFor(pairs, activePane) : null;
+  if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+  const health = pairHealth(pair, agents);
+  const partner = partnerOf(pair, activePane);
+  const mine = memberOf(pair, activePane);
+  const ok = health.state === 'healthy';
+  strip.className = 'pair-strip' + (ok ? '' : ' stale');
+  strip.innerHTML =
+    `<span class="pair-name">${escapeHtml(pair.name)} · ${escapeHtml(mine.role)} → ${escapeHtml(partner.role)}</span>` +
+    (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
+    `<button onclick="openPairDialog(activePane)">Edit</button>` +
+    `<button onclick="unpair()">Unpair</button>` +
+    (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
+  strip.style.display = 'flex';
+}
+
+// --- Transfer ---
+
+function openTransfer() {
+  const pair = pairFor(pairs, activePane);
+  if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
+  // Capture before anything can steal the selection — switching panes clears it.
+  transferSelection = String(window.getSelection() || '').trim();
+  const partner = partnerOf(pair, activePane);
+  document.getElementById('transferTarget').textContent = partner.role;
+  const preview = document.getElementById('transferPreview');
+  const box = document.getElementById('transferShortcuts');
+  if (!transferSelection) {
+    box.innerHTML = '';
+    preview.textContent = 'Select some text in the pane first, then tap Transfer.';
+    document.getElementById('transferSheet').style.display = 'block';
+    return;
+  }
+  box.innerHTML = SHORTCUTS.map((s, i) =>
+      `<button class="nav-key" style="width:100%;justify-content:flex-start" onclick="doTransfer(${i})">${escapeHtml(s.label)}</button>`).join('') +
+    `<button class="nav-key" style="width:100%;justify-content:flex-start;color:var(--muted)" onclick="doTransfer(-1)">No instruction</button>`;
+  preview.textContent = transferSelection.length > 600
+    ? transferSelection.slice(0, 600) + '\n…'
+    : transferSelection;
+  document.getElementById('transferSheet').style.display = 'block';
+}
+
+function closeTransfer() {
+  document.getElementById('transferSheet').style.display = 'none';
+}
+
+// Prefill and stop. This is the last checkpoint before one agent's output enters another's
+// context, so it must never end in a send.
+function doTransfer(shortcutIndex) {
+  const pair = pairFor(pairs, activePane);
+  if (!pair) return;
+  const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
+  const instruction = shortcutIndex >= 0 ? SHORTCUTS[shortcutIndex].text : '';
+  const out = composeTransfer(instruction, mine.role, mine.agent, transferSelection);
+  if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+  closeTransfer();
+  openTerminal(partner.pane_id);
+  const input = document.getElementById('termInput');
+  input.value = out.text;
+  autoGrow(input);
+  input.focus();
+  // Show the top of the payload, not its tail — reading it is the checkpoint.
+  input.setSelectionRange(0, 0);
+  input.scrollTop = 0;
+  if (window.cue) cue('page');
+}
+
+function insertShortcut(i) {
+  const input = document.getElementById('termInput');
+  const text = SHORTCUTS[i].text;
+  const at = input.selectionStart ?? input.value.length;
+  input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
+  input.selectionStart = input.selectionEnd = at + text.length;
+  autoGrow(input);
+  input.focus();
+}
+
+function autoGrow(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 118) + 'px';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
+
 function agentCard(a) {
   const color = a.status==='blocked'?'var(--red)':a.status==='working'?'var(--green)':'var(--muted)';
   const pulseClass = a.status==='working'?' pulse':'';
@@ -698,6 +1020,7 @@ function agentCard(a) {
   return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${label}${host}</div><div class="meta">${a.agent} · ${cwd}</div></div>
+    <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
 }
@@ -728,12 +1051,14 @@ function openTerminal(paneId) {
     qa.innerHTML='';
     ak.innerHTML='';
   }
+  renderPairStrip();
   refreshPane();
   refreshInterval = setInterval(refreshPane, 3000);
 }
 
 function closeTerminal() {
   activePane = null; clearInterval(refreshInterval);
+  document.getElementById('pairStrip').style.display = 'none';
   document.getElementById('terminalView').classList.remove('active');
   document.getElementById('agentListView').style.display = '';
 }
@@ -746,7 +1071,7 @@ function sendText() {
   if(!i.value||!ws||!activePane)return;
   ws.send(JSON.stringify({type:'send_text',pane_id:activePane,text:i.value}));
   ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:['Enter']}));
-  i.value=''; setTimeout(refreshPane,500);
+  i.value=''; autoGrow(i); setTimeout(refreshPane,500);
 }
 function sendKey(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:[k]}));setTimeout(refreshPane,300);}
 function sendKeys(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:k}));setTimeout(refreshPane,300);}
@@ -893,7 +1218,12 @@ function pressCtrl(label) {
 function toggleArrows(){}
 function hideArrows(){}
 function respond(t){if(!ws||!activePane)return;if(window.cue)cue('success');ws.send(JSON.stringify({type:'respond',pane_id:activePane,text:t}));document.getElementById('quickActions').innerHTML='';setTimeout(refreshPane,500);}
-document.getElementById('termInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendText();}});
+// Enter inserts a newline; Ctrl/Cmd+Enter sends. Reversed from P2 deliberately: a transferred
+// payload is multi-line, and submitting it on the first Enter defeats the review checkpoint.
+document.getElementById('termInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();sendText();}
+});
+document.getElementById('termInput').addEventListener('input',e=>autoGrow(e.target));
 document.getElementById('termContent').addEventListener('scroll', function() {
   const el = this;
   userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
@@ -1064,6 +1394,10 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 initPush();
+
+loadPairs();
+document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
+  `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
 </script>
 </body>
 </html>

@@ -657,7 +657,9 @@ async def handle_client(ws):
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
-                if not text or len(text) > 1000:
+                # 4000, not 1000: a transferred selection is usually code or a diff (P3 spec §6).
+                # The bound stays — an unbounded write is a real abuse vector.
+                if not text or len(text) > 4000:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
