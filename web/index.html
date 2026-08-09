@@ -226,6 +226,12 @@
       padding: 12px;
     }
 
+    /* Recents sit below the list and share its card styling; the section header supplies the
+       top gap, so only the sides and bottom are padded here. */
+    .recents {
+      padding: 0 12px 12px;
+    }
+
     .section-header {
       font-size: 0.7rem;
       font-weight: 600;
@@ -958,10 +964,10 @@
   </div>
 
   <div class="view" id="agentListView">
-    <!-- Up to five recently opened panes, one tap from the landing page. Absent only when none of
-       them is still live, so a fresh browser looks exactly as it did before. -->
-    <div class="chip-strip" id="recents" style="display:none"></div>
     <div class="agents" id="agents"></div>
+    <!-- Up to five recently opened panes, below the list and rendered with the same cards. A
+       sibling of #agents, not a child: renderBody rewrites that node's innerHTML every snapshot. -->
+    <div class="recents" id="recents" style="display:none"></div>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
@@ -1506,7 +1512,7 @@
       document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
-      renderRecents();  // after the body: it is positioned relative to markup renderBody just wrote
+      renderRecents();
     }
 
     function renderBody() {
@@ -1527,7 +1533,7 @@
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
       let html = hoistHtml(agents);
-      html += `<div class="chip-strip project-strip"><span class="chip-label">Projects</span>`;
+      html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
@@ -1740,15 +1746,6 @@
 
     const RECENTS_KEY = 'herdr_recents';
     const MAX_RECENTS = 5;
-    let recentsEl = null;
-
-    // Recents belong under the Projects chips — the chips choose a scope, recents jump inside it, so
-    // scope reads first. With no Projects configured there is no strip and it stays at the top.
-    function placeRecents(el) {
-      const strip = document.querySelector('#agents .project-strip');
-      if (strip) strip.after(el);
-      else document.getElementById('agentListView').insertBefore(el, document.getElementById('agents'));
-    }
 
     function loadRecents() {
       try {
@@ -1770,24 +1767,18 @@
     // Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
     // pane IDs, so a stale entry could open a pane the user never visited.
     function renderRecents() {
-      // Held as a live reference, not re-queried: #agents innerHTML is rewritten every render, which
-      // detaches this node when it sits inside the Projects layer.
-      const el = recentsEl || (recentsEl = document.getElementById('recents'));
-      placeRecents(el);
+      const el = document.getElementById('recents');
       // Sliced here too, not only on write: a list stored under an older, larger cap must not
-      // render six chips just because it predates the current one.
+      // render six entries just because it predates the current one.
       const live = loadRecents()
         .map(r => agents.find(a => memberMatches(r, a)))
         .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1)
         .slice(0, MAX_RECENTS);
       if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
-      el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
-        live.map(a => {
-          const dot = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
-          return `<button class="chip" onclick="openTerminal('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
-            `<span class="dot" style="background:${dot};margin-right:6px" aria-hidden="true"></span>${escapeHtml(paneLabel(a))}</button>`;
-        }).join('');
-      el.style.display = 'flex';
+      // Same section header and same cards as the list above, so a recent reads as the session it
+      // is rather than as a second kind of thing.
+      el.innerHTML = section('Recents', 'var(--blue)', live);
+      el.style.display = '';
     }
 
     // --- Pairs (storage and UI) ---

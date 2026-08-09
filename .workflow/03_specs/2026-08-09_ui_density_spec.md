@@ -92,9 +92,13 @@ constraint, so it is expressed once as a base rule that no later rule may underc
 repeated per field. Non-focusable elements — buttons, labels, chips — are unaffected and keep their
 sizes.
 
-**S3.7** The landing page lists up to five recently opened panes as chips, one tap from the pane,
-above the agent list and below the Projects strip when there is one. Entries whose pane is no longer
-live are omitted rather than shown inert, and the strip is absent only when none survives.
+**S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
+agent list, as a vertical list using the same section header and the same cards as the list above —
+not a chip strip. Entries whose pane is no longer live are omitted rather than shown inert, and the
+section is absent only when none survives.
+
+> Rationale: recents are the same sessions, so they read as the same objects. A second visual
+> vocabulary for them was a distinction without a difference, and it cost a horizontal scroller.
 
 ## S4 — Prompt shortcuts
 

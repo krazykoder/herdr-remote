@@ -533,11 +533,34 @@ four rows instead of the six `max-height` intends. The px cap goes; CSS owns bot
     }
 ```
 
-### `[MODIFY]` recents on the landing page
+### `[MODIFY]` recents become a section below the list
 
-The chip strip already exists; it was capped at six and hidden below two live entries (S3.7).
+Recents already existed as a chip strip above the agent list, capped at six and hidden below two live
+entries. They become a vertical `Recents` section underneath it, built from the existing `section()`
+and `agentCard()` so they render identically to the sessions above (S3.7):
+
+```js
+      el.innerHTML = section('Recents', 'var(--blue)', live);
+```
+
 `MAX_RECENTS` becomes 5, the gate becomes `!live.length`, and `renderRecents` slices as well as
-`noteRecent` — a list written under the old cap must not render six chips.
+`noteRecent` — a list written under the old cap must not render six entries.
+
+Moving `#recents` from inside `#agents` to a sibling after it deletes the placement machinery
+outright: `placeRecents`, the `recentsEl` cache, and the `project-strip` marker class that existed
+only as its anchor. `renderBody` rewrites `#agents`'s `innerHTML` every snapshot, which is what
+detached the node and forced the cache; a sibling is never touched.
+
+```css
+    /* Recents sit below the list and share its card styling; the section header supplies the
+       top gap, so only the sides and bottom are padded here. */
+    .recents {
+      padding: 0 12px 12px;
+    }
+```
+
+It stays outside `.agents`, so the desktop grid does not apply and the list is vertical at every
+width, as asked.
 
 ### `[MODIFY]` rename moves into the gear menu
 
@@ -592,8 +615,9 @@ Manual, with the relay running:
 | M18 | Tap the pane title | Nothing happens — it is plain text; rename lives in the gear menu |
 | M19 | Empty composer; then type six lines; then clear it | Two rows at rest, grows to the six-row ceiling, returns to two rows — never one |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
-| M21 | Open three panes, return to the landing page | Up to five recent chips above the agent list; each opens its pane |
-| M22 | Kill a recent pane in herdr, then reload the landing page | Its chip is gone, not inert |
+| M21 | Open three panes, return to the landing page | A `Recents` section below the agent list, same cards, up to five; each opens its pane |
+| M22 | Kill a recent pane in herdr, then reload the landing page | Its entry is gone, not inert |
+| M23 | With Projects configured, switch Projects a few times | Recents survive every re-render and stay below the list |
 
 ## Acceptance criteria
 
@@ -610,7 +634,8 @@ Manual, with the relay running:
 7. Rename is a gear-menu item; the pane title is inert text; the menu dismisses on outside click,
    Escape, and pane close (M17, M18).
 8. Focusing any field on iOS Safari does not zoom or shift the page (M20).
-9. The landing page offers up to five live recent panes as one-tap chips (M21, M22).
+9. The landing page offers up to five live recent panes as a vertical section below the agent
+   list, using the same cards (M21–M23).
 10. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
