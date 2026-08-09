@@ -1,8 +1,9 @@
 # Column parity and the line ruler
 
 **Date:** 2026-08-09
-**Status:** Proposal — not approved, not scheduled
-**Phase:** would land as P6, after P5 (fullscreen + PWA)
+**Status:** Part 1 **approved and implemented** (2026-08-09). Part 2 proposed, not scheduled.
+**Phase:** P6. Part 1 shipped ahead of P5 at the user's direction.
+**Implementation:** `.workflow/05_implementation/2026-08-09_column_parity.md`
 
 Two requests came in together. They are the same problem seen from two ends, and the cheap
 version of the second one only exists if the first is solved. That is the main finding here.
@@ -78,6 +79,10 @@ that. Anything that claims otherwise is hiding a re-wrap somewhere.
 So the answer is not one behaviour, it is a choice the user makes per their device:
 
 ### Three render modes
+
+> **As built:** default is **True size**, persisted under `herdr_wrap_mode`, chosen from `Line
+> width` in the pane gear menu. The user's iPhone sweet spot is a 9px terminal, which at a ~0.6
+> advance ratio shows ~68 of an 87-column pane before panning.
 
 | Mode | Behaviour | Where it wins |
 |---|---|---|

@@ -296,6 +296,26 @@ def get_all_agents():
     return annotate_agents(agents, PROJECTS)
 
 
+def pane_cols(pane_id, remote=None):
+    """The pane's width in terminal cells, or None if herdr cannot say.
+
+    `pane read` hands back scrollback already hard-wrapped at this width, so without it the
+    browser re-wraps rows that were already wrapped and no line break can be attributed to
+    the agent rather than to the viewport. Read per request, never cached: splitting or
+    resizing a pane changes it.
+    """
+    raw = run_herdr("pane", "layout", "--pane", pane_id, remote=remote)
+    try:
+        panes = json.loads(raw).get("result", {}).get("layout", {}).get("panes", [])
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    for p in panes:
+        if p.get("pane_id") == pane_id:
+            width = p.get("rect", {}).get("width")
+            return width if isinstance(width, int) and width > 0 else None
+    return None
+
+
 def read_pane(pane_id, remote=None):
     raw = run_herdr("pane", "read", pane_id, "--lines", "50", "--source", "recent", remote=remote)
     lines = [l for l in raw.splitlines() if l.strip() and not CHROME_RE.search(l)]
@@ -753,8 +773,13 @@ async def handle_client(ws, listener="lan"):
                     continue
                 lines = msg.get("lines", "30")
                 remote = pane_remote_map.get(pane_id)
-                content = run_herdr("pane", "read", pane_id, "--lines", str(lines), "--source", "recent", remote=remote)
-                await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id, "content": content}))
+                # recent-unwrapped, not recent: it drops the line breaks the terminal itself
+                # inserted, leaving only the ones the agent wrote. cols lets the client lay the
+                # result out at the pane's true width instead of guessing.
+                content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+                                    "--source", "recent-unwrapped", remote=remote)
+                await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id,
+                                          "content": content, "cols": pane_cols(pane_id, remote=remote)}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)

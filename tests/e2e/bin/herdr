@@ -45,6 +45,14 @@ if args[:2] == ["agent", "list"]:
                                             for i, n in enumerate(TAKEN)]}}))
 elif args[:2] == ["pane", "list"]:
     print(json.dumps({"result": {"panes": PANES.get(host, [])}}))
+elif args[:2] == ["pane", "layout"]:
+    # Width in cells, which is what the relay is after. Two panes of different widths so a
+    # client that picks the wrong one is visibly wrong rather than accidentally right.
+    pane = args[args.index("--pane") + 1] if "--pane" in args else ""
+    print(json.dumps({"result": {"layout": {"panes": [
+        {"pane_id": pane, "rect": {"height": 48, "width": 87, "x": 0, "y": 1}},
+        {"pane_id": "other", "rect": {"height": 48, "width": 40, "x": 88, "y": 1}},
+    ]}}}))
 elif args[:2] == ["workspace", "create"]:
     # A new workspace and a new tab each come up holding one shell pane, which is why the relay
     # closes it once the agent's own pane exists.
