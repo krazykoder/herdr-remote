@@ -24,17 +24,21 @@ New workspace is available on every Project card, including zero-session Project
 
 Relay names new pane `Role N`, where `N` is the lowest unused positive number among live same-Project labels matching that Role. New-tab placement uses same label for created tab. Naming is cosmetic: no pair is created, no routing changes, and no prompt is sent. If pane renaming fails after agent start, return `ok:false` and state that agent may already be running.
 
+`N` is derived by parsing live pane labels, which has two accepted consequences: two starts issued inside one poll interval can both choose the same `N`, and a pane renamed by the user in herdr leaves the sequence. Neither is worth a reservation table — the label is a convenience, never an identifier, and nothing in the protocol resolves a session by it.
+
 On success, close dialog and wait for normal poll snapshot. Browser does not invent a session locally. On error, keep dialog open and show relay error. No initial prompt is sent.
 
 ## 3. Protocol and relay contract
 
-After P2 is enabled, relay sends this read-only options message immediately after the `projects` message on connect:
+Relay sends this read-only options message immediately after the `projects` message on connect, and **only when `start_agent` will actually be accepted** — that is, `HERDR_ENABLE_WRITE_EXT=1` and `HERDR_RELAY_TOKEN` set (§7.3 of the architecture; the relay refuses to boot on the first without the second).
 
 ```json
 {"type":"start_options","agents":["codex","claude","pi"],"roles":["architect","reviewer","agent"]}
 ```
 
 `agents` is the ordered `HERDR_START_AGENTS` allowlist; the browser must not maintain a separate list. `roles` is fixed display metadata, not instruction metadata.
+
+**Presence of `start_options` is the browser's feature gate.** No message ⇒ no Start session control anywhere in the UI. Rendering the control unconditionally produces a button that always errors, which reads as a broken app rather than a disabled feature. This also keeps the default deployment — write extension off — visually identical to P1.
 
 ```json
 {
@@ -54,8 +58,10 @@ Relay validates, in order:
 2. `name` appears in `HERDR_START_AGENTS`; `role` is exactly `architect`, `reviewer`, or `agent`.
 3. `project_id` exists in `PROJECTS`; relay obtains cwd and remote host only from that entry.
 4. Placement is one of three values and has exactly its required field.
-5. For New tab, `workspace_id` resolves to at least one live unambiguous pane on Project host with matching `project_id`.
-6. For Split, `split_from` passes existing pane ambiguity guard and resolves to matching Project host and `project_id`.
+5. For New tab, `workspace_id` resolves under the P1 workspace rule (P1 spec §4.2): every live agent carrying that `workspace_id` is on **one** host, that host is the Project's host, and at least one of those agents has the matching `project_id`.
+6. For Split, `split_from` passes the P1 pane ambiguity guard (P1 spec §5) and resolves to matching Project host and `project_id`.
+
+Step 5 is a **one-distinct-host** test, not an at-least-one-match test. "At least one live pane on the Project's host" passes while a second host also reports `w8`, which is precisely the collision the guard exists to catch, and the tab would then be created on whichever host `pane_remote_map` happened to keep. Steps 5 and 6 use different guards because `workspace_id` and `pane_id` are separate ID spaces that collide independently.
 
 The client never supplies cwd, host, env, argv, tab ID, or prompt text.
 
@@ -89,3 +95,9 @@ Successful calls audit `name`, `project_id`, role, and placement, then reply `co
 | A7 | Agent start fails after layout creation | `ok:false`; no session claimed |
 | A8 | Successful start | Audit entry; next poll shows agent under selected Project |
 | A9 | Architect/Reviewer/Agent choice | Correct cosmetic `Role N` pane label; no prompt or Pair created |
+| A10 | Write extension disabled | No `start_options` on connect; no Start session control rendered |
+| A11 | New tab where the chosen `workspace_id` is also reported by a second host | Refused as ambiguous; no tab created on either host |
+
+## 6. Blocked on verification
+
+The relay-call table in §3 assumes four CLI signatures nobody has run: `workspace create --cwd --label`, `tab create --workspace`, `agent start --workspace`, and `pane rename` with a spaced label — plus the `result.<name>` shape of each returned ID. Discovery confirmed the commands exist, not these flags. **Run the checks in architecture §5 before implementing this spec.** A missing `--label` or a rename that rejects spaces changes the design here, not a constant.

@@ -3,7 +3,8 @@
 **Date:** 2026-08-08
 **Status:** **Proposal — under review.** Promote to `.workflow/02_architecture/` once accepted.
 **Decisions:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decisions.md`
-**Source proposal:** `.workflow/07_dev_notes/2026-08-08_workspace_and_session_pair_proposal.md`
+**Source notes:** `.workflow/07_dev_notes/2026-08-08_workspace_and_session_pair_initial_notes.md`
+**Phase map:** `.workflow/07_dev_notes/2026-08-08_phase_map.md`
 **Classification:** **Class B** — additive protocol extension, backward compatible. No existing message shape changes.
 
 **Guiding constraint:** reuse the existing architecture wherever possible, and keep **every step manual in v1**. The relay gains as little as it can; the frontend holds the controls.
@@ -87,11 +88,11 @@ Symlinks are not resolved in v1. Configure canonical paths when they matter.
 2. Opening a Project shows its live native workspaces; opening a workspace shows its tabs; opening a tab shows its agent sessions. The current workspace/tab chip UI is reused at those two levels.
 3. **Start session** is the remote-spawn entry point. User selects session role (**Architect**, **Reviewer**, or **Agent**), an allowlisted agent (for example codex, claude, or pi), and one placement: **New workspace** (default), **New tab** in a selected Project workspace, or **Split** beside a selected Project agent.
 4. New workspace creates a workspace at configured Project cwd, then starts chosen agent inside it. New tab creates a tab in selected live Project workspace, then starts chosen agent in that tab. Split starts chosen agent beside selected agent in its tab. There is no standalone empty-workspace action.
-5. `+ Tab` remains a layout action: it creates an empty native tab in selected live workspace. It does not start an agent and cannot create a Pair. Use Start session → New tab when a new tab must immediately contain an agent.
-6. After the agent starts, relay names its pane `Architect N`, `Reviewer N`, or `Agent N`; a new-tab start applies same label to its tab. `N` is the lowest unused positive number for that role among live sessions in the same Project. Role is naming only: no prompt is sent.
+5. `+ Tab` remains a layout action: it creates an empty native tab in selected live workspace. It does not start an agent and cannot create a Pair. Use Start session → New tab when a new tab must immediately contain an agent. **Its result is not visible in herdr-remote:** `get_agents_from_host:195` filters `if p.get("agent")`, so an empty tab is absent from every snapshot until an agent is started in it — and Start session → New tab creates its own tab rather than adopting one. `+ Tab` therefore serves the operator sitting at the herdr terminal, and is verified with `herdr tab list`, not in the browser (D8).
+6. After the agent starts, relay names its pane `Architect N`, `Reviewer N`, or `Agent N`; a new-tab start applies same label to its tab. `N` is the lowest unused positive number for that role among live sessions in the same Project. Role is naming only: no prompt is sent. `N` is derived by parsing live pane labels, so two starts issued within one poll interval can both pick the same `N`, and a pane renamed in herdr drops out of the numbering. Both are cosmetic and accepted — labels are a convenience, never an identifier.
 7. A live agent pane is standalone by default. User may select two same-host panes and create a named local Pair; the pair only makes transfer easier. Unpairing never changes workspaces, tabs, or sessions.
 8. Prompt shortcut buttons insert their `@...` string into the frontend composer; user edits and sends it. Composer is a multiline `<textarea>`: Enter creates newline; send button or Ctrl/Cmd+Enter sends.
-7. Closing an agent leaves its Project card present. An empty workspace/tab is native herdr layout and may not be visible in the agent snapshot until it contains an agent; this is acceptable in v1.
+9. Closing an agent leaves its Project card present. An empty workspace/tab is native herdr layout and may not be visible in the agent snapshot until it contains an agent; this is acceptable in v1.
 
 ---
 
@@ -161,6 +162,8 @@ Neither state auto-deletes the pair. A stale pair recovers if its agent pane ret
 
 For `placement: "new_tab"`, relay resolves selected live workspace and creates the tab itself; client never sends a tab ID. For `placement: "split"`, relay resolves target tab from `agent_cache[split_from]["tab_id"]`. A workspace or split source outside the Project or on another host is refused.
 
+Both placements inherit the ambiguity rules, and they are **different rules for different ID spaces**: `split_from` uses the pane guard (§5 of the P1 spec), `workspace_id` uses the one-distinct-host workspace test (§4.3). Checking a `workspace_id` for "at least one live pane on the Project's host" is not sufficient — that passes while another host also reports `w8`, which is exactly the collision the guard exists to catch.
+
 There is no `transfer` command. Transfer is frontend-only (§6) and rides the existing `send_text`.
 
 ### 4.2 Server → Client
@@ -179,7 +182,16 @@ Two consequences of sending this only on connect, both accepted for v1 and both 
 
 ### 4.3 Retained native layout control
 
-`create_tab` remains. Before calling `herdr tab create`, relay resolves `workspace_id` to exactly one live agent snapshot and passes that snapshot's remote host to `run_herdr`. An unknown or ambiguous workspace is refused. This fixes G2 without changing what `+ Tab` means.
+`create_tab` remains. Before calling `herdr tab create`, relay resolves `workspace_id` against the live snapshot and passes the resolved remote host to `run_herdr`. An unknown or ambiguous workspace is refused. This fixes G2 without changing what `+ Tab` means.
+
+**The resolution test is one host, not one agent.** herdr workspace IDs are per-server counters in the same way pane IDs are (G7), so `w8` can exist on `local` and on `devbox` simultaneously. The rule is therefore:
+
+- collect every live agent whose `workspace_id` matches;
+- **zero** matches → refuse (`unknown workspace_id`);
+- matches spanning **more than one distinct host** → refuse (`ambiguous workspace_id`);
+- otherwise → use that single host.
+
+"Exactly one matching agent" would be wrong in the opposite direction: a workspace with three agents in it is the normal case, not an ambiguous one.
 
 ---
 
@@ -208,6 +220,17 @@ run_herdr("agent", "start", name, "--cwd", project.cwd,
 `create_workspace` uses `herdr workspace create --cwd <project cwd> --label <project label> --focus`; `create_tab` uses `herdr tab create --workspace <id> --focus`. Both parse and validate their returned ID before starting an agent. If either command fails, relay returns an error and does not pretend a session exists. No prompt is sent, so readiness does not arise and `run_herdr`'s existing 15s timeout remains sufficient.
 
 After `agent start`, relay parses returned `pane_id`, allocates role label from live same-Project pane labels, and calls `herdr pane rename <pane_id> <Role N>` on same host. New-tab placement also creates tab with `<Role N>` label. If naming fails, command reports `ok:false`: agent may be alive, but user is told the named-session request did not complete.
+
+> **Four unverified CLI contracts block P2, not P1.** Everything above assumes flag and output shapes nobody has run. Discovery (G4) confirmed the *commands* exist; it did not confirm these *signatures*. Verify before the P2 spec is frozen, against a scratch host:
+>
+> ```bash
+> herdr workspace create --cwd /tmp --label Scratch --focus   # accepts --cwd and --label? returns result.workspace_id?
+> herdr tab create --workspace <id> --focus                   # returns result.tab_id?
+> herdr agent start claude --cwd /tmp --workspace <id> --focus # returns result.pane_id? is --workspace valid alongside --cwd?
+> herdr pane rename <pane_id> "Architect 1"                    # accepts a label with a space?
+> ```
+>
+> A missing `--label`, a rename that rejects spaces, or an ID that is not in `result.<name>` changes the P2 design, not just a parameter. This is the P2 counterpart of the §6.4b bracketed-paste question, and it is the same class of risk: a spec frozen on an assumed CLI surface.
 
 ---
 
@@ -338,7 +361,7 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 | D1 | Projects are trusted configured `{id, cwd, host}` launch targets; grouping uses longest lexical cwd-root match |
 | D2 | Session Pairs are named, fingerprinted frontend state; relay sync is deferred |
 | D3 | Every step is manual in v1; transfer is frontend copy-paste with no relay command |
-| D4 | `start_agent` is restricted to allowlisted agent names and naming roles in configured Projects |
+| D4 | `start_agent` is restricted to allowlisted agent names in configured Projects |
 | D5 | Agents start raw — no seed prompt; instruction shortcuts are frontend-side path references |
 | D6 | Ambiguous pane IDs are refused, not resolved — the narrow G7 mitigation, shipped in P1 |
 | D7 | Projects render in configured file order and never reorder by activity |
@@ -349,7 +372,10 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 
 ## 10. Open Questions for Phase 3 (Specs)
 
-1. **Multi-line delivery** (§6.4b) — must be settled by experiment before the transfer spec is frozen. It is the only thing in this proposal that could force a design change rather than a parameter change.
-2. **Pair creation UI** — confirm whether the pair editor lives on agent cards, terminal header, or both.
-3. ~~**Project ordering in the client**~~ — **resolved (D7):** configured file order, never reordered by activity.
-4. **Pair sync** — keep deferred until named local pairs prove useful; then add authenticated, last-write-wins frontend-preferences sync.
+Two are **experiments, not judgement calls** — each can force a design change rather than a parameter change, and each needs a live herdr. Neither blocks P1.
+
+1. **Multi-line delivery** (§6.4b) — does `herdr pane send-text` bracket-paste? Blocks the P3 transfer spec.
+2. **Layout CLI signatures** (§5 callout) — do `workspace create --cwd --label`, `tab create`, `agent start --workspace`, and `pane rename` accept these flags and return IDs at `result.<name>`? Blocks the P2 start spec.
+3. **Pair creation UI** — confirm whether the pair editor lives on agent cards, terminal header, or both.
+4. ~~**Project ordering in the client**~~ — **resolved (D7):** configured file order, never reordered by activity.
+5. **Pair sync** — keep deferred until named local pairs prove useful; then add authenticated, last-write-wins frontend-preferences sync.
