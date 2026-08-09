@@ -66,6 +66,13 @@ WS_PORT = int(os.environ.get("HERDR_RELAY_PORT", "8375"))
 POLL_INTERVAL = 2
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
 
+# An agent TUI needs a beat after a bracketed paste before it treats Enter as submit; sent
+# immediately, the Enter is swallowed and the text just sits in the composer. Measured against
+# codex 0.145.0: 0 ms leaves it sitting, 100 ms submits, single-line and multi-line alike.
+# ponytail: a fixed settle delay, not a readiness signal — herdr exposes none. If one agent ever
+# needs longer, make this per-agent rather than raising it for everyone.
+SEND_SETTLE = 0.15
+
 # VAPID Web Push
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
 VAPID_PRIVATE_KEY = os.environ.get("HERDR_VAPID_PRIVATE", "")
@@ -614,7 +621,12 @@ async def handle_client(ws):
                 remote = pane_remote_map.get(pane_id)
                 log.info("Response from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("respond", ip, device, pane_id, f"text={text!r}")
-                run_herdr("pane", "send-text", pane_id, text + "\n", remote=remote)
+                # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
+                # inserted as literal text and the approval never submits. Paste, let the TUI
+                # settle, then press Enter.
+                run_herdr("pane", "send-text", pane_id, text, remote=remote)
+                await asyncio.sleep(SEND_SETTLE)
+                run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
             elif msg_type == "read_pane":
@@ -667,6 +679,10 @@ async def handle_client(ws):
                 log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("send_text", ip, device, pane_id, f"text={text!r}")
                 run_herdr("pane", "send-text", pane_id, text, remote=remote)
+                # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
+                # right behind this — which is exactly what every composer does — lands late
+                # enough to submit. One choke point, rather than a delay in each client.
+                await asyncio.sleep(SEND_SETTLE)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
