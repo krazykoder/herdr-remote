@@ -90,7 +90,9 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .quick-actions { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .quick-actions button { padding: 10px 14px; border-radius: 8px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex: 1; min-width: 70px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-yes { background: var(--green); color: #fff; } .btn-trust { background: var(--blue); color: #fff; } .btn-no { background: var(--red); color: #fff; }
-.term-input { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
+.term-shortcuts { display: flex; justify-content: center; padding: 6px 12px 0; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
+.term-shortcuts select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 0.72rem; max-width: 70%; }
+.term-input { padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
 .term-input input, .term-input textarea { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; font-family: monospace; min-width: 0; }
 .term-input textarea { resize: none; overflow-y: auto; line-height: 1.4; max-height: 8.4em; }
 .term-input { align-items: flex-end; }
@@ -205,6 +207,11 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
   <div class="pair-strip" id="pairStrip" style="display:none"></div>
   <div class="term-content" id="termContent">Loading…</div>
   <div class="quick-actions" id="quickActions"></div>
+  <!-- Instruction shortcuts, one tap from the composer. A native <select> so a phone opens its
+       own picker; it inserts at the cursor and never sends, like the copies in the quick dock. -->
+  <div class="term-shortcuts">
+    <select id="shortcutPick" onchange="pickShortcut(this)" aria-label="Insert an instruction"></select>
+  </div>
   <div class="term-input">
     <button onclick="openCommandPalette()" aria-label="Commands" style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
     <textarea id="termInput" rows="1" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
@@ -1143,6 +1150,16 @@ function insertShortcut(i) {
   input.focus();
 }
 
+// A shortcut is an action, not a state: the select snaps back so it never reads as "this pane
+// is set to Review". Guarded on the empty placeholder value — Number('') is 0, which would
+// otherwise insert the first shortcut whenever the picker was dismissed.
+function pickShortcut(sel) {
+  const raw = sel.value;
+  sel.selectedIndex = 0;
+  if (raw === '') return;
+  insertShortcut(Number(raw));
+}
+
 function autoGrow(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 118) + 'px';
@@ -1563,6 +1580,9 @@ initPush();
 loadPairs();
 document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
   `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
+document.getElementById('shortcutPick').innerHTML =
+  `<option value="">Instructions</option>` +   // no ▾: the select draws its own chevron
+  SHORTCUTS.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join('');
 </script>
 </body>
 </html>
