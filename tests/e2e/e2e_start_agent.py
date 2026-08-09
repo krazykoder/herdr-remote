@@ -52,8 +52,17 @@ def start_relay(**extra):
     open(LOG, "w").close()
     proc = subprocess.Popen([PY, f"{REPO}/relay/herdr_relay.py"], env=relay_env(**extra),
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    time.sleep(3.5)  # first poll is at t+0, second at t+2
-    return proc
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"relay exited during startup: {proc.stdout.read()}")
+        try:
+            with socket.create_connection(("127.0.0.1", int(PORT)), timeout=0.2):
+                return proc
+        except OSError:
+            time.sleep(0.1)
+    stop_relay(proc)
+    raise RuntimeError(f"relay did not listen on {PORT} within 10 seconds")
 
 
 def stop_relay(proc):
