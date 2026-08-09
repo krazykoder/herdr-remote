@@ -54,7 +54,14 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # End-to-end: spawns real relays against a fake herdr on two simulated hosts.
 # Not picked up by discover — it binds a port, so run it deliberately.
 .venv313/bin/python tests/e2e/e2e_start_agent.py
+
+# Frontend pair/transfer logic. Extracts the pure block from web/index.html
+# between its markers, so the single-file app keeps its no-build-step property.
+node --test tests/test_pairs.js
 ```
+
+Editing `web/` needs only a browser reload — the relay reads `index.html` from disk on every
+GET and serves it `no-cache`. Editing `relay/` needs a relay restart.
 
 `tests/e2e/bin/` holds a fake `herdr` and a fake `ssh`. The fake ssh sets `HERDR_FAKE_HOST`
 and execs locally, which is what lets one machine present two hosts — the only way to
