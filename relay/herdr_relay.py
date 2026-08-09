@@ -749,6 +749,14 @@ async def handle_client(ws):
                     push_subscriptions.remove(sub)
                     _save_push_subs()
                 await ws.send(json.dumps({"type": "push_unsubscribed", "ok": True}))
+            else:
+                # Say so instead of dropping it. A client newer than the relay used to get
+                # silence here, which reads as a bug in the feature rather than a stale relay.
+                log.warning("Unknown message type %r from %s (%s)", msg_type, ip, device)
+                await ws.send(json.dumps({
+                    "type": "error",
+                    "message": f"unknown message type {msg_type!r} — the relay may be older than this client",
+                }))
     except (ConnectionClosedError, ConnectionClosedOK):
         pass
     finally:

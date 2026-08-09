@@ -304,6 +304,10 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
   </div>
 </div>
 
+<!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
+     so a rejected send_text or rename looked identical to one that worked. -->
+<div id="toast" role="status" aria-live="polite" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)"></div>
+
 <!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
 <div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
   <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
@@ -537,7 +541,10 @@ function tryDemo() {
 }
 
 function handleMessage(msg) {
-  if (msg.type === 'projects') {
+  if (msg.type === 'error') {
+    showToast(msg.message || 'The relay refused that.');
+  }
+  else if (msg.type === 'projects') {
     projects = msg.projects || [];
     render();
   }
@@ -550,6 +557,18 @@ function handleMessage(msg) {
     // The session appears on the next poll snapshot; the browser invents nothing.
     if (msg.ok) closeStart();
     else setStartError(msg.error || 'start failed');
+  }
+  else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
+    // Same rule: apply the label only once the relay confirms herdr took it. Painting it
+    // optimistically made a relay that never handled the message look like a working rename
+    // until the next poll silently undid it.
+    const a = agents.find(x => x.pane_id === msg.pane_id);
+    if (a && msg.ok) {
+      a.label = msg.label;
+      if (activePane === msg.pane_id) document.getElementById('termTitle').textContent = paneTitle(a);
+      render();
+      renderPairStrip();
+    }
   }
   else if (msg.type === 'agents') {
     // Track timeline on status changes
@@ -968,13 +987,13 @@ function renamePane() {
   const next = prompt('Name for this pane', a.label || a.project || a.agent);
   if (next === null) return;
   const label = next.trim();
-  if (!label || label.length > 32) { alert('Name must be 1 to 32 characters.'); return; }
+  // Cleared or unchanged means keep what it had — the relay refuses an empty label, and
+  // nagging about it is worse than treating a blank field as "leave it alone".
+  if (!label || label === a.label) return;
+  if (label.length > 32) { showToast('Name must be 32 characters or fewer.'); return; }
   ws.send(JSON.stringify({type: 'rename_pane', pane_id: activePane, label: label}));
-  // The next poll carries the new label; show it now so the tap feels answered.
-  a.label = label;
-  document.getElementById('termTitle').textContent = paneTitle(a);
-  render();
-  renderPairStrip();
+  // Nothing is applied here — the command_result branch does it once herdr has accepted the
+  // rename, and an `error` reply surfaces instead if the relay is too old to know the message.
 }
 
 // Jump to the other half of the pair without going back through the agent list. Refuses on a
@@ -1050,6 +1069,16 @@ function insertShortcut(i) {
 function autoGrow(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 118) + 'px';
+}
+
+let toastTimer = null;
+function showToast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+  if (window.cue) cue('error');
 }
 
 function escapeHtml(s) {
