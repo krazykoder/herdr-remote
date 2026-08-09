@@ -13,6 +13,7 @@ from start_agent import (
     dig,
     load_start_agents,
     next_role_label,
+    tab_create_args,
     validate_start_request,
 )
 
@@ -215,6 +216,10 @@ class SplitTests(unittest.TestCase):
 
 
 class ArgsTests(unittest.TestCase):
+    def test_new_tab_uses_the_role_label(self):
+        args = tab_create_args("w3", "Architect 1")
+        self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--label", "Architect 1", "--focus"))
+
     def test_argv_is_the_allowlisted_name(self):
         args = agent_start_args("claude", "/work/charts", "workspace", "w3")
         self.assertEqual(args[-2:], ("--", "claude"))

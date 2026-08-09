@@ -336,7 +336,7 @@ def start_agent_exec(plan):
             return None, "workspace create returned no workspace_id"
         args = agent_start_args(plan["name"], plan["cwd"], "workspace", workspace_id)
     elif placement == "new_tab":
-        data, err = _herdr_json(*tab_create_args(plan["workspace_id"]), remote=remote)
+        data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
         if err:
             return None, err
         tab_id = dig(data, "result", "tab", "tab_id")

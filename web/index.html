@@ -360,6 +360,10 @@ function connect() {
   let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
   if (!url) { showSetup(); return; }
   if (ws) ws.close();
+  // start_options is a per-connection capability advertisement, never cached state.
+  startOptions = null;
+  closeStart();
+  render();
   setStatus('connecting');
   // Append token as query param if stored separately
   const token = localStorage.getItem('herdr_relay_token');
@@ -515,7 +519,7 @@ function projectCard(p) {
     : 'No sessions';
   // Available on every Project card, including one with zero live sessions.
   const start = startOptions
-    ? `<button class="chip chip-add" aria-label="Start session in ${p.label}" onclick="openStartDialog('${p.id}',event)">+</button>`
+    ? `<button class="chip chip-add" aria-label="Start session in ${p.label}" onclick="openStartDialog('${p.id}',event)">+ Start</button>`
     : '';
   return `<div class="agent" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
     <span class="dot" style="background:${color}" aria-hidden="true"></span>

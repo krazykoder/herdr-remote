@@ -159,8 +159,8 @@ def workspace_create_args(cwd, label):
     return ("workspace", "create", "--cwd", cwd, "--label", label, "--focus")
 
 
-def tab_create_args(workspace_id):
-    return ("tab", "create", "--workspace", workspace_id, "--focus")
+def tab_create_args(workspace_id, label):
+    return ("tab", "create", "--workspace", workspace_id, "--label", label, "--focus")
 
 
 def agent_start_args(name, cwd, anchor_kind, anchor_id, split=False):
