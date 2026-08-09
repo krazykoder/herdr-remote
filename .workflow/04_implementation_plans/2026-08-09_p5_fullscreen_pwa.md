@@ -11,8 +11,11 @@ change; **no access-control change** — settled in
 
 ## Goal
 
-Reclaim the browser chrome itself. P4 makes the document stop scrolling, which is correct but
-means a mobile browser will never collapse its URL bar. Two answers, both wanted:
+Turn the web app into something that behaves like an installed app: no browser chrome, and a shell
+that lives on the device instead of being re-fetched every launch.
+
+P4 makes the document stop scrolling, which is correct but means a mobile browser will never collapse
+its URL bar. Two answers to that, both wanted:
 
 - **Fullscreen API** — Android, iPadOS, and desktop, feature-detected, one gesture. Hides the URL bar *and* the system
   nav bar.
@@ -207,7 +210,66 @@ origin.
 Loading the app directly from the tunnel origin stays supported but degraded — no service worker, no
 push, no install (S7.9). It must not look broken; those three features are simply unavailable there.
 
-### `[MODIFY] web/index.html` — VAPID fetch carries the token
+### `[MODIFY] web/sw.js` — precache the shell so the app launches from device storage
+
+Today `sw.js` handles `push` and `notificationclick` only: no `fetch` handler and no Cache Storage,
+so nothing is stored on the device and every launch re-downloads `index.html`. This is what makes the
+installed app feel like a bookmark rather than an app. Precaching the shell is the whole point of the
+service worker and it is the last piece of "installed app" behaviour.
+
+```js
+// --- App shell cache ---
+// Bump CACHE on any deploy that changes a precached file; activate drops every older cache.
+const CACHE = 'herdr-shell-v1';
+const SHELL = ['./', 'logo.svg', 'manifest.webmanifest',
+  'icons/herdr-180.png', 'icons/herdr-192.png', 'icons/herdr-512.png']
+  .map((p) => new URL(p, APP_SCOPE).href);
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+// Network-first for the document, cache-first for the rest of the shell.
+// ponytail: no stale-while-revalidate and no update prompt — a control surface running a stale
+// shell against a changed relay is worse than one request on launch. Revisit if launch latency
+// becomes the complaint.
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      fetch(req)
+        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res; })
+        .catch(() => caches.match(req).then((r) => r || caches.match(new URL('./', APP_SCOPE).href)))
+    );
+    return;
+  }
+  if (SHELL.includes(req.url)) {
+    e.respondWith(caches.match(req).then((r) => r || fetch(req)));
+  }
+});
+```
+
+Existing `install`/`activate` handlers (lines 6–7) are **replaced**, not appended to — `skipWaiting`
+and `clients.claim` are preserved inside the new ones.
+
+**Footgun:** `addAll` is atomic. If any precached URL 404s, the service worker never installs and push
+silently stops working too. Every file in `SHELL` must exist on the Pages origin before this ships —
+verify with V5 below.
+
+**The `esm.sh` import is deliberately not precached.** `web/index.html:13` imports `cuelume` from a
+third-party CDN at every launch. It is cross-origin, so caching it means an opaque `no-cors`
+response; and every call site is already guarded with `if (window.cue)` (18 of them), so offline the
+sound cues simply go silent and nothing breaks. Vendoring it into the file would restore the
+"self-contained, no build step" property, but that is a separate decision, not P5's.
 
 Separate pre-existing bug, found while resolving the decision above. `web/index.html:2316` fetches the
 VAPID key with no credentials, so enabling push against any token-gated listener returns 401 and
@@ -265,6 +327,13 @@ grep -n "application/json,{&quot;name" web/index.html    # expect nothing
 
 # 4. Relay suite
 .venv313/bin/python -m unittest discover -s tests -t tests
+
+# 5. Every precached URL resolves on the Pages origin. addAll is atomic: one 404 and the
+#    service worker never installs, which also silently kills push.
+BASE=https://<pages-origin>
+for p in "" logo.svg manifest.webmanifest icons/herdr-180.png icons/herdr-192.png icons/herdr-512.png; do
+  printf "%-26s " "/$p"; curl -so /dev/null -w "%{http_code}\n" "$BASE/$p"
+done   # expect 200 on every line
 ```
 
 With the external listener enabled, verify the gate is **still absolute** — this is a regression check
@@ -296,6 +365,12 @@ Manual:
 | M10 | Same, rotate to landscape | No content under the notch or home indicator |
 | M11 | PWA launch, then P4's M1–M8 spot checks | Shell behaves identically to the tab |
 | M12 | Load over plain `http://` LAN address | App works; install simply not offered — no error surfaced |
+| M13 | DevTools → Application → Cache Storage after first load | `herdr-shell-v1` present with all six entries |
+| M14 | Install from Pages, enable airplane mode, launch from the home screen | Shell renders from cache; status shows disconnected; no error page |
+| M15 | Same, but stop the relay only (network up) | Shell renders; status disconnected; reconnects when the relay returns |
+| M16 | Redeploy with `CACHE` bumped, relaunch online, then check Cache Storage | New shell served; exactly one cache remains |
+| M17 | Offline launch, then inspect the agent list | Empty/disconnected — no stale agent data shown as if live |
+| M18 | Offline launch with `esm.sh` unreachable | App fully usable; sound cues silent; no visible error |
 
 ## Acceptance criteria
 
@@ -311,3 +386,5 @@ Manual:
 6. `node --test tests/test_pairs.js` and the unittest suite pass unchanged (S8).
 7. The 192px, 512px, and 180px PNG icons exist, are served with `image/png`, and the 180px icon is
    referenced by `apple-touch-icon`.
+8. The installed app launches offline from device storage, shows an honest disconnected state, caches
+   no agent data, and leaves exactly one shell cache after a redeploy (M13–M18, S7.11–S7.15).

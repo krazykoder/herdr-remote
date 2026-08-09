@@ -157,6 +157,23 @@ are simply unavailable.
 **S7.10** Enabling push against a token-gated listener must succeed. The VAPID key request carries the
 stored token as `?token=`, which the relay already accepts.
 
+**S7.11 — offline shell.** The installed app launches from device storage. Its service worker
+precaches the document, manifest, logo and icons on install, so a launch succeeds with the origin
+unreachable and does not wait on the network to render.
+
+**S7.12** The document is fetched network-first with a cache fallback, so a redeploy is picked up on
+the next online launch and a stale shell is never preferred to a reachable fresh one.
+
+**S7.13** Exactly one shell cache exists after activation; superseded caches are deleted, so a
+redeploy cannot leave unreachable stale entries behind.
+
+**S7.14** Offline launch degrades honestly: the shell renders, connection status shows disconnected,
+and no agent data is fabricated from cache. Only the shell is cached — never agent state, pane
+content, or any relay response.
+
+**S7.15** Third-party CDN assets are not required for the app to function. Their absence (offline, or
+CDN down) may disable optional embellishment but must not block launch or raise a visible error.
+
 ## S8 — Non-regressions
 
 - The pure pair-logic block and its markers are byte-identical; `node --test tests/test_pairs.js`

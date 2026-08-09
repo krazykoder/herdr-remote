@@ -226,6 +226,13 @@ Gaps closed by this change:
    service worker, no push, no install. Decision and the two rejected alternatives:
    `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
 
+5. **Nothing is stored on the device today.** `web/sw.js` implements `push` and `notificationclick`
+   only — no `fetch` handler, no Cache Storage — so every launch re-downloads `index.html` and the
+   installed app behaves like a bookmark. Precaching the shell (document, manifest, logo, icons) is
+   what makes it an app: it launches from device storage, instantly, with the origin unreachable.
+   Only the shell is cached; agent state is never persisted, so an offline launch renders the UI and
+   reports disconnected rather than showing stale panes as if live.
+
 Two consequences worth stating up front, because they constrain what "installable" can mean:
 
 - **Mixed content splits hosting in two.** An HTTPS page cannot open `ws://`, so a Pages-hosted app
