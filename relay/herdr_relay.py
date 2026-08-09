@@ -746,7 +746,17 @@ def start_mdns():
             addresses=[sock_mod.inet_aton(ip)], port=WS_PORT,
         )
         zc = Zeroconf()
-        threading.Thread(target=zc.register_service, args=(info,), daemon=True).start()
+
+        def register():
+            # A second relay on the same LAN takes the same service name. Without
+            # allow_name_change that raises inside this thread, and the traceback lands
+            # on stderr looking like a crash while the relay is in fact serving fine.
+            try:
+                zc.register_service(info, allow_name_change=True)
+            except Exception as e:
+                log.warning("mDNS registration failed: %s", e)
+
+        threading.Thread(target=register, daemon=True).start()
         log.info("mDNS registering at %s", ip)
         return zc, info
     except Exception as e:
