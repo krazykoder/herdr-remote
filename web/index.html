@@ -458,7 +458,7 @@ function renderProjects() {
   html += `</div>`;
   if (activeProject === null) {
     html += projects.map(projectCard).join('');
-    const other = agents.filter(a => !a.project_id);
+    const other = agents.filter(a => !a.project_id && a.status !== 'blocked');
     if (other.length) html += section('Other sessions', 'var(--muted)', other);
   } else {
     const mine = agents.filter(a => a.project_id === activeProject);

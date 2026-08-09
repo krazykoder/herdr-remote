@@ -25,7 +25,9 @@
 ]
 ```
 
-Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` ≤64 characters, absolute `cwd`, and `host` equal to `local` or one configured in `HERDR_REMOTES`. The path itself must be absolute. Any malformed entry, duplicate id, unreadable file, or unknown host exits non-zero at startup. Duplicate roots are rejected per `(host, cwd)`, not per `cwd`: the same path on two different hosts is two distinct machines and resolves unambiguously, so refusing it would block the ordinary case of one repo checked out on a laptop and a build box. Unset variable or `[]` means Projects are disabled.
+Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` ≤64 characters, absolute `cwd`, and `host` equal to `local` or one configured in `HERDR_REMOTES`. The path itself must be absolute.
+
+`~` expands in the config path and in a **local** entry's `cwd`. A remote entry's `cwd` starting with `~` is refused: `expanduser` resolves against the relay's home, not the SSH target's, so it would silently name a path that may not exist on that machine. Remote roots are spelled out. Any malformed entry, duplicate id, unreadable file, or unknown host exits non-zero at startup. Duplicate roots are rejected per `(host, cwd)`, not per `cwd`: the same path on two different hosts is two distinct machines and resolves unambiguously, so refusing it would block the ordinary case of one repo checked out on a laptop and a build box. Unset variable or `[]` means Projects are disabled.
 
 For every live pane, relay matches same-host configured roots using `cwd == root` or `cwd.startswith(root.rstrip("/") + "/")`; longest root wins. Thus local agents started from a configured root or a subdirectory appear under that Project; unmatched panes stay visible as Other sessions. Matching is lexical: no git, worktree, or symlink resolution. Plain `startswith` is wrong — it groups `/code/x-old` under `/code/x`.
 

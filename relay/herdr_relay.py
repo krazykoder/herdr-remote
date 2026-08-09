@@ -495,10 +495,11 @@ async def handle_client(ws):
     clients.add(ws)
     connected_at = time.monotonic()
     try:
-        # Projects first, then the cached snapshot, so the client can group without
-        # waiting up to POLL_INTERVAL for its first broadcast.
-        await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
-        await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
+        # Preserve the legacy wire behavior when Projects are disabled. When enabled,
+        # Projects must arrive before the cached snapshot so the client can group it.
+        if PROJECTS:
+            await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
+            await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
         async for raw in ws:
             try:
                 msg = json.loads(raw)

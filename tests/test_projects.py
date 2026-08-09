@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -101,6 +102,22 @@ class LoadProjectsTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(ProjectConfigError):
                     load_projects(write_config([{"id": "a", "label": bad, "cwd": "/w"}]))
+
+    def test_tilde_expands_for_local(self):
+        got = load_projects(write_config([{"id": "a", "label": "A", "cwd": "~/code/x"}]))
+        self.assertEqual(got[0]["cwd"], os.path.expanduser("~/code/x"))
+
+    def test_tilde_rejected_for_remote(self):
+        entries = [{"id": "a", "label": "A", "cwd": "~/code/x", "host": "box"}]
+        with self.assertRaises(ProjectConfigError) as ctx:
+            load_projects(write_config(entries), valid_hosts=["box"])
+        self.assertIn("~", str(ctx.exception))
+
+    def test_tilde_in_config_path(self):
+        path = write_config([{"id": "a", "label": "A", "cwd": "/w"}])
+        home = os.path.expanduser("~")
+        if path.startswith(home):
+            self.assertEqual(len(load_projects("~" + path[len(home):])), 1)
 
     def test_relative_cwd_rejected(self):
         with self.assertRaises(ProjectConfigError):

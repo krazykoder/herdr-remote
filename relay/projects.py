@@ -25,6 +25,7 @@ def load_projects(path, valid_hosts=()):
     """
     if not path:
         return []
+    path = os.path.expanduser(path)  # the config path and its roots are hand-written
     if not os.path.isabs(path):
         raise ProjectConfigError(f"HERDR_PROJECTS_FILE must be an absolute path: {path!r}")
     try:
@@ -55,17 +56,29 @@ def load_projects(path, valid_hosts=()):
         if not isinstance(label, str) or not label.strip() or len(label) > MAX_LABEL:
             raise ProjectConfigError(f"{where} ({pid}): label must be 1..{MAX_LABEL} characters")
 
-        cwd = entry.get("cwd")
-        if not isinstance(cwd, str) or not os.path.isabs(cwd):
-            raise ProjectConfigError(f"{where} ({pid}): cwd must be an absolute path, got {cwd!r}")
-        cwd = os.path.normpath(cwd)
-
         host = entry.get("host", "local")
         if host not in allowed_hosts:
             raise ProjectConfigError(
                 f"{where} ({pid}): host {host!r} is not 'local' nor in HERDR_REMOTES "
                 f"({', '.join(sorted(valid_hosts)) or 'empty'})"
             )
+
+        cwd = entry.get("cwd")
+        if not isinstance(cwd, str):
+            raise ProjectConfigError(f"{where} ({pid}): cwd must be an absolute path, got {cwd!r}")
+        # ~ expands against the relay's home, which is only the right home for local.
+        # A remote entry must spell its path out, or it would silently point at the
+        # relay operator's home path on a machine where it may not exist.
+        if host == "local":
+            cwd = os.path.expanduser(cwd)
+        elif cwd.startswith("~"):
+            raise ProjectConfigError(
+                f"{where} ({pid}): cwd on remote host {host!r} cannot start with '~' — "
+                f"it would expand against the relay's home, not {host}'s"
+            )
+        if not os.path.isabs(cwd):
+            raise ProjectConfigError(f"{where} ({pid}): cwd must be an absolute path, got {cwd!r}")
+        cwd = os.path.normpath(cwd)
 
         # Same root on two different hosts is unambiguous; same root on one host is not.
         if (host, cwd) in seen_roots:
