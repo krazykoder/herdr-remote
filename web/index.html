@@ -271,6 +271,7 @@ let ws = null, agents = [], activePane = null, refreshInterval = null, userScrol
 let timeline = [], prevStatuses = {};
 let activeWorkspace = null;
 let activeTab = null;
+let projects = [], activeProject = null;
 
 // Settings — auto-detect relay when served from same origin
 const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -375,7 +376,11 @@ function tryDemo() {
 }
 
 function handleMessage(msg) {
-  if (msg.type === 'agents') {
+  if (msg.type === 'projects') {
+    projects = msg.projects || [];
+    render();
+  }
+  else if (msg.type === 'agents') {
     // Track timeline on status changes
     for (const a of msg.agents) {
       const prev = prevStatuses[a.pane_id];
@@ -426,6 +431,7 @@ function handleMessage(msg) {
 
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+  if (projects.length) { renderProjects(); return; }
   const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
   if (workspaces.length <= 1) {
     activeWorkspace = null;
@@ -433,56 +439,102 @@ function render() {
     renderAgentList(agents);
     return;
   }
-  renderWorkspaces(workspaces);
+  let html = hoistHtml(agents) + layoutHtml(agents);
+  if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
+  document.getElementById('agents').innerHTML = html;
 }
 
-function renderWorkspaces(workspaces) {
-  let html = '';
-  // Hoist blocked agents
-  const blocked = agents.filter(a => a.status === 'blocked');
-  if (blocked.length) {
-    html += `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`;
-    html += blocked.map(a => agentCard(a)).join('');
-  }
-  // Space chip strip
-  html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
-  html += `<button class="chip${activeWorkspace===null?' active':''}" onclick="backToWorkspaces()">All</button>`;
-  for (const wsId of workspaces) {
-    const wsAgents = agents.filter(a => a.workspace_id === wsId);
-    const hasBlocked = wsAgents.some(a => a.status === 'blocked');
-    const name = wsAgents[0]?.project || wsId.slice(0, 8);
-    html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+// Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
+function renderProjects() {
+  if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
+  let html = hoistHtml(agents);
+  html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
+  html += `<button class="chip${activeProject===null?' active':''}" onclick="selectProject(null)">All</button>`;
+  for (const p of projects) {
+    const list = agents.filter(a => a.project_id === p.id);
+    const hasBlocked = list.some(a => a.status === 'blocked');
+    html += `<button class="chip${activeProject===p.id?' active':''}${hasBlocked?' alert':''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
   }
   html += `</div>`;
-  // Tab chip strip (always show when workspace selected)
-  if (activeWorkspace) {
-    const wsTabs = [...new Set(agents.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
-    html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
-    if (wsTabs.length > 1) {
-      html += `<button class="chip${!activeTab?' active':''}" onclick="selectTab(null)">All</button>`;
-    }
-    wsTabs.forEach((tid, i) => {
-      const tabAgents = agents.filter(a => a.tab_id === tid);
-      const hasBlocked = tabAgents.some(a => a.status === 'blocked');
-      const tabLabel = tabAgents[0]?.label || 'Tab '+(i+1);
-      html += `<button class="chip${activeTab===tid?' active':''}${hasBlocked?' alert':''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
-    });
-    html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
-    html += `</div>`;
+  if (activeProject === null) {
+    html += projects.map(projectCard).join('');
+    const other = agents.filter(a => !a.project_id);
+    if (other.length) html += section('Other sessions', 'var(--muted)', other);
+  } else {
+    const mine = agents.filter(a => a.project_id === activeProject);
+    html += mine.length ? layoutHtml(mine) : '<div class="empty">No sessions</div>';
   }
-  // Agent list (filtered)
-  let filtered = agents;
+  document.getElementById('agents').innerHTML = html;
+}
+
+function projectCard(p) {
+  const list = agents.filter(a => a.project_id === p.id);
+  const blocked = list.filter(a => a.status === 'blocked').length;
+  const color = blocked ? 'var(--red)' : list.length ? 'var(--green)' : 'var(--muted)';
+  const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
+  const meta = list.length
+    ? `${list.length} session${list.length>1?'s':''}${blocked?` · ${blocked} blocked`:''}`
+    : 'No sessions';
+  return `<div class="agent" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
+    <span class="dot" style="background:${color}" aria-hidden="true"></span>
+    <div class="info"><div class="project">${p.label}${host}</div><div class="meta">${meta}</div></div>
+    <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
+  </div>`;
+}
+
+function hoistHtml(list) {
+  const blocked = list.filter(a => a.status === 'blocked');
+  if (!blocked.length) return '';
+  return `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
+    + blocked.map(a => agentCard(a)).join('');
+}
+
+// Native workspace/tab navigation over `list` — all agents, or one Project's.
+function layoutHtml(list) {
+  const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
+  let html = '';
+  if (workspaces.length <= 1) {
+    activeWorkspace = null;
+    activeTab = null;
+  } else {
+    // Space chip strip
+    html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
+    html += `<button class="chip${activeWorkspace===null?' active':''}" onclick="backToWorkspaces()">All</button>`;
+    for (const wsId of workspaces) {
+      const wsAgents = list.filter(a => a.workspace_id === wsId);
+      const hasBlocked = wsAgents.some(a => a.status === 'blocked');
+      const name = wsAgents[0]?.project || wsId.slice(0, 8);
+      html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+    }
+    html += `</div>`;
+    // Tab chip strip (always show when workspace selected)
+    if (activeWorkspace) {
+      const wsTabs = [...new Set(list.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
+      html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
+      if (wsTabs.length > 1) {
+        html += `<button class="chip${!activeTab?' active':''}" onclick="selectTab(null)">All</button>`;
+      }
+      wsTabs.forEach((tid, i) => {
+        const tabAgents = list.filter(a => a.tab_id === tid);
+        const hasBlocked = tabAgents.some(a => a.status === 'blocked');
+        const tabLabel = tabAgents[0]?.label || 'Tab '+(i+1);
+        html += `<button class="chip${activeTab===tid?' active':''}${hasBlocked?' alert':''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+      });
+      html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
+      html += `</div>`;
+    }
+  }
+  // Agent list (filtered). Blocked are already hoisted above.
+  let filtered = list;
   if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
   if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
-  // Don't re-show blocked that are already hoisted
   const working = filtered.filter(a => a.status==='working');
   const done = filtered.filter(a => a.status==='done');
   const idle = filtered.filter(a => a.status==='idle'||a.status==='unknown');
   if (working.length) html += section('Working', 'var(--green)', working);
   if (done.length) html += section('Done', 'var(--muted)', done);
   if (idle.length) html += section('Idle', 'var(--muted)', idle);
-  if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
-  document.getElementById('agents').innerHTML = html;
+  return html;
 }
 
 function renderAgentList(list) {
@@ -499,6 +551,9 @@ function renderAgentList(list) {
   document.getElementById('agents').innerHTML = html;
 }
 
+// A workspace ID from one Project means nothing under another, and leaving it set
+// silently filters the new Project down to nothing.
+function selectProject(id) { activeProject = id; activeWorkspace = null; activeTab = null; render(); }
 function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
 function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
 function selectTab(id) { activeTab = id; render(); }

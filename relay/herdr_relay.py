@@ -7,6 +7,14 @@
 import asyncio, json, logging, os, re, shutil, signal, socket, subprocess, time
 
 from agent_state import complete_agent_update_message
+from projects import (
+    ProjectConfigError,
+    ambiguous_pane_ids,
+    annotate_agents,
+    load_projects,
+    public_projects,
+    resolve_workspace_remote,
+)
 
 try:
     from websockets.asyncio.server import serve
@@ -56,6 +64,13 @@ PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 # Remote hosts: comma-separated SSH targets
 REMOTES = [r.strip() for r in os.environ.get("HERDR_REMOTES", "").split(",") if r.strip()]
 
+# Configured Projects: read once at startup, fail closed. Unset means Projects are disabled.
+try:
+    PROJECTS = load_projects(os.environ.get("HERDR_PROJECTS_FILE", ""), valid_hosts=REMOTES)
+except ProjectConfigError as e:
+    print(f"herdr-remote: bad Projects config: {e}", file=sys.stderr)
+    sys.exit(1)
+
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
 SUBAGENT_OPTIONS = ["approve all pending", "configure individually", "exit (cancel subagents)"]
 CHROME_RE = re.compile(
@@ -72,6 +87,8 @@ event_queue = asyncio.Queue()
 pane_remote_map = {}
 known_panes = set()
 agent_cache = {}
+ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
+latest_agents = []  # last full snapshot, replayed to each client on connect
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
 SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "Up", "Down", "Left", "Right", "BSpace"} | {
@@ -202,7 +219,7 @@ def get_all_agents():
     agents = get_agents_from_host(remote=None)
     for remote in REMOTES:
         agents.extend(get_agents_from_host(remote=remote))
-    return agents
+    return annotate_agents(agents, PROJECTS)
 
 
 def read_pane(pane_id, remote=None):
@@ -244,8 +261,25 @@ async def poll_loop():
         await asyncio.sleep(POLL_INTERVAL)
 
 
+def pane_guard(pane_id):
+    """Return an error string if this pane may not be addressed, else None.
+
+    Bare pane IDs are per-server counters, so the same ID on two hosts routes to
+    whichever was polled last. Refuse rather than guess (D6); clears within one poll.
+    """
+    if pane_id not in known_panes:
+        return "unknown pane_id"
+    if pane_id in ambiguous_panes:
+        return "ambiguous pane_id (same id on multiple hosts)"
+    return None
+
+
 async def _poll_once():
+        global latest_agents
         agents = get_all_agents()
+        latest_agents = agents
+        ambiguous_panes.clear()
+        ambiguous_panes.update(ambiguous_pane_ids(agents))
         # Always broadcast (even empty list) so clients stay in sync
         for a in agents:
             pane_remote_map[a["pane_id"]] = a.get("remote")
@@ -461,6 +495,10 @@ async def handle_client(ws):
     clients.add(ws)
     connected_at = time.monotonic()
     try:
+        # Projects first, then the cached snapshot, so the client can group without
+        # waiting up to POLL_INTERVAL for its first broadcast.
+        await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
+        await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -469,8 +507,9 @@ async def handle_client(ws):
             msg_type = msg.get("type")
             if msg_type == "respond":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
                 if text.strip().lower() not in SAFE_RESPONSES:
@@ -484,8 +523,9 @@ async def handle_client(ws):
                 event_queue.put_nowait(msg)
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 lines = msg.get("lines", "30")
                 remote = pane_remote_map.get(pane_id)
@@ -493,8 +533,9 @@ async def handle_client(ws):
                 await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id, "content": content}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 keys = msg.get("keys", [])
                 if not all(k in SAFE_KEYS for k in keys):
@@ -516,8 +557,9 @@ async def handle_client(ws):
                 await ws.send(json.dumps({"type": "command_result", "command": "send_keys", "ok": True}))
             elif msg_type == "send_text":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
                 if not text or len(text) > 1000:
@@ -529,13 +571,19 @@ async def handle_client(ws):
                 run_herdr("pane", "send-text", pane_id, text, remote=remote)
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
-                if workspace_id:
-                    log.info("Create tab from %s (%s): workspace=%s", ip, device, workspace_id)
-                    audit("create_tab", ip, device, "", f"workspace={workspace_id}")
-                    run_herdr("tab", "create", "--workspace", workspace_id, "--focus")
-                    await ws.send(json.dumps({"type": "tab_created", "ok": True}))
-                else:
+                if not workspace_id:
                     await ws.send(json.dumps({"type": "error", "message": "workspace_id required"}))
+                    continue
+                # workspace_id is its own ID space and collides like pane_id does, so it
+                # gets its own guard — the pane ambiguity set says nothing about it (D6).
+                remote, ws_err = resolve_workspace_remote(latest_agents, workspace_id)
+                if ws_err:
+                    await ws.send(json.dumps({"type": "error", "message": ws_err}))
+                    continue
+                log.info("Create tab from %s (%s): workspace=%s host=%s", ip, device, workspace_id, remote or "local")
+                audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
+                run_herdr("tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
+                await ws.send(json.dumps({"type": "tab_created", "ok": True}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
                 if sub and sub not in push_subscriptions:

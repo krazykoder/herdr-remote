@@ -25,11 +25,11 @@
 ]
 ```
 
-Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` ≤64 characters, absolute `cwd`, and `host` equal to `local` or one configured in `HERDR_REMOTES`. The path itself must be absolute. Any malformed entry, duplicate ID/root, unreadable file, or unknown host exits non-zero at startup. Unset variable or `[]` means Projects are disabled.
+Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` ≤64 characters, absolute `cwd`, and `host` equal to `local` or one configured in `HERDR_REMOTES`. The path itself must be absolute. Any malformed entry, duplicate id, unreadable file, or unknown host exits non-zero at startup. Duplicate roots are rejected per `(host, cwd)`, not per `cwd`: the same path on two different hosts is two distinct machines and resolves unambiguously, so refusing it would block the ordinary case of one repo checked out on a laptop and a build box. Unset variable or `[]` means Projects are disabled.
 
 For every live pane, relay matches same-host configured roots using `cwd == root` or `cwd.startswith(root.rstrip("/") + "/")`; longest root wins. Thus local agents started from a configured root or a subdirectory appear under that Project; unmatched panes stay visible as Other sessions. Matching is lexical: no git, worktree, or symlink resolution. Plain `startswith` is wrong — it groups `/code/x-old` under `/code/x`.
 
-**Only full `agents` snapshots carry grouping (D10).** An unmatched pane omits `project_id` entirely — not `null`, not `""`. `complete_agent_update_message:24` treats an empty value as "keep the previous value" for tracked fields and `apply_agent_message:49` merges with `dict.update`, so `null` in a snapshot is indistinguishable from "unchanged".
+**Only full `agents` snapshots carry grouping (D10).** An unmatched pane omits `project_id` entirely — not `null`, not `""`. A full snapshot replaces the client list, so either representation clears previous grouping; omission is the smaller additive wire shape.
 
 Incremental `agent_update` messages never carry `project_id`: the field stays **out of** `AGENT_EVENT_FIELDS`, so an update cannot disturb grouping, and the browser keeps the last snapshot's value until the next snapshot replaces the list wholesale (`apply_agent_message:36`). Worst-case staleness is one `POLL_INTERVAL`.
 
@@ -96,8 +96,7 @@ On every poll, recompute pane IDs present on more than one host. For these IDs, 
 | # | Given | Then |
 |---|---|---|
 | A1 | Pane cwd equals or is below configured root | Correct `project_id`; longest root wins |
-| A2 | Pane cwd is sibling prefix or wrong host | Snapshot omits the `project_id` key entirely; pane shown under Other sessions |
-| A2b | An `agent_event` arrives for a grouped pane | The broadcast `agent_update` contains no `project_id`; the browser's grouping is unchanged |
+| A2 | Pane cwd is sibling prefix/wrong host, or an `agent_event` arrives | Snapshot omits `project_id`; update contains no `project_id`; pane stays/shows under Other sessions until next snapshot as applicable |
 | A3 | Zero-session configured Project | Visible card with “No sessions” |
 | A4 | Config disabled | Existing workspace/tab navigation and `create_tab` remain available |
 | A5 | Fresh client connects | Receives `projects`, then cached `agents` |

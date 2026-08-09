@@ -37,15 +37,16 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 4. **Route order in `process_request`.** The comment at `:366` is load-bearing: event push (`?d=`) must be handled before any static route, or events are silently dropped while the caller still gets 200. New routes go below.
 5. **Snapshot fields are additive-only.** Five clients consume `agents`; `apply_agent_message` (`agent_state.py:33`) merges by `pane_id`.
 
-### Blast radius — measured, not asserted
+### Blast radius
 
-The relay is the core library and it must not be rewritten to gain a grouping feature. Measured against `relay/herdr_relay.py` (611 lines):
+The relay is the core library and it must not be rewritten to gain a grouping feature. P1 is measured from the shipped diff; P2 and P3 remain plan estimates.
 
 | Phase | `herdr_relay.py` | Other core | New files |
 |---|---|---|---|
-| P1 | ~+60 / −25, nine localized edits (~4% of lines) | `agent_state.py` **unchanged** (D10) | `relay/projects.py` (~70 lines, pure), `tests/test_projects.py` |
-| P2 | ~+120, one new command handler | none | none |
-| P3 | one constant (`1000` → `4000`) | none | none |
+| P1 (shipped) | **+63 / −15**, seven localized edits (~10% of lines, mostly the `create_tab` and `pane_guard` blocks) | `agent_state.py` **unchanged** (D10) | `relay/projects.py` (149 lines, pure), `tests/test_projects.py` (228) |
+| P1 browser (shipped) | `web/index.html` +91 / −36 — `renderWorkspaces` split into `hoistHtml` + `layoutHtml(list)` so the Project view reuses it | — | — |
+| P2 (estimate) | ~+120, one new command handler | none | none |
+| P3 (estimate) | one constant (`1000` → `4000`) | none | none |
 
 Every P1 edit is an insertion into an existing function or a new module-level helper. No function changes signature, no control flow is restructured, no dependency is added, and `run_herdr`, `process_request`, `event_push`, the UDP and mDNS paths, the push-subscription code, `audit`, and both allowlists are untouched.
 
@@ -98,7 +99,7 @@ For every live pane, relay matches `host` and `cwd` against configured Projects.
 - Agent started locally from subdirectory of configured Project root: **grouped under that Project**; longest root wins.
 - Agent outside every configured root: shown under **Other sessions**, never hidden.
 
-**Grouping is derived from polled snapshots only (D10).** An unmatched pane's snapshot entry carries **no `project_id` field** — the key is absent, not `null` or `""`. `complete_agent_update_message:24` treats an empty value as "keep the previous value" for tracked fields, and `apply_agent_message:49` merges with `dict.update`, so a `null` in a *snapshot* would be indistinguishable from "unchanged". Absent is unambiguous. The frontend buckets every agent without a `project_id` into **Other sessions**.
+**Grouping is derived from polled snapshots only (D10).** An unmatched pane's snapshot entry carries **no `project_id` field** — the key is absent, not `null` or `""`. A full `agents` snapshot replaces the browser list, so either representation would clear an old grouping; omission is the smaller additive wire shape. The frontend buckets every agent without a `project_id` into **Other sessions**.
 
 Incremental `agent_update` messages carry no `project_id` at all — the field stays out of `AGENT_EVENT_FIELDS`. An update therefore never touches the browser's grouping, which keeps the value from the last snapshot until the next one replaces it wholesale (`apply_agent_message:36`). Maximum staleness is one `POLL_INTERVAL`, 2 seconds, and only for the rare case of an agent `cd`-ing across a configured root.
 
@@ -305,9 +306,9 @@ The transfer action captures current text selection, resolves other healthy pair
 
 Sending then reuses the existing path unchanged: `send_text`, then `send_keys ["Enter"]` (`web/index.html:568-569`).
 
-### 6.4 The `send_text` cap — open implementation question
+### 6.4 P3 preflight — delivery behavior
 
-Two things have to be settled against a live agent pane before this is built.
+Before any P3 code, its implementer runs these checks against a live scratch pane and records the date, pane/agent, and PASS or FAIL in the P3 spec. P3 cannot begin until the newline result selects its sending path.
 
 **(a) Length.** `send_text` refuses text over 1000 chars (`:523`). A pasted diff blows through that. Raise the cap to 4000 — one constant, and the guard stays in place, because an unbounded write is a genuine abuse vector, not a formality. The alternative, chunking client-side into sub-1000 sends, is rejected: it risks a partial payload landing in the agent if a chunk fails midway.
 
@@ -369,9 +370,9 @@ Confirmed during discovery: the token check in `process_request` (`:334-347`) ru
 
 | Phase | Scope | Touches | Gate |
 |---|---|---|---|
-| **P1 — Projects** | Load `HERDR_PROJECTS_FILE`; emit `projects` and cached `agents` on connect; resolve each live pane by longest configured root; refuse ambiguous pane IDs (D6); add Project outer navigation; retain/fix workspace, tab, and `create_tab` controls | `projects.py` (new), `herdr_relay.py`, `agent_state.py`, `web/index.html`, tests | Root/subdirectory sessions group under Project; unmatched session appears under Other sessions; zero-session Project appears; config-disabled workspace UI is unchanged; remote `create_tab` reaches remote host; duplicate pane ID is refused. **Specced:** `03_specs/2026-08-08_projects_spec.md`. **Planned:** `04_implementation_plans/2026-08-08_p1_projects.md` |
+| **P1 — Projects** | Load `HERDR_PROJECTS_FILE`; emit `projects` and cached `agents` on connect; resolve each live pane by longest configured root; refuse ambiguous pane IDs (D6); add Project outer navigation; retain/fix workspace, tab, and `create_tab` controls | `projects.py` (new), `herdr_relay.py`, `web/index.html`, tests | Root/subdirectory sessions group under Project; unmatched session appears under Other sessions; zero-session Project appears; config-disabled workspace UI is unchanged; remote `create_tab` reaches remote host; duplicate pane ID is refused. **Specced:** `03_specs/2026-08-08_projects_spec.md`. **Planned:** `04_implementation_plans/2026-08-08_p1_projects.md` |
 | **P2 — Start session** | `start_agent` raw, no seeding; New workspace/New tab/Split placements; allowlists + `HERDR_ENABLE_WRITE_EXT` + token | `herdr_relay.py`, `web/index.html`, tests | Zero-session local/remote Project starts agent in new workspace; New tab and Split stay same-Project/same-host; invalid placement/refused source fails safely; audit line present. **Specced:** `03_specs/2026-08-08_start_agent_spec.md` |
-| **P3 — Local pairs + transfer UI** | `localStorage` pairs, pair editor, selection, prompt shortcut buttons, multiline composer, partner-composer prefill; `send_text` cap raised | `web/index.html`, one constant in `herdr_relay.py` | Pair survives page reload; cross-host pin refused; pinning an already-paired pane replaces after confirm; stale or duplicated fingerprint disables transfer; prompt button only inserts `@...`; Enter adds newline, Ctrl/Cmd+Enter sends; a 3000-char selection transfers intact; prefill never auto-sends; oversize text still refused |
+| **P3 — Local pairs + transfer UI** | **Preflight:** P3 implementer runs §6.4 against a live scratch pane and records the result in P3 spec. Then `localStorage` pairs, pair editor, selection, prompt shortcut buttons, multiline composer, partner-composer prefill; `send_text` cap raised | `web/index.html`, one constant in `herdr_relay.py` | Preflight PASS uses one `send_text`; FAIL uses per-line `send_text` plus `M-Enter`. Then Pair survives page reload; cross-host pin refused; pinning an already-paired pane replaces after confirm; stale or duplicated fingerprint disables transfer; prompt button only inserts `@...`; Enter adds newline, Ctrl/Cmd+Enter sends; a 3000-char selection transfers intact; prefill never auto-sends; oversize text still refused |
 | **P4 — Deferred** | Authenticated last-write-wins frontend-preferences sync; auto-relay with per-pair opt-in and hop cap; 3+ member groups; git/worktree-aware Projects; server-side instruction presets shared across clients | — | Not specced. Sync requires an authenticated user/profile model; auto-relay requires its own threat model. |
 
 Each phase is independently shippable. P3 does not depend on P2.
@@ -401,7 +402,7 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 
 Two are **experiments, not judgement calls** — each can force a design change rather than a parameter change, and each needs a live herdr. Neither blocks P1.
 
-1. **Multi-line delivery** (§6.4b) — does `herdr pane send-text` bracket-paste? Blocks the P3 transfer spec.
+1. **Multi-line delivery** (§6.4b) — does `herdr pane send-text` bracket-paste? Required P3 preflight; record result before P3 implementation.
 2. **Layout CLI signatures** (§5 callout) — do `workspace create --cwd --label`, `tab create`, `agent start --workspace`, and `pane rename` accept these flags and return IDs at `result.<name>`? Blocks the P2 start spec.
 3. **Pair creation UI** — confirm whether the pair editor lives on agent cards, terminal header, or both.
 4. ~~**Project ordering in the client**~~ — **resolved (D7):** configured file order, never reordered by activity.
