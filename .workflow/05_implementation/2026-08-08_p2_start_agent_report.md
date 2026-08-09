@@ -140,7 +140,7 @@ Startup waits for the port with a bounded poll rather than a fixed sleep.
 | # | Item | Blocks | Owner |
 |---|---|---|---|
 | 1 | **Real *remote* smoke start is untested.** There is no `HERDR_REMOTES` on this machine, so the real run confirmed the *local* path only. Remote routing evidence is the fake-ssh harness. Run one real start into a remote Project when an SSH target exists. | — | User |
-| 2 | **P3 bracketed-paste preflight is INCONCLUSIVE.** Unchanged from the P1 report; needs a visible focused pane. The FAIL fallback costs a protocol change (`M-Enter` in `SAFE_KEYS`). | P3 | P3 implementer |
+| 2 | ~~**P3 bracketed-paste preflight is INCONCLUSIVE.**~~ **PASS**, 2026-08-09, pane `wB:p2` (Claude Code), recorded in dev-notes §6.4. All three lines landed in the composer unsubmitted. P3 sends one `send_text`; `SAFE_KEYS` unchanged, no protocol change. | — | done |
 | 3 | **Relay wedge, cause unproven.** Unchanged from the P1 report. If it recurs, **do not kill it** — take a live `sample` first. | nothing | — |
 | 4 | Smoke-test workspace `wB` is still open with a live claude in it — `herdr workspace close wB`. | — | User |
 | 5 | Promotion of the Projects/Pairs docs from `07_dev_notes/` to `02_architecture/` | — | User |

@@ -317,6 +317,22 @@ On FAIL, the fallback is per-line `send-text` with `M-Enter` (Alt+Enter — newl
 
 **Attempt record, 2026-08-08:** the command was sent to an unfocused scratch Codex pane and then an existing idle Codex pane. The scratch pane exited before it could be read; both `pane read` and `agent read` returned no visible text for the existing pane. Result: **INCONCLUSIVE**. A visible live terminal must repeat the check and record PASS or FAIL before P3 begins; `C-c` was sent once to clear any unsent test input from the existing pane.
 
+**Result, 2026-08-09 — PASS.** Pane `wB:p2`, Claude Code (Opus 5), the P2 smoke workspace, focused and visible. `herdr pane send-text wB:p2 $'line one\nline two\nline three'` put all three lines into the composer as one entry:
+
+```
+❯ line one
+  line two
+  line three
+```
+
+Nothing was submitted — no turn appears in the transcript before or after — and `herdr pane send-keys wB:p2 C-c` cleared the composer, which is only possible for unsubmitted input. Confirmed twice: once by the user watching the terminal, once by reading `--source visible` between the send and the clear.
+
+`herdr pane send-text` emits a bracketed paste. **P3 sends the whole payload in one `send_text`.** The per-line `M-Enter` fallback is not needed, so `SAFE_KEYS` is unchanged and P3 requires no protocol change — only the 1000 → 4000 cap in (a).
+
+The earlier read failures were the reading method, not the sending: an unfocused or exited pane returns nothing. Read a focused pane with `--source visible`.
+
+Tested against Claude Code only. Codex was not retested — it has no disposable pane on this machine. Bracketed paste is emitted by herdr, so the honoring is per-TUI; if a codex transfer ever submits early, that is a per-agent bug, not a reason to redesign the send path.
+
 ---
 
 ## 7. Security
