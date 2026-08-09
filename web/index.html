@@ -397,6 +397,10 @@ function memberMatches(m, a) {
          a.agent === m.agent && (a.cwd || '') === (m.cwd || '');
 }
 
+function recentFingerprint(a) {
+  return {pane_id: a.pane_id, host: a.host || 'local', agent: a.agent, cwd: a.cwd || ''};
+}
+
 function pairHealth(pair, list) {
   for (const m of pair.members) {
     if (list.filter(a => a.pane_id === m.pane_id).length > 1)
@@ -625,7 +629,11 @@ function handleMessage(msg) {
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
   renderPairStrip();  // pair health is recomputed from every snapshot, never cached
-  renderRecents();
+  renderBody();
+  renderRecents();  // after the body: it is positioned relative to markup renderBody just wrote
+}
+
+function renderBody() {
   if (projects.length) { renderProjects(); return; }
   const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
   if (workspaces.length <= 1) {
@@ -643,7 +651,7 @@ function render() {
 function renderProjects() {
   if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
   let html = hoistHtml(agents);
-  html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
+  html += `<div class="chip-strip project-strip"><span class="chip-label">Projects</span>`;
   html += `<button class="chip${activeProject===null?' active':''}" onclick="selectProject(null)">All</button>`;
   for (const p of projects) {
     const list = agents.filter(a => a.project_id === p.id);
@@ -851,25 +859,42 @@ function submitStart() {
 
 const RECENTS_KEY = 'herdr_recents';
 const MAX_RECENTS = 6;
+let recentsEl = null;
+
+// Recents belong under the Projects chips — the chips choose a scope, recents jump inside it, so
+// scope reads first. With no Projects configured there is no strip and it stays at the top.
+function placeRecents(el) {
+  const strip = document.querySelector('#agents .project-strip');
+  if (strip) strip.after(el);
+  else document.getElementById('agentListView').insertBefore(el, document.getElementById('agents'));
+}
 
 function loadRecents() {
   try {
     const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
-    return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+    // Version-one recents stored bare pane IDs. Drop them: herdr can reuse an ID for a
+    // different session, and this is a convenience list, not data worth migrating unsafely.
+    return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id && x.agent) : [];
   } catch (e) { return []; }
 }
 
 function noteRecent(paneId) {
-  const next = [paneId, ...loadRecents().filter(p => p !== paneId)].slice(0, MAX_RECENTS);
+  const live = agents.filter(a => a.pane_id === paneId);
+  if (live.length !== 1) return;
+  const current = recentFingerprint(live[0]);
+  const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, MAX_RECENTS);
   localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
 }
 
 // Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
 // pane IDs, so a stale entry could open a pane the user never visited.
 function renderRecents() {
-  const el = document.getElementById('recents');
+  // Held as a live reference, not re-queried: #agents innerHTML is rewritten every render, which
+  // detaches this node when it sits inside the Projects layer.
+  const el = recentsEl || (recentsEl = document.getElementById('recents'));
+  placeRecents(el);
   const live = loadRecents()
-    .map(id => agents.find(a => a.pane_id === id))
+    .map(r => agents.find(a => memberMatches(r, a)))
     .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1);
   if (live.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
   el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
@@ -920,7 +945,7 @@ function openPairDialog(paneId, ev) {
   pairSource = agents.find(a => a.pane_id === paneId);
   if (!pairSource) return;
   pairPartner = null;
-  document.getElementById('pairSource').textContent = paneLabel(pairSource);
+  document.getElementById('pairSource').textContent = paneTitle(pairSource);
   document.getElementById('pairFields').style.display = 'none';
   setPairError('');
   renderPairCandidates();
@@ -944,9 +969,11 @@ function renderPairCandidates() {
   box.innerHTML = `<p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px">Partner</p>` +
     candidates.map(a => {
       const existing = pairFor(pairs, a.pane_id);
-      const note = existing ? ` <span style="color:var(--orange)">· in "${escapeHtml(existing.name)}"</span>` : '';
+      // &nbsp; not a plain space: the button is a flex container, so whitespace between its
+      // children collapses and the note would butt straight against the name.
+      const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
       const on = pairPartner && pairPartner.pane_id === a.pane_id;
-      return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneLabel(a))} · ${escapeHtml(a.agent)}${note}</button>`;
+      return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
     }).join('');
   submit.disabled = !pairPartner;
 }
@@ -1086,7 +1113,10 @@ function closeTransfer() {
 // context, so it must never end in a send.
 function doTransfer(shortcutIndex) {
   const pair = pairFor(pairs, activePane);
-  if (!pair) return;
+  if (!pair || pairHealth(pair, agents).state !== 'healthy') {
+    document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
+    return;
+  }
   const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
   const instruction = shortcutIndex >= 0 ? SHORTCUTS[shortcutIndex].text : '';
   const out = composeTransfer(instruction, mine.role, transferSelection);

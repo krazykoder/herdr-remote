@@ -149,7 +149,52 @@ two panes both called `claude` distinguish nothing.
 
 ---
 
-## 8. What this phase did not touch
+## 8. Post-report changes
+
+Written after §1–§7, from review of the shipped UI.
+
+**Two safety gaps closed.**
+
+1. **Recents stored a bare `pane_id`.** herdr reuses pane IDs, so a chip could open a session the
+   user never visited — the same failure the pair fingerprint exists to prevent, reintroduced by a
+   convenience list. Recents now store the full fingerprint and are matched with `memberMatches`.
+   Version-one entries are dropped rather than migrated: a convenience list is not worth an unsafe
+   migration.
+2. **Transfer trusted health computed at the last poll.** A pane could die inside that window and
+   the prefill would target it. `doTransfer` now rechecks `pairHealth` immediately before it
+   prefills, and a test asserts the recheck is present in the source.
+
+**Three UI changes, at the user's direction.**
+
+3. **Recents moved below the Projects chips** — the chips choose a scope and recents jump inside
+   it, so scope reads first. `#agents` innerHTML is rewritten on every poll, which detaches the
+   node, so it is held by reference and re-placed each render rather than re-queried. With no
+   Projects configured there is no strip and it falls back above the list.
+4. **The pair sheet shows the full `project · agent · name`** for its header and every candidate,
+   matching the cards. Role fields still default to the bare label: that string lands in
+   `feedback from …:` in the payload, where the full form is noise.
+5. Spacing bug found while doing 4 — `Architect 1· in "Cross check"` had no space, because the
+   candidate button is a flex container and whitespace between children collapses.
+
+### Renaming a pane does not rename its tab
+
+Asked during review. `rename_pane` calls `herdr pane rename`, which sets the **pane** label; the
+herdr tab bar draws **tab** labels (`herdr tab rename <tab_id>`). They are different objects and
+not one-to-one — `wB:p1` and `wB:p2` share tab `wB:t1` — so driving a tab rename from a pane rename
+would silently relabel a sibling pane. A pair member is a pane, so the web app shows the pane label.
+Driving tab labels too would need a new message type and a rule for shared tabs.
+
+### Pairs do not survive clearing site data
+
+Also asked. Expected: `herdr_pairs` is `localStorage`, browser-local and **origin**-local. Two
+consequences worth knowing — pairs do not follow a laptop to a phone, and reaching the relay on a
+different origin (`127.0.0.1`, a LAN address, the tunnel hostname) gets a separate set. Spec §2 puts
+any relay-side pair record out of scope and dev-notes Q5 defers sync; persisting them would mean
+relay-side storage behind `HERDR_RELAY_TOKEN`, since a pair names panes on the user's machine.
+
+---
+
+## 9. What this phase did not touch
 
 No pair record, prompt seeding, or cross-host pairing reached the relay. No auto-relay: every A→B
 hop still has a human at the checkpoint. `SAFE_KEYS` is unchanged — the preflight PASS removed the

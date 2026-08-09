@@ -21,14 +21,14 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
+               'recentFingerprint', 'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
 // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
-       pairCandidates, composeTransfer, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       pairCandidates, composeTransfer, recentFingerprint, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -105,9 +105,21 @@ test('a pane_id reported by two hosts is stale', () => {
   assert.match(h.reason, /more than one host/);
 });
 
+test('a recent fingerprint does not match a reused pane ID', () => {
+  assert.equal(memberMatches(recentFingerprint(agent()), agent({cwd: '/other'})), false);
+});
+
 test('a stale pair reports a reason naming the member', () => {
   const p = pair(member(), member({pane_id: 'w1:p2', role: 'reviewer', agent: 'codex'}));
   assert.match(pairHealth(p, [agent()]).reason, /reviewer/);
+});
+
+test('transfer rechecks pair health immediately before it prefills', () => {
+  const start = HTML.indexOf('function doTransfer');
+  const end = HTML.indexOf('function insertShortcut', start);
+  assert.ok(start !== -1 && end > start, 'doTransfer block not found');
+  const transfer = HTML.slice(start, end);
+  assert.match(transfer, /pairHealth\(pair, agents\)\.state !== 'healthy'/);
 });
 
 // --- lookup ---
