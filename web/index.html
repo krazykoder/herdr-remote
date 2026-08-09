@@ -177,6 +177,9 @@
       overflow-y: hidden;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      /* A fling past the last tab otherwise chains to the page, where Chrome on macOS reads a
+         horizontal swipe as navigate-back and leaves the pane. */
+      overscroll-behavior-x: none;
       scroll-behavior: smooth;
       scroll-snap-type: x proximity;
       scroll-padding: 0 12px;
@@ -494,6 +497,7 @@
       padding: 8px 12px;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: none;  /* same swipe-back chaining as the tab strip */
     }
 
     .chip-strip::-webkit-scrollbar {
@@ -735,7 +739,15 @@
       line-height: 1.5;
       color: var(--term-text);
       -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
+      /* Split by axis, deliberately. `contain` stops scroll chaining but still permits the
+         elastic bounce, which True size made visible by turning on overflow-x — panning a wide
+         line stretched and snapped, in Chrome and Safari but not Firefox. `none` on x removes
+         the bounce as well, so panning ends where the line ends everywhere.
+
+         y stays `contain`: the bounce at the top of the scrollback is the only feedback that
+         loadMore() just fired, and it is the axis every terminal app on the platform bounces on. */
+      overscroll-behavior-x: none;
+      overscroll-behavior-y: contain;
     }
 
     /* Reflow — the viewport decides where lines break. The hanging indent is the honesty: a
