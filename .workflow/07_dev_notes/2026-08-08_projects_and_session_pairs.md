@@ -37,6 +37,28 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 4. **Route order in `process_request`.** The comment at `:366` is load-bearing: event push (`?d=`) must be handled before any static route, or events are silently dropped while the caller still gets 200. New routes go below.
 5. **Snapshot fields are additive-only.** Five clients consume `agents`; `apply_agent_message` (`agent_state.py:33`) merges by `pane_id`.
 
+### Blast radius — measured, not asserted
+
+The relay is the core library and it must not be rewritten to gain a grouping feature. Measured against `relay/herdr_relay.py` (611 lines):
+
+| Phase | `herdr_relay.py` | Other core | New files |
+|---|---|---|---|
+| P1 | ~+60 / −25, nine localized edits (~4% of lines) | `agent_state.py` **unchanged** (D10) | `relay/projects.py` (~70 lines, pure), `tests/test_projects.py` |
+| P2 | ~+120, one new command handler | none | none |
+| P3 | one constant (`1000` → `4000`) | none | none |
+
+Every P1 edit is an insertion into an existing function or a new module-level helper. No function changes signature, no control flow is restructured, no dependency is added, and `run_herdr`, `process_request`, `event_push`, the UDP and mDNS paths, the push-subscription code, `audit`, and both allowlists are untouched.
+
+**Verified, not assumed:** the other four clients ignore both unknown message types and unknown JSON keys, so `projects` and `project_id` cannot break them — `herdr_tui.py:161-178` and `herdr_telegram.py:837-855` are `if/elif` chains with no `else`; `herdi-mac/Sources/RelayConnection.swift:303` and `herdi-ios/Sources/Services/RelayConnection.swift` end in `default: break`; and both Swift `AgentData` structs use synthesized `Decodable`, which drops unrecognized keys.
+
+Three genuine behaviour changes, all intended:
+
+1. `create_tab` can now return an error where it previously always "succeeded" against the local host. That is the G2 bug fix; its only caller is `web/index.html`.
+2. The relay sends two messages on connect where it previously sent none (G3).
+3. The relay can `exit(1)` at startup, only when `HERDR_PROJECTS_FILE` is set and invalid. New failure mode, deliberately fail-closed.
+
+P2 is where the surface actually grows, and it is the phase gated off by default behind `HERDR_ENABLE_WRITE_EXT` plus a mandatory token (§7.3).
+
 ### Gaps found during discovery
 
 | # | Finding | Consequence |
