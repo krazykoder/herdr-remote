@@ -65,8 +65,9 @@ the remembered pane rather than overwriting it.
 **S2.4** If the remembered pane is no longer live when the panel closes, the app lands on the agent
 list rather than opening a dead pane.
 
-**S2.5** Agents is a destination, not a toggle: it goes to the agent list and discards any remembered
-pane.
+**S2.5** A recent-pane shortcut is a destination, not a toggle: it opens that pane, closes any open
+panel, and discards the remembered pane — otherwise closing Settings later would yank the user back
+to a pane they had already moved on from.
 
 **S2.6** Two flex panes are never simultaneously visible.
 
@@ -81,7 +82,7 @@ composer, at every width. It is the same element in the same DOM position, reord
 bar, and not re-rendered. Its separator faces up there, since it is then the shell's last element.
 
 It carries, left to right: the connection dot, `herdr`, the connection state in parentheses, the
-agent count, then Agents, Activity and Settings.
+agent count, up to three recent-pane shortcuts, then Activity and Settings.
 
 > Rationale: in a pane the thumb is at the bottom on the composer, and the term header above already
 > carries back, status, title and refresh. The earlier decision to hide the header outright reclaimed
@@ -122,6 +123,17 @@ tap on a key or dock button otherwise leaves the pane zoomed with no obvious way
 pinch-zoom stay available: the app never suppresses the user's own zoom, so `user-scalable=no` and
 `maximum-scale=1` are rejected — the first is ignored by modern iOS Safari anyway, and where either
 is honoured it removes zoom from people who need it.
+
+**S3.11** The app header carries up to **three** shortcuts to the most recently visited panes,
+labelled with the pane name and carrying its status colour, ordered most-recent first. The shortcut
+for the pane currently open is marked as such. Only live panes are offered — a dead `pane_id` is
+never shown, because herdr reuses IDs and the shortcut would open a pane the user never visited.
+
+They take the header's slack and give it up first: at any width the Activity and Settings controls
+keep their full hit areas, and the shortcuts truncate instead.
+
+> Rationale: moving between panes is the most frequent action in the app. Landing on the agent list
+> to pick the next one is a detour on the path the user takes most often.
 
 **S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
 agent list, as a vertical list using the same section header and the same cards as the list above —

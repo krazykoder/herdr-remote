@@ -108,6 +108,45 @@
       border-top: 1px solid var(--border);
     }
 
+    /* Direct jumps to the last panes visited, in the bar that is always on screen. Takes the
+       slack in the header and gives it up first: the two icon buttons never get squeezed. */
+    .nav-recents {
+      display: flex;
+      gap: 6px;
+      margin-left: auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .nav-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      max-width: 104px;
+      min-height: 44px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.7rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .nav-chip .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .nav-chip.active {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
     .header h1 {
       font-size: 1rem;
       font-weight: 700;
@@ -958,16 +997,9 @@
     <span class="dot status-dot"></span>
     <h1>herdr</h1>
     <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
-    <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
-    <button id="navAgents" onclick="goAgents()" aria-label="Agents"><svg width="18" height="18" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="8" y1="6" x2="21" y2="6" />
-        <line x1="8" y1="12" x2="21" y2="12" />
-        <line x1="8" y1="18" x2="21" y2="18" />
-        <line x1="3" y1="6" x2="3.01" y2="6" />
-        <line x1="3" y1="12" x2="3.01" y2="12" />
-        <line x1="3" y1="18" x2="3.01" y2="18" />
-      </svg></button>
+    <span id="agentCount" style="font-size:0.7rem;color:var(--muted)"></span>
+    <!-- Jump straight to the last three panes visited. Filled by renderNavRecents. -->
+    <div class="nav-recents" id="navRecents"></div>
     <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -1433,13 +1465,33 @@
       else document.getElementById('agentListView').style.display = '';
     }
 
-    // The agent list is a destination, not a toggle: it discards the remembered pane.
-    function goAgents() {
+    // Jumping between panes is the most frequent move in the app, so the last three live ones sit
+    // in the bar that is always on screen. Same liveness rule as the Recents section: a dead
+    // pane_id is dropped, never offered, because herdr reuses IDs.
+    const NAV_RECENTS = 3;
+
+    function renderNavRecents() {
+      const el = document.getElementById('navRecents');
+      const live = loadRecents()
+        .map(r => agents.find(a => memberMatches(r, a)))
+        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1)
+        .slice(0, NAV_RECENTS);
+      el.innerHTML = live.map(a => {
+        const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+        return `<button class="nav-chip${a.pane_id === activePane ? ' active' : ''}" ` +
+          `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+          `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
+          `<span class="label">${escapeHtml(paneLabel(a))}</span></button>`;
+      }).join('');
+    }
+
+    // A jump is a destination, so it drops any panel the user was in and the pane it would
+    // have returned to — otherwise closing Settings later would yank them back to an older pane.
+    function jumpToPane(paneId) {
       panelReturnPane = null;
       document.getElementById('settingsView').style.display = 'none';
       document.getElementById('timelineView').style.display = 'none';
-      if (activePane) closeTerminal();
-      else document.getElementById('agentListView').style.display = '';
+      openTerminal(paneId);
     }
 
     function toggleSettings() {
@@ -1610,6 +1662,7 @@
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
+      renderNavRecents();
     }
 
     function renderBody() {
@@ -2263,8 +2316,13 @@
     }
 
     function openTerminal(paneId) {
+      // Opening over an already-open pane leaves the old poller running otherwise, and every
+      // switch adds another read_pane every 3s. Cleared here rather than in each caller, because
+      // switchToPartner and the header chips both land straight on this without closing first.
+      clearInterval(refreshInterval);
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       noteRecent(paneId);
+      renderNavRecents();  // the chip for this pane has to read as active straight away
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
       document.getElementById('agentListView').style.display = 'none';
@@ -2296,6 +2354,7 @@
       activePane = null; clearInterval(refreshInterval);
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
+      renderNavRecents();
       document.getElementById('terminalView').classList.remove('active');
       closeTermMenu();
       document.body.classList.remove('terminal-open');

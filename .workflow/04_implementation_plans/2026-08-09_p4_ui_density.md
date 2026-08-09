@@ -171,8 +171,23 @@ exemption in the 768px block goes away entirely:
     }
 ```
 
-The header gains an Agents control (`goAgents`) beside Activity and Settings, and `setStatus`
+The header gains three recent-pane shortcuts beside Activity and Settings (S3.11), and `setStatus`
 renders the connection state parenthesised — `(live)` / `(connecting…)` / `(offline)`.
+
+`renderNavRecents` reuses the liveness filter the Recents section already uses, capped at three, and
+runs from `render`, from `openTerminal` (so the new pane's chip reads active immediately) and from
+`closeTerminal`. `.nav-recents` carries `margin-left: auto`, `min-width: 0` and `overflow: hidden`,
+so it absorbs the header's slack and truncates before the two icon buttons lose any hit area.
+
+**Bug found while wiring this up.** `openTerminal` set `refreshInterval` without clearing the
+previous one, so opening a pane over an open pane left the old 3s poller running. `switchToPartner`
+has been doing exactly that since P3 — every pair switch added another `read_pane` every 3 seconds
+until the pane was closed. The header shortcuts make it reachable a second way. Fixed once at the
+top of `openTerminal` rather than in each caller:
+
+```js
+      clearInterval(refreshInterval);
+```
 
 ### `[MODIFY]` scrollers (lines 129–142)
 
@@ -700,7 +715,10 @@ Manual, with the relay running:
 | M31 | Open a pane → Settings → Activity → Activity | Returns to the same pane; the switch did not lose it |
 | M32 | Open a pane → Settings, kill the pane in herdr, then Settings again | Lands on the agent list, no dead pane |
 | M33 | Agent list → Activity → Activity | Returns to the agent list |
-| M34 | In a pane, tap Agents | Agent list; a later Settings toggle does not jump back to the pane |
+| M34 | In a pane, tap another pane's header shortcut | That pane opens; its chip becomes the active one |
+| M36 | Switch panes six times via the header shortcuts, then watch the relay log | One read_pane every 3s, not six |
+| M37 | 380px wide, three shortcuts with long names | Names truncate; Activity and Settings keep full 44px hit areas |
+| M38 | Kill a pane that has a header shortcut | Its shortcut disappears on the next snapshot |
 | M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
 | M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
@@ -729,11 +747,13 @@ Manual, with the relay running:
     needs two taps (M19, M24–M26).
 11. The gear menu carries an independent 8–24px composer text size defaulting to 16, and the pair
     items with a confirming unpair (M27, M28).
-14. Settings and Activity return to wherever the user was, including the pane; Agents does not
-    (M30–M34).
+14. Settings and Activity return to wherever the user was, including the pane; a pane shortcut does
+    not (M30–M34).
+15. The header carries up to three live recent-pane shortcuts that open their pane directly, and
+    switching panes leaves exactly one poller running (M34, M36–M38).
 12. The pair strip carries only switch and transfer, and its placement is settable and persisted,
     defaulting to above the composer (M28, M29).
-15. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
+16. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
 acceptance criteria for this phase.
