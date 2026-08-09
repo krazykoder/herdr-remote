@@ -102,10 +102,10 @@
     /* No vertical padding: the 44px controls inside already set the bar's height, and padding on
        top of them only made it taller than anything it contains needs. */
     .header {
-      padding: 0 12px;
+      padding: 0 8px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       border-bottom: 1px solid var(--border);
     }
 
@@ -116,6 +116,45 @@
       order: 9;
       border-bottom: none;
       border-top: 1px solid var(--border);
+    }
+
+    /* The shell's last row at every width. Its bottom padding is as much the point as its
+       contents: ~20px keeps the text clear of the iPhone's bottom curve and home indicator.
+       env() resolves to 0 until P5 adds viewport-fit=cover, so the 20px stands alone for now and
+       the device inset simply adds to it once it starts reporting. */
+    .status-bar {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+      font-size: 0.65rem;
+      font-weight: 500;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .status-bar .left {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-bar .right {
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .status-bar .right.on {
+      color: var(--green);
+    }
+
+    /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
+    body.terminal-open>.status-bar {
+      order: 10;
     }
 
     /* One badge per live agent, in the bar that is always on screen. Snapshot order, never
@@ -147,6 +186,17 @@
       display: flex;
     }
 
+    /* The pair of icon buttons is one group, not two header children with a gap between them.
+       margin-left:auto pins the group right at every width and in every view — the tab strip is
+       display:none on the landing page, so relying on it to push them over left them next to the
+       title there. */
+    .header .nav-group {
+      display: flex;
+      flex-shrink: 0;
+      gap: 2px;
+      margin-left: auto;
+    }
+
     .agent-tabs::-webkit-scrollbar {
       display: none;
     }
@@ -173,18 +223,32 @@
 
     /* 44px tall for the hit area, but only ~28px of it is painted: the pill is drawn by an inset
        shadow inside a transparent button, so the bar reads light while the target stays full-size. */
+    /* The button is the 44px touch target and paints nothing; the pill inside it is what the eye
+       sees, and it is 28px. That split is the only way to have a tab that looks slim in a slim bar
+       without taking the hit area down with it. */
     .agent-tab {
       display: flex;
       align-items: center;
-      gap: 6px;
       flex: 0 0 auto;
       scroll-snap-align: start;
-      max-width: 128px;
+      max-width: 132px;
+      min-width: 0;
       min-height: 44px;
-      padding: 0 11px;
+      padding: 0;
       border: none;
-      border-radius: 8px;
       background: none;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .agent-tab .pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 7px;
       box-shadow: inset 0 0 0 1px var(--border);
       color: var(--muted);
       font-size: 0.72rem;
@@ -192,7 +256,6 @@
       letter-spacing: -0.01em;
       white-space: nowrap;
       overflow: hidden;
-      cursor: pointer;
       transition: box-shadow 0.15s, color 0.15s, background 0.15s;
     }
 
@@ -201,7 +264,7 @@
       text-overflow: ellipsis;
     }
 
-    .agent-tab:hover {
+    .agent-tab:hover .pill {
       background: var(--surface);
       box-shadow: inset 0 0 0 1px var(--muted);
       color: var(--text);
@@ -209,7 +272,7 @@
 
     /* Selection is a filled pill, not a tinted border: at 0.72rem in a crowded bar a border-only
        cue is invisible on a phone. */
-    .agent-tab.active {
+    .agent-tab.active .pill {
       background: var(--blue);
       box-shadow: inset 0 0 0 1px var(--blue);
       color: var(--bg);
@@ -218,7 +281,7 @@
 
     /* The selected tab needs its own hover, or pointing at it makes it look like every other
        hovered tab and the selection appears to move. Brighter and lifted, never repainted. */
-    .agent-tab.active:hover {
+    .agent-tab.active:hover .pill {
       background: var(--blue);
       box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px color-mix(in srgb, var(--blue) 30%, transparent);
       color: var(--bg);
@@ -235,13 +298,16 @@
       letter-spacing: -0.02em;
     }
 
+    /* Narrower than the 44px square, on purpose: the tabs are what the user aims at in this bar
+       and every pixel here is a pixel they do not get. Full 44px height is kept, so the target
+       is squeezed on one axis only, and the two sit tight against each other. */
     .header button {
       background: none;
       border: none;
       color: var(--muted);
       cursor: pointer;
-      padding: 4px;
-      min-width: 44px;
+      padding: 0;
+      min-width: 36px;
       min-height: 44px;
       display: flex;
       align-items: center;
@@ -675,6 +741,12 @@
       overscroll-behavior: contain;
     }
 
+    /* Empty for most of a pane's life. Left displayed it still drew a top border and 12px of
+       padding, which read as dead space between the terminal and the composer. */
+    .quick-actions:empty {
+      display: none;
+    }
+
     .quick-actions {
       padding: 6px 10px;
       border-top: 1px solid var(--border);
@@ -1080,17 +1152,19 @@
     <h1>herdr</h1>
     <!-- One badge per live agent, selectable like tabs. Filled by renderAgentTabs. -->
     <div class="agent-tabs" id="agentTabs"></div>
-    <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg></button>
-    <button id="navSettings" onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path
-          d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg></button>
+    <div class="nav-group">
+      <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg></button>
+      <button id="navSettings" onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg></button>
+    </div>
   </div>
 
   <div class="settings" id="settingsView">
@@ -1137,6 +1211,14 @@
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
+  </div>
+
+  <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
+       anything. Deliberately sparse for now — the space exists as much for the iPhone's bottom
+       curve as for what it says. -->
+  <div class="status-bar" id="statusBar">
+    <span class="left" id="statusBarLeft"></span>
+    <span class="right" id="statusBarRight"></span>
   </div>
 
   <div class="terminal-view" id="terminalView">
@@ -1592,8 +1674,9 @@
           const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
           return `<button class="agent-tab" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+            `<span class="pill">` +
             `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
-            `<span class="label">${escapeHtml(paneLabel(a))}</span></button>`;
+            `<span class="label">${escapeHtml(paneLabel(a))}</span></span></button>`;
         }).join('');
         tabsActive = null;  // the buttons are new, so the class has to be applied again
       }
@@ -1609,6 +1692,26 @@
         // neighbour you are most likely to want next. Centring always shows both.
         b.scrollIntoView({ block: 'nearest', inline: 'center' });
       });
+    }
+
+    // --- Bottom status bar ---
+    // Left: when the open pane's content last actually changed. Stamping every poll would read
+    // "now" forever and mean nothing, so the stamp is taken only when the text differs.
+    let paneStampAt = null;
+
+    function fmtStamp(d) {
+      const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return `${t} · ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+    }
+
+    function renderStatusBar() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const on = !!a && a.status === 'working';
+      document.getElementById('statusBarLeft').textContent =
+        activePane && paneStampAt ? fmtStamp(paneStampAt) : '';
+      const right = document.getElementById('statusBarRight');
+      right.textContent = a ? (on ? 'active' : 'idle') : '';
+      right.classList.toggle('on', on);
     }
 
     // With the scrollbar hidden, nothing else says there are more tabs off-screen.
@@ -1798,7 +1901,10 @@
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
         const prevScroll = el.scrollTop;
-        el.textContent = msg.content || '(empty)';
+        const next = msg.content || '(empty)';
+        // Only a real change is activity. The pane is re-read every 3s regardless.
+        if (next !== el.textContent) { paneStampAt = new Date(); renderStatusBar(); }
+        el.textContent = next;
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
           const growth = el.scrollHeight - prevHeight;
@@ -1810,6 +1916,7 @@
     }
 
     function render() {
+      renderStatusBar();
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
@@ -2482,6 +2589,8 @@
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
       renderAgentTabs();  // the tab for this pane has to read as active straight away
+      paneStampAt = null;  // the previous pane's timestamp is not this one's
+      renderStatusBar();
       document.getElementById('terminalView').classList.add('active');
       const qa = document.getElementById('quickActions');
       const ak = document.getElementById('actionKeys');
@@ -2512,6 +2621,8 @@
       closeTermMenu();
       document.body.classList.remove('terminal-open');
       document.getElementById('agentListView').style.display = '';
+      paneStampAt = null;
+      renderStatusBar();
     }
 
     let paneLines = 200;

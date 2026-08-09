@@ -169,8 +169,33 @@ strip its room; the wording survives as the dot's tooltip. The agent count is go
 reason — the list and the strip both show the agents themselves.
 
 **S3.13** The app header carries no vertical padding: the 44px controls inside already set its
-height, and padding on top of them made the bar taller than anything it contains requires. Hit
-areas are unchanged — the height came off the bar, not off the targets.
+height, and padding on top of them made the bar taller than anything it contains requires.
+
+Activity and Settings are one right-pinned group at every width and in **every view**, including
+the landing page where the tab strip is absent. They are 36px wide rather than 44 — squeezed on the
+horizontal axis only, keeping full 44px height — because in this bar the tabs are what the user
+aims at, and width spent on two fixed icons is width the tabs never get.
+
+**S3.14** A tab's touch target and its painted pill are different boxes: the button is 44px tall and
+paints nothing, the pill inside it is 28px. This is the only way to keep a slim tab in a slim bar
+without taking the hit area down with it.
+
+**S3.15** The quick-actions row is hidden while empty. Displayed, it drew a top border and its
+padding even with no prompt pending, which read as dead space between the terminal and the composer
+for most of a pane's life.
+
+**S3.16** The shell's last row is a **status bar**, present in every view. Left: when the open
+pane's content last actually changed, as time and short date. Right: `active` while that pane is
+working, `idle` otherwise. Both are blank with no pane open.
+
+Its bottom padding is as much the point as its contents: ~20px keeps the text clear of the iPhone's
+bottom curve and home indicator. `env(safe-area-inset-bottom)` is added to that and resolves to 0
+until P5 adds `viewport-fit=cover`, so the fixed 20px stands alone for now.
+
+The left stamp is taken **only when the pane text differs** from what is already shown. The pane is
+re-read every 3 seconds regardless, so stamping each poll would read as "now" forever and say
+nothing. It is cleared when a pane opens or closes — the previous pane's timestamp is not this
+pane's.
 
 **S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
 agent list, as a vertical list using the same section header and the same cards as the list above —

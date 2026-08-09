@@ -760,6 +760,40 @@ reader.
 `.term-menu-wrap` gains `margin-left: 6px`. Refresh and the gear are adjacent, do very different
 things, and the header's 8px gap alone put them inside mis-tap distance.
 
+### `[NEW]` bottom status bar, slim tabs, no dead row
+
+**Status bar.** `#statusBar` is a new last child of the shell with a `.left` and a `.right` span,
+`order: 10` under `body.terminal-open` so it stays below the app header, which itself is at the
+bottom in a pane. Its `padding-bottom` is `calc(20px + env(safe-area-inset-bottom, 0px))` — the
+20px is the iPhone bottom-curve allowance and stands alone today, since `env()` reports 0 without
+`viewport-fit=cover`; P5 adding that directive makes the device inset add to it rather than
+replace it.
+
+`renderStatusBar()` reads the open pane from the live snapshot: left is `fmtStamp(paneStampAt)`,
+right is `active` / `idle` from `status === 'working'`, both blank with no pane. Called from
+`render()`, `openTerminal`, `closeTerminal`, and from the `pane_content` handler.
+
+`paneStampAt` is set in the `pane_content` handler **only when the incoming text differs** from
+what is displayed. `refreshPane` polls every 3s, so stamping on arrival would show "now"
+permanently. It is nulled on open and on close, or a new pane inherits the last one's time.
+
+**Slim tabs.** The tab's contents move into a `<span class="pill">`; the button keeps
+`min-height: 44px` and now paints nothing, and the pill is 28px with the border, fill, radius and
+type. Splitting the target from the paint is what allows a slim tab in a 44px bar without taking
+the hit area down with it. All four state rules (`:hover`, `.active`, `.active:hover`) move to
+`.pill`; the dot's ring stays on `.agent-tab.active .dot`.
+
+**Dead row.** `.quick-actions:empty { display: none }`. `#quickActions` is empty for most of a
+pane's life, and displayed it still drew `border-top` plus 12px of vertical padding between the
+terminal and the composer.
+
+**Header compression.** `.header` gap 10px to 8px and side padding 12px to 8px. Activity and
+Settings move into a `.nav-group` with `gap: 2px` and `margin-left: auto`: the group is pinned
+right in every view, which the tab strip could not do for it — the strip is `display: none` on the
+landing page, so without this the buttons sat beside the title there. `.header button` drops to
+`min-width: 36px` with no padding, keeping the full 44px height. The hit area is squeezed on one
+axis only, deliberately: the tabs are the target in this bar.
+
 ---
 
 ## Verification
@@ -843,6 +877,13 @@ Manual, with the relay running:
 | M54 | Open the eighth tab from the first | It lands centred with a neighbour visible on both sides |
 | M55 | Mobile, fling the strip | Settles on a tab edge; a short deliberate drag stops where released |
 | M56 | Block an agent, watch its tab | The dot turns red and stays solid — nothing in the strip blinks |
+| M57 | iPhone, landing page and in a pane | ~20px of clear space below the status bar; no text under the home indicator |
+| M58 | Open a pane and leave it idle 30s, then type into the agent | Left stamp holds, then updates the moment the pane text changes |
+| M59 | Open pane A, note the stamp, switch to pane B | B starts blank rather than showing A's time |
+| M60 | Watch the right side while an agent works, then finishes | active while working, idle after |
+| M61 | Open a pane with no prompt pending | No gap between the terminal and the composer; the row returns when a prompt arrives |
+| M62 | Measure a tab | 44px tall target, ~28px painted pill |
+| M63 | Landing page and in a pane, at 380px and 1440px | Activity and Settings are flush right in both views at both widths |
 | M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
 | M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
@@ -880,7 +921,12 @@ Manual, with the relay running:
 23. Every tab is reachable at every width — touch fling and desktop wheel — with edge fades marking
     overflow and selection centring on jump (M52–M55).
 21. The current tab's hover is distinct from an unselected tab's (M50).
-22. The app header is 44px tall with no control below 44px, and carries no agent count (M47, M51).
+22. The app header is 44px tall and carries no agent count; Activity and Settings are 36×44 and
+    pinned right in every view (M47, M51, M63).
+24. A status bar is the shell's last row in every view, with ~20px of bottom clearance, a
+    change-driven timestamp on the left and active/idle on the right (M57–M60).
+25. The quick-actions row occupies no space while empty, and a tab paints slimmer than its 44px
+    target (M61, M62).
 17. Dark is the default with no OS dependency; Light is opt-in from Settings, persists, and applies
     before first paint (M43–M45).
 18. `(live)` / `(connecting…)` / `(offline)` text is gone; the status dot alone carries the state,
