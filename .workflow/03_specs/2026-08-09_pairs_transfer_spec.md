@@ -4,7 +4,7 @@
 **Source:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs.md` §3, §6, §7.2
 **Depends on:** P1 (grouping, `pane_guard`). P2 is optional — a pair works on any two live panes.
 **Preflight:** Bracketed paste **PASS** (2026-08-09, dev-notes §6.4). One `send_text` carries the payload.
-**Status:** Approved — implementation-ready.
+**Status:** Implemented — `web/index.html`, `tests/test_pairs.js`, `relay/herdr_relay.py`, `relay/start_agent.py`.
 
 ---
 
