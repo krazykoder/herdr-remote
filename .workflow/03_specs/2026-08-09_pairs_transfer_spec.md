@@ -27,9 +27,20 @@ The pair is a frontend binding, not a channel. It does not move text — §4 doe
 | Multiline composer, Ctrl/Cmd+Enter to send | Changing how `send_text` reaches herdr |
 | `send_text` cap 1000 → 4000 | Any other relay behaviour |
 | Instruction shortcut buttons | Prompt copy authored by the implementer — paths only |
+| Switch-to-partner control and key binding | Auto-following the partner, or switching on its state |
+| `rename_pane` (added mid-phase, see below) | A frontend-only display alias |
 
-**One relay-side change exists in this phase: the cap constant.** Everything else is
-`web/index.html`. If a change requires a new message type, it is out of scope — say so and stop.
+**Two relay-side changes exist in this phase.** The cap constant, and `rename_pane` — a new
+message type, added at the user's explicit request after implementation began. The original
+boundary said a new message type meant stopping; recording the crossing rather than quietly
+widening the scope. It is **not** behind `HERDR_ENABLE_WRITE_EXT`: that gate exists for spawning
+processes, and relabelling an existing pane is strictly weaker than `send_text` and `send_keys`,
+which are already open. Gating it while leaving those open would be theatre. The label is bounded
+by `validate_pane_label` (1–32 chars, no control characters) because it becomes an argv entry.
+
+Renaming goes through herdr, not a browser-local alias. An alias would disagree with the herdr
+pane list and with the `Architect N` labels a started session receives, leaving one pane with
+three names.
 
 ---
 
@@ -63,8 +74,11 @@ candidate name. Selecting a partner shows three editable fields before save:
 
 - Pair name, default `<source label> ↔ <partner label>`, each falling back to its agent name when
   the pane carries no label; required, maximum 64 characters.
-- Source display role, default source agent name.
-- Partner display role, default partner agent name.
+- Source display name, defaulting to the source pane's own label.
+- Partner display name, defaulting to the partner pane's own label.
+
+The agent name is a poor default here: two panes both called `claude` tell the reader nothing
+about which colleague sent the text.
 
 Save generates the pair `id` as `'p_' + Math.random().toString(36).slice(2, 10)`, captures both
 fingerprints, persists the pair, and closes the sheet. Not `crypto.randomUUID()` — it is `undefined`
@@ -122,19 +136,22 @@ selection moves.
 ```
 {instruction}
 
-feedback from {from_role} ({from_agent}):
-<<<TRANSFER
+feedback from {from_name}:
 {selected text}
-TRANSFER>>>
 ```
 
-**The fence is not decoration.** Without it, transferred content containing a line like
-`Proceed to implement` is indistinguishable from the user's own instruction. The delimiter gives
-the receiving agent an unambiguous boundary.
+`from_name` is the source pane's display name — `Architect 1`, `Reviewer 2` — editable in the pair
+sheet and defaulting to the pane's own label. The agent name is deliberately not repeated: the
+receiving agent is being told which colleague sent the text, not which tool produced it.
 
-If the selection itself contains either `<<<TRANSFER` or `TRANSFER>>>` at line start, the transfer
-is refused with a message. Escaping or renaming the fence per payload is more machinery than the
-case deserves; refusing is honest and the user can trim the selection.
+**No fence — changed 2026-08-09 at the user's direction, knowingly.** The original design wrapped
+the quoted region in `<<<TRANSFER` / `TRANSFER>>>` because without a delimiter, transferred
+content containing a line like `Proceed to implement.` is indistinguishable from the user's own
+instruction. That boundary is gone, and with it the refusal of selections that forged the
+sentinels. The remaining containment is human: the user chooses the selection and reads the
+prefilled composer before sending. Recorded here rather than quietly dropped, so a future reader
+sees a decision instead of an omission — reintroducing a delimiter is a one-line change in
+`composeTransfer`.
 
 Over 4000 chars after composition: refuse in the frontend, naming the size. Do not silently
 truncate a diff, and do not chunk — a partial payload landing in an agent is worse than a refusal.
@@ -189,10 +206,13 @@ transfer moves it into B's context. The relay no longer participates, so contain
 
 1. The user selects the text — only a selection moves.
 2. The composer is prefilled, **never** auto-sent.
-3. The payload is fenced.
+3. ~~The payload is fenced.~~ **Removed 2026-08-09** at the user's direction (§4.2). This was a
+   security change, made deliberately and with the tradeoff stated, not a UX tweak.
 4. The 4000 cap bounds volume; `audit()` records it.
 
-Removing any one of these is a security change, not a UX change. **No auto-relay in v1.**
+Removing any of the remaining three is a security change, not a UX change. Points 1 and 2 now
+carry the whole boundary, which makes the prefill-never-auto-send rule load-bearing rather than
+merely careful. **No auto-relay in v1.**
 
 ---
 
@@ -207,8 +227,11 @@ Removing any one of these is a security change, not a UX change. **No auto-relay
 | A5 | A pane ID reused by a different session (different `cwd`) reads stale, not healthy |
 | A6 | A `pane_id` duplicated across two hosts in one snapshot reads stale |
 | A7 | Transfer with a selection prefills the **partner's** composer and sends nothing |
-| A8 | The prefilled payload carries instruction, attribution, and fence, in that order |
-| A9 | A selection containing either transfer fence sentinel is refused |
+| A8 | The prefilled payload carries instruction, then attribution, then the text |
+| A9 | The payload contains no fence, and a selection containing the old sentinels passes through unchanged |
+| A16 | The switch control and its ⌘/Ctrl+Shift+P binding move to the partner pane, and both are absent on a stale pair |
+| A17 | Renaming a pane changes the label herdr itself reports; empty, over-32-character, and control-character labels are refused |
+| A18 | Every pane displays as `project · agent · name`, dropping absent parts rather than showing an empty segment |
 | A10 | A composed payload over 4000 chars is refused, naming the size, and sends nothing |
 | A11 | Enter in the composer inserts a newline; Ctrl/Cmd+Enter sends |
 | A12 | A multi-line payload arrives in the agent's composer as one unsubmitted entry (preflight path) |

@@ -14,6 +14,7 @@ from start_agent import (
     load_start_agents,
     next_role_label,
     tab_create_args,
+    validate_pane_label,
     validate_start_request,
 )
 
@@ -243,6 +244,36 @@ class DigTests(unittest.TestCase):
         self.assertEqual(dig({"result": None}, "result", "agent", "pane_id"), "")
         self.assertEqual(dig({"result": {"agent": {"pane_id": 7}}},
                              "result", "agent", "pane_id"), "")
+
+
+class PaneLabelTests(unittest.TestCase):
+    def test_accepts_and_strips(self):
+        self.assertEqual(validate_pane_label("  Architect 1  "), ("Architect 1", ""))
+
+    def test_rejects_empty_and_whitespace_only(self):
+        for raw in ("", "   ", "\t"):
+            label, err = validate_pane_label(raw)
+            self.assertEqual(label, "")
+            self.assertTrue(err)
+
+    def test_rejects_non_string(self):
+        self.assertEqual(validate_pane_label(None)[0], "")
+        self.assertEqual(validate_pane_label(7)[0], "")
+
+    def test_length_boundary(self):
+        self.assertEqual(validate_pane_label("x" * 32), ("x" * 32, ""))
+        self.assertEqual(validate_pane_label("x" * 33)[0], "")
+
+    def test_rejects_control_characters(self):
+        # A newline or escape in a pane label corrupts the herdr status line and pane list.
+        for raw in ("bad\nname", "bad\tname", "bad\x1b[31mname", "bad\x7fname"):
+            label, err = validate_pane_label(raw)
+            self.assertEqual(label, "", raw)
+            self.assertIn("control", err)
+
+    def test_allows_punctuation_and_non_ascii(self):
+        for raw in ("charts.TS · api", "Reviewer #2", "Wörker"):
+            self.assertEqual(validate_pane_label(raw), (raw, ""))
 
 
 if __name__ == "__main__":

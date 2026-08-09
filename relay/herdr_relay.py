@@ -22,6 +22,7 @@ from start_agent import (
     dig,
     load_start_agents,
     pane_rename_args,
+    validate_pane_label,
     tab_create_args,
     validate_start_request,
     workspace_create_args,
@@ -666,6 +667,33 @@ async def handle_client(ws):
                 log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("send_text", ip, device, pane_id, f"text={text!r}")
                 run_herdr("pane", "send-text", pane_id, text, remote=remote)
+            elif msg_type == "rename_pane":
+                # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
+                # Relabelling an existing pane is strictly weaker than send_text and send_keys,
+                # which are already open, so gating it here and not those would be theatre.
+                pane_id = msg["pane_id"]
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
+                    continue
+                label, label_err = validate_pane_label(msg.get("label", ""))
+                if label_err:
+                    await ws.send(json.dumps({"type": "error", "message": label_err}))
+                    continue
+                remote = pane_remote_map.get(pane_id)
+                audit("rename_pane", ip, device, pane_id, f"label={label!r}")
+                try:
+                    result = run_herdr_result(*pane_rename_args(pane_id, label), remote=remote)
+                except Exception as e:
+                    log.warning("rename failed for pane %s: %s", pane_id, e)
+                    await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
+                    continue
+                if result.returncode != 0:
+                    log.warning("rename failed for pane %s with exit %s", pane_id, result.returncode)
+                    await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
+                    continue
+                await ws.send(json.dumps({"type": "command_result", "command": "rename_pane",
+                                          "ok": True, "pane_id": pane_id, "label": label}))
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
                 if not workspace_id:

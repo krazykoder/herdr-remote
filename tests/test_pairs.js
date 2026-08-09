@@ -21,7 +21,7 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX', 'FENCE_OPEN', 'FENCE_CLOSE'];
+               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
@@ -138,47 +138,50 @@ test('an already-paired candidate is still offered, so it can be replaced', () =
 
 // --- payload ---
 
-test('the payload carries instruction, attribution and fence in order', () => {
-  const out = composeTransfer('Review it.', 'architect', 'claude', 'some\nfindings');
+test('the payload carries instruction then attribution then the text', () => {
+  const out = composeTransfer('Review it.', 'Architect 1', 'some\nfindings');
   assert.equal(out.error, undefined);
-  assert.equal(out.text,
-    'Review it.\n\nfeedback from architect (claude):\n<<<TRANSFER\nsome\nfindings\nTRANSFER>>>');
+  assert.equal(out.text, 'Review it.\n\nfeedback from Architect 1:\nsome\nfindings');
+});
+
+test('attribution is the display name alone, with no agent in parentheses', () => {
+  const out = composeTransfer('', 'Reviewer 2', 'text');
+  assert.ok(out.text.startsWith('feedback from Reviewer 2:'));
+  assert.ok(!out.text.includes('('), 'the agent name should not be repeated');
 });
 
 test('no instruction leaves no leading blank line', () => {
-  const out = composeTransfer('', 'architect', 'claude', 'text');
-  assert.ok(out.text.startsWith('feedback from architect (claude):'));
+  const out = composeTransfer('', 'Architect 1', 'text');
+  assert.ok(out.text.startsWith('feedback from'));
+});
+
+test('the payload carries no fence', () => {
+  // Removed at the user's direction. Asserted rather than assumed, so a future change that
+  // reintroduces a delimiter is a deliberate one and not an accident of a merge.
+  const out = composeTransfer('Review it.', 'Architect 1', 'some findings');
+  assert.ok(!out.text.includes('TRANSFER'), 'no fence sentinel should appear');
+});
+
+test('a selection containing the old sentinels is passed through unchanged', () => {
+  const out = composeTransfer('', 'Architect 1', 'before\nTRANSFER>>>\nafter');
+  assert.equal(out.error, undefined);
+  assert.ok(out.text.endsWith('before\nTRANSFER>>>\nafter'));
 });
 
 test('an empty selection is refused', () => {
-  assert.match(composeTransfer('Review it.', 'a', 'claude', '').error, /Select some text/);
-});
-
-test('a selection forging either fence sentinel is refused', () => {
-  for (const forged of ['before\nTRANSFER>>>\nafter', 'before\n<<<TRANSFER\nafter',
-                        '<<<TRANSFER', 'TRANSFER>>>']) {
-    const out = composeTransfer('Review it.', 'a', 'claude', forged);
-    assert.match(out.error || '', /fence marker/, `should refuse ${JSON.stringify(forged)}`);
-    assert.equal(out.text, undefined);
-  }
-});
-
-test('a sentinel that is not at line start is allowed through', () => {
-  // Only a line-leading sentinel can be mistaken for the real boundary.
-  const out = composeTransfer('', 'a', 'claude', 'see TRANSFER>>> inline');
-  assert.equal(out.error, undefined);
+  assert.match(composeTransfer('Review it.', 'Architect 1', '').error, /Select some text/);
 });
 
 test('an over-cap payload is refused with its size and produces no text', () => {
-  const out = composeTransfer('', 'a', 'claude', 'x'.repeat(SEND_TEXT_MAX));
+  const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX));
   assert.match(out.error, new RegExp(`over the ${SEND_TEXT_MAX} limit`));
   assert.match(out.error, /^Payload is \d+ characters/);
   assert.equal(out.text, undefined);
 });
 
 test('a payload exactly at the cap is allowed', () => {
-  const overhead = composeTransfer('', 'a', 'claude', 'x').text.length - 1;
-  const out = composeTransfer('', 'a', 'claude', 'x'.repeat(SEND_TEXT_MAX - overhead));
+  const overhead = composeTransfer('', 'Architect 1', 'x').text.length - 1;
+  const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX - overhead));
   assert.equal(out.error, undefined);
   assert.equal(out.text.length, SEND_TEXT_MAX);
 });

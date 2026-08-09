@@ -179,6 +179,25 @@ def pane_rename_args(pane_id, label):
     return ("pane", "rename", pane_id, label)
 
 
+def validate_pane_label(raw):
+    """Return (label, error) for a client-supplied pane label.
+
+    The label is the one piece of free text a client may put on a pane, so it is bounded here
+    rather than trusted: control characters would corrupt the herdr status line and the pane
+    list, and an unbounded string is an unbounded argv entry.
+    """
+    if not isinstance(raw, str):
+        return "", "label must be a string"
+    label = raw.strip()
+    if not label:
+        return "", "label is empty"
+    if len(label) > 32:
+        return "", "label is longer than 32 characters"
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in label):
+        return "", "label contains control characters"
+    return label, ""
+
+
 def dig(data, *path):
     """Read a nested JSON path, returning "" if any hop is missing or not a dict.
 
