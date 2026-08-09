@@ -1,541 +1,1291 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
-<title>herdr-remote</title>
-<script type="module">
-import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
-window.cue = play;
-document.addEventListener('DOMContentLoaded', () => bind());
-</script>
-<style>
-:root {
-  --bg: #e1e2e7; --surface: #d8d9e0; --border: #b6bbd1; --text: #1f2f66; --muted: #68709a;
-  --green: #587539; --red: #f52a65; --blue: #2e7de9; --orange: #8c6c3e;
-  --term-bg: #1a1b26; --term-text: #c0caf5;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1b26; --surface: #202331; --border: #2f3549; --text: #c0caf5; --muted: #565f89;
-    --green: #9ece6a; --red: #f7768e; --blue: #7aa2f7; --orange: #e0af68;
-    --term-bg: #1a1b26; --term-text: #c0caf5;
-  }
-}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest"
+    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
+  <title>herdr-remote</title>
+  <script type="module">
+    import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
+    window.cue = play;
+    document.addEventListener('DOMContentLoaded', () => bind());
+  </script>
+  <style>
+    :root {
+      --bg: #e1e2e7;
+      --surface: #d8d9e0;
+      --border: #b6bbd1;
+      --text: #1f2f66;
+      --muted: #68709a;
+      --green: #587539;
+      --red: #f52a65;
+      --blue: #2e7de9;
+      --orange: #8c6c3e;
+      --term-bg: #1a1b26;
+      --term-text: #c0caf5;
+    }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-*:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
-body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; background: var(--bg); color: var(--text); min-height: 100dvh; min-height: -webkit-fill-available; display: flex; flex-direction: column; width: 100%; overflow-x: hidden; }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1b26;
+        --surface: #202331;
+        --border: #2f3549;
+        --text: #c0caf5;
+        --muted: #565f89;
+        --green: #9ece6a;
+        --red: #f7768e;
+        --blue: #7aa2f7;
+        --orange: #e0af68;
+        --term-bg: #1a1b26;
+        --term-text: #c0caf5;
+      }
+    }
 
-.header { padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
-.header h1 { font-size: 1rem; font-weight: 700; letter-spacing: -0.02em; }
-.header button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 8px; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 8px; transition: color 0.15s, background 0.15s; }
-.header button:hover { color: var(--text); background: var(--border); }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot.pulse { animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-.view { flex: 1; overflow-y: auto; }
+    *:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
 
-/* Settings */
-.settings { display: none; padding: 16px; }
-.settings.active { display: block; }
-.settings h2 { font-size: 0.9rem; margin-bottom: 12px; }
-.setting-group { background: var(--surface); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
-.setting-group label { font-size: 0.75rem; color: var(--muted); display: block; margin-bottom: 6px; }
-.setting-group input { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
-.setting-group select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
-.setting-group .hint { font-size: 0.65rem; color: var(--muted); margin-top: 4px; }
-.setting-group button { margin-top: 8px; padding: 8px 16px; border-radius: 6px; border: none; background: var(--green); color: #000; font-weight: 600; font-size: 13px; cursor: pointer; }
+    body {
+      font-family: -apple-system, system-ui, -webkit-system-font, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      overflow-x: hidden;
+    }
+
+    .header {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header h1 {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .header button {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 8px;
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .header button:hover {
+      color: var(--text);
+      background: var(--border);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot.pulse {
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.4;
+      }
+    }
+
+    .view {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Settings */
+    .settings {
+      display: none;
+      padding: 16px;
+    }
+
+    .settings.active {
+      display: block;
+    }
+
+    .settings h2 {
+      font-size: 0.9rem;
+      margin-bottom: 12px;
+    }
+
+    .setting-group {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .setting-group label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .setting-group input {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .setting-group select {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .setting-group .hint {
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .setting-group button {
+      margin-top: 8px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      background: var(--green);
+      color: #000;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
 
 
-/* Agent list */
-.agents { padding: 12px; }
-.section-header { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; display: flex; align-items: center; gap: 5px; }
-.agent { background: var(--surface); border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; cursor: pointer; border: 1px solid var(--border); transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
-.agent:hover { border-color: color-mix(in srgb, var(--text) 20%, transparent); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.agent:active { transform: scale(0.99); box-shadow: none; }
-.agent .dot { width: 10px; height: 10px; }
-.agent.blocked { border-color: var(--red); background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
-.workspace-card { border-color: color-mix(in srgb, var(--text) 10%, transparent); }
-.count-pill { display: inline-block; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, transparent); font-size: 0.65rem; }
-.chip-strip { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 8px 12px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.chip-strip::-webkit-scrollbar { display: none; }
-.chip-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
-.chip { padding: 6px 14px; border-radius: 9999px; border: none; font-size: 0.8rem; font-weight: 500; white-space: nowrap; cursor: pointer; position: relative; transition: all 0.15s; background: var(--border); color: var(--muted); }
-.chip.active { background: var(--blue); color: #fff; }
-.chip.alert::after { content: ''; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--red); border: 2px solid var(--bg); }
-.chip:active { transform: scale(0.95); }
-.chip-add { border: 2px dashed var(--border); background: transparent; color: var(--muted); font-size: 1rem; padding: 4px 12px; }
-.chip-add:hover { border-color: var(--blue); color: var(--blue); }
-.start-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.start-field select, .start-field input { padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-transform: none; letter-spacing: normal; font-weight: 400; }
-.start-field select:disabled { opacity: 0.5; }
-#startSubmit:disabled { opacity: 0.5; cursor: default; }
-.agent .info { flex: 1; }
-.agent .project { font-size: 0.9rem; font-weight: 500; }
-.agent .meta { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
+    /* Agent list */
+    .agents {
+      padding: 12px;
+    }
 
-/* Terminal view */
-.terminal-view { display: none; flex-direction: column; position: fixed; inset: 0; top: 49px; background: var(--bg); z-index: 50; }
-.terminal-view.active { display: flex; }
-.term-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.term-header .back { background: none; border: none; color: var(--blue); font-size: 1.4rem; cursor: pointer; padding: 4px 8px; }
-.term-header .title { flex: 1; font-size: 0.8rem; font-weight: 500; }
-.term-header .refresh-btn { background: none; border: none; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
-.term-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px 12px; background: var(--term-bg); font-family: 'SF Mono', 'Menlo', monospace; font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; word-break: break-all; color: var(--term-text); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-.quick-actions { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
-.quick-actions button { padding: 10px 14px; border-radius: 8px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex: 1; min-width: 70px; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn-yes { background: var(--green); color: #fff; } .btn-trust { background: var(--blue); color: #fff; } .btn-no { background: var(--red); color: #fff; }
-.term-shortcuts { display: flex; justify-content: center; padding: 6px 12px 0; background: var(--surface); border-top: 1px solid var(--border); flex-shrink: 0; }
-.term-shortcuts select { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 0.72rem; max-width: 70%; }
-.term-input { padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
-.term-input input, .term-input textarea { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; font-family: monospace; min-width: 0; }
-.term-input textarea { resize: none; overflow-y: auto; line-height: 1.4; max-height: 8.4em; }
-.term-input { align-items: flex-end; }
-.pair-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 0.7rem; flex-shrink: 0; }
-.pair-strip .pair-name { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The reason a pair went stale gets its own line — truncated to "is no lo…" it is useless. */
-.pair-strip .pair-reason { flex-basis: 100%; color: var(--orange); }
-.pair-strip button { padding: 5px 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.7rem; cursor: pointer; flex-shrink: 0; }
-.pair-strip button.transfer { border-color: var(--blue); color: var(--blue); font-weight: 600; }
-.pair-strip button.switch { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pair-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 0.65rem; padding: 4px 8px; cursor: pointer; flex-shrink: 0; }
-.pair-btn.paired { border-color: var(--blue); color: var(--blue); }
-.term-input button:last-child { padding: 10px 14px; border-radius: 6px; border: none; background: var(--blue); color: #fff; font-weight: 700; font-size: 16px; flex-shrink: 0; }
-.term-keys { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; flex-direction: column; background: var(--surface); flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom, 8px); }
-.nav-key { padding: 10px 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; min-height: 44px; display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; }
-.nav-key:active { background: var(--border); transform: scale(0.97); }
-.mod-key { font-size: 12px; }
-.mod-key.armed { background: var(--blue); border-color: var(--blue); color: #fff; }
-.tab-btn { padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
-.tab-btn.active { background: var(--surface); color: var(--text); border-color: var(--blue); }
-.ctrl-key { padding: 10px 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; min-height: 44px; }
-.ctrl-key:active { background: var(--border); }
-.ctrl-key.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, var(--border)); }
-.ctrl-key.confirm { background: var(--red); color: #fff; border-color: var(--red); }
-.digit-key { padding: 14px 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 18px; font-family: monospace; font-weight: 600; cursor: pointer; min-height: 52px; display: flex; align-items: center; justify-content: center; }
-.digit-key:active { background: var(--border); }
-.queue-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: color-mix(in srgb, var(--text) 5%, var(--bg)); font-family: monospace; font-size: 12px; font-weight: 500; cursor: pointer; }
-.queue-chip:hover { border-color: var(--red); }
-.queue-chip.danger { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); }
+    .section-header {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 16px 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
 
-.empty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 0.85rem; }
+    .agent {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
 
-/* Desktop */
-@media (min-width: 768px) {
-  body { max-width: 960px; margin: 0 auto; padding: 0 16px; }
-  .terminal-view { position: static; display: none; }
-  .terminal-view.active { display: flex; height: calc(100dvh - 49px); }
-  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-  .section-header { grid-column: 1 / -1; }
-  .chip-strip { grid-column: 1 / -1; }
-  .term-content { min-height: 400px; }
-}
-@media (min-width: 1200px) {
-  body { max-width: 1100px; }
-  .agents { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
-}
-@media (max-width: 380px) {
-  .header { padding: 10px 12px; }
-  .header h1 { font-size: 0.9rem; }
-  .agents { padding: 8px; }
-  .agent { padding: 12px; }
-  .term-input { padding: 6px 8px; gap: 4px; }
-  .term-keys { padding: 6px 8px; }
-}
-@media (pointer: fine) {
-  .quick-actions button { flex: none; min-width: auto; padding: 8px 18px; }
-}
-</style>
+    .agent:hover {
+      border-color: color-mix(in srgb, var(--text) 20%, transparent);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .agent:active {
+      transform: scale(0.99);
+      box-shadow: none;
+    }
+
+    .agent .dot {
+      width: 10px;
+      height: 10px;
+    }
+
+    .agent.blocked {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 5%, var(--surface));
+    }
+
+    .workspace-card {
+      border-color: color-mix(in srgb, var(--text) 10%, transparent);
+    }
+
+    .count-pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      font-size: 0.65rem;
+    }
+
+    .chip-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 8px 12px;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .chip-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chip-label {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .chip {
+      padding: 6px 14px;
+      border-radius: 9999px;
+      border: none;
+      font-size: 0.8rem;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.15s;
+      background: var(--border);
+      color: var(--muted);
+    }
+
+    .chip.active {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .chip.alert::after {
+      content: '';
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      border: 2px solid var(--bg);
+    }
+
+    .chip:active {
+      transform: scale(0.95);
+    }
+
+    .chip-add {
+      border: 2px dashed var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 1rem;
+      padding: 4px 12px;
+    }
+
+    .chip-add:hover {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .start-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .start-field select,
+    .start-field input {
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      text-transform: none;
+      letter-spacing: normal;
+      font-weight: 400;
+    }
+
+    .start-field select:disabled {
+      opacity: 0.5;
+    }
+
+    #startSubmit:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .agent .info {
+      flex: 1;
+    }
+
+    .agent .project {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    .agent .meta {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* Terminal view */
+    .terminal-view {
+      display: none;
+      flex-direction: column;
+      position: fixed;
+      inset: 0;
+      top: 49px;
+      background: var(--bg);
+      z-index: 50;
+    }
+
+    .terminal-view.active {
+      display: flex;
+    }
+
+    .term-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .term-header .back {
+      background: none;
+      border: none;
+      color: var(--blue);
+      font-size: 1.4rem;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    .term-header .title {
+      flex: 1;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .term-header .refresh-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+    }
+
+    .term-content {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 10px 12px;
+      background: var(--term-bg);
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      word-break: break-all;
+      color: var(--term-text);
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    .quick-actions {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    .quick-actions button {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      flex: 1;
+      min-width: 70px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-yes {
+      background: var(--green);
+      color: #fff;
+    }
+
+    .btn-trust {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .btn-no {
+      background: var(--red);
+      color: #fff;
+    }
+
+    .term-shortcuts {
+      display: flex;
+      justify-content: center;
+      padding: 6px 12px 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .term-shortcuts select {
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 0.72rem;
+      max-width: 70%;
+    }
+
+    .term-input {
+      padding: 8px 12px;
+      display: flex;
+      gap: 6px;
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .term-input input,
+    .term-input textarea {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      font-family: monospace;
+      min-width: 0;
+    }
+
+    .term-input textarea {
+      resize: none;
+      overflow-y: auto;
+      line-height: 1.4;
+      max-height: 8.4em;
+    }
+
+    .term-input {
+      align-items: flex-end;
+    }
+
+    .pair-strip {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 0.7rem;
+      flex-shrink: 0;
+    }
+
+    .pair-strip .pair-name {
+      flex: 1;
+      min-width: 0;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* The reason a pair went stale gets its own line — truncated to "is no lo…" it is useless. */
+    .pair-strip .pair-reason {
+      flex-basis: 100%;
+      color: var(--orange);
+    }
+
+    .pair-strip button {
+      padding: 5px 9px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.7rem;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .pair-strip button.transfer {
+      border-color: var(--blue);
+      color: var(--blue);
+      font-weight: 600;
+    }
+
+    .pair-strip button.switch {
+      max-width: 40%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pair-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.65rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .pair-btn.paired {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .term-input button:last-child {
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: none;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 700;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .term-keys {
+      border-top: 1px solid var(--border);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      flex-shrink: 0;
+      padding-bottom: env(safe-area-inset-bottom, 8px);
+    }
+
+    .nav-key {
+      padding: 10px 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .nav-key:active {
+      background: var(--border);
+      transform: scale(0.97);
+    }
+
+    .mod-key {
+      font-size: 12px;
+    }
+
+    .mod-key.armed {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .tab-btn {
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--text);
+      border-color: var(--blue);
+    }
+
+    .ctrl-key {
+      padding: 10px 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      min-height: 44px;
+    }
+
+    .ctrl-key:active {
+      background: var(--border);
+    }
+
+    .ctrl-key.danger {
+      color: var(--red);
+      border-color: color-mix(in srgb, var(--red) 30%, var(--border));
+    }
+
+    .ctrl-key.confirm {
+      background: var(--red);
+      color: #fff;
+      border-color: var(--red);
+    }
+
+    .digit-key {
+      padding: 14px 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 18px;
+      font-family: monospace;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .digit-key:active {
+      background: var(--border);
+    }
+
+    .queue-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--text) 5%, var(--bg));
+      font-family: monospace;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .queue-chip:hover {
+      border-color: var(--red);
+    }
+
+    .queue-chip.danger {
+      border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+      color: var(--red);
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 60px 20px;
+      font-size: 0.85rem;
+    }
+
+    /* Desktop */
+    @media (min-width: 768px) {
+      body {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+
+      .terminal-view {
+        position: static;
+        display: none;
+      }
+
+      .terminal-view.active {
+        display: flex;
+        height: calc(100dvh - 49px);
+      }
+
+      .agents {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 12px;
+      }
+
+      .section-header {
+        grid-column: 1 / -1;
+      }
+
+      .chip-strip {
+        grid-column: 1 / -1;
+      }
+
+      .term-content {
+        min-height: 400px;
+      }
+    }
+
+    @media (min-width: 1200px) {
+      body {
+        max-width: 1100px;
+      }
+
+      .agents {
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      }
+    }
+
+    @media (max-width: 380px) {
+      .header {
+        padding: 10px 12px;
+      }
+
+      .header h1 {
+        font-size: 0.9rem;
+      }
+
+      .agents {
+        padding: 8px;
+      }
+
+      .agent {
+        padding: 12px;
+      }
+
+      .term-input {
+        padding: 6px 8px;
+        gap: 4px;
+      }
+
+      .term-keys {
+        padding: 6px 8px;
+      }
+    }
+
+    @media (pointer: fine) {
+      .quick-actions button {
+        flex: none;
+        min-width: auto;
+        padding: 8px 18px;
+      }
+    }
+  </style>
 </head>
+
 <body>
 
-<div class="header">
-  <span class="dot" id="statusDot"></span>
-  <h1>herdr</h1>
-  <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
-  <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
-  <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
-  <button onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
-</div>
-
-<div class="settings" id="settingsView">
-  <h2>Settings</h2>
-  <div class="setting-group">
-    <label for="relayUrl">Relay URL</label>
-    <input id="relayUrl" type="url" placeholder="wss://your-tunnel.trycloudflare.com" />
-    <label for="relayToken" style="margin-top:8px">Token (optional)</label>
-    <input id="relayToken" type="password" placeholder="shared secret" />
-    <button onclick="saveAndConnect()">Connect</button>
-    <div class="hint">Run <code>./relay/start.sh</code> to get a URL. <a href="https://github.com/dcolinmorgan/herdr-remote/blob/main/QUICKSTART.md" style="color:var(--blue)">Setup guide →</a></div>
+  <div class="header">
+    <span class="dot" id="statusDot"></span>
+    <h1>herdr</h1>
+    <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
+    <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
+    <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg></button>
+    <button onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path
+          d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg></button>
   </div>
 
-  <div class="setting-group">
-    <label>Push Notifications</label>
-    <div id="pushStatus" style="font-size:0.75rem;margin-bottom:6px"></div>
-    <button id="pushToggle" onclick="togglePush()">Enable Push</button>
-    <div class="hint">Get notified when agents are blocked, even with this tab closed.</div>
-  </div>
-  <div class="setting-group">
-    <label>Status</label>
-    <div id="settingsStatus" style="font-size:0.75rem"></div>
-  </div>
-</div>
+  <div class="settings" id="settingsView">
+    <h2>Settings</h2>
+    <div class="setting-group">
+      <label for="relayUrl">Relay URL</label>
+      <input id="relayUrl" type="url" placeholder="wss://your-tunnel.trycloudflare.com" />
+      <label for="relayToken" style="margin-top:8px">Token (optional)</label>
+      <input id="relayToken" type="password" placeholder="shared secret" />
+      <button onclick="saveAndConnect()">Connect</button>
+      <div class="hint">Run <code>./relay/start.sh</code> to get a URL. <a
+          href="https://github.com/dcolinmorgan/herdr-remote/blob/main/QUICKSTART.md" style="color:var(--blue)">Setup
+          guide →</a></div>
+    </div>
 
-<div class="view" id="agentListView">
-  <!-- Recently opened panes. Absent until there is more than one, so a fresh browser and a
+    <div class="setting-group">
+      <label>Push Notifications</label>
+      <div id="pushStatus" style="font-size:0.75rem;margin-bottom:6px"></div>
+      <button id="pushToggle" onclick="togglePush()">Enable Push</button>
+      <div class="hint">Get notified when agents are blocked, even with this tab closed.</div>
+    </div>
+    <div class="setting-group">
+      <label>Status</label>
+      <div id="settingsStatus" style="font-size:0.75rem"></div>
+    </div>
+  </div>
+
+  <div class="view" id="agentListView">
+    <!-- Recently opened panes. Absent until there is more than one, so a fresh browser and a
        single-agent setup both look exactly as they did before. -->
-  <div class="chip-strip" id="recents" style="display:none"></div>
-  <div class="agents" id="agents"></div>
-</div>
-
-<div class="view" id="timelineView" style="display:none;padding:12px;">
-  <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
-</div>
-
-<div class="terminal-view" id="terminalView">
-  <div class="term-header">
-    <button class="back" onclick="closeTerminal()" aria-label="Back to agent list"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
-    <span class="title" id="termTitle" role="button" tabindex="0" title="Rename this pane" onclick="renamePane()" onkeydown="if(event.key==='Enter'){renamePane()}" style="cursor:pointer"></span>
-    <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></button>
+    <div class="chip-strip" id="recents" style="display:none"></div>
+    <div class="agents" id="agents"></div>
   </div>
-  <!-- Pair strip — absent unless the active pane belongs to a pair -->
-  <div class="pair-strip" id="pairStrip" style="display:none"></div>
-  <div class="term-content" id="termContent">Loading…</div>
-  <div class="quick-actions" id="quickActions"></div>
-  <!-- Instruction shortcuts, one tap from the composer. A native <select> so a phone opens its
+
+  <div class="view" id="timelineView" style="display:none;padding:12px;">
+    <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
+  </div>
+
+  <div class="terminal-view" id="terminalView">
+    <div class="term-header">
+      <button class="back" onclick="closeTerminal()" aria-label="Back to agent list"><svg width="20" height="20"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="m15 18-6-6 6-6" />
+        </svg></button>
+      <span class="title" id="termTitle" role="button" tabindex="0" title="Rename this pane" onclick="renamePane()"
+        onkeydown="if(event.key==='Enter'){renamePane()}" style="cursor:pointer"></span>
+      <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+          <path d="M16 16h5v5" />
+        </svg></button>
+    </div>
+    <!-- Pair strip — absent unless the active pane belongs to a pair -->
+    <div class="pair-strip" id="pairStrip" style="display:none"></div>
+    <div class="term-content" id="termContent">Loading…</div>
+    <div class="quick-actions" id="quickActions"></div>
+    <!-- Instruction shortcuts, one tap from the composer. A native <select> so a phone opens its
        own picker; it inserts at the cursor and never sends, like the copies in the quick dock. -->
-  <div class="term-shortcuts">
-    <select id="shortcutPick" onchange="pickShortcut(this)" aria-label="Insert an instruction"></select>
-  </div>
-  <div class="term-input">
-    <button onclick="openCommandPalette()" aria-label="Commands" style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
-    <textarea id="termInput" rows="1" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-    <button onclick="toggleQuickDock()" aria-label="Quick actions" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></button>
-    <button onclick="toggleKeysDock()" aria-label="Keys" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg></button>
-    <button onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
-  </div>
-  <div class="term-keys" id="termKeys" style="display:none">
-    <!-- Key queue strip (visible when composing) -->
-    <div id="keyQueueStrip" style="display:none;width:100%;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center"></div>
-    <!-- Tab toggle -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-bottom:6px">
-      <button class="tab-btn active" id="tabKeys" onclick="switchKeyTab('keys')">Keys</button>
-      <button class="tab-btn" id="tabDigits" onclick="switchKeyTab('digits')">123</button>
+    <div class="term-shortcuts">
+      <select id="shortcutPick" onchange="pickShortcut(this)" aria-label="Insert an instruction"></select>
     </div>
-    <!-- Keys pad -->
-    <div id="keysPad" style="width:100%">
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
-        <button class="nav-key" onclick="fireKey('Escape')">Esc</button>
-        <button class="nav-key" style="grid-column:span 2" onclick="fireKey('Space')">Space</button>
-        <button class="nav-key" onclick="fireKey('Enter')">⏎ Enter</button>
+    <div class="term-input">
+      <button onclick="openCommandPalette()" aria-label="Commands"
+        style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
+      <textarea id="termInput" rows="1" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
+        autocapitalize="off" spellcheck="false"></textarea>
+      <button onclick="toggleQuickDock()" aria-label="Quick actions"
+        style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange);flex-shrink:0"><svg
+          width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+        </svg></button>
+      <button onclick="toggleKeysDock()" aria-label="Keys"
+        style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);flex-shrink:0"><svg
+          width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10" />
+        </svg></button>
+      <button onclick="sendText()" aria-label="Send"
+        style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg
+          width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+        </svg></button>
+    </div>
+    <div class="term-keys" id="termKeys" style="display:none">
+      <!-- Key queue strip (visible when composing) -->
+      <div id="keyQueueStrip"
+        style="display:none;width:100%;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center">
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
-        <button class="nav-key" onclick="fireKey('Tab')">Tab</button>
-        <button class="nav-key" onclick="fireKey('Left')">←</button>
-        <button class="nav-key" onclick="fireKey('Down')">↓</button>
-        <button class="nav-key" onclick="fireKey('Up')">↑</button>
+      <!-- Tab toggle -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-bottom:6px">
+        <button class="tab-btn active" id="tabKeys" onclick="switchKeyTab('keys')">Keys</button>
+        <button class="tab-btn" id="tabDigits" onclick="switchKeyTab('digits')">123</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px">
-        <button class="nav-key" onclick="fireKey('Right')">→</button>
-        <button class="nav-key mod-key" id="modShift" onclick="armMod('shift')">⇧ Shift</button>
-        <button class="nav-key mod-key" id="modCtrl" onclick="armMod('ctrl')">Ctrl</button>
+      <!-- Keys pad -->
+      <div id="keysPad" style="width:100%">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
+          <button class="nav-key" onclick="fireKey('Escape')">Esc</button>
+          <button class="nav-key" style="grid-column:span 2" onclick="fireKey('Space')">Space</button>
+          <button class="nav-key" onclick="fireKey('Enter')">⏎ Enter</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
+          <button class="nav-key" onclick="fireKey('Tab')">Tab</button>
+          <button class="nav-key" onclick="fireKey('Left')">←</button>
+          <button class="nav-key" onclick="fireKey('Down')">↓</button>
+          <button class="nav-key" onclick="fireKey('Up')">↑</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:4px">
+          <button class="nav-key" onclick="fireKey('Right')">→</button>
+          <button class="nav-key mod-key" id="modShift" onclick="armMod('shift')">⇧ Shift</button>
+          <button class="nav-key mod-key" id="modCtrl" onclick="armMod('ctrl')">Ctrl</button>
+        </div>
+        <!-- Ctrl presets -->
+        <div>
+          <button onclick="toggleCtrlPresets()"
+            style="background:none;border:none;color:var(--muted);font-size:0.7rem;cursor:pointer;padding:2px 4px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase">Presets
+            <span id="ctrlChevron">▸</span></button>
+          <div id="ctrlPresets" style="display:none;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px"></div>
+        </div>
       </div>
-      <!-- Ctrl presets -->
-      <div>
-        <button onclick="toggleCtrlPresets()" style="background:none;border:none;color:var(--muted);font-size:0.7rem;cursor:pointer;padding:2px 4px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase">Presets <span id="ctrlChevron">▸</span></button>
-        <div id="ctrlPresets" style="display:none;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px"></div>
+      <!-- Digits pad -->
+      <div id="digitsPad" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
+      <!-- Action keys for blocked state -->
+      <div id="actionKeys" style="width:100%;margin-top:4px"></div>
+    </div>
+    <!-- Quick actions dock -->
+    <div class="term-keys" id="quickDock" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+        <span
+          style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Quick
+          Actions</span>
+        <button onclick="toggleQuickDock()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
+      </div>
+      <div style="width:100%">
+        <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:4px">
+          Confirm</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px">
+          <button class="nav-key" style="color:var(--green);border-color:var(--green)"
+            onclick="quickSend('yes')">yes</button>
+          <button class="nav-key" style="color:var(--red);border-color:var(--red)" onclick="quickSend('no')">no</button>
+        </div>
+        <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:4px">
+          Common</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+          <button class="nav-key" onclick="quickSend('continue')">continue</button>
+          <button class="nav-key" onclick="quickSend('retry')">retry</button>
+          <button class="nav-key" onclick="quickSend('skip')">skip</button>
+          <button class="nav-key" onclick="quickSend('commit and push')">commit & push</button>
+        </div>
+        <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:8px 0 4px">
+          Instructions</p>
+        <!-- These insert at the cursor and never send — unlike Confirm and Common above. -->
+        <div id="shortcutRow" style="display:grid;gap:4px"></div>
       </div>
     </div>
-    <!-- Digits pad -->
-    <div id="digitsPad" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
-    <!-- Action keys for blocked state -->
-    <div id="actionKeys" style="width:100%;margin-top:4px"></div>
   </div>
-  <!-- Quick actions dock -->
-  <div class="term-keys" id="quickDock" style="display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
-      <span style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Quick Actions</span>
-      <button onclick="toggleQuickDock()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
-    </div>
-    <div style="width:100%">
-      <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:4px">Confirm</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:8px">
-        <button class="nav-key" style="color:var(--green);border-color:var(--green)" onclick="quickSend('yes')">yes</button>
-        <button class="nav-key" style="color:var(--red);border-color:var(--red)" onclick="quickSend('no')">no</button>
-      </div>
-      <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:4px">Common</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-        <button class="nav-key" onclick="quickSend('continue')">continue</button>
-        <button class="nav-key" onclick="quickSend('retry')">retry</button>
-        <button class="nav-key" onclick="quickSend('skip')">skip</button>
-        <button class="nav-key" onclick="quickSend('commit and push')">commit & push</button>
-      </div>
-      <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:8px 0 4px">Instructions</p>
-      <!-- These insert at the cursor and never send — unlike Confirm and Common above. -->
-      <div id="shortcutRow" style="display:grid;gap:4px"></div>
-    </div>
-  </div>
-</div>
 
-<!-- Command palette -->
-<div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:100;">
-  <div onclick="closePalette()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:50dvh;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-      <span style="font-size:0.8rem;font-weight:600;flex:1">Commands</span>
-      <button onclick="closePalette()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
-    </div>
-    <input id="cmdSearch" type="text" placeholder="Search commands…" autocomplete="off" autocorrect="off" style="margin:8px 12px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px" oninput="filterCommands()" />
-    <div id="cmdList" style="overflow-y:auto;padding:4px 12px;"></div>
-  </div>
-</div>
-
-<!-- Start session — rendered only when the relay advertises start_options -->
-<div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
-  <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-      <span style="font-size:0.8rem;font-weight:600;flex:1">Start session · <span id="startProject"></span></span>
-      <button onclick="closeStart()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
-    </div>
-    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
-      <label class="start-field">Role<select id="startRole"></select></label>
-      <label class="start-field">Agent<select id="startAgent"></select></label>
-      <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
-      <div id="startTargetRow"></div>
-      <p id="startError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
-      <button id="startSubmit" onclick="submitStart()" style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Start session</button>
+  <!-- Command palette -->
+  <div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closePalette()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:50dvh;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Commands</span>
+        <button onclick="closePalette()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <input id="cmdSearch" type="text" placeholder="Search commands…" autocomplete="off" autocorrect="off"
+        style="margin:8px 12px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px"
+        oninput="filterCommands()" />
+      <div id="cmdList" style="overflow-y:auto;padding:4px 12px;"></div>
     </div>
   </div>
-</div>
 
-<!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
+  <!-- Start session — rendered only when the relay advertises start_options -->
+  <div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Start session · <span id="startProject"></span></span>
+        <button onclick="closeStart()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <label class="start-field">Role<select id="startRole"></select></label>
+        <label class="start-field">Agent<select id="startAgent"></select></label>
+        <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
+        <div id="startTargetRow"></div>
+        <p id="startError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="startSubmit" onclick="submitStart()"
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Start
+          session</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
      so a rejected send_text or rename looked identical to one that worked. -->
-<div id="toast" role="status" aria-live="polite" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)"></div>
+  <div id="toast" role="status" aria-live="polite"
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+  </div>
 
-<!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
-<div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
-  <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-      <span style="font-size:0.8rem;font-weight:600;flex:1">Pair · <span id="pairSource"></span></span>
-      <button onclick="closePair()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
-    </div>
-    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
-      <div id="pairCandidates"></div>
-      <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
-        <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
-        <label class="start-field">This pane's name<input id="pairRoleA" maxlength="32" type="text" /></label>
-        <label class="start-field">Partner's name<input id="pairRoleB" maxlength="32" type="text" /></label>
+  <!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
+  <div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Pair · <span id="pairSource"></span></span>
+        <button onclick="closePair()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
-      <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
-      <button id="pairSubmit" onclick="savePair()" style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Save pair</button>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <div id="pairCandidates"></div>
+        <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
+          <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
+          <label class="start-field">This pane's name<input id="pairRoleA" maxlength="32" type="text" /></label>
+          <label class="start-field">Partner's name<input id="pairRoleB" maxlength="32" type="text" /></label>
+        </div>
+        <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="pairSubmit" onclick="savePair()"
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Save
+          pair</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
-<div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
-  <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-      <span style="font-size:0.8rem;font-weight:600;flex:1">Transfer to <span id="transferTarget"></span></span>
-      <button onclick="closeTransfer()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
-    </div>
-    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
-      <p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0">Instruction</p>
-      <div id="transferShortcuts" style="display:flex;flex-direction:column;gap:6px"></div>
-      <p style="font-size:0.7rem;color:var(--muted);margin:0">The payload is placed in the composer for you to read. Nothing is sent.</p>
-      <pre id="transferPreview" style="margin:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);font-size:0.65rem;max-height:22vh;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>
+  <!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
+  <div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Transfer to <span id="transferTarget"></span></span>
+        <button onclick="closeTransfer()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+        <p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0">
+          Instruction</p>
+        <div id="transferShortcuts" style="display:flex;flex-direction:column;gap:6px"></div>
+        <p style="font-size:0.7rem;color:var(--muted);margin:0">The payload is placed in the composer for you to read.
+          Nothing is sent.</p>
+        <pre id="transferPreview"
+          style="margin:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);font-size:0.65rem;max-height:22vh;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
     </div>
   </div>
-</div>
 
-<script>
+  <script>
 
-let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
-let timeline = [], prevStatuses = {};
-let activeWorkspace = null;
-let activeTab = null;
-let projects = [], activeProject = null;
-// Absence of start_options is the feature gate: no message, no Start session control.
-let startOptions = null, startProjectId = null;
-// Pairs live only in this browser. The relay has no pair message and stores no pair data.
-let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
+    let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
+    let timeline = [], prevStatuses = {};
+    let activeWorkspace = null;
+    let activeTab = null;
+    let projects = [], activeProject = null;
+    // Absence of start_options is the feature gate: no message, no Start session control.
+    let startOptions = null, startProjectId = null;
+    // Pairs live only in this browser. The relay has no pair message and stores no pair data.
+    let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
 
-// --- P3 pair logic (pure) --- start
-// Pure, dependency-free, and extracted verbatim by tests/test_pairs.js. Keep it that way:
-// anything here that touches the DOM, ws, or localStorage breaks the tests silently.
-const PAIRS_KEY = 'herdr_pairs';
-const PAIRS_VERSION = 1;
-const MAX_PAIRS = 32;
-const SEND_TEXT_MAX = 4000;      // matches the relay cap in herdr_relay.py
+    // --- P3 pair logic (pure) --- start
+    // Pure, dependency-free, and extracted verbatim by tests/test_pairs.js. Keep it that way:
+    // anything here that touches the DOM, ws, or localStorage breaks the tests silently.
+    const PAIRS_KEY = 'herdr_pairs';
+    const PAIRS_VERSION = 1;
+    const MAX_PAIRS = 32;
+    const SEND_TEXT_MAX = 4000;      // matches the relay cap in herdr_relay.py
 
-const SHORTCUTS = [
-  {label: 'Review', text: 'Review, edit, fix; then propose next steps.'},
-  {label: 'Implement', text: 'Proceed to implement.'},
-  {label: 'Architect prompt', text: '@.agent/prompts/System_Prompt_2_Architect.md ; /ponytail /caveman'},
-];
+    const SHORTCUTS = [
+      { label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
+      { label: 'Implement', text: 'Proceed to implement.' },
+      { label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+    ];
 
-// A corrupt blob must not brick the terminal view — it loads as no pairs at all.
-function parsePairs(raw) {
-  let data;
-  try { data = JSON.parse(raw); } catch (e) { return []; }
-  if (!data || data.version !== PAIRS_VERSION || !Array.isArray(data.pairs)) return [];
-  return data.pairs.filter(p => p && typeof p.id === 'string' && Array.isArray(p.members) &&
-    p.members.length === 2 && p.members.every(m => m && m.pane_id));
-}
+    // A corrupt blob must not brick the terminal view — it loads as no pairs at all.
+    function parsePairs(raw) {
+      let data;
+      try { data = JSON.parse(raw); } catch (e) { return []; }
+      if (!data || data.version !== PAIRS_VERSION || !Array.isArray(data.pairs)) return [];
+      return data.pairs.filter(p => p && typeof p.id === 'string' && Array.isArray(p.members) &&
+        p.members.length === 2 && p.members.every(m => m && m.pane_id));
+    }
 
-function newPairId() {
-  // Not crypto.randomUUID(): it is undefined in a non-secure context, and the relay serves
-  // this page over plain HTTP on a LAN address. Uniqueness among <=32 local entries is enough.
-  return 'p_' + Math.random().toString(36).slice(2, 10);
-}
+    function newPairId() {
+      // Not crypto.randomUUID(): it is undefined in a non-secure context, and the relay serves
+      // this page over plain HTTP on a LAN address. Uniqueness among <=32 local entries is enough.
+      return 'p_' + Math.random().toString(36).slice(2, 10);
+    }
 
-// All four fields, because herdr reuses a pane_id after a pane closes. A matching pane_id
-// with a different cwd is a different session, and pasting into it is the worst failure here.
-function memberMatches(m, a) {
-  return a.pane_id === m.pane_id && (a.host || 'local') === (m.host || 'local') &&
-         a.agent === m.agent && (a.cwd || '') === (m.cwd || '');
-}
+    // All four fields, because herdr reuses a pane_id after a pane closes. A matching pane_id
+    // with a different cwd is a different session, and pasting into it is the worst failure here.
+    function memberMatches(m, a) {
+      return a.pane_id === m.pane_id && (a.host || 'local') === (m.host || 'local') &&
+        a.agent === m.agent && (a.cwd || '') === (m.cwd || '');
+    }
 
-function recentFingerprint(a) {
-  return {pane_id: a.pane_id, host: a.host || 'local', agent: a.agent, cwd: a.cwd || ''};
-}
+    function recentFingerprint(a) {
+      return { pane_id: a.pane_id, host: a.host || 'local', agent: a.agent, cwd: a.cwd || '' };
+    }
 
-function pairHealth(pair, list) {
-  for (const m of pair.members) {
-    if (list.filter(a => a.pane_id === m.pane_id).length > 1)
-      return {state: 'stale', reason: `${m.pane_id} is reported by more than one host`};
-    if (!list.some(a => memberMatches(m, a)))
-      return {state: 'stale', reason: `${m.role || m.agent} (${m.pane_id}) is no longer running`};
-  }
-  return {state: 'healthy', reason: ''};
-}
+    function pairHealth(pair, list) {
+      for (const m of pair.members) {
+        if (list.filter(a => a.pane_id === m.pane_id).length > 1)
+          return { state: 'stale', reason: `${m.pane_id} is reported by more than one host` };
+        if (!list.some(a => memberMatches(m, a)))
+          return { state: 'stale', reason: `${m.role || m.agent} (${m.pane_id}) is no longer running` };
+      }
+      return { state: 'healthy', reason: '' };
+    }
 
-function pairFor(list, paneId) {
-  return list.find(p => p.members.some(m => m.pane_id === paneId)) || null;
-}
+    function pairFor(list, paneId) {
+      return list.find(p => p.members.some(m => m.pane_id === paneId)) || null;
+    }
 
-function memberOf(pair, paneId) { return pair.members.find(m => m.pane_id === paneId); }
-function partnerOf(pair, paneId) { return pair.members.find(m => m.pane_id !== paneId); }
+    function memberOf(pair, paneId) { return pair.members.find(m => m.pane_id === paneId); }
+    function partnerOf(pair, paneId) { return pair.members.find(m => m.pane_id !== paneId); }
 
-// Same host only: a bare pane_id cannot be routed unambiguously across hosts.
-function pairCandidates(list, source) {
-  return list.filter(a => a.pane_id !== source.pane_id &&
-                          (a.host || 'local') === (source.host || 'local'));
-}
+    // Same host only: a bare pane_id cannot be routed unambiguously across hosts.
+    function pairCandidates(list, source) {
+      return list.filter(a => a.pane_id !== source.pane_id &&
+        (a.host || 'local') === (source.host || 'local'));
+    }
 
-// `from` is the source's display name — the pane label P2 assigns ("Architect 1", "Reviewer 2"),
-// editable in the pair sheet. The agent name is deliberately not repeated: the receiving agent
-// is being told which colleague the text came from, not which tool produced it.
-//
-// No fence. Removed at the user's direction, knowingly: it was the receiving agent's only
-// boundary marker for the quoted region, so a transferred line like "Proceed to implement."
-// now reads the same as an instruction the user typed. The remaining containment is the human
-// one — the user selects the text and reads the prefilled composer before sending.
-function composeTransfer(instruction, from, text) {
-  if (!text) return {error: 'Select some text in the pane first'};
-  const body = (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}`;
-  if (body.length > SEND_TEXT_MAX)
-    return {error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less`};
-  return {text: body};
-}
-// --- P3 pair logic (pure) --- end
+    // `from` is the source's display name — the pane label P2 assigns ("Architect 1", "Reviewer 2"),
+    // editable in the pair sheet. The agent name is deliberately not repeated: the receiving agent
+    // is being told which colleague the text came from, not which tool produced it.
+    //
+    // No fence. Removed at the user's direction, knowingly: it was the receiving agent's only
+    // boundary marker for the quoted region, so a transferred line like "Proceed to implement."
+    // now reads the same as an instruction the user typed. The remaining containment is the human
+    // one — the user selects the text and reads the prefilled composer before sending.
+    function composeTransfer(instruction, from, text) {
+      if (!text) return { error: 'Select some text in the pane first' };
+      const body = (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}`;
+      if (body.length > SEND_TEXT_MAX)
+        return { error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less` };
+      return { text: body };
+    }
+    // --- P3 pair logic (pure) --- end
 
-// Settings — auto-detect relay when served from same origin
-const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-const DEMO_RELAY = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
-const isDemo = location.hostname.includes('herdr-demo.pages.dev');
-const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io') && !location.hostname.includes('localhost');
-const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
-const urlToken = new URLSearchParams(location.search).get('token');
-if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
-const savedToken = localStorage.getItem('herdr_relay_token') || '';
-document.getElementById('relayUrl').value = savedUrl;
-document.getElementById('relayToken').value = savedToken;
-
+    // Settings — auto-detect relay when served from same origin
+    const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+    const DEMO_RELAY = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
+    const isDemo = location.hostname.includes('herdr-demo.pages.dev');
+    const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io') && !location.hostname.includes('localhost');
+    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+    const urlToken = new URLSearchParams(location.search).get('token');
+    if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
+    const savedToken = localStorage.getItem('herdr_relay_token') || '';
+    document.getElementById('relayUrl').value = savedUrl;
+    document.getElementById('relayToken').value = savedToken;
 
 
-function toggleSettings() {
-  const s = document.getElementById('settingsView');
-  const show = s.style.display !== 'block';
-  s.style.display = show ? 'block' : 'none';
-  document.getElementById('agentListView').style.display = show ? 'none' : '';
-  document.getElementById('timelineView').style.display = 'none';
-  if (show) {
-    document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
-      ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
-      : `<span style="color:var(--red)">● Disconnected</span>`;
-  }
-}
 
-function toggleTimeline() {
-  const t = document.getElementById('timelineView');
-  const show = t.style.display !== 'block';
-  t.style.display = show ? 'block' : 'none';
-  document.getElementById('agentListView').style.display = show ? 'none' : '';
-  document.getElementById('settingsView').style.display = 'none';
-  if (show) renderTimeline();
-}
+    function toggleSettings() {
+      const s = document.getElementById('settingsView');
+      const show = s.style.display !== 'block';
+      s.style.display = show ? 'block' : 'none';
+      document.getElementById('agentListView').style.display = show ? 'none' : '';
+      document.getElementById('timelineView').style.display = 'none';
+      if (show) {
+        document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
+          ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
+          : `<span style="color:var(--red)">● Disconnected</span>`;
+      }
+    }
 
-function renderTimeline() {
-  const el = document.getElementById('timelineList');
-  if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
-  el.innerHTML = timeline.map(e => {
-    const t = e.time.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    const color = e.status==='blocked'?'var(--red)':e.status==='working'?'var(--green)':'var(--muted)';
-    return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
-  }).join('');
-}
+    function toggleTimeline() {
+      const t = document.getElementById('timelineView');
+      const show = t.style.display !== 'block';
+      t.style.display = show ? 'block' : 'none';
+      document.getElementById('agentListView').style.display = show ? 'none' : '';
+      document.getElementById('settingsView').style.display = 'none';
+      if (show) renderTimeline();
+    }
 
-function saveAndConnect() {
-  const url = document.getElementById('relayUrl').value.trim();
-  if (!url) return;
-  localStorage.setItem('herdr_relay_url', url);
-  const token = document.getElementById('relayToken').value.trim();
-  if (token) localStorage.setItem('herdr_relay_token', token);
-  else localStorage.removeItem('herdr_relay_token');
-  connect();
-  toggleSettings();
-}
+    function renderTimeline() {
+      const el = document.getElementById('timelineList');
+      if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
+      el.innerHTML = timeline.map(e => {
+        const t = e.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const color = e.status === 'blocked' ? 'var(--red)' : e.status === 'working' ? 'var(--green)' : 'var(--muted)';
+        return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
+      }).join('');
+    }
 
-// Connection
-function connect() {
-  let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
-  if (!url) { showSetup(); return; }
-  if (ws) ws.close();
-  // start_options is a per-connection capability advertisement, never cached state.
-  startOptions = null;
-  closeStart();
-  render();
-  setStatus('connecting');
-  // Append token as query param if stored separately
-  const token = localStorage.getItem('herdr_relay_token');
-  let wsUrl = url;
-  if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
-  ws = new WebSocket(wsUrl);
-  ws.onopen = () => { setStatus('connected'); if(window.cue) cue('ready'); };
-  ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
-  ws.onerror = () => setStatus('disconnected');
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
-}
+    function saveAndConnect() {
+      const url = document.getElementById('relayUrl').value.trim();
+      if (!url) return;
+      localStorage.setItem('herdr_relay_url', url);
+      const token = document.getElementById('relayToken').value.trim();
+      if (token) localStorage.setItem('herdr_relay_token', token);
+      else localStorage.removeItem('herdr_relay_token');
+      connect();
+      toggleSettings();
+    }
 
-function setStatus(s) {
-  const dot = document.getElementById('statusDot');
-  const label = document.getElementById('connLabel');
-  dot.style.background = s==='connected'?'var(--green)':s==='connecting'?'var(--orange)':'var(--red)';
-  label.textContent = s==='connected'?'live':s==='connecting'?'connecting…':'offline';
-  label.style.color = s==='connected'?'var(--green)':s==='connecting'?'var(--orange)':'var(--red)';
-}
+    // Connection
+    function connect() {
+      let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+      if (!url) { showSetup(); return; }
+      if (ws) ws.close();
+      // start_options is a per-connection capability advertisement, never cached state.
+      startOptions = null;
+      closeStart();
+      render();
+      setStatus('connecting');
+      // Append token as query param if stored separately
+      const token = localStorage.getItem('herdr_relay_token');
+      let wsUrl = url;
+      if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => { setStatus('connected'); if (window.cue) cue('ready'); };
+      ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
+      ws.onerror = () => setStatus('disconnected');
+      ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+    }
 
-function showSetup() {
-  document.getElementById('agents').innerHTML = `<div class="empty">
+    function setStatus(s) {
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('connLabel');
+      dot.style.background = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+      label.textContent = s === 'connected' ? 'live' : s === 'connecting' ? 'connecting…' : 'offline';
+      label.style.color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+    }
+
+    function showSetup() {
+      document.getElementById('agents').innerHTML = `<div class="empty">
     <p style="font-size:1.5rem;margin-bottom:12px">🐑</p>
     <p><strong>herdr-remote</strong></p>
     <p style="margin-top:8px">Monitor & approve agents from your phone</p>
@@ -546,1043 +1296,1048 @@ function showSetup() {
       2. Tap ⚙ → paste the wss:// URL<br>
     </p>
   </div>`;
-}
-function tryDemo() {
-  localStorage.setItem('herdr_relay_url', 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev');
-  localStorage.removeItem('herdr_relay_token');
-  document.getElementById('relayUrl').value = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
-  connect();
-}
-
-function handleMessage(msg) {
-  if (msg.type === 'error') {
-    showToast(msg.message || 'The relay refused that.');
-  }
-  else if (msg.type === 'projects') {
-    projects = msg.projects || [];
-    render();
-  }
-  else if (msg.type === 'start_options') {
-    startOptions = msg;
-    render();
-  }
-  else if (msg.type === 'command_result' && msg.command === 'start_agent') {
-    document.getElementById('startSubmit').disabled = false;
-    // The session appears on the next poll snapshot; the browser invents nothing.
-    if (msg.ok) closeStart();
-    else setStartError(msg.error || 'start failed');
-  }
-  else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
-    // Same rule: apply the label only once the relay confirms herdr took it. Painting it
-    // optimistically made a relay that never handled the message look like a working rename
-    // until the next poll silently undid it.
-    const a = agents.find(x => x.pane_id === msg.pane_id);
-    if (a && msg.ok) {
-      a.label = msg.label;
-      if (activePane === msg.pane_id) document.getElementById('termTitle').textContent = paneTitle(a);
-      render();
-      renderPairStrip();
     }
-  }
-  else if (msg.type === 'agents') {
-    // Track timeline on status changes
-    for (const a of msg.agents) {
-      const prev = prevStatuses[a.pane_id];
-      if (prev && prev !== a.status) {
-        timeline.unshift({project: a.project, agent: a.agent, status: a.status, time: new Date()});
-        if (timeline.length > 100) timeline.pop();
+    function tryDemo() {
+      localStorage.setItem('herdr_relay_url', 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev');
+      localStorage.removeItem('herdr_relay_token');
+      document.getElementById('relayUrl').value = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
+      connect();
+    }
+
+    function handleMessage(msg) {
+      if (msg.type === 'error') {
+        showToast(msg.message || 'The relay refused that.');
       }
-      prevStatuses[a.pane_id] = a.status;
+      else if (msg.type === 'projects') {
+        projects = msg.projects || [];
+        render();
+      }
+      else if (msg.type === 'start_options') {
+        startOptions = msg;
+        render();
+      }
+      else if (msg.type === 'command_result' && msg.command === 'start_agent') {
+        document.getElementById('startSubmit').disabled = false;
+        // The session appears on the next poll snapshot; the browser invents nothing.
+        if (msg.ok) closeStart();
+        else setStartError(msg.error || 'start failed');
+      }
+      else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
+        // Same rule: apply the label only once the relay confirms herdr took it. Painting it
+        // optimistically made a relay that never handled the message look like a working rename
+        // until the next poll silently undid it.
+        const a = agents.find(x => x.pane_id === msg.pane_id);
+        if (a && msg.ok) {
+          a.label = msg.label;
+          if (activePane === msg.pane_id) document.getElementById('termTitle').textContent = paneTitle(a);
+          render();
+          renderPairStrip();
+        }
+      }
+      else if (msg.type === 'agents') {
+        // Track timeline on status changes
+        for (const a of msg.agents) {
+          const prev = prevStatuses[a.pane_id];
+          if (prev && prev !== a.status) {
+            timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
+            if (timeline.length > 100) timeline.pop();
+          }
+          prevStatuses[a.pane_id] = a.status;
+        }
+        agents = msg.agents; render();
+      }
+      else if (msg.type === 'agent_update') {
+        const update = msg.agent;
+        if (!update || !update.pane_id) return;
+        const existing = agents.find(a => a.pane_id === update.pane_id);
+        const previousStatus = existing?.status || prevStatuses[update.pane_id];
+        if (existing) Object.assign(existing, update);
+        else agents.push({ ...update });
+        if (previousStatus && previousStatus !== update.status) {
+          timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
+          if (timeline.length > 100) timeline.pop();
+        }
+        prevStatuses[update.pane_id] = update.status;
+        render();
+      }
+      else if (msg.type === 'blocked') {
+        const a = agents.find(x => x.pane_id === msg.pane_id);
+        if (a) { a.status = 'blocked'; a.prompt = msg.prompt; a.options = msg.options; }
+        else agents.push({ ...msg, status: 'blocked' });
+        if (window.cue) cue('chime');
+        timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
+        if (timeline.length > 100) timeline.pop();
+        render();
+      } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
+        const el = document.getElementById('termContent');
+        const prevHeight = el.scrollHeight;
+        const prevScroll = el.scrollTop;
+        el.textContent = msg.content || '(empty)';
+        if (userScrolledUp) {
+          // Keep scroll position relative to bottom (content may have grown at top)
+          const growth = el.scrollHeight - prevHeight;
+          el.scrollTop = prevScroll + growth;
+        } else {
+          el.scrollTop = el.scrollHeight;
+        }
+      }
     }
-    agents = msg.agents; render();
-  }
-  else if (msg.type === 'agent_update') {
-    const update = msg.agent;
-    if (!update || !update.pane_id) return;
-    const existing = agents.find(a => a.pane_id === update.pane_id);
-    const previousStatus = existing?.status || prevStatuses[update.pane_id];
-    if (existing) Object.assign(existing, update);
-    else agents.push({...update});
-    if (previousStatus && previousStatus !== update.status) {
-      timeline.unshift({project: update.project, agent: update.agent, status: update.status, time: new Date()});
-      if (timeline.length > 100) timeline.pop();
+
+    function render() {
+      document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+      renderPairStrip();  // pair health is recomputed from every snapshot, never cached
+      renderBody();
+      renderRecents();  // after the body: it is positioned relative to markup renderBody just wrote
     }
-    prevStatuses[update.pane_id] = update.status;
-    render();
-  }
-  else if (msg.type === 'blocked') {
-    const a = agents.find(x => x.pane_id === msg.pane_id);
-    if (a) { a.status='blocked'; a.prompt=msg.prompt; a.options=msg.options; }
-    else agents.push({...msg, status:'blocked'});
-    if(window.cue) cue('chime');
-    timeline.unshift({project: msg.project, agent: msg.agent, status: 'blocked', time: new Date()});
-    if (timeline.length > 100) timeline.pop();
-    render();
-  } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
-    const el = document.getElementById('termContent');
-    const prevHeight = el.scrollHeight;
-    const prevScroll = el.scrollTop;
-    el.textContent = msg.content || '(empty)';
-    if (userScrolledUp) {
-      // Keep scroll position relative to bottom (content may have grown at top)
-      const growth = el.scrollHeight - prevHeight;
-      el.scrollTop = prevScroll + growth;
-    } else {
-      el.scrollTop = el.scrollHeight;
+
+    function renderBody() {
+      if (projects.length) { renderProjects(); return; }
+      const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
+      if (workspaces.length <= 1) {
+        activeWorkspace = null;
+        activeTab = null;
+        renderAgentList(agents);
+        return;
+      }
+      let html = hoistHtml(agents) + layoutHtml(agents);
+      if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
+      document.getElementById('agents').innerHTML = html;
     }
-  }
-}
 
-function render() {
-  document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
-  renderPairStrip();  // pair health is recomputed from every snapshot, never cached
-  renderBody();
-  renderRecents();  // after the body: it is positioned relative to markup renderBody just wrote
-}
-
-function renderBody() {
-  if (projects.length) { renderProjects(); return; }
-  const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
-  if (workspaces.length <= 1) {
-    activeWorkspace = null;
-    activeTab = null;
-    renderAgentList(agents);
-    return;
-  }
-  let html = hoistHtml(agents) + layoutHtml(agents);
-  if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
-  document.getElementById('agents').innerHTML = html;
-}
-
-// Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
-function renderProjects() {
-  if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
-  let html = hoistHtml(agents);
-  html += `<div class="chip-strip project-strip"><span class="chip-label">Projects</span>`;
-  html += `<button class="chip${activeProject===null?' active':''}" onclick="selectProject(null)">All</button>`;
-  for (const p of projects) {
-    const list = agents.filter(a => a.project_id === p.id);
-    const hasBlocked = list.some(a => a.status === 'blocked');
-    html += `<button class="chip${activeProject===p.id?' active':''}${hasBlocked?' alert':''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
-  }
-  html += `</div>`;
-  if (activeProject === null) {
-    html += projects.map(projectCard).join('');
-    const other = agents.filter(a => !a.project_id && a.status !== 'blocked');
-    if (other.length) html += section('Other sessions', 'var(--muted)', other);
-  } else {
-    if (startOptions) {
-      html += `<div class="chip-strip"><button class="chip chip-add" onclick="openStartDialog('${activeProject}')">+ Start session</button></div>`;
+    // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
+    function renderProjects() {
+      if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
+      let html = hoistHtml(agents);
+      html += `<div class="chip-strip project-strip"><span class="chip-label">Projects</span>`;
+      html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
+      for (const p of projects) {
+        const list = agents.filter(a => a.project_id === p.id);
+        const hasBlocked = list.some(a => a.status === 'blocked');
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
+      }
+      html += `</div>`;
+      if (activeProject === null) {
+        html += projects.map(projectCard).join('');
+        const other = agents.filter(a => !a.project_id && a.status !== 'blocked');
+        if (other.length) html += section('Other sessions', 'var(--muted)', other);
+      } else {
+        if (startOptions) {
+          html += `<div class="chip-strip"><button class="chip chip-add" onclick="openStartDialog('${activeProject}')">+ Start session</button></div>`;
+        }
+        const mine = agents.filter(a => a.project_id === activeProject);
+        html += mine.length ? layoutHtml(mine) : '<div class="empty">No sessions</div>';
+      }
+      document.getElementById('agents').innerHTML = html;
     }
-    const mine = agents.filter(a => a.project_id === activeProject);
-    html += mine.length ? layoutHtml(mine) : '<div class="empty">No sessions</div>';
-  }
-  document.getElementById('agents').innerHTML = html;
-}
 
-function projectCard(p) {
-  const list = agents.filter(a => a.project_id === p.id);
-  const blocked = list.filter(a => a.status === 'blocked').length;
-  const color = blocked ? 'var(--red)' : list.length ? 'var(--green)' : 'var(--muted)';
-  const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
-  const meta = list.length
-    ? `${list.length} session${list.length>1?'s':''}${blocked?` · ${blocked} blocked`:''}`
-    : 'No sessions';
-  // Available on every Project card, including one with zero live sessions.
-  const start = startOptions
-    ? `<button class="chip chip-add" aria-label="Start session in ${p.label}" onclick="openStartDialog('${p.id}',event)">+ Start</button>`
-    : '';
-  return `<div class="agent" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
+    function projectCard(p) {
+      const list = agents.filter(a => a.project_id === p.id);
+      const blocked = list.filter(a => a.status === 'blocked').length;
+      const color = blocked ? 'var(--red)' : list.length ? 'var(--green)' : 'var(--muted)';
+      const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
+      const meta = list.length
+        ? `${list.length} session${list.length > 1 ? 's' : ''}${blocked ? ` · ${blocked} blocked` : ''}`
+        : 'No sessions';
+      // Available on every Project card, including one with zero live sessions.
+      const start = startOptions
+        ? `<button class="chip chip-add" aria-label="Start session in ${p.label}" onclick="openStartDialog('${p.id}',event)">+ Start</button>`
+        : '';
+      return `<div class="agent" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
     <span class="dot" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${p.label}${host}</div><div class="meta">${meta}</div></div>
     ${start}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
-}
-
-function hoistHtml(list) {
-  const blocked = list.filter(a => a.status === 'blocked');
-  if (!blocked.length) return '';
-  return `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
-    + blocked.map(a => agentCard(a)).join('');
-}
-
-// Native workspace/tab navigation over `list` — all agents, or one Project's.
-function layoutHtml(list) {
-  const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
-  let html = '';
-  if (workspaces.length <= 1) {
-    activeWorkspace = null;
-    activeTab = null;
-  } else {
-    // Space chip strip
-    html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
-    html += `<button class="chip${activeWorkspace===null?' active':''}" onclick="backToWorkspaces()">All</button>`;
-    for (const wsId of workspaces) {
-      const wsAgents = list.filter(a => a.workspace_id === wsId);
-      const hasBlocked = wsAgents.some(a => a.status === 'blocked');
-      const name = wsAgents[0]?.project || wsId.slice(0, 8);
-      html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
     }
-    html += `</div>`;
-    // Tab chip strip (always show when workspace selected)
-    if (activeWorkspace) {
-      const wsTabs = [...new Set(list.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
-      html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
-      if (wsTabs.length > 1) {
-        html += `<button class="chip${!activeTab?' active':''}" onclick="selectTab(null)">All</button>`;
+
+    function hoistHtml(list) {
+      const blocked = list.filter(a => a.status === 'blocked');
+      if (!blocked.length) return '';
+      return `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
+        + blocked.map(a => agentCard(a)).join('');
+    }
+
+    // Native workspace/tab navigation over `list` — all agents, or one Project's.
+    function layoutHtml(list) {
+      const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
+      let html = '';
+      if (workspaces.length <= 1) {
+        activeWorkspace = null;
+        activeTab = null;
+      } else {
+        // Space chip strip
+        html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
+        html += `<button class="chip${activeWorkspace === null ? ' active' : ''}" onclick="backToWorkspaces()">All</button>`;
+        for (const wsId of workspaces) {
+          const wsAgents = list.filter(a => a.workspace_id === wsId);
+          const hasBlocked = wsAgents.some(a => a.status === 'blocked');
+          const name = wsAgents[0]?.project || wsId.slice(0, 8);
+          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+        }
+        html += `</div>`;
+        // Tab chip strip (always show when workspace selected)
+        if (activeWorkspace) {
+          const wsTabs = [...new Set(list.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
+          html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
+          if (wsTabs.length > 1) {
+            html += `<button class="chip${!activeTab ? ' active' : ''}" onclick="selectTab(null)">All</button>`;
+          }
+          wsTabs.forEach((tid, i) => {
+            const tabAgents = list.filter(a => a.tab_id === tid);
+            const hasBlocked = tabAgents.some(a => a.status === 'blocked');
+            const tabLabel = tabAgents[0]?.label || 'Tab ' + (i + 1);
+            html += `<button class="chip${activeTab === tid ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+          });
+          html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
+          html += `</div>`;
+        }
       }
-      wsTabs.forEach((tid, i) => {
-        const tabAgents = list.filter(a => a.tab_id === tid);
-        const hasBlocked = tabAgents.some(a => a.status === 'blocked');
-        const tabLabel = tabAgents[0]?.label || 'Tab '+(i+1);
-        html += `<button class="chip${activeTab===tid?' active':''}${hasBlocked?' alert':''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
-      });
-      html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
-      html += `</div>`;
+      // Agent list (filtered). Blocked are already hoisted above.
+      let filtered = list;
+      if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
+      if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
+      const working = filtered.filter(a => a.status === 'working');
+      const done = filtered.filter(a => a.status === 'done');
+      const idle = filtered.filter(a => a.status === 'idle' || a.status === 'unknown');
+      if (working.length) html += section('Working', 'var(--green)', working);
+      if (done.length) html += section('Done', 'var(--muted)', done);
+      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      return html;
     }
-  }
-  // Agent list (filtered). Blocked are already hoisted above.
-  let filtered = list;
-  if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
-  if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
-  const working = filtered.filter(a => a.status==='working');
-  const done = filtered.filter(a => a.status==='done');
-  const idle = filtered.filter(a => a.status==='idle'||a.status==='unknown');
-  if (working.length) html += section('Working', 'var(--green)', working);
-  if (done.length) html += section('Done', 'var(--muted)', done);
-  if (idle.length) html += section('Idle', 'var(--muted)', idle);
-  return html;
-}
 
-function renderAgentList(list) {
-  const blocked = list.filter(a => a.status==='blocked');
-  const working = list.filter(a => a.status==='working');
-  const done = list.filter(a => a.status==='done');
-  const idle = list.filter(a => a.status==='idle'||a.status==='unknown');
-  let html = '';
-  if (blocked.length) html += section('Blocked', 'var(--red)', blocked);
-  if (working.length) html += section('Working', 'var(--green)', working);
-  if (done.length) html += section('Done', 'var(--muted)', done);
-  if (idle.length) html += section('Idle', 'var(--muted)', idle);
-  if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
-  document.getElementById('agents').innerHTML = html;
-}
+    function renderAgentList(list) {
+      const blocked = list.filter(a => a.status === 'blocked');
+      const working = list.filter(a => a.status === 'working');
+      const done = list.filter(a => a.status === 'done');
+      const idle = list.filter(a => a.status === 'idle' || a.status === 'unknown');
+      let html = '';
+      if (blocked.length) html += section('Blocked', 'var(--red)', blocked);
+      if (working.length) html += section('Working', 'var(--green)', working);
+      if (done.length) html += section('Done', 'var(--muted)', done);
+      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
+      document.getElementById('agents').innerHTML = html;
+    }
 
-// A workspace ID from one Project means nothing under another, and leaving it set
-// silently filters the new Project down to nothing.
-function selectProject(id) { activeProject = id; activeWorkspace = null; activeTab = null; render(); }
-function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
-function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
-function selectTab(id) { activeTab = id; render(); }
+    // A workspace ID from one Project means nothing under another, and leaving it set
+    // silently filters the new Project down to nothing.
+    function selectProject(id) { activeProject = id; activeWorkspace = null; activeTab = null; render(); }
+    function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
+    function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
+    function selectTab(id) { activeTab = id; render(); }
 
-function createTab(workspaceId) {
-  if (!ws) return;
-  if (window.cue) cue('sparkle');
-  ws.send(JSON.stringify({type:'create_tab', workspace_id: workspaceId}));
-  setTimeout(() => { activeTab = null; }, 1500);
-}
+    function createTab(workspaceId) {
+      if (!ws) return;
+      if (window.cue) cue('sparkle');
+      ws.send(JSON.stringify({ type: 'create_tab', workspace_id: workspaceId }));
+      setTimeout(() => { activeTab = null; }, 1500);
+    }
 
-// --- Start session dialog ---
-function fillSelect(id, options) {
-  const el = document.getElementById(id);
-  el.innerHTML = options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-  el.disabled = !options.length;
-  return options.length;
-}
+    // --- Start session dialog ---
+    function fillSelect(id, options) {
+      const el = document.getElementById(id);
+      el.innerHTML = options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+      el.disabled = !options.length;
+      return options.length;
+    }
 
-function setStartError(text) {
-  const el = document.getElementById('startError');
-  el.textContent = text || '';
-  el.style.display = text ? 'block' : 'none';
-}
+    function setStartError(text) {
+      const el = document.getElementById('startError');
+      el.textContent = text || '';
+      el.style.display = text ? 'block' : 'none';
+    }
 
-function openStartDialog(projectId, ev) {
-  if (ev) ev.stopPropagation();
-  if (!startOptions) return;
-  startProjectId = projectId;
-  const p = projects.find(x => x.id === projectId);
-  document.getElementById('startProject').textContent = p ? p.label : '';
-  fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
-  fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
-  fillSelect('startPlacement', [['new_workspace','New workspace'],['new_tab','New tab'],['split','Split']]);
-  setStartError('');
-  document.getElementById('startSubmit').disabled = false;
-  renderStartTarget();  // may disable submit again when the Project has no live target
-  document.getElementById('startSheet').style.display = 'block';
-}
+    function openStartDialog(projectId, ev) {
+      if (ev) ev.stopPropagation();
+      if (!startOptions) return;
+      startProjectId = projectId;
+      const p = projects.find(x => x.id === projectId);
+      document.getElementById('startProject').textContent = p ? p.label : '';
+      fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
+      fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
+      fillSelect('startPlacement', [['new_workspace', 'New workspace'], ['new_tab', 'New tab'], ['split', 'Split']]);
+      setStartError('');
+      document.getElementById('startSubmit').disabled = false;
+      renderStartTarget();  // may disable submit again when the Project has no live target
+      document.getElementById('startSheet').style.display = 'block';
+    }
 
-function closeStart() {
-  document.getElementById('startSheet').style.display = 'none';
-  startProjectId = null;
-}
+    function closeStart() {
+      document.getElementById('startSheet').style.display = 'none';
+      startProjectId = null;
+    }
 
-// New tab lists this Project's live workspaces; Split lists its live panes. Neither is
-// offered for a Project with no live sessions — New workspace always is.
-function renderStartTarget() {
-  const placement = document.getElementById('startPlacement').value;
-  const row = document.getElementById('startTargetRow');
-  const mine = agents.filter(a => a.project_id === startProjectId);
-  if (placement === 'new_workspace') { row.innerHTML = ''; return; }
-  const isTab = placement === 'new_tab';
-  const label = isTab ? 'Workspace' : 'Beside pane';
-  row.innerHTML = `<label class="start-field">${label}<select id="startTarget"></select></label>`;
-  let options;
-  if (isTab) {
-    const seen = new Set();
-    options = mine.filter(a => a.workspace_id && !seen.has(a.workspace_id) && seen.add(a.workspace_id))
-                  .map(a => [a.workspace_id, a.project || a.workspace_id]);
-  } else {
-    options = mine.map(a => [a.pane_id, `${a.label || a.agent} · ${a.pane_id}`]);
-  }
-  const any = fillSelect('startTarget', options);
-  setStartError(any ? '' : (isTab ? 'No live workspaces in this project' : 'No live panes in this project'));
-  document.getElementById('startSubmit').disabled = !any;
-}
+    // New tab lists this Project's live workspaces; Split lists its live panes. Neither is
+    // offered for a Project with no live sessions — New workspace always is.
+    function renderStartTarget() {
+      const placement = document.getElementById('startPlacement').value;
+      const row = document.getElementById('startTargetRow');
+      const mine = agents.filter(a => a.project_id === startProjectId);
+      if (placement === 'new_workspace') { row.innerHTML = ''; return; }
+      const isTab = placement === 'new_tab';
+      const label = isTab ? 'Workspace' : 'Beside pane';
+      row.innerHTML = `<label class="start-field">${label}<select id="startTarget"></select></label>`;
+      let options;
+      if (isTab) {
+        const seen = new Set();
+        options = mine.filter(a => a.workspace_id && !seen.has(a.workspace_id) && seen.add(a.workspace_id))
+          .map(a => [a.workspace_id, a.project || a.workspace_id]);
+      } else {
+        options = mine.map(a => [a.pane_id, `${a.label || a.agent} · ${a.pane_id}`]);
+      }
+      const any = fillSelect('startTarget', options);
+      setStartError(any ? '' : (isTab ? 'No live workspaces in this project' : 'No live panes in this project'));
+      document.getElementById('startSubmit').disabled = !any;
+    }
 
-function submitStart() {
-  if (!ws || !startProjectId) return;
-  const placement = document.getElementById('startPlacement').value;
-  const msg = {
-    type: 'start_agent',
-    name: document.getElementById('startAgent').value,
-    role: document.getElementById('startRole').value,
-    project_id: startProjectId,
-    placement: placement,
-  };
-  if (placement !== 'new_workspace') {
-    const target = document.getElementById('startTarget');
-    if (!target || !target.value) { setStartError('Select a target first'); return; }
-    msg[placement === 'new_tab' ? 'workspace_id' : 'split_from'] = target.value;
-  }
-  setStartError('');
-  document.getElementById('startSubmit').disabled = true;
-  ws.send(JSON.stringify(msg));
-}
+    function submitStart() {
+      if (!ws || !startProjectId) return;
+      const placement = document.getElementById('startPlacement').value;
+      const msg = {
+        type: 'start_agent',
+        name: document.getElementById('startAgent').value,
+        role: document.getElementById('startRole').value,
+        project_id: startProjectId,
+        placement: placement,
+      };
+      if (placement !== 'new_workspace') {
+        const target = document.getElementById('startTarget');
+        if (!target || !target.value) { setStartError('Select a target first'); return; }
+        msg[placement === 'new_tab' ? 'workspace_id' : 'split_from'] = target.value;
+      }
+      setStartError('');
+      document.getElementById('startSubmit').disabled = true;
+      ws.send(JSON.stringify(msg));
+    }
 
-// --- Recents ---
-// Most-recently-opened panes, for one-tap access without hunting the list. Browser-local, like
-// pairs: the relay has no notion of which panes this device visited.
+    // --- Recents ---
+    // Most-recently-opened panes, for one-tap access without hunting the list. Browser-local, like
+    // pairs: the relay has no notion of which panes this device visited.
 
-const RECENTS_KEY = 'herdr_recents';
-const MAX_RECENTS = 6;
-let recentsEl = null;
+    const RECENTS_KEY = 'herdr_recents';
+    const MAX_RECENTS = 6;
+    let recentsEl = null;
 
-// Recents belong under the Projects chips — the chips choose a scope, recents jump inside it, so
-// scope reads first. With no Projects configured there is no strip and it stays at the top.
-function placeRecents(el) {
-  const strip = document.querySelector('#agents .project-strip');
-  if (strip) strip.after(el);
-  else document.getElementById('agentListView').insertBefore(el, document.getElementById('agents'));
-}
+    // Recents belong under the Projects chips — the chips choose a scope, recents jump inside it, so
+    // scope reads first. With no Projects configured there is no strip and it stays at the top.
+    function placeRecents(el) {
+      const strip = document.querySelector('#agents .project-strip');
+      if (strip) strip.after(el);
+      else document.getElementById('agentListView').insertBefore(el, document.getElementById('agents'));
+    }
 
-function loadRecents() {
-  try {
-    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
-    // Version-one recents stored bare pane IDs. Drop them: herdr can reuse an ID for a
-    // different session, and this is a convenience list, not data worth migrating unsafely.
-    return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id && x.agent) : [];
-  } catch (e) { return []; }
-}
+    function loadRecents() {
+      try {
+        const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
+        // Version-one recents stored bare pane IDs. Drop them: herdr can reuse an ID for a
+        // different session, and this is a convenience list, not data worth migrating unsafely.
+        return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id && x.agent) : [];
+      } catch (e) { return []; }
+    }
 
-function noteRecent(paneId) {
-  const live = agents.filter(a => a.pane_id === paneId);
-  if (live.length !== 1) return;
-  const current = recentFingerprint(live[0]);
-  const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, MAX_RECENTS);
-  localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
-}
+    function noteRecent(paneId) {
+      const live = agents.filter(a => a.pane_id === paneId);
+      if (live.length !== 1) return;
+      const current = recentFingerprint(live[0]);
+      const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, MAX_RECENTS);
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+    }
 
-// Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
-// pane IDs, so a stale entry could open a pane the user never visited.
-function renderRecents() {
-  // Held as a live reference, not re-queried: #agents innerHTML is rewritten every render, which
-  // detaches this node when it sits inside the Projects layer.
-  const el = recentsEl || (recentsEl = document.getElementById('recents'));
-  placeRecents(el);
-  const live = loadRecents()
-    .map(r => agents.find(a => memberMatches(r, a)))
-    .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1);
-  if (live.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
-  el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
-    live.map(a => {
-      const dot = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
-      return `<button class="chip" onclick="openTerminal('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
-        `<span class="dot" style="background:${dot};margin-right:6px" aria-hidden="true"></span>${escapeHtml(paneLabel(a))}</button>`;
-    }).join('');
-  el.style.display = 'flex';
-}
+    // Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
+    // pane IDs, so a stale entry could open a pane the user never visited.
+    function renderRecents() {
+      // Held as a live reference, not re-queried: #agents innerHTML is rewritten every render, which
+      // detaches this node when it sits inside the Projects layer.
+      const el = recentsEl || (recentsEl = document.getElementById('recents'));
+      placeRecents(el);
+      const live = loadRecents()
+        .map(r => agents.find(a => memberMatches(r, a)))
+        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1);
+      if (live.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
+        live.map(a => {
+          const dot = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          return `<button class="chip" onclick="openTerminal('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+            `<span class="dot" style="background:${dot};margin-right:6px" aria-hidden="true"></span>${escapeHtml(paneLabel(a))}</button>`;
+        }).join('');
+      el.style.display = 'flex';
+    }
 
-// --- Pairs (storage and UI) ---
+    // --- Pairs (storage and UI) ---
 
-function loadPairs() { pairs = parsePairs(localStorage.getItem(PAIRS_KEY) || ''); }
-function savePairs() {
-  localStorage.setItem(PAIRS_KEY, JSON.stringify({version: PAIRS_VERSION, pairs: pairs}));
-}
+    function loadPairs() { pairs = parsePairs(localStorage.getItem(PAIRS_KEY) || ''); }
+    function savePairs() {
+      localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
+    }
 
-function fingerprint(a, role) {
-  return {pane_id: a.pane_id, host: a.host || 'local', role: role,
-          agent: a.agent, cwd: a.cwd || ''};
-}
+    function fingerprint(a, role) {
+      return {
+        pane_id: a.pane_id, host: a.host || 'local', role: role,
+        agent: a.agent, cwd: a.cwd || ''
+      };
+    }
 
-function paneLabel(a) { return a.label || a.project || a.agent; }
+    function paneLabel(a) { return a.label || a.project || a.agent; }
 
-// One display form everywhere: project · agent · name, e.g. "charts.TS · claude · Architect 1".
-// Each part is dropped when absent, so an unnamed pane degrades to "charts.TS · claude" rather
-// than showing an empty segment or repeating the project as its own name.
-function paneTitle(a) {
-  const parts = [];
-  if (a.project) parts.push(a.project);
-  if (a.agent) parts.push(a.agent);
-  if (a.label && a.label !== a.project) parts.push(a.label);
-  return parts.join(' · ') || a.pane_id;
-}
+    // One display form everywhere: project · agent · name, e.g. "charts.TS · claude · Architect 1".
+    // Each part is dropped when absent, so an unnamed pane degrades to "charts.TS · claude" rather
+    // than showing an empty segment or repeating the project as its own name.
+    function paneTitle(a) {
+      const parts = [];
+      if (a.project) parts.push(a.project);
+      if (a.agent) parts.push(a.agent);
+      if (a.label && a.label !== a.project) parts.push(a.label);
+      return parts.join(' · ') || a.pane_id;
+    }
 
-// warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
-// a failure teaches the user to ignore the colour.
-function setPairError(text, warn) {
-  const el = document.getElementById('pairError');
-  el.textContent = text || '';
-  el.style.color = warn ? 'var(--orange)' : 'var(--red)';
-  el.style.display = text ? 'block' : 'none';
-}
+    // warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
+    // a failure teaches the user to ignore the colour.
+    function setPairError(text, warn) {
+      const el = document.getElementById('pairError');
+      el.textContent = text || '';
+      el.style.color = warn ? 'var(--orange)' : 'var(--red)';
+      el.style.display = text ? 'block' : 'none';
+    }
 
-function openPairDialog(paneId, ev) {
-  if (ev) ev.stopPropagation();
-  pairSource = agents.find(a => a.pane_id === paneId);
-  if (!pairSource) return;
-  pairPartner = null;
-  document.getElementById('pairSource').textContent = paneTitle(pairSource);
-  document.getElementById('pairFields').style.display = 'none';
-  setPairError('');
-  renderPairCandidates();
-  document.getElementById('pairSheet').style.display = 'block';
-}
+    function openPairDialog(paneId, ev) {
+      if (ev) ev.stopPropagation();
+      pairSource = agents.find(a => a.pane_id === paneId);
+      if (!pairSource) return;
+      pairPartner = null;
+      document.getElementById('pairSource').textContent = paneTitle(pairSource);
+      document.getElementById('pairFields').style.display = 'none';
+      setPairError('');
+      renderPairCandidates();
+      document.getElementById('pairSheet').style.display = 'block';
+    }
 
-function closePair() {
-  document.getElementById('pairSheet').style.display = 'none';
-  pairSource = null; pairPartner = null;
-}
+    function closePair() {
+      document.getElementById('pairSheet').style.display = 'none';
+      pairSource = null; pairPartner = null;
+    }
 
-function renderPairCandidates() {
-  const box = document.getElementById('pairCandidates');
-  const submit = document.getElementById('pairSubmit');
-  const candidates = pairCandidates(agents, pairSource);
-  if (!candidates.length) {
-    box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>`;
-    submit.disabled = true;
-    return;
-  }
-  box.innerHTML = `<p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px">Partner</p>` +
-    candidates.map(a => {
-      const existing = pairFor(pairs, a.pane_id);
-      // &nbsp; not a plain space: the button is a flex container, so whitespace between its
-      // children collapses and the note would butt straight against the name.
-      const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
-      const on = pairPartner && pairPartner.pane_id === a.pane_id;
-      return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
-    }).join('');
-  submit.disabled = !pairPartner;
-}
+    function renderPairCandidates() {
+      const box = document.getElementById('pairCandidates');
+      const submit = document.getElementById('pairSubmit');
+      const candidates = pairCandidates(agents, pairSource);
+      if (!candidates.length) {
+        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>`;
+        submit.disabled = true;
+        return;
+      }
+      box.innerHTML = `<p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px">Partner</p>` +
+        candidates.map(a => {
+          const existing = pairFor(pairs, a.pane_id);
+          // &nbsp; not a plain space: the button is a flex container, so whitespace between its
+          // children collapses and the note would butt straight against the name.
+          const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
+          const on = pairPartner && pairPartner.pane_id === a.pane_id;
+          return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
+        }).join('');
+      submit.disabled = !pairPartner;
+    }
 
-function choosePartner(paneId) {
-  pairPartner = agents.find(a => a.pane_id === paneId);
-  if (!pairPartner) return;
-  document.getElementById('pairName').value =
-    `${paneLabel(pairSource)} ↔ ${paneLabel(pairPartner)}`.slice(0, 64);
-  // Default to the pane's own name — "Architect 1", "Reviewer 2" — which is what the
-  // receiving agent is shown. The agent name is a poor default: two panes both called
-  // "claude" tell the reader nothing about which colleague sent the text.
-  document.getElementById('pairRoleA').value = paneLabel(pairSource);
-  document.getElementById('pairRoleB').value = paneLabel(pairPartner);
-  document.getElementById('pairFields').style.display = 'flex';
-  // Name what is being replaced — a silent replacement is how a user loses a pair they meant to keep.
-  const clashes = [pairSource, pairPartner].map(p => pairFor(pairs, p.pane_id)).filter(Boolean);
-  const names = [...new Set(clashes.map(p => p.name))];
-  setPairError(names.length ? `Saving replaces the existing pair ${names.map(n => `"${n}"`).join(' and ')}.` : '', true);
-  renderPairCandidates();
-}
+    function choosePartner(paneId) {
+      pairPartner = agents.find(a => a.pane_id === paneId);
+      if (!pairPartner) return;
+      document.getElementById('pairName').value =
+        `${paneLabel(pairSource)} ↔ ${paneLabel(pairPartner)}`.slice(0, 64);
+      // Default to the pane's own name — "Architect 1", "Reviewer 2" — which is what the
+      // receiving agent is shown. The agent name is a poor default: two panes both called
+      // "claude" tell the reader nothing about which colleague sent the text.
+      document.getElementById('pairRoleA').value = paneLabel(pairSource);
+      document.getElementById('pairRoleB').value = paneLabel(pairPartner);
+      document.getElementById('pairFields').style.display = 'flex';
+      // Name what is being replaced — a silent replacement is how a user loses a pair they meant to keep.
+      const clashes = [pairSource, pairPartner].map(p => pairFor(pairs, p.pane_id)).filter(Boolean);
+      const names = [...new Set(clashes.map(p => p.name))];
+      setPairError(names.length ? `Saving replaces the existing pair ${names.map(n => `"${n}"`).join(' and ')}.` : '', true);
+      renderPairCandidates();
+    }
 
-function savePair() {
-  if (!pairSource || !pairPartner) return;
-  const name = document.getElementById('pairName').value.trim();
-  if (!name) { setPairError('Pair name is required'); return; }
-  const roleA = document.getElementById('pairRoleA').value.trim() || paneLabel(pairSource);
-  const roleB = document.getElementById('pairRoleB').value.trim() || paneLabel(pairPartner);
-  const ids = [pairSource.pane_id, pairPartner.pane_id];
-  const kept = pairs.filter(p => !p.members.some(m => ids.includes(m.pane_id)));
-  if (kept.length >= MAX_PAIRS) { setPairError(`Already at ${MAX_PAIRS} pairs — remove one first`); return; }
-  pairs = kept.concat([{id: newPairId(), name: name.slice(0, 64),
-    members: [fingerprint(pairSource, roleA), fingerprint(pairPartner, roleB)]}]);
-  savePairs();
-  closePair();
-  render();
-  renderPairStrip();
-}
+    function savePair() {
+      if (!pairSource || !pairPartner) return;
+      const name = document.getElementById('pairName').value.trim();
+      if (!name) { setPairError('Pair name is required'); return; }
+      const roleA = document.getElementById('pairRoleA').value.trim() || paneLabel(pairSource);
+      const roleB = document.getElementById('pairRoleB').value.trim() || paneLabel(pairPartner);
+      const ids = [pairSource.pane_id, pairPartner.pane_id];
+      const kept = pairs.filter(p => !p.members.some(m => ids.includes(m.pane_id)));
+      if (kept.length >= MAX_PAIRS) { setPairError(`Already at ${MAX_PAIRS} pairs — remove one first`); return; }
+      pairs = kept.concat([{
+        id: newPairId(), name: name.slice(0, 64),
+        members: [fingerprint(pairSource, roleA), fingerprint(pairPartner, roleB)]
+      }]);
+      savePairs();
+      closePair();
+      render();
+      renderPairStrip();
+    }
 
-function unpair() {
-  const pair = pairFor(pairs, activePane);
-  if (!pair || !confirm(`Remove the pair "${pair.name}"?`)) return;
-  pairs = pairs.filter(p => p.id !== pair.id);
-  savePairs();
-  render();
-  renderPairStrip();
-}
+    function unpair() {
+      const pair = pairFor(pairs, activePane);
+      if (!pair || !confirm(`Remove the pair "${pair.name}"?`)) return;
+      pairs = pairs.filter(p => p.id !== pair.id);
+      savePairs();
+      render();
+      renderPairStrip();
+    }
 
-// The strip is absent, not disabled, when there is no pair — and the transfer control is
-// absent whenever the pair is stale, so the UI can never offer an unverified target.
-function renderPairStrip() {
-  const strip = document.getElementById('pairStrip');
-  const pair = activePane ? pairFor(pairs, activePane) : null;
-  if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
-  const health = pairHealth(pair, agents);
-  const partner = partnerOf(pair, activePane);
-  const mine = memberOf(pair, activePane);
-  const ok = health.state === 'healthy';
-  // Read the partner's name from the live snapshot, not from the pair record: the record holds
-  // the name captured at pin time, so renaming a pane would leave a stale name on this button.
-  // Falls back to the pinned name, then the pane ID, so the button is never blank.
-  const live = agents.find(a => a.pane_id === partner.pane_id);
-  const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
-  strip.className = 'pair-strip' + (ok ? '' : ' stale');
-  strip.innerHTML =
-    // Switch sits first, on the left: it is the control reached most often, and the thumb
-    // is already there from the back button above it.
-    (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
-    `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
-    (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
-    `<button onclick="openPairDialog(activePane)">Edit</button>` +
-    `<button onclick="unpair()">Unpair</button>` +
-    (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
-  strip.style.display = 'flex';
-}
+    // The strip is absent, not disabled, when there is no pair — and the transfer control is
+    // absent whenever the pair is stale, so the UI can never offer an unverified target.
+    function renderPairStrip() {
+      const strip = document.getElementById('pairStrip');
+      const pair = activePane ? pairFor(pairs, activePane) : null;
+      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+      const health = pairHealth(pair, agents);
+      const partner = partnerOf(pair, activePane);
+      const mine = memberOf(pair, activePane);
+      const ok = health.state === 'healthy';
+      // Read the partner's name from the live snapshot, not from the pair record: the record holds
+      // the name captured at pin time, so renaming a pane would leave a stale name on this button.
+      // Falls back to the pinned name, then the pane ID, so the button is never blank.
+      const live = agents.find(a => a.pane_id === partner.pane_id);
+      const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
+      strip.className = 'pair-strip' + (ok ? '' : ' stale');
+      strip.innerHTML =
+        // Switch sits first, on the left: it is the control reached most often, and the thumb
+        // is already there from the back button above it.
+        (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
+        `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
+        (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
+        `<button onclick="openPairDialog(activePane)">Edit</button>` +
+        `<button onclick="unpair()">Unpair</button>` +
+        (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
+      strip.style.display = 'flex';
+    }
 
-// Renames the pane in herdr itself, not just in this browser. A frontend-only alias would
-// disagree with the herdr pane list and with the Architect N labels a started session gets,
-// leaving one pane with three names.
-function renamePane() {
-  const a = agents.find(x => x.pane_id === activePane);
-  if (!a || !ws) return;
-  const next = prompt('Name for this pane', a.label || a.project || a.agent);
-  if (next === null) return;
-  const label = next.trim();
-  // Cleared or unchanged means keep what it had — the relay refuses an empty label, and
-  // nagging about it is worse than treating a blank field as "leave it alone".
-  if (!label || label === a.label) return;
-  if (label.length > 32) { showToast('Name must be 32 characters or fewer.'); return; }
-  ws.send(JSON.stringify({type: 'rename_pane', pane_id: activePane, label: label}));
-  // Nothing is applied here — the command_result branch does it once herdr has accepted the
-  // rename, and an `error` reply surfaces instead if the relay is too old to know the message.
-}
+    // Renames the pane in herdr itself, not just in this browser. A frontend-only alias would
+    // disagree with the herdr pane list and with the Architect N labels a started session gets,
+    // leaving one pane with three names.
+    function renamePane() {
+      const a = agents.find(x => x.pane_id === activePane);
+      if (!a || !ws) return;
+      const next = prompt('Name for this pane', a.label || a.project || a.agent);
+      if (next === null) return;
+      const label = next.trim();
+      // Cleared or unchanged means keep what it had — the relay refuses an empty label, and
+      // nagging about it is worse than treating a blank field as "leave it alone".
+      if (!label || label === a.label) return;
+      if (label.length > 32) { showToast('Name must be 32 characters or fewer.'); return; }
+      ws.send(JSON.stringify({ type: 'rename_pane', pane_id: activePane, label: label }));
+      // Nothing is applied here — the command_result branch does it once herdr has accepted the
+      // rename, and an `error` reply surfaces instead if the relay is too old to know the message.
+    }
 
-// Jump to the other half of the pair without going back through the agent list. Refuses on a
-// stale pair for the same reason transfer does — the target has not been verified.
-function switchToPartner() {
-  const pair = activePane ? pairFor(pairs, activePane) : null;
-  if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
-  openTerminal(partnerOf(pair, activePane).pane_id);
-  if (window.cue) cue('page');
-}
+    // Jump to the other half of the pair without going back through the agent list. Refuses on a
+    // stale pair for the same reason transfer does — the target has not been verified.
+    function switchToPartner() {
+      const pair = activePane ? pairFor(pairs, activePane) : null;
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
+      openTerminal(partnerOf(pair, activePane).pane_id);
+      if (window.cue) cue('page');
+    }
 
-// --- Transfer ---
+    // --- Transfer ---
 
-function openTransfer() {
-  const pair = pairFor(pairs, activePane);
-  if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
-  // Capture before anything can steal the selection — switching panes clears it.
-  transferSelection = String(window.getSelection() || '').trim();
-  const partner = partnerOf(pair, activePane);
-  const live = agents.find(a => a.pane_id === partner.pane_id);
-  document.getElementById('transferTarget').textContent =
-    (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
-  const preview = document.getElementById('transferPreview');
-  const box = document.getElementById('transferShortcuts');
-  if (!transferSelection) {
-    box.innerHTML = '';
-    preview.textContent = 'Select some text in the pane first, then tap Transfer.';
-    document.getElementById('transferSheet').style.display = 'block';
-    return;
-  }
-  box.innerHTML = SHORTCUTS.map((s, i) =>
-      `<button class="nav-key" style="width:100%;justify-content:flex-start" onclick="doTransfer(${i})">${escapeHtml(s.label)}</button>`).join('') +
-    `<button class="nav-key" style="width:100%;justify-content:flex-start;color:var(--muted)" onclick="doTransfer(-1)">No instruction</button>`;
-  preview.textContent = transferSelection.length > 600
-    ? transferSelection.slice(0, 600) + '\n…'
-    : transferSelection;
-  document.getElementById('transferSheet').style.display = 'block';
-}
+    function openTransfer() {
+      const pair = pairFor(pairs, activePane);
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
+      // Capture before anything can steal the selection — switching panes clears it.
+      transferSelection = String(window.getSelection() || '').trim();
+      const partner = partnerOf(pair, activePane);
+      const live = agents.find(a => a.pane_id === partner.pane_id);
+      document.getElementById('transferTarget').textContent =
+        (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
+      const preview = document.getElementById('transferPreview');
+      const box = document.getElementById('transferShortcuts');
+      if (!transferSelection) {
+        box.innerHTML = '';
+        preview.textContent = 'Select some text in the pane first, then tap Transfer.';
+        document.getElementById('transferSheet').style.display = 'block';
+        return;
+      }
+      box.innerHTML = SHORTCUTS.map((s, i) =>
+        `<button class="nav-key" style="width:100%;justify-content:flex-start" onclick="doTransfer(${i})">${escapeHtml(s.label)}</button>`).join('') +
+        `<button class="nav-key" style="width:100%;justify-content:flex-start;color:var(--muted)" onclick="doTransfer(-1)">No instruction</button>`;
+      preview.textContent = transferSelection.length > 600
+        ? transferSelection.slice(0, 600) + '\n…'
+        : transferSelection;
+      document.getElementById('transferSheet').style.display = 'block';
+    }
 
-function closeTransfer() {
-  document.getElementById('transferSheet').style.display = 'none';
-}
+    function closeTransfer() {
+      document.getElementById('transferSheet').style.display = 'none';
+    }
 
-// Prefill and stop. This is the last checkpoint before one agent's output enters another's
-// context, so it must never end in a send.
-function doTransfer(shortcutIndex) {
-  const pair = pairFor(pairs, activePane);
-  if (!pair || pairHealth(pair, agents).state !== 'healthy') {
-    document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
-    return;
-  }
-  const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
-  const instruction = shortcutIndex >= 0 ? SHORTCUTS[shortcutIndex].text : '';
-  const out = composeTransfer(instruction, mine.role, transferSelection);
-  if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
-  closeTransfer();
-  openTerminal(partner.pane_id);
-  const input = document.getElementById('termInput');
-  input.value = out.text;
-  autoGrow(input);
-  input.focus();
-  // Show the top of the payload, not its tail — reading it is the checkpoint.
-  input.setSelectionRange(0, 0);
-  input.scrollTop = 0;
-  if (window.cue) cue('page');
-}
+    // Prefill and stop. This is the last checkpoint before one agent's output enters another's
+    // context, so it must never end in a send.
+    function doTransfer(shortcutIndex) {
+      const pair = pairFor(pairs, activePane);
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') {
+        document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
+        return;
+      }
+      const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
+      const instruction = shortcutIndex >= 0 ? SHORTCUTS[shortcutIndex].text : '';
+      const out = composeTransfer(instruction, mine.role, transferSelection);
+      if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+      closeTransfer();
+      openTerminal(partner.pane_id);
+      const input = document.getElementById('termInput');
+      input.value = out.text;
+      autoGrow(input);
+      input.focus();
+      // Show the top of the payload, not its tail — reading it is the checkpoint.
+      input.setSelectionRange(0, 0);
+      input.scrollTop = 0;
+      if (window.cue) cue('page');
+    }
 
-function insertShortcut(i) {
-  const input = document.getElementById('termInput');
-  const text = SHORTCUTS[i].text;
-  const at = input.selectionStart ?? input.value.length;
-  input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
-  input.selectionStart = input.selectionEnd = at + text.length;
-  autoGrow(input);
-  input.focus();
-}
+    function insertShortcut(i) {
+      const input = document.getElementById('termInput');
+      const text = SHORTCUTS[i].text;
+      const at = input.selectionStart ?? input.value.length;
+      input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
+      input.selectionStart = input.selectionEnd = at + text.length;
+      autoGrow(input);
+      input.focus();
+    }
 
-// A shortcut is an action, not a state: the select snaps back so it never reads as "this pane
-// is set to Review". Guarded on the empty placeholder value — Number('') is 0, which would
-// otherwise insert the first shortcut whenever the picker was dismissed.
-function pickShortcut(sel) {
-  const raw = sel.value;
-  sel.selectedIndex = 0;
-  if (raw === '') return;
-  insertShortcut(Number(raw));
-}
+    // A shortcut is an action, not a state: the select snaps back so it never reads as "this pane
+    // is set to Review". Guarded on the empty placeholder value — Number('') is 0, which would
+    // otherwise insert the first shortcut whenever the picker was dismissed.
+    function pickShortcut(sel) {
+      const raw = sel.value;
+      sel.selectedIndex = 0;
+      if (raw === '') return;
+      insertShortcut(Number(raw));
+    }
 
-function autoGrow(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 118) + 'px';
-}
+    function autoGrow(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 118) + 'px';
+    }
 
-let toastTimer = null;
-function showToast(text) {
-  const el = document.getElementById('toast');
-  el.textContent = text;
-  el.style.display = 'block';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
-  if (window.cue) cue('error');
-}
+    let toastTimer = null;
+    function showToast(text) {
+      const el = document.getElementById('toast');
+      el.textContent = text;
+      el.style.display = 'block';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+      if (window.cue) cue('error');
+    }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c =>
-    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-}
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
 
-function agentCard(a) {
-  const color = a.status==='blocked'?'var(--red)':a.status==='working'?'var(--green)':'var(--muted)';
-  const pulseClass = a.status==='working'?' pulse':'';
-  const host = a.host&&a.host!=='local'?` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>`:'';
-  const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
-  const label = paneLabel(a);
-  // Line 1 is the full project · agent · name; line 2 carries the path, which line 1 no longer
-  // duplicates now that the agent has moved up into the title.
-  return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+    function agentCard(a) {
+      const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+      const pulseClass = a.status === 'working' ? ' pulse' : '';
+      const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
+      const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
+      const label = paneLabel(a);
+      // Line 1 is the full project · agent · name; line 2 carries the path, which line 1 no longer
+      // duplicates now that the agent has moved up into the title.
+      return `<div class="agent${a.status === 'blocked' ? ' blocked' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${escapeHtml(paneTitle(a))}${host}</div><div class="meta">${cwd}</div></div>
     <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
-}
-
-function section(title, color, list) {
-  return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}</div>` +
-    list.map(a => agentCard(a)).join('');
-}
-
-function openTerminal(paneId) {
-  activePane = paneId; paneLines = 200; userScrolledUp = false;
-  noteRecent(paneId);
-  const a = agents.find(x => x.pane_id===paneId);
-  document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
-  document.getElementById('agentListView').style.display = 'none';
-  document.getElementById('terminalView').classList.add('active');
-  const qa = document.getElementById('quickActions');
-  const ak = document.getElementById('actionKeys');
-  if (a&&a.status==='blocked') {
-    const opts = a.options||['yes, single permission','trust, always allow','no (tab to edit)'];
-    qa.innerHTML = opts.map(o => {
-      const cls = o.includes('yes')||o.includes('approve')?'btn-yes':o.includes('trust')?'btn-trust':'btn-no';
-      const icon = o.includes('yes') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : o.includes('trust') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-      const label = o.includes('yes') ? 'Yes' : o.includes('trust') ? 'Yes All' : 'No';
-      return `<button class="${cls}" onclick="respond('${o.replace(/'/g,"\\'")}')">${icon} ${label}</button>`;
-    }).join('');
-    ak.innerHTML = '';
-  } else {
-    qa.innerHTML='';
-    ak.innerHTML='';
-  }
-  renderPairStrip();
-  refreshPane();
-  refreshInterval = setInterval(refreshPane, 3000);
-}
-
-function closeTerminal() {
-  activePane = null; clearInterval(refreshInterval);
-  document.getElementById('pairStrip').style.display = 'none';
-  renderRecents();  // the pane just visited belongs at the front before the next poll, not after
-  document.getElementById('terminalView').classList.remove('active');
-  document.getElementById('agentListView').style.display = '';
-}
-
-let paneLines = 200;
-function refreshPane() { if(ws&&activePane) ws.send(JSON.stringify({type:'read_pane',pane_id:activePane,lines:paneLines})); }
-function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
-function sendText() {
-  const i=document.getElementById('termInput');
-  if(!i.value||!ws||!activePane)return;
-  ws.send(JSON.stringify({type:'send_text',pane_id:activePane,text:i.value}));
-  ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:['Enter']}));
-  i.value=''; autoGrow(i); setTimeout(refreshPane,500);
-}
-function sendKey(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:[k]}));setTimeout(refreshPane,300);}
-function sendKeys(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:k}));setTimeout(refreshPane,300);}
-
-// --- Nav Tray (collie-style) ---
-let keyQueue = [], armedMod = null, ctrlConfirm = null;
-const CTRL_PRESETS = [
-  {label:'Ctrl C', keys:['ctrl+c']},
-  {label:'Ctrl D', keys:['ctrl+d'], danger:true},
-  {label:'Ctrl U', keys:['ctrl+u']},
-  {label:'Ctrl R', keys:['ctrl+r']},
-  {label:'Ctrl L', keys:['ctrl+l']},
-  {label:'Ctrl Z', keys:['ctrl+z'], danger:true},
-];
-const DANGER_KEYS = new Set(['ctrl+c','ctrl+d','ctrl+z']);
-
-function fireKey(k) {
-  if(window.cue) cue('tick');
-  const composed = armedMod ? `${armedMod}+${k}` : k;
-  if (keyQueue.length > 0 || armedMod) {
-    keyQueue.push(composed);
-    armedMod = null;
-    if(window.cue) cue('droplet');
-    renderKeyQueue();
-    renderMods();
-  } else {
-    sendKeys([composed]);
-  }
-}
-
-function armMod(m) {
-  armedMod = armedMod === m ? null : m;
-  if(window.cue) cue('toggle');
-  renderMods();
-}
-
-function renderMods() {
-  const s = document.getElementById('modShift');
-  const c = document.getElementById('modCtrl');
-  if (s) s.classList.toggle('armed', armedMod === 'shift');
-  if (c) c.classList.toggle('armed', armedMod === 'ctrl');
-}
-
-function renderKeyQueue() {
-  const strip = document.getElementById('keyQueueStrip');
-  if (!keyQueue.length && !armedMod) { strip.style.display = 'none'; return; }
-  strip.style.display = 'flex';
-  let html = keyQueue.map((k,i) => {
-    const isDanger = DANGER_KEYS.has(k.toLowerCase());
-    const label = k.includes('+') ? k.replace('ctrl+','Ctrl ').replace('shift+','\u21e7 ') : k;
-    return `<span class="queue-chip${isDanger?' danger':''}" onclick="removeQueueKey(${i})">${label} \u00d7</span>`;
-  }).join('');
-  if (armedMod) html += `<span style="color:var(--muted);font-size:12px;padding:4px">${armedMod==='shift'?'\u21e7':'Ctrl'} + \u2026</span>`;
-  html += `<span style="margin-left:auto;display:flex;gap:4px">`;
-  html += `<button onclick="sendQueuedKeys()" style="padding:6px 12px;border-radius:6px;border:none;background:${keyQueue.some(k=>DANGER_KEYS.has(k.toLowerCase()))?'var(--red)':'var(--blue)'};color:#fff;font-size:12px;font-weight:600;cursor:pointer">Send</button>`;
-  html += `<button onclick="clearKeyQueue()" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-size:12px;cursor:pointer">✕</button>`;
-  html += `</span>`;
-  strip.innerHTML = html;
-}
-
-function removeQueueKey(i) { keyQueue.splice(i,1); renderKeyQueue(); }
-function clearKeyQueue() { keyQueue=[]; armedMod=null; renderKeyQueue(); renderMods(); }
-function sendQueuedKeys() {
-  if (!keyQueue.length) return;
-  if(window.cue) cue('success');
-  sendKeys(keyQueue);
-  keyQueue=[]; armedMod=null; renderKeyQueue(); renderMods();
-}
-
-function toggleKeysDock() {
-  const el = document.getElementById('termKeys');
-  const quick = document.getElementById('quickDock');
-  const show = el.style.display === 'none';
-  el.style.display = show ? '' : 'none';
-  if (show) quick.style.display = 'none'; // mutual exclusive
-  if(window.cue) cue(show ? 'page' : 'tick');
-}
-
-function toggleQuickDock() {
-  const el = document.getElementById('quickDock');
-  const keys = document.getElementById('termKeys');
-  const show = el.style.display === 'none';
-  el.style.display = show ? '' : 'none';
-  if (show) keys.style.display = 'none'; // mutual exclusive
-  if(window.cue) cue(show ? 'page' : 'tick');
-}
-
-function quickSend(text) {
-  if (!ws || !activePane) return;
-  if(window.cue) cue('success');
-  ws.send(JSON.stringify({type:'send_text', pane_id: activePane, text: text}));
-  ws.send(JSON.stringify({type:'send_keys', pane_id: activePane, keys:['Enter']}));
-  document.getElementById('quickDock').style.display = 'none';
-  setTimeout(refreshPane, 500);
-}
-
-function switchKeyTab(tab) {
-  document.getElementById('tabKeys').classList.toggle('active', tab==='keys');
-  document.getElementById('tabDigits').classList.toggle('active', tab==='digits');
-  document.getElementById('keysPad').style.display = tab==='keys' ? '' : 'none';
-  const dp = document.getElementById('digitsPad');
-  dp.style.display = tab==='digits' ? 'grid' : 'none';
-  if (tab==='digits' && !dp.innerHTML) {
-    dp.innerHTML = [1,2,3,4,5,6,7,8,9].map(d => `<button class="digit-key" onclick="fireKey('${d}')">${d}</button>`).join('');
-  }
-}
-
-function toggleCtrlPresets() {
-  const el = document.getElementById('ctrlPresets');
-  const chevron = document.getElementById('ctrlChevron');
-  const show = el.style.display === 'none';
-  el.style.display = show ? 'grid' : 'none';
-  chevron.textContent = show ? '\u25be' : '\u25b8';
-  if (show && !el.innerHTML) {
-    el.innerHTML = CTRL_PRESETS.map(p => {
-      const cls = p.danger ? 'ctrl-key danger' : 'ctrl-key';
-      return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${p.label}</button>`;
-    }).join('');
-  }
-}
-
-function pressCtrl(label) {
-  const preset = CTRL_PRESETS.find(p => p.label === label);
-  if (!preset) return;
-  // If composing (queue has items), just stage it
-  if (keyQueue.length > 0) { keyQueue.push(...preset.keys); renderKeyQueue(); return; }
-  // Two-tap confirm for danger keys
-  if (preset.danger && ctrlConfirm !== label) {
-    ctrlConfirm = label;
-    if(window.cue) cue('error');
-    const el = document.getElementById('ctrlPresets');
-    el.innerHTML = CTRL_PRESETS.map(p => {
-      const cls = p.danger ? (p.label===label?'ctrl-key confirm':'ctrl-key danger') : 'ctrl-key';
-      const txt = p.label===label ? 'Confirm?' : p.label;
-      return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${txt}</button>`;
-    }).join('');
-    setTimeout(() => { ctrlConfirm=null; toggleCtrlPresets(); toggleCtrlPresets(); }, 3000);
-    return;
-  }
-  ctrlConfirm = null;
-  sendKeys(preset.keys);
-}
-
-function toggleArrows(){}
-function hideArrows(){}
-function respond(t){if(!ws||!activePane)return;if(window.cue)cue('success');ws.send(JSON.stringify({type:'respond',pane_id:activePane,text:t}));document.getElementById('quickActions').innerHTML='';setTimeout(refreshPane,500);}
-// Enter inserts a newline; Ctrl/Cmd+Enter sends. Reversed from P2 deliberately: a transferred
-// payload is multi-line, and submitting it on the first Enter defeats the review checkpoint.
-document.getElementById('termInput').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();sendText();}
-});
-document.getElementById('termInput').addEventListener('input',e=>autoGrow(e.target));
-// Ctrl/Cmd+Shift+P switches to the paired pane. On document, not the composer, so it works
-// whether or not the composer has focus.
-document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
-    if (!activePane || !pairFor(pairs, activePane)) return;
-    e.preventDefault();
-    switchToPartner();
-  }
-});
-document.getElementById('termContent').addEventListener('scroll', function() {
-  const el = this;
-  userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
-  if (el.scrollTop === 0 && paneLines < 5000) loadMore();
-});
-
-if (savedUrl) setTimeout(connect, 100); else showSetup();
-
-// --- Command Palette ---
-const COMMANDS = {
-  claude: [
-    {cmd: '/compact', desc: 'Summarize context to free tokens', common: true},
-    {cmd: '/clear', desc: 'Start fresh conversation', common: true, danger: true},
-    {cmd: '/model', desc: 'Switch model', common: true},
-    {cmd: '/status', desc: 'Show version and connectivity', common: true},
-    {cmd: '/context', desc: 'Visualize context-window usage', common: true},
-    {cmd: '/review', desc: 'Review a pull request', common: true},
-    {cmd: '/diff', desc: 'Show uncommitted changes', common: false},
-    {cmd: '/resume', desc: 'Resume previous conversation', common: false},
-    {cmd: '/help', desc: 'Show all commands', common: false},
-  ],
-  codex: [
-    {cmd: '/compact', desc: 'Summarize history to free context', common: true},
-    {cmd: '/clear', desc: 'Reset and start new chat', common: true, danger: true},
-    {cmd: '/diff', desc: 'Show git diff of working tree', common: true},
-    {cmd: '/model', desc: 'Switch model', common: true},
-    {cmd: '/status', desc: 'Show model and token usage', common: true},
-    {cmd: '/review', desc: 'Code review working tree', common: true},
-    {cmd: '/mention', desc: 'Attach files to context', common: false},
-    {cmd: '/plan', desc: 'Enter plan mode', common: false},
-  ],
-  pi: [
-    {cmd: '/compact', desc: 'Compact context', common: true},
-    {cmd: '/new', desc: 'Start new session', common: true, danger: true},
-    {cmd: '/model', desc: 'Switch model', common: true},
-    {cmd: '/session', desc: 'Show session info', common: true},
-    {cmd: '/tree', desc: 'Jump to earlier point', common: true},
-    {cmd: '/share', desc: 'Share session as gist', common: true},
-    {cmd: '/copy', desc: 'Copy last response', common: false},
-    {cmd: '/reload', desc: 'Reload extensions and skills', common: false},
-  ],
-  opencode: [
-    {cmd: '/compact', desc: 'Compact current session', common: true},
-    {cmd: '/new', desc: 'Start new session', common: true, danger: true},
-    {cmd: '/models', desc: 'List and switch models', common: true},
-    {cmd: '/undo', desc: 'Undo last turn and revert', common: true, danger: true},
-    {cmd: '/share', desc: 'Share session', common: true},
-    {cmd: '/diff', desc: 'Show working changes', common: false},
-    {cmd: '/export', desc: 'Export to Markdown', common: false},
-  ],
-};
-
-function getAgentCommands() {
-  const a = agents.find(x => x.pane_id === activePane);
-  if (!a) return [];
-  const key = (a.agent || '').toLowerCase();
-  if (COMMANDS[key]) return COMMANDS[key];
-  if (key.startsWith('claude')) return COMMANDS.claude;
-  if (key.startsWith('codex')) return COMMANDS.codex;
-  if (key.startsWith('pi') || key === 'kiro') return COMMANDS.pi;
-  if (key.startsWith('opencode')) return COMMANDS.opencode;
-  return COMMANDS.claude; // fallback
-}
-
-function openCommandPalette() {
-  if(window.cue) cue('page');
-  document.getElementById('cmdPalette').style.display = '';
-  document.getElementById('cmdSearch').value = '';
-  filterCommands();
-  document.getElementById('cmdSearch').focus();
-}
-function closePalette() { document.getElementById('cmdPalette').style.display = 'none'; }
-
-function filterCommands() {
-  const q = (document.getElementById('cmdSearch').value || '').toLowerCase();
-  const cmds = getAgentCommands();
-  const filtered = q ? cmds.filter(c => c.cmd.includes(q) || c.desc.toLowerCase().includes(q)) : cmds.filter(c => c.common);
-  const el = document.getElementById('cmdList');
-  if (!filtered.length) { el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.8rem">No commands match</div>'; return; }
-  el.innerHTML = filtered.map(c => `<div role="button" tabindex="0" onclick="runCommand('${c.cmd}')" onkeydown="if(event.key==='Enter')runCommand('${c.cmd}')" style="padding:10px 12px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:2px;transition:background 0.15s" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background=''">
-    <span style="font-family:monospace;font-weight:600;font-size:0.85rem;${c.danger?'color:var(--red)':'color:var(--blue)'}">${c.cmd}</span>
-    <span style="flex:1;font-size:0.75rem;color:var(--muted)">${c.desc}</span>
-  </div>`).join('');
-}
-
-function runCommand(cmd) {
-  closePalette();
-  if (!ws || !activePane) return;
-  ws.send(JSON.stringify({type:'send_text', pane_id: activePane, text: cmd}));
-  ws.send(JSON.stringify({type:'send_keys', pane_id: activePane, keys:['Enter']}));
-  setTimeout(refreshPane, 500);
-}
-
-// --- Web Push ---
-let pushSubscription = null;
-
-async function initPush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    document.getElementById('pushStatus').textContent = 'Push not supported in this browser';
-    document.getElementById('pushToggle').style.display = 'none';
-    return;
-  }
-  try {
-    const reg = await navigator.serviceWorker.register(new URL('sw.js', document.baseURI).pathname);
-    pushSubscription = await reg.pushManager.getSubscription();
-    updatePushUI();
-  } catch (e) {
-    document.getElementById('pushStatus').textContent = 'Service worker error: ' + e.message;
-  }
-}
-
-function updatePushUI() {
-  const btn = document.getElementById('pushToggle');
-  const status = document.getElementById('pushStatus');
-  if (pushSubscription) {
-    btn.textContent = 'Disable Push';
-    btn.style.background = 'var(--red)';
-    status.innerHTML = '<span style="color:var(--green)">● Enabled</span>';
-  } else {
-    btn.textContent = 'Enable Push';
-    btn.style.background = 'var(--green)';
-    status.innerHTML = '<span style="color:var(--muted)">○ Disabled</span>';
-  }
-}
-
-async function togglePush() {
-  if (pushSubscription) {
-    // Unsubscribe
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({type: 'push_unsubscribe', subscription: pushSubscription.toJSON()}));
     }
-    await pushSubscription.unsubscribe();
-    pushSubscription = null;
-    updatePushUI();
-  } else {
-    // Subscribe
-    try {
-      const relayUrl = localStorage.getItem('herdr_relay_url') || '';
-      const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
-      const resp = await fetch(httpUrl + '/api/vapid-public-key');
-      const {publicKey} = await resp.json();
-      if (!publicKey) {
-        document.getElementById('pushStatus').textContent = 'VAPID key not configured on relay';
+
+    function section(title, color, list) {
+      return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}</div>` +
+        list.map(a => agentCard(a)).join('');
+    }
+
+    function openTerminal(paneId) {
+      activePane = paneId; paneLines = 200; userScrolledUp = false;
+      noteRecent(paneId);
+      const a = agents.find(x => x.pane_id === paneId);
+      document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
+      document.getElementById('agentListView').style.display = 'none';
+      document.getElementById('terminalView').classList.add('active');
+      const qa = document.getElementById('quickActions');
+      const ak = document.getElementById('actionKeys');
+      if (a && a.status === 'blocked') {
+        const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
+        qa.innerHTML = opts.map(o => {
+          const cls = o.includes('yes') || o.includes('approve') ? 'btn-yes' : o.includes('trust') ? 'btn-trust' : 'btn-no';
+          const icon = o.includes('yes') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : o.includes('trust') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+          const label = o.includes('yes') ? 'Yes' : o.includes('trust') ? 'Yes All' : 'No';
+          return `<button class="${cls}" onclick="respond('${o.replace(/'/g, "\\'")}')">${icon} ${label}</button>`;
+        }).join('');
+        ak.innerHTML = '';
+      } else {
+        qa.innerHTML = '';
+        ak.innerHTML = '';
+      }
+      renderPairStrip();
+      refreshPane();
+      refreshInterval = setInterval(refreshPane, 3000);
+    }
+
+    function closeTerminal() {
+      activePane = null; clearInterval(refreshInterval);
+      document.getElementById('pairStrip').style.display = 'none';
+      renderRecents();  // the pane just visited belongs at the front before the next poll, not after
+      document.getElementById('terminalView').classList.remove('active');
+      document.getElementById('agentListView').style.display = '';
+    }
+
+    let paneLines = 200;
+    function refreshPane() { if (ws && activePane) ws.send(JSON.stringify({ type: 'read_pane', pane_id: activePane, lines: paneLines })); }
+    function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
+    function sendText() {
+      const i = document.getElementById('termInput');
+      if (!i.value || !ws || !activePane) return;
+      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: i.value }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      i.value = ''; autoGrow(i); setTimeout(refreshPane, 500);
+    }
+    function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
+    function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }
+
+    // --- Nav Tray (collie-style) ---
+    let keyQueue = [], armedMod = null, ctrlConfirm = null;
+    const CTRL_PRESETS = [
+      { label: 'Ctrl C', keys: ['ctrl+c'] },
+      { label: 'Ctrl D', keys: ['ctrl+d'], danger: true },
+      { label: 'Ctrl U', keys: ['ctrl+u'] },
+      { label: 'Ctrl R', keys: ['ctrl+r'] },
+      { label: 'Ctrl L', keys: ['ctrl+l'] },
+      { label: 'Ctrl Z', keys: ['ctrl+z'], danger: true },
+    ];
+    const DANGER_KEYS = new Set(['ctrl+c', 'ctrl+d', 'ctrl+z']);
+
+    function fireKey(k) {
+      if (window.cue) cue('tick');
+      const composed = armedMod ? `${armedMod}+${k}` : k;
+      if (keyQueue.length > 0 || armedMod) {
+        keyQueue.push(composed);
+        armedMod = null;
+        if (window.cue) cue('droplet');
+        renderKeyQueue();
+        renderMods();
+      } else {
+        sendKeys([composed]);
+      }
+    }
+
+    function armMod(m) {
+      armedMod = armedMod === m ? null : m;
+      if (window.cue) cue('toggle');
+      renderMods();
+    }
+
+    function renderMods() {
+      const s = document.getElementById('modShift');
+      const c = document.getElementById('modCtrl');
+      if (s) s.classList.toggle('armed', armedMod === 'shift');
+      if (c) c.classList.toggle('armed', armedMod === 'ctrl');
+    }
+
+    function renderKeyQueue() {
+      const strip = document.getElementById('keyQueueStrip');
+      if (!keyQueue.length && !armedMod) { strip.style.display = 'none'; return; }
+      strip.style.display = 'flex';
+      let html = keyQueue.map((k, i) => {
+        const isDanger = DANGER_KEYS.has(k.toLowerCase());
+        const label = k.includes('+') ? k.replace('ctrl+', 'Ctrl ').replace('shift+', '\u21e7 ') : k;
+        return `<span class="queue-chip${isDanger ? ' danger' : ''}" onclick="removeQueueKey(${i})">${label} \u00d7</span>`;
+      }).join('');
+      if (armedMod) html += `<span style="color:var(--muted);font-size:12px;padding:4px">${armedMod === 'shift' ? '\u21e7' : 'Ctrl'} + \u2026</span>`;
+      html += `<span style="margin-left:auto;display:flex;gap:4px">`;
+      html += `<button onclick="sendQueuedKeys()" style="padding:6px 12px;border-radius:6px;border:none;background:${keyQueue.some(k => DANGER_KEYS.has(k.toLowerCase())) ? 'var(--red)' : 'var(--blue)'};color:#fff;font-size:12px;font-weight:600;cursor:pointer">Send</button>`;
+      html += `<button onclick="clearKeyQueue()" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-size:12px;cursor:pointer">✕</button>`;
+      html += `</span>`;
+      strip.innerHTML = html;
+    }
+
+    function removeQueueKey(i) { keyQueue.splice(i, 1); renderKeyQueue(); }
+    function clearKeyQueue() { keyQueue = []; armedMod = null; renderKeyQueue(); renderMods(); }
+    function sendQueuedKeys() {
+      if (!keyQueue.length) return;
+      if (window.cue) cue('success');
+      sendKeys(keyQueue);
+      keyQueue = []; armedMod = null; renderKeyQueue(); renderMods();
+    }
+
+    function toggleKeysDock() {
+      const el = document.getElementById('termKeys');
+      const quick = document.getElementById('quickDock');
+      const show = el.style.display === 'none';
+      el.style.display = show ? '' : 'none';
+      if (show) quick.style.display = 'none'; // mutual exclusive
+      if (window.cue) cue(show ? 'page' : 'tick');
+    }
+
+    function toggleQuickDock() {
+      const el = document.getElementById('quickDock');
+      const keys = document.getElementById('termKeys');
+      const show = el.style.display === 'none';
+      el.style.display = show ? '' : 'none';
+      if (show) keys.style.display = 'none'; // mutual exclusive
+      if (window.cue) cue(show ? 'page' : 'tick');
+    }
+
+    function quickSend(text) {
+      if (!ws || !activePane) return;
+      if (window.cue) cue('success');
+      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: text }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      document.getElementById('quickDock').style.display = 'none';
+      setTimeout(refreshPane, 500);
+    }
+
+    function switchKeyTab(tab) {
+      document.getElementById('tabKeys').classList.toggle('active', tab === 'keys');
+      document.getElementById('tabDigits').classList.toggle('active', tab === 'digits');
+      document.getElementById('keysPad').style.display = tab === 'keys' ? '' : 'none';
+      const dp = document.getElementById('digitsPad');
+      dp.style.display = tab === 'digits' ? 'grid' : 'none';
+      if (tab === 'digits' && !dp.innerHTML) {
+        dp.innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => `<button class="digit-key" onclick="fireKey('${d}')">${d}</button>`).join('');
+      }
+    }
+
+    function toggleCtrlPresets() {
+      const el = document.getElementById('ctrlPresets');
+      const chevron = document.getElementById('ctrlChevron');
+      const show = el.style.display === 'none';
+      el.style.display = show ? 'grid' : 'none';
+      chevron.textContent = show ? '\u25be' : '\u25b8';
+      if (show && !el.innerHTML) {
+        el.innerHTML = CTRL_PRESETS.map(p => {
+          const cls = p.danger ? 'ctrl-key danger' : 'ctrl-key';
+          return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${p.label}</button>`;
+        }).join('');
+      }
+    }
+
+    function pressCtrl(label) {
+      const preset = CTRL_PRESETS.find(p => p.label === label);
+      if (!preset) return;
+      // If composing (queue has items), just stage it
+      if (keyQueue.length > 0) { keyQueue.push(...preset.keys); renderKeyQueue(); return; }
+      // Two-tap confirm for danger keys
+      if (preset.danger && ctrlConfirm !== label) {
+        ctrlConfirm = label;
+        if (window.cue) cue('error');
+        const el = document.getElementById('ctrlPresets');
+        el.innerHTML = CTRL_PRESETS.map(p => {
+          const cls = p.danger ? (p.label === label ? 'ctrl-key confirm' : 'ctrl-key danger') : 'ctrl-key';
+          const txt = p.label === label ? 'Confirm?' : p.label;
+          return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${txt}</button>`;
+        }).join('');
+        setTimeout(() => { ctrlConfirm = null; toggleCtrlPresets(); toggleCtrlPresets(); }, 3000);
         return;
       }
-      const reg = await navigator.serviceWorker.ready;
-      pushSubscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey)
-      });
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({type: 'push_subscribe', subscription: pushSubscription.toJSON()}));
-      }
-      updatePushUI();
-    } catch (e) {
-      document.getElementById('pushStatus').textContent = 'Error: ' + e.message;
+      ctrlConfirm = null;
+      sendKeys(preset.keys);
     }
-  }
-}
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  const arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
+    function toggleArrows() { }
+    function hideArrows() { }
+    function respond(t) { if (!ws || !activePane) return; if (window.cue) cue('success'); ws.send(JSON.stringify({ type: 'respond', pane_id: activePane, text: t })); document.getElementById('quickActions').innerHTML = ''; setTimeout(refreshPane, 500); }
+    // Enter inserts a newline; Ctrl/Cmd+Enter sends. Reversed from P2 deliberately: a transferred
+    // payload is multi-line, and submitting it on the first Enter defeats the review checkpoint.
+    document.getElementById('termInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendText(); }
+    });
+    document.getElementById('termInput').addEventListener('input', e => autoGrow(e.target));
+    // Ctrl/Cmd+Shift+P switches to the paired pane. On document, not the composer, so it works
+    // whether or not the composer has focus.
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        if (!activePane || !pairFor(pairs, activePane)) return;
+        e.preventDefault();
+        switchToPartner();
+      }
+    });
+    document.getElementById('termContent').addEventListener('scroll', function () {
+      const el = this;
+      userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
+      if (el.scrollTop === 0 && paneLines < 5000) loadMore();
+    });
 
-initPush();
+    if (savedUrl) setTimeout(connect, 100); else showSetup();
 
-loadPairs();
-document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
-  `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
-document.getElementById('shortcutPick').innerHTML =
-  `<option value="">Instructions</option>` +   // no ▾: the select draws its own chevron
-  SHORTCUTS.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join('');
-</script>
+    // --- Command Palette ---
+    const COMMANDS = {
+      claude: [
+        { cmd: '/compact', desc: 'Summarize context to free tokens', common: true },
+        { cmd: '/clear', desc: 'Start fresh conversation', common: true, danger: true },
+        { cmd: '/model', desc: 'Switch model', common: true },
+        { cmd: '/status', desc: 'Show version and connectivity', common: true },
+        { cmd: '/context', desc: 'Visualize context-window usage', common: true },
+        { cmd: '/review', desc: 'Review a pull request', common: true },
+        { cmd: '/diff', desc: 'Show uncommitted changes', common: false },
+        { cmd: '/resume', desc: 'Resume previous conversation', common: false },
+        { cmd: '/help', desc: 'Show all commands', common: false },
+      ],
+      codex: [
+        { cmd: '/compact', desc: 'Summarize history to free context', common: true },
+        { cmd: '/clear', desc: 'Reset and start new chat', common: true, danger: true },
+        { cmd: '/diff', desc: 'Show git diff of working tree', common: true },
+        { cmd: '/model', desc: 'Switch model', common: true },
+        { cmd: '/status', desc: 'Show model and token usage', common: true },
+        { cmd: '/review', desc: 'Code review working tree', common: true },
+        { cmd: '/mention', desc: 'Attach files to context', common: false },
+        { cmd: '/plan', desc: 'Enter plan mode', common: false },
+      ],
+      pi: [
+        { cmd: '/compact', desc: 'Compact context', common: true },
+        { cmd: '/new', desc: 'Start new session', common: true, danger: true },
+        { cmd: '/model', desc: 'Switch model', common: true },
+        { cmd: '/session', desc: 'Show session info', common: true },
+        { cmd: '/tree', desc: 'Jump to earlier point', common: true },
+        { cmd: '/share', desc: 'Share session as gist', common: true },
+        { cmd: '/copy', desc: 'Copy last response', common: false },
+        { cmd: '/reload', desc: 'Reload extensions and skills', common: false },
+      ],
+      opencode: [
+        { cmd: '/compact', desc: 'Compact current session', common: true },
+        { cmd: '/new', desc: 'Start new session', common: true, danger: true },
+        { cmd: '/models', desc: 'List and switch models', common: true },
+        { cmd: '/undo', desc: 'Undo last turn and revert', common: true, danger: true },
+        { cmd: '/share', desc: 'Share session', common: true },
+        { cmd: '/diff', desc: 'Show working changes', common: false },
+        { cmd: '/export', desc: 'Export to Markdown', common: false },
+      ],
+    };
+
+    function getAgentCommands() {
+      const a = agents.find(x => x.pane_id === activePane);
+      if (!a) return [];
+      const key = (a.agent || '').toLowerCase();
+      if (COMMANDS[key]) return COMMANDS[key];
+      if (key.startsWith('claude')) return COMMANDS.claude;
+      if (key.startsWith('codex')) return COMMANDS.codex;
+      if (key.startsWith('pi') || key === 'kiro') return COMMANDS.pi;
+      if (key.startsWith('opencode')) return COMMANDS.opencode;
+      return COMMANDS.claude; // fallback
+    }
+
+    function openCommandPalette() {
+      if (window.cue) cue('page');
+      document.getElementById('cmdPalette').style.display = '';
+      document.getElementById('cmdSearch').value = '';
+      filterCommands();
+      document.getElementById('cmdSearch').focus();
+    }
+    function closePalette() { document.getElementById('cmdPalette').style.display = 'none'; }
+
+    function filterCommands() {
+      const q = (document.getElementById('cmdSearch').value || '').toLowerCase();
+      const cmds = getAgentCommands();
+      const filtered = q ? cmds.filter(c => c.cmd.includes(q) || c.desc.toLowerCase().includes(q)) : cmds.filter(c => c.common);
+      const el = document.getElementById('cmdList');
+      if (!filtered.length) { el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:0.8rem">No commands match</div>'; return; }
+      el.innerHTML = filtered.map(c => `<div role="button" tabindex="0" onclick="runCommand('${c.cmd}')" onkeydown="if(event.key==='Enter')runCommand('${c.cmd}')" style="padding:10px 12px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:2px;transition:background 0.15s" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background=''">
+    <span style="font-family:monospace;font-weight:600;font-size:0.85rem;${c.danger ? 'color:var(--red)' : 'color:var(--blue)'}">${c.cmd}</span>
+    <span style="flex:1;font-size:0.75rem;color:var(--muted)">${c.desc}</span>
+  </div>`).join('');
+    }
+
+    function runCommand(cmd) {
+      closePalette();
+      if (!ws || !activePane) return;
+      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: cmd }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      setTimeout(refreshPane, 500);
+    }
+
+    // --- Web Push ---
+    let pushSubscription = null;
+
+    async function initPush() {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        document.getElementById('pushStatus').textContent = 'Push not supported in this browser';
+        document.getElementById('pushToggle').style.display = 'none';
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.register(new URL('sw.js', document.baseURI).pathname);
+        pushSubscription = await reg.pushManager.getSubscription();
+        updatePushUI();
+      } catch (e) {
+        document.getElementById('pushStatus').textContent = 'Service worker error: ' + e.message;
+      }
+    }
+
+    function updatePushUI() {
+      const btn = document.getElementById('pushToggle');
+      const status = document.getElementById('pushStatus');
+      if (pushSubscription) {
+        btn.textContent = 'Disable Push';
+        btn.style.background = 'var(--red)';
+        status.innerHTML = '<span style="color:var(--green)">● Enabled</span>';
+      } else {
+        btn.textContent = 'Enable Push';
+        btn.style.background = 'var(--green)';
+        status.innerHTML = '<span style="color:var(--muted)">○ Disabled</span>';
+      }
+    }
+
+    async function togglePush() {
+      if (pushSubscription) {
+        // Unsubscribe
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'push_unsubscribe', subscription: pushSubscription.toJSON() }));
+        }
+        await pushSubscription.unsubscribe();
+        pushSubscription = null;
+        updatePushUI();
+      } else {
+        // Subscribe
+        try {
+          const relayUrl = localStorage.getItem('herdr_relay_url') || '';
+          const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
+          const resp = await fetch(httpUrl + '/api/vapid-public-key');
+          const { publicKey } = await resp.json();
+          if (!publicKey) {
+            document.getElementById('pushStatus').textContent = 'VAPID key not configured on relay';
+            return;
+          }
+          const reg = await navigator.serviceWorker.ready;
+          pushSubscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          });
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'push_subscribe', subscription: pushSubscription.toJSON() }));
+          }
+          updatePushUI();
+        } catch (e) {
+          document.getElementById('pushStatus').textContent = 'Error: ' + e.message;
+        }
+      }
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const raw = atob(base64);
+      const arr = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return arr;
+    }
+
+    initPush();
+
+    loadPairs();
+    document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
+      `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
+    document.getElementById('shortcutPick').innerHTML =
+      `<option value="">Instructions</option>` +   // no ▾: the select draws its own chevron
+      SHORTCUTS.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join('');
+  </script>
 </body>
+
 </html>
