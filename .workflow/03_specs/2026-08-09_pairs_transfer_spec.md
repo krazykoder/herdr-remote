@@ -1,0 +1,209 @@
+# Spec — P3: Session Pairs and Transfer
+
+**Date:** 2026-08-09
+**Source:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs.md` §3, §6, §7.2
+**Depends on:** P1 (grouping, `pane_guard`). P2 is optional — a pair works on any two live panes.
+**Preflight:** Bracketed paste **PASS** (2026-08-09, dev-notes §6.4). One `send_text` carries the payload.
+**Status:** Draft.
+
+---
+
+## 1. Goal
+
+Move a selection from one agent's pane into another agent's composer, with the user reading the
+exact payload before it sends. A **Session Pair** is the saved shortcut that makes "the other one"
+a single tap instead of a navigation.
+
+The pair is a frontend binding, not a channel. It does not move text — §4 does.
+
+---
+
+## 2. Scope boundary
+
+| In | Out |
+|---|---|
+| `localStorage` pairs, pair editor, pair health | Any relay-side pair record or pair protocol |
+| Transfer: select → shortcut → prefill partner's composer | Auto-send, auto-relay, any A→B hop without a human |
+| Multiline composer, Ctrl/Cmd+Enter to send | Changing how `send_text` reaches herdr |
+| `send_text` cap 1000 → 4000 | Any other relay behaviour |
+| Instruction shortcut dropdown | Prompt copy authored by the implementer — paths only |
+
+**One relay-side change exists in this phase: the cap constant.** Everything else is
+`web/index.html`. If a change requires a new message type, it is out of scope — say so and stop.
+
+---
+
+## 3. Pair model
+
+### 3.1 Storage
+
+One versioned `localStorage` key, `herdr_pairs`, matching the app's existing `herdr_*` convention:
+
+```json
+{"version": 1, "pairs": [{
+  "id": "p_a1b2c3d4", "name": "Architecture review",
+  "members": [
+    {"pane_id": "w8:p1", "host": "local", "role": "architect", "agent": "claude", "cwd": "/Users/t/code/herdr-remote"},
+    {"pane_id": "w8:p2", "host": "local", "role": "reviewer",  "agent": "codex",  "cwd": "/Users/t/code/herdr-remote"}
+  ]}]}
+```
+
+`agent`, `cwd`, `host` are the **identity fingerprint**, captured at pin time. Not display data —
+they exist to detect pane-ID reuse. `role` is a display label defaulting to the agent name,
+renameable; it appears in the payload attribution (§4.2) and never reaches a shell.
+
+An unreadable or wrong-`version` value is discarded and replaced with an empty set. A corrupt blob
+must not brick the terminal view.
+
+### 3.2 Health, recomputed from every snapshot
+
+| State | Condition | Effect |
+|---|---|---|
+| `healthy` | Both members match one live agent on `pane_id`, `host`, `agent`, **and** `cwd`, and neither `pane_id` is duplicated in the snapshot | Transfer offered |
+| `stale` | Any member unmatched, or its `pane_id` appears twice | Pair greyed, transfer control **absent**, reason shown |
+
+Neither state deletes the pair — a stale pair recovers when its pane returns.
+
+> **Load-bearing property: the UI must never offer to paste into a pane other than the one the
+> user pinned.** All four fingerprint fields are checked because `pane_id` alone is reused by herdr
+> after a pane closes. A matching `pane_id` with a different `cwd` is a different session.
+
+### 3.3 Limits
+
+- Exactly 2 members, **same host** — cross-host pairs refused at creation. A bare `pane_id` cannot
+  be routed unambiguously across hosts (P1 G7), and a pair that silently retargets another machine
+  is the worst failure this feature can produce. Lifts free when identity becomes `(host, pane_id)`.
+- Max 32 pairs. Over the limit, creation is refused with a message — not a silent eviction.
+- **A pane belongs to at most one pair.** Pinning an already-paired pane replaces the old pair
+  after a confirm naming what is being replaced.
+
+---
+
+## 4. Transfer
+
+### 4.1 Flow
+
+1. User selects text in the pane view (`#termContent`).
+2. User picks an instruction shortcut, or none.
+3. Frontend resolves the partner from the active pane's healthy pair, switches `activePane` to it,
+   prefills the composer, and **stops**.
+4. User reads it and presses Send.
+
+Sending reuses the existing path unchanged: `send_text`, then `send_keys ["Enter"]`
+(`web/index.html:747-748`).
+
+An empty selection disables the transfer control. Never transfer a whole scrollback — only a
+selection moves.
+
+### 4.2 Payload
+
+```
+{instruction}
+
+feedback from {from_role} ({from_agent}):
+<<<TRANSFER
+{selected text}
+TRANSFER>>>
+```
+
+**The fence is not decoration.** Without it, transferred content containing a line like
+`Proceed to implement` is indistinguishable from the user's own instruction. The delimiter gives
+the receiving agent an unambiguous boundary.
+
+If the selection itself contains `TRANSFER>>>` at line start, the transfer is refused with a
+message. Escaping or renaming the fence per payload is more machinery than the case deserves;
+refusing is honest and the user can trim the selection.
+
+Over 4000 chars after composition: refuse in the frontend, naming the size. Do not silently
+truncate a diff, and do not chunk — a partial payload landing in an agent is worse than a refusal.
+
+### 4.3 Instruction shortcuts
+
+A `const` array in `web/index.html`, alongside the themes and key presets. Buttons insert at the
+cursor; they never send.
+
+| Shortcut | Inserted text |
+|---|---|
+| Review | `Review, edit, fix; then propose next steps.` |
+| Implement | `Proceed to implement.` |
+| Architect prompt | `@.agent/prompts/System_Prompt_2_Architect.md ; /ponytail /caveman` |
+
+**Prompts are referenced by path, never pasted inline.** The agent resolves the file itself, so
+neither relay nor frontend carries prompt copy. The starter set is the user's; the implementer
+adds none.
+
+---
+
+## 5. Composer
+
+`#termInput` is an `<input>` (`:194`) and Enter sends (`:896`). Both change:
+
+- `<textarea>`, 1 row default, auto-growing to ~6 rows.
+- **Enter inserts a newline. Ctrl/Cmd+Enter and the Send button submit.**
+- Existing callers of `sendText()` are unaffected — the palette and quick actions build their own
+  text and call `send_text` directly (`:840`, `:985`).
+
+This reverses a reflex users already have. It is required: a prefilled multi-line payload that
+submits on the first Enter defeats the review checkpoint that §4.1 exists for.
+
+---
+
+## 6. Relay change
+
+`relay/herdr_relay.py:659` — `len(text) > 1000` becomes `4000`. One constant.
+
+The guard stays: an unbounded write is a real abuse vector. The existing `audit()` at `:665`
+already records every `send_text` and needs no change. **No new message type, no new gate, no
+`SAFE_KEYS` change** — the preflight PASS removed the only reason P3 would have touched the
+protocol.
+
+---
+
+## 7. Security posture
+
+Transfer is a prompt-injection path: agent A's pane may hold text A fetched from the internet, and
+transfer moves it into B's context. The relay no longer participates, so containment is
+**structural**, and every structural piece must survive implementation:
+
+1. The user selects the text — only a selection moves.
+2. The composer is prefilled, **never** auto-sent.
+3. The payload is fenced.
+4. The 4000 cap bounds volume; `audit()` records it.
+
+Removing any one of these is a security change, not a UX change. **No auto-relay in v1.**
+
+---
+
+## 8. Acceptance
+
+| # | Check |
+|---|---|
+| A1 | Pin two same-host panes; pair persists across reload |
+| A2 | Cross-host pin refused at creation, with the reason shown |
+| A3 | Pinning an already-paired pane confirms, then replaces |
+| A4 | Closing a member's pane turns the pair stale; **transfer control disappears** |
+| A5 | A pane ID reused by a different session (different `cwd`) reads stale, not healthy |
+| A6 | A `pane_id` duplicated across two hosts in one snapshot reads stale |
+| A7 | Transfer with a selection prefills the **partner's** composer and sends nothing |
+| A8 | The prefilled payload carries instruction, attribution, and fence, in that order |
+| A9 | A selection containing `TRANSFER>>>` is refused |
+| A10 | A composed payload over 4000 chars is refused, naming the size, and sends nothing |
+| A11 | Enter in the composer inserts a newline; Ctrl/Cmd+Enter sends |
+| A12 | A multi-line payload arrives in the agent's composer as one unsubmitted entry (preflight path) |
+| A13 | A corrupt `herdr_pairs` value loads as empty; the terminal view still works |
+| A14 | With no pairs configured, the UI is identical to P2 — no control, not a disabled one |
+
+Pair health, fingerprint matching, payload composition, and cap/fence refusal are pure functions
+and get unit tests. A12 needs one live pane.
+
+---
+
+## 9. Open
+
+**Pair editor location — decided:** the **pin control lives on agent cards** (where both candidates
+are visible together) and the **pair status and transfer control live in the terminal header**
+(where the selection is). These are two different jobs, not one control in two places; dev-notes
+open question 3 is closed by this.
+
+**Deferred:** cross-device pair sync (dev-notes Q5) — until named local pairs prove useful, and
+then only as authenticated frontend-preference sync.
