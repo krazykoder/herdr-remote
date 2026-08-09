@@ -965,11 +965,16 @@ function renderPairStrip() {
   const partner = partnerOf(pair, activePane);
   const mine = memberOf(pair, activePane);
   const ok = health.state === 'healthy';
+  // Read the partner's name from the live snapshot, not from the pair record: the record holds
+  // the name captured at pin time, so renaming a pane would leave a stale name on this button.
+  // Falls back to the pinned name, then the pane ID, so the button is never blank.
+  const live = agents.find(a => a.pane_id === partner.pane_id);
+  const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
   strip.className = 'pair-strip' + (ok ? '' : ' stale');
   strip.innerHTML =
     // Switch sits first, on the left: it is the control reached most often, and the thumb
     // is already there from the back button above it.
-    (ok ? `<button class="switch" title="Switch to ${escapeHtml(partner.role)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partner.role)}</button>` : '') +
+    (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
     `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
     (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
     `<button onclick="openPairDialog(activePane)">Edit</button>` +
@@ -1013,7 +1018,9 @@ function openTransfer() {
   // Capture before anything can steal the selection — switching panes clears it.
   transferSelection = String(window.getSelection() || '').trim();
   const partner = partnerOf(pair, activePane);
-  document.getElementById('transferTarget').textContent = partner.role;
+  const live = agents.find(a => a.pane_id === partner.pane_id);
+  document.getElementById('transferTarget').textContent =
+    (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
   const preview = document.getElementById('transferPreview');
   const box = document.getElementById('transferShortcuts');
   if (!transferSelection) {
