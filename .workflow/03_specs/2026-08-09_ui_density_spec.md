@@ -65,9 +65,9 @@ the remembered pane rather than overwriting it.
 **S2.4** If the remembered pane is no longer live when the panel closes, the app lands on the agent
 list rather than opening a dead pane.
 
-**S2.5** A recent-pane shortcut is a destination, not a toggle: it opens that pane, closes any open
-panel, and discards the remembered pane — otherwise closing Settings later would yank the user back
-to a pane they had already moved on from.
+**S2.5** An agent tab is a destination, not a toggle: it opens that pane, closes any open panel, and
+discards the remembered pane — otherwise closing Settings later would yank the user back to a pane
+they had already moved on from.
 
 **S2.6** Two flex panes are never simultaneously visible.
 
@@ -81,8 +81,8 @@ to a pane they had already moved on from.
 composer, at every width. It is the same element in the same DOM position, reordered — not a second
 bar, and not re-rendered. Its separator faces up there, since it is then the shell's last element.
 
-It carries, left to right: the connection dot, `herdr`, the connection state in parentheses, the
-agent count, up to three recent-pane shortcuts, then Activity and Settings.
+It carries, left to right: the connection dot, `herdr`, the agent count, the agent tab strip, then
+Activity and Settings. The connection state is the dot's colour alone — no text label.
 
 > Rationale: in a pane the thumb is at the bottom on the composer, and the term header above already
 > carries back, status, title and refresh. The earlier decision to hide the header outright reclaimed
@@ -124,16 +124,28 @@ pinch-zoom stay available: the app never suppresses the user's own zoom, so `use
 `maximum-scale=1` are rejected — the first is ignored by modern iOS Safari anyway, and where either
 is honoured it removes zoom from people who need it.
 
-**S3.11** The app header carries up to **three** shortcuts to the most recently visited panes,
-labelled with the pane name and carrying its status colour, ordered most-recent first. The shortcut
-for the pane currently open is marked as such. Only live panes are offered — a dead `pane_id` is
-never shown, because herdr reuses IDs and the shortcut would open a pane the user never visited.
+**S3.11** The app header carries an **agent tab strip**: one badge per live agent, labelled with the
+pane name and carrying its status colour. Selecting a tab opens that pane and marks the tab as
+current; **selection never reorders the strip**. Order comes from the snapshot, not from recency —
+a tab that moves the moment it is selected cannot be aimed at twice.
 
-They take the header's slack and give it up first: at any width the Activity and Settings controls
-keep their full hit areas, and the shortcuts truncate instead.
+The current tab is a filled badge, not a tinted border: at this size in a crowded bar a border-only
+cue is not legible on a phone.
+
+The strip takes the header's slack and gives it up first: at any width Activity and Settings keep
+their full hit areas, and the tabs truncate instead. Where the tabs overflow, **touch widths scroll
+the strip horizontally; desktop widths show only what fits** — a mouse has no fling scroll, so an
+overflowing strip would strand the last tabs behind a hidden scrollbar. The agent list carries the
+rest at every width. When the strip scrolls, the current tab is scrolled into view.
+
+Panes with a duplicated `pane_id` are omitted, the same fail-closed rule the agent list applies.
 
 > Rationale: moving between panes is the most frequent action in the app. Landing on the agent list
 > to pick the next one is a detour on the path the user takes most often.
+
+**S3.12** The connection state is shown by the status dot's colour alone. The `(live)` /
+`(connecting…)` / `(offline)` text beside it stated the same fact a second time and cost the tab
+strip its room; the wording survives as the dot's tooltip.
 
 **S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
 agent list, as a vertical list using the same section header and the same cards as the list above —
@@ -305,3 +317,23 @@ pane, above the composer, or bottom. **Above the composer is the default** — o
 and transfer controls belong next to the thumb already resting on the composer, not a pane away. The
 choice persists under `herdr_pair_place`. At the bottom the strip's separator faces up, since it is
 then the pane's last element.
+
+
+## S10 — Theme
+
+**S10.1** **Dark is the product default**, independent of the OS colour scheme. The terminal it wraps
+is dark in every theme, and a light shell around a dark pane is the jarring combination.
+
+**S10.2** App Settings carries an `Appearance` control with exactly two values, Dark and Light. Light
+is opt-in and persists under `localStorage` key `herdr_theme`. An absent or unrecognised value is
+dark.
+
+**S10.3** The theme is applied **before first paint** by a synchronous inline script, so a user on
+Light never sees a dark flash. The stylesheet's `:root` carries the dark values and
+`:root[data-theme="light"]` overrides them, so the default costs no attribute and no script.
+
+**S10.4** `meta[name=theme-color]` tracks the choice, since the installed PWA paints its chrome from
+it. `--term-bg` and `--term-text` are the same in both themes by design: the pane is a terminal.
+
+**S10.5** Theme selection reads and writes `localStorage` only. Storage being unavailable leaves the
+app on the default rather than failing to load.

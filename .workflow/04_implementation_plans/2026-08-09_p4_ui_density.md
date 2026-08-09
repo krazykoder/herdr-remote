@@ -660,6 +660,54 @@ would drop the flipped separator on the next snapshot.
 `tabindex`, `title`, `onclick`, `onkeydown` and `cursor:pointer` that made it a hidden control
 (S5.8). It reduces to `<span class="title" id="termTitle"></span>`. `renamePane` itself is untouched.
 
+### `[MODIFY]` dark by default, light by choice
+
+`:root` now carries the **dark** palette and `:root[data-theme="light"]` overrides it. The
+`@media (prefers-color-scheme: dark)` block is deleted: the theme is the product's decision, not the
+OS's, and keeping the media query would have made a light-OS user's Dark choice depend on which rule
+won. `--term-bg` / `--term-text` are identical in both — the pane is a terminal in either theme.
+
+A synchronous inline `<script>` in `<head>`, before the stylesheet is used, sets
+`documentElement.dataset.theme` from `herdr_theme`. It is inline and blocking on purpose: deferred,
+a Light user gets a dark flash on every load. It is wrapped in `try` so blocked storage leaves the
+default rather than throwing.
+
+`setTheme(name)` sets or deletes the attribute, persists, syncs the `#themePick` value, and updates
+`meta[name=theme-color]` (added, since none existed) so the installed PWA's chrome tracks the choice.
+It is called once at start-up from the stored value, which also seeds the control.
+
+The manifest data URI's `background_color` / `theme_color` move to `#1a1b26`.
+
+### `[MODIFY]` recent chips become an agent tab strip
+
+`.nav-recents` / `.nav-chip` become `.agent-tabs` / `.agent-tab`; `renderNavRecents` becomes
+`renderAgentTabs` at all three call sites (`render`, `openTerminal`, `closeTerminal`). `jumpToPane`
+is unchanged — a tab is the same kind of destination the shortcut was.
+
+The source changes from `loadRecents()` to the live `agents` snapshot, which is the point: **recency
+order reorders on selection**, so the tab under the thumb moves the instant it is used. Snapshot
+order is stable. `NAV_RECENTS` is deleted — the strip carries every live agent and lets layout decide
+what is reachable. Duplicate `pane_id`s are filtered, the same fail-closed rule the list applies.
+
+Selection is a filled blue pill rather than a tinted border: at 0.72rem in a crowded bar a
+border-only cue does not survive a phone screen. The status dot gets a white ring on the fill so it
+stays legible.
+
+Overflow is split by width: `overflow-x: auto` (scrollbar hidden) by default, overridden to
+`hidden` inside the existing 768px desktop block. A mouse has no fling scroll, so a scrolling strip
+on desktop would strand the last tabs behind an invisible scrollbar. After each render the current
+tab is `scrollIntoView`'d with `inline: 'nearest'`, or the selection can sit off-screen on a phone.
+
+### `[MODIFY]` connection state loses its text, term header gains a gap
+
+`#connLabel` and its two lines in `setStatus` are deleted. The dot beside it already carried the
+same three states in colour; the text restated them and took the room the tab strip needs. The
+wording survives as each dot's `title`, so the state is still nameable on hover and to a screen
+reader.
+
+`.term-menu-wrap` gains `margin-left: 6px`. Refresh and the gear are adjacent, do very different
+things, and the header's 8px gap alone put them inside mis-tap distance.
+
 ---
 
 ## Verification
@@ -681,6 +729,13 @@ grep -c "min-height: 0" web/index.html    # expect 4: .view, .settings, .termina
 
 # 5. No focusable field is left below the 16px iOS zoom threshold — expect no input/textarea/select
 grep -nE "font-size: ?(1[0-5]|[0-9])px" web/index.html
+
+# 6. The connection-state text is gone and nothing still references the old chips
+grep -n "connLabel" web/index.html
+grep -n "nav-chip\|navRecents\|renderNavRecents" web/index.html
+
+# 7. Dark is the default: :root carries the dark values, light is the opt-in attribute
+grep -n "data-theme" web/index.html
 ```
 
 Manual, with the relay running:
@@ -715,10 +770,18 @@ Manual, with the relay running:
 | M31 | Open a pane → Settings → Activity → Activity | Returns to the same pane; the switch did not lose it |
 | M32 | Open a pane → Settings, kill the pane in herdr, then Settings again | Lands on the agent list, no dead pane |
 | M33 | Agent list → Activity → Activity | Returns to the agent list |
-| M34 | In a pane, tap another pane's header shortcut | That pane opens; its chip becomes the active one |
-| M36 | Switch panes six times via the header shortcuts, then watch the relay log | One read_pane every 3s, not six |
-| M37 | 380px wide, three shortcuts with long names | Names truncate; Activity and Settings keep full 44px hit areas |
-| M38 | Kill a pane that has a header shortcut | Its shortcut disappears on the next snapshot |
+| M34 | In a pane, tap another agent's tab | That pane opens; its tab becomes the current one |
+| M36 | Switch panes six times via the tab strip, then watch the relay log | One read_pane every 3s, not six |
+| M37 | 380px wide, several agents with long names | Names truncate; Activity and Settings keep full 44px hit areas |
+| M38 | Kill a pane that has a tab | Its tab disappears on the next snapshot |
+| M39 | Select tab 4 of 6, then select tab 1 | Neither selection reorders the strip; only the fill moves |
+| M40 | Mobile 390px with eight agents | Strip scrolls horizontally; the current tab is scrolled into view |
+| M41 | Desktop 1440px with eight agents | Strip does not scroll; it shows what fits, no hidden scrollbar |
+| M42 | Compare the current tab against the rest at arm's length on a phone | The fill reads as selected without squinting |
+| M43 | First load with storage cleared | Dark, regardless of the OS colour scheme |
+| M44 | Settings → Appearance → Light, reload | Light, with no dark flash before paint |
+| M45 | Open a pane in Light | The terminal body stays dark; only the shell is light |
+| M46 | In a pane, tap refresh then the gear repeatedly | No mis-taps; the two are visibly separated |
 | M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
 | M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
@@ -749,8 +812,14 @@ Manual, with the relay running:
     items with a confirming unpair (M27, M28).
 14. Settings and Activity return to wherever the user was, including the pane; a pane shortcut does
     not (M30–M34).
-15. The header carries up to three live recent-pane shortcuts that open their pane directly, and
-    switching panes leaves exactly one poller running (M34, M36–M38).
+15. The header carries one tab per live agent that opens its pane directly, selection never reorders
+    the strip, the strip scrolls on touch and truncates on desktop, and switching panes leaves
+    exactly one poller running (M34, M36–M42).
+17. Dark is the default with no OS dependency; Light is opt-in from Settings, persists, and applies
+    before first paint (M43–M45).
+18. `(live)` / `(connecting…)` / `(offline)` text is gone; the status dot alone carries the state,
+    with the wording as its tooltip.
+19. Refresh and the pane gear are visibly separated in the term header (M46).
 12. The pair strip carries only switch and transfer, and its placement is settable and persisted,
     defaulting to above the composer (M28, M29).
 16. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.

@@ -4,18 +4,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#1a1b26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest"
-    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
+    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%231a1b26&quot;,&quot;theme_color&quot;:&quot;%231a1b26&quot;}">
   <title>herdr-remote</title>
+  <!-- Before first paint, or the light user gets a dark flash on every load. Inline and
+       synchronous for that reason; it must not wait for the module script below. -->
+  <script>
+    try {
+      if (localStorage.getItem('herdr_theme') === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* storage blocked: stay on the default */ }
+  </script>
   <script type="module">
     import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
     window.cue = play;
     document.addEventListener('DOMContentLoaded', () => bind());
   </script>
   <style>
+    /* Dark is the product default, not the OS's: the terminal it wraps is dark either way, and a
+       light shell around a dark pane is the jarring combination. Light is opt-in from Settings. */
     :root {
+      --bg: #1a1b26;
+      --surface: #202331;
+      --border: #2f3549;
+      --text: #c0caf5;
+      --muted: #565f89;
+      --green: #9ece6a;
+      --red: #f7768e;
+      --blue: #7aa2f7;
+      --orange: #e0af68;
+      --term-bg: #1a1b26;
+      --term-text: #c0caf5;
+    }
+
+    :root[data-theme="light"] {
       --bg: #e1e2e7;
       --surface: #d8d9e0;
       --border: #b6bbd1;
@@ -27,22 +51,6 @@
       --orange: #8c6c3e;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #1a1b26;
-        --surface: #202331;
-        --border: #2f3549;
-        --text: #c0caf5;
-        --muted: #565f89;
-        --green: #9ece6a;
-        --red: #f7768e;
-        --blue: #7aa2f7;
-        --orange: #e0af68;
-        --term-bg: #1a1b26;
-        --term-text: #c0caf5;
-      }
     }
 
     * {
@@ -108,43 +116,67 @@
       border-top: 1px solid var(--border);
     }
 
-    /* Direct jumps to the last panes visited, in the bar that is always on screen. Takes the
-       slack in the header and gives it up first: the two icon buttons never get squeezed. */
-    .nav-recents {
+    /* One badge per live agent, in the bar that is always on screen. Snapshot order, never
+       recency: a tab that moves the moment you select it is a tab you cannot aim at twice.
+       Takes the slack in the header and gives it up first, so the two icon buttons keep
+       their full hit area. */
+    .agent-tabs {
       display: flex;
       gap: 6px;
       margin-left: auto;
       min-width: 0;
-      overflow: hidden;
+      /* Mobile: fling past the ones that do not fit. Desktop overrides this to hidden. */
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
     }
 
-    .nav-chip {
+    .agent-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .agent-tab {
       display: flex;
       align-items: center;
-      gap: 5px;
-      min-width: 0;
-      max-width: 104px;
+      gap: 6px;
+      flex: 0 0 auto;
+      max-width: 132px;
       min-height: 44px;
-      padding: 0 8px;
+      padding: 0 10px;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 0.7rem;
-      font-weight: 500;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 600;
       white-space: nowrap;
       overflow: hidden;
       cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
 
-    .nav-chip .label {
+    .agent-tab .label {
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .nav-chip.active {
+    .agent-tab:hover {
+      color: var(--text);
+      border-color: var(--muted);
+    }
+
+    /* Selection is a filled pill, not a tinted border: at 0.72rem in a crowded bar a border-only
+       cue is invisible on a phone, and the ring keeps the status dot legible on the fill. */
+    .agent-tab.active {
+      background: var(--blue);
       border-color: var(--blue);
-      color: var(--blue);
+      color: var(--bg);
+      font-weight: 700;
+    }
+
+    .agent-tab.active .dot {
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
     }
 
     .header h1 {
@@ -506,6 +538,9 @@
     .term-menu-wrap {
       position: relative;
       display: flex;
+      /* Refresh and the gear sit next to each other and do very different things; the header's
+         8px gap alone put them close enough to mis-tap. */
+      margin-left: 6px;
       flex-shrink: 0;
     }
 
@@ -942,6 +977,12 @@
       .chip-strip {
         grid-column: 1 / -1;
       }
+
+      /* No fling scroll with a mouse, so an overflowing strip would strand the last tabs
+         behind an invisible scrollbar. Show what fits; the agent list has the rest. */
+      .agent-tabs {
+        overflow-x: hidden;
+      }
     }
 
     @media (min-width: 1200px) {
@@ -996,10 +1037,9 @@
   <div class="header">
     <span class="dot status-dot"></span>
     <h1>herdr</h1>
-    <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
     <span id="agentCount" style="font-size:0.7rem;color:var(--muted)"></span>
-    <!-- Jump straight to the last three panes visited. Filled by renderNavRecents. -->
-    <div class="nav-recents" id="navRecents"></div>
+    <!-- One badge per live agent, selectable like tabs. Filled by renderAgentTabs. -->
+    <div class="agent-tabs" id="agentTabs"></div>
     <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -1031,6 +1071,15 @@
       <div id="pushStatus" style="font-size:0.75rem;margin-bottom:6px"></div>
       <button id="pushToggle" onclick="togglePush()">Enable Push</button>
       <div class="hint">Get notified when agents are blocked, even with this tab closed.</div>
+    </div>
+
+    <div class="setting-group">
+      <label for="themePick">Appearance</label>
+      <select id="themePick" onchange="setTheme(this.value)">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+      <div class="hint">Dark is the default. The terminal itself is dark in both.</div>
     </div>
 
     <div class="setting-group">
@@ -1429,6 +1478,22 @@
     document.getElementById('relayUrl').value = savedUrl;
     document.getElementById('relayToken').value = savedToken;
 
+    // Theme. The head script already applied it before paint; this only keeps the control honest.
+    const THEME_KEY = 'herdr_theme';
+
+    function setTheme(name) {
+      const light = name === 'light';
+      if (light) document.documentElement.dataset.theme = 'light';
+      else delete document.documentElement.dataset.theme;
+      try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch (e) { /* private mode: session-only */ }
+      document.getElementById('themePick').value = light ? 'light' : 'dark';
+      // The installed PWA paints its chrome from this, so it has to track the choice.
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.content = light ? '#e1e2e7' : '#1a1b26';
+    }
+
+    setTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+
 
 
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
@@ -1465,24 +1530,26 @@
       else document.getElementById('agentListView').style.display = '';
     }
 
-    // Jumping between panes is the most frequent move in the app, so the last three live ones sit
-    // in the bar that is always on screen. Same liveness rule as the Recents section: a dead
-    // pane_id is dropped, never offered, because herdr reuses IDs.
-    const NAV_RECENTS = 3;
-
-    function renderNavRecents() {
-      const el = document.getElementById('navRecents');
-      const live = loadRecents()
-        .map(r => agents.find(a => memberMatches(r, a)))
-        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1)
-        .slice(0, NAV_RECENTS);
+    // Jumping between panes is the most frequent move in the app, so every live agent gets a tab
+    // in the bar that is always on screen. Snapshot order, deliberately not recency: selecting a
+    // tab must not move it, or the next selection lands somewhere else.
+    // Duplicate pane IDs are dropped rather than shown twice — same fail-closed rule as the list.
+    function renderAgentTabs() {
+      const el = document.getElementById('agentTabs');
+      const live = agents.filter(a => agents.filter(x => x.pane_id === a.pane_id).length === 1);
       el.innerHTML = live.map(a => {
         const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
-        return `<button class="nav-chip${a.pane_id === activePane ? ' active' : ''}" ` +
-          `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+        const on = a.pane_id === activePane;
+        return `<button class="agent-tab${on ? ' active' : ''}" ` +
+          `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}"` +
+          `${on ? ' aria-current="page"' : ''}>` +
           `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
           `<span class="label">${escapeHtml(paneLabel(a))}</span></button>`;
       }).join('');
+      // The selected tab can sit past the right edge on a phone; scroll it into view rather than
+      // leaving the user with no visible selection at all.
+      const sel = el.querySelector('.agent-tab.active');
+      if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
 
     // A jump is a destination, so it drops any panel the user was in and the pane it would
@@ -1551,13 +1618,15 @@
     }
 
     // One update path for every status dot: the app header's and the term header's, so the
-    // connection stays visible on mobile where the app header is hidden.
+    // connection stays visible on mobile where the app header is hidden. The dot carries the
+    // whole signal — the text beside it said the same thing twice and cost tab room.
     function setStatus(s) {
       const color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
-      document.querySelectorAll('.status-dot').forEach(d => { d.style.background = color; });
-      const label = document.getElementById('connLabel');
-      label.textContent = s === 'connected' ? '(live)' : s === 'connecting' ? '(connecting…)' : '(offline)';
-      label.style.color = color;
+      const label = s === 'connected' ? 'Connected' : s === 'connecting' ? 'Connecting…' : 'Offline';
+      document.querySelectorAll('.status-dot').forEach(d => {
+        d.style.background = color;
+        d.title = label;
+      });
     }
 
     function showSetup() {
@@ -1662,7 +1731,7 @@
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
-      renderNavRecents();
+      renderAgentTabs();
     }
 
     function renderBody() {
@@ -2322,7 +2391,7 @@
       clearInterval(refreshInterval);
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       noteRecent(paneId);
-      renderNavRecents();  // the chip for this pane has to read as active straight away
+      renderAgentTabs();  // the tab for this pane has to read as active straight away
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
       document.getElementById('agentListView').style.display = 'none';
@@ -2354,7 +2423,7 @@
       activePane = null; clearInterval(refreshInterval);
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
-      renderNavRecents();
+      renderAgentTabs();
       document.getElementById('terminalView').classList.remove('active');
       closeTermMenu();
       document.body.classList.remove('terminal-open');
