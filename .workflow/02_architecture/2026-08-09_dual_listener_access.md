@@ -1,7 +1,7 @@
 # Proposal — Dual-listener local and external access
 
 **Date:** 2026-08-09  
-**Status:** Reviewed — approved for implementation with the corrections below applied  
+**Status:** Approved — implementing  
 **Scope:** Relay access control for existing remote Start session capability (P2)  
 **Repeals:** the P2 rule that `HERDR_ENABLE_WRITE_EXT=1` requires `HERDR_RELAY_TOKEN` — see
 [What this repeals](#what-this-repeals)
