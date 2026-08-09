@@ -185,6 +185,9 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 </div>
 
 <div class="view" id="agentListView">
+  <!-- Recently opened panes. Absent until there is more than one, so a fresh browser and a
+       single-agent setup both look exactly as they did before. -->
+  <div class="chip-strip" id="recents" style="display:none"></div>
   <div class="agents" id="agents"></div>
 </div>
 
@@ -622,6 +625,7 @@ function handleMessage(msg) {
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
   renderPairStrip();  // pair health is recomputed from every snapshot, never cached
+  renderRecents();
   if (projects.length) { renderProjects(); return; }
   const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
   if (workspaces.length <= 1) {
@@ -839,6 +843,42 @@ function submitStart() {
   setStartError('');
   document.getElementById('startSubmit').disabled = true;
   ws.send(JSON.stringify(msg));
+}
+
+// --- Recents ---
+// Most-recently-opened panes, for one-tap access without hunting the list. Browser-local, like
+// pairs: the relay has no notion of which panes this device visited.
+
+const RECENTS_KEY = 'herdr_recents';
+const MAX_RECENTS = 6;
+
+function loadRecents() {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+  } catch (e) { return []; }
+}
+
+function noteRecent(paneId) {
+  const next = [paneId, ...loadRecents().filter(p => p !== paneId)].slice(0, MAX_RECENTS);
+  localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+}
+
+// Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
+// pane IDs, so a stale entry could open a pane the user never visited.
+function renderRecents() {
+  const el = document.getElementById('recents');
+  const live = loadRecents()
+    .map(id => agents.find(a => a.pane_id === id))
+    .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1);
+  if (live.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
+    live.map(a => {
+      const dot = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+      return `<button class="chip" onclick="openTerminal('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+        `<span class="dot" style="background:${dot};margin-right:6px" aria-hidden="true"></span>${escapeHtml(paneLabel(a))}</button>`;
+    }).join('');
+  el.style.display = 'flex';
 }
 
 // --- Pairs (storage and UI) ---
@@ -1116,6 +1156,7 @@ function section(title, color, list) {
 
 function openTerminal(paneId) {
   activePane = paneId; paneLines = 200; userScrolledUp = false;
+  noteRecent(paneId);
   const a = agents.find(x => x.pane_id===paneId);
   document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
   document.getElementById('agentListView').style.display = 'none';
@@ -1143,6 +1184,7 @@ function openTerminal(paneId) {
 function closeTerminal() {
   activePane = null; clearInterval(refreshInterval);
   document.getElementById('pairStrip').style.display = 'none';
+  renderRecents();  // the pane just visited belongs at the front before the next poll, not after
   document.getElementById('terminalView').classList.remove('active');
   document.getElementById('agentListView').style.display = '';
 }
