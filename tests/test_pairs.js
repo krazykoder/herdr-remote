@@ -21,14 +21,16 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'recentFingerprint', 'agentSlash', 'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
+               'recentFingerprint', 'agentSlash', 'reanchorSel',
+               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
 // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
-       pairCandidates, composeTransfer, recentFingerprint, agentSlash, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
+       SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -253,4 +255,60 @@ test('localhost is eligible for same-origin relay auto-connect', () => {
 
 test('web app ships no external demo relay', () => {
   assert.doesNotMatch(HTML, /herdr-demo|herdr-remote-demo|tryDemo/);
+});
+
+// --- ruler selection re-anchoring ---
+//
+// The ruler holds two line indices, and `pane read` returns the last N lines — so every line the
+// agent prints slides the selection up, and loading more scrollback slides it down. These cover
+// the drift, because a band that stays put while its text moves is worse than no band.
+
+const doc = (...rows) => rows.join('\n');
+
+test('reanchorSel keeps indices when nothing moved', () => {
+  const t = doc('a', 'b', 'c', 'd');
+  assert.deepEqual(reanchorSel(t, 'b\nc', 1, 2), [1, 2]);
+});
+
+test('reanchorSel follows the block up when output is appended', () => {
+  // Two new lines at the tail push the window; the same text is now two rows higher.
+  assert.deepEqual(reanchorSel(doc('c', 'd', 'e', 'f'), 'c\nd', 1, 2), [0, 1]);
+});
+
+test('reanchorSel follows the block down when scrollback is loaded', () => {
+  assert.deepEqual(reanchorSel(doc('x', 'y', 'a', 'b', 'c'), 'b\nc', 1, 2), [3, 4]);
+});
+
+test('reanchorSel drops the selection when its text is gone', () => {
+  assert.equal(reanchorSel(doc('a', 'b', 'c'), 'q\nr', 0, 1), null);
+});
+
+test('reanchorSel ignores a mid-line match', () => {
+  // 'bar' lives inside 'foobar', which is not the line the user selected.
+  assert.equal(reanchorSel(doc('foobar', 'baz'), 'bar', 5, 5), null);
+});
+
+test('reanchorSel ignores a match that stops short of the line end', () => {
+  // 'foo' opens 'foobar' but is not that line.
+  assert.equal(reanchorSel(doc('foobar', 'baz'), 'foo', 9, 9), null);
+});
+
+test('reanchorSel matches a whole line at the very start and very end', () => {
+  assert.deepEqual(reanchorSel(doc('one', 'two'), 'one', 7, 7), [0, 0]);
+  assert.deepEqual(reanchorSel(doc('one', 'two'), 'two', 7, 7), [1, 1]);
+});
+
+test('reanchorSel takes the first of two identical blocks', () => {
+  // Held indices that no longer match, so it has to search: no anchor exists to tell the two
+  // apart, and first match is the documented behaviour.
+  assert.deepEqual(reanchorSel(doc('dup', 'x', 'dup'), 'dup', 1, 1), [0, 0]);
+});
+
+test('reanchorSel treats an empty selection as no selection', () => {
+  assert.equal(reanchorSel(doc('a', 'b'), '', 0, 0), null);
+});
+
+test('reanchorSel preserves a blank line inside the block', () => {
+  const t = doc('h', 'a', '', 'b', 'z');
+  assert.deepEqual(reanchorSel(t, 'a\n\nb', 0, 2), [1, 3]);
 });

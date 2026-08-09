@@ -140,7 +140,8 @@ cd herdi-ios && xcodegen generate
 
 ## Web App
 
-The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, and agent-icon detection.
+The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, agent-icon detection, and a
+line ruler for picking a range of pane lines with a finger.
 
 ## WebSocket Protocol
 

@@ -1,9 +1,10 @@
 # Column parity and the line ruler
 
 **Date:** 2026-08-09
-**Status:** Part 1 **approved and implemented** (2026-08-09). Part 2 proposed, not scheduled.
-**Phase:** P6. Part 1 shipped ahead of P5 at the user's direction.
-**Implementation:** `.workflow/05_implementation/2026-08-09_column_parity.md`
+**Status:** Both parts **approved and implemented** (2026-08-09).
+**Phase:** P6. Shipped ahead of P5 at the user's direction.
+**Implementation:** Part 1 `.workflow/05_implementation/2026-08-09_column_parity.md`,
+Part 2 `.workflow/05_implementation/2026-08-09_line_ruler.md`
 
 Two requests came in together. They are the same problem seen from two ends, and the cheap
 version of the second one only exists if the first is solved. That is the main finding here.
@@ -120,6 +121,11 @@ phone. That is what True size + horizontal pan is for.
 
 ## Part 2 — The line ruler
 
+> **As built:** shipped 2026-08-09. Fine mode (the 4:1 drag-left gain) was skipped — at 9px a line
+> is ~13.5px and the preview bubble already closes the feedback loop; it is worth adding only if
+> handle dragging proves fiddly in practice. The selection also had to survive line-index drift,
+> which this proposal did not anticipate: see `reanchorSel` in the walkthrough.
+
 ### Why native selection fails here
 
 iOS text selection is built for prose: character-granular, handles that land *on* the glyphs they
@@ -221,20 +227,24 @@ Pair transfer is the stated reason this feature exists, so that seam is the one 
    Building it first would mean building the expensive per-line-DOM version and then throwing it
    away.
 
-Neither should start before P5 lands. P5 changes the shell's height model and adds
-`viewport-fit=cover`, and the ruler is positioned against that shell.
+~~Neither should start before P5 lands.~~ Both shipped first, at the user's direction. P5 still
+changes the shell's height model and adds `viewport-fit=cover`; the ruler is positioned against
+`#termWrap` rather than the viewport, so the safe-area inset lands on the shell around it and the
+band's arithmetic is unaffected. Worth re-running R1 and R5 once P5 is in.
 
 ---
 
 ## Open questions
 
 1. **Does `pane layout` report the right width for a remote pane over SSH?** Assumed yes, same as
-   `pane read`, but unverified — this needs one check against a live `HERDR_REMOTES` host before
-   Part 1 is planned.
+   `pane read`. Still unverified — Part 1 shipped without it. `remote` is passed through and
+   covered by a unit test, but nothing has run against a live `HERDR_REMOTES` host. Worst case is
+   a wrong `cols`, which shows up as Fit width solving to the wrong size.
 2. **Fit width when a pane is resized mid-session.** The font size would change under the user's
    feet. Re-solve on every snapshot, or only when the pane is opened? Leaning: re-solve, but only
    when `cols` actually changes, and never while a ruler selection is active.
-3. **Does the ruler belong on desktop?** A mouse can select lines fine. Cheapest answer is to show
-   it everywhere and let it be redundant on desktop rather than maintain two selection stories.
+3. **Does the ruler belong on desktop?** ~~A mouse can select lines fine.~~ Settled as proposed:
+   shown everywhere, redundant on desktop, one selection story. Native drag-select still works
+   alongside it — a click only clears the ruler's range when the native selection is collapsed.
 4. **`--format ansi` is available.** Colour would make the terminal far more readable, and is
    entirely separate from both of these. Worth its own proposal.

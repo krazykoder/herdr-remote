@@ -758,6 +758,159 @@
       white-space: pre;
     }
 
+    /* --- Line ruler ---------------------------------------------------------------------
+       The handles live in a column of their own, right of the text, so the finger dragging one
+       never covers the line it is selecting. That single property is what native selection
+       cannot offer and what makes this usable at a 9px terminal.
+
+       Selection is a range of line indices, never a character range — which is also what makes
+       it cheap: with `white-space: pre` one logical line is one visual row of known height, so
+       index <-> y is arithmetic and the whole feature costs one band element. Reflow breaks
+       that (a line spans an unknown number of rows), so the ruler is not offered there. */
+    .term-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      /* The band is positioned against this box and has to clip to it. */
+      overflow: hidden;
+    }
+
+    .term-wrap>.term-content {
+      flex: 1;
+    }
+
+    .ruler {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 32px;
+      /* The ruler owns its drags; without this the page pans out from under them on iOS. */
+      touch-action: none;
+      cursor: ns-resize;
+      z-index: 2;
+    }
+
+    /* Deliberately no background. In True size the text pans underneath, and a solid 32px strip
+       would hide a column of it — only the track and the handles paint. */
+    .ruler::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      left: 50%;
+      width: 3px;
+      margin-left: -1.5px;
+      border-radius: 2px;
+      background: var(--border);
+      opacity: 0.7;
+    }
+
+    .ruler-handle {
+      position: absolute;
+      left: 0;
+      width: 32px;
+      /* 44px of target for a 6px bar: the grip is deliberately far larger than its paint. */
+      height: 44px;
+      margin-top: -22px;
+      z-index: 3;
+    }
+
+    .ruler-handle::before {
+      content: '';
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: 19px;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--blue);
+      box-shadow: 0 0 0 1px var(--term-bg);
+    }
+
+    /* Parked at the viewport edge because the range continues past it. A handle that scrolled
+       away is a selection that cannot be adjusted, so it stops instead of leaving. */
+    .ruler-handle.parked::before {
+      opacity: 0.5;
+      left: 9px;
+      right: 9px;
+    }
+
+    .sel-band {
+      position: absolute;
+      left: 0;
+      right: 32px;
+      pointer-events: none;
+      background: color-mix(in srgb, var(--blue) 20%, transparent);
+      border-top: 1px solid var(--blue);
+      border-bottom: 1px solid var(--blue);
+      z-index: 1;
+    }
+
+    /* At 9px the user cannot read the row they are landing on. This is how they confirm the
+       line without needing pixel precision. */
+    .sel-bubble {
+      position: absolute;
+      right: 38px;
+      max-width: 62%;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--text);
+      color: var(--bg);
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    .sel-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
+    .sel-bar[hidden] {
+      display: none;
+    }
+
+    .sel-bar .count {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sel-bar .spacer {
+      flex: 1;
+    }
+
+    .sel-bar button {
+      padding: 8px 12px;
+      min-height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .sel-bar button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: var(--bg);
+    }
+
     /* Empty for most of a pane's life. Left displayed it still drew a top border and 12px of
        padding, which read as dead space between the terminal and the composer. */
     .quick-actions:empty {
@@ -1300,7 +1453,22 @@
     </div>
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
-    <div class="term-content" id="termContent">Loading…</div>
+    <div class="term-wrap" id="termWrap">
+      <div class="term-content" id="termContent">Loading…</div>
+      <div class="sel-band" id="selBand" hidden></div>
+      <div class="ruler" id="ruler" hidden aria-hidden="true">
+        <div class="ruler-handle" id="rulerTop" hidden></div>
+        <div class="ruler-handle" id="rulerBot" hidden></div>
+      </div>
+      <div class="sel-bubble" id="selBubble" hidden></div>
+    </div>
+    <div class="sel-bar" id="selBar" hidden>
+      <span class="count" id="selCount"></span>
+      <span class="spacer"></span>
+      <button onclick="copySel()" id="selCopy">Copy</button>
+      <button class="primary" onclick="openTransfer()" id="selTransfer" hidden>Transfer ›</button>
+      <button onclick="clearSel()" aria-label="Clear selection">✕</button>
+    </div>
     <div class="quick-actions" id="quickActions"></div>
     <div class="term-input">
       <div class="term-input-side">
@@ -1612,6 +1780,28 @@
       if (body.length > SEND_TEXT_MAX)
         return { error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less` };
       return { text: body };
+    }
+
+    // A ruler selection is a pair of line indices, and `pane read` returns the *last* N lines —
+    // so anything the agent prints shifts every index up, and loading more scrollback shifts them
+    // down. The selection therefore follows its own text, not its position.
+    //
+    // Returns the new [a, b], or null when the block is gone — at which point the selection is
+    // gone too, which is the honest answer. A block that repeats verbatim resolves to the first
+    // match; distinguishing them would need an anchor the pane does not give us.
+    function reanchorSel(text, selText, a, b) {
+      if (!selText) return null;
+      const rows = text.split('\n');
+      if (rows.slice(a, b + 1).join('\n') === selText) return [a, b];
+      // Whole lines only. A mid-line match, or one that stops short of the line's end, is a
+      // different selection that happens to share characters.
+      const whole = (i) => (i === 0 || text[i - 1] === '\n') &&
+        (i + selText.length === text.length || text[i + selText.length] === '\n');
+      let at = text.indexOf(selText);
+      while (at >= 0 && !whole(at)) at = text.indexOf(selText, at + 1);
+      if (at < 0) return null;
+      const start = text.slice(0, at).split('\n').length - 1;
+      return [start, start + selText.split('\n').length - 1];
     }
     // --- P3 pair logic (pure) --- end
 
@@ -1942,6 +2132,8 @@
         } else {
           el.scrollTop = el.scrollHeight;
         }
+        // After the scroll settles, not before: the band is drawn against scrollTop.
+        setPaneText(next);
       }
     }
 
@@ -2279,6 +2471,8 @@
       }
       renderWrapHint();
       syncFontButtons();
+      // Reflow makes line index <-> y unknowable, so the ruler goes away with it.
+      drawSel();
     }
 
     function renderWrapHint() {
@@ -2297,6 +2491,152 @@
       applyWrapMode();
     }
 
+    // --- Line ruler ---
+    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — that
+    // is what the non-wrapping modes bought, and it is why the ruler is hidden in Reflow.
+    let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
+
+    function rulerOn() { return currentWrapMode() !== 'reflow' && !!activePane; }
+
+    function clearSel() { selA = selB = null; selText = ''; drawSel(); }
+
+    function lineGeom() {
+      const el = document.getElementById('termContent'), cs = getComputedStyle(el);
+      return { el, lh: parseFloat(cs.lineHeight) || 16, pad: parseFloat(cs.paddingTop) || 0 };
+    }
+
+    function lineAt(clientY) {
+      const { el, lh, pad } = lineGeom();
+      const y = clientY - el.getBoundingClientRect().top + el.scrollTop - pad;
+      return Math.min(paneRows.length - 1, Math.max(0, Math.floor(y / lh)));
+    }
+
+    function drawSel() {
+      const ruler = document.getElementById('ruler');
+      const band = document.getElementById('selBand');
+      const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
+      const bar = document.getElementById('selBar');
+      ruler.hidden = !rulerOn();
+      const on = rulerOn() && selA !== null && paneRows.length > 0;
+      band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
+      if (!on) return;
+      const { el, lh, pad } = lineGeom();
+      const a = Math.min(selA, selB), b = Math.max(selA, selB);
+      selText = paneRows.slice(a, b + 1).join('\n');
+      const y0 = pad + a * lh - el.scrollTop, y1 = y0 + (b - a + 1) * lh;
+      band.style.top = y0 + 'px';
+      band.style.height = (y1 - y0) + 'px';
+      const h = document.getElementById('termWrap').clientHeight;
+      park(top, y0, h);
+      park(bot, y1, h);
+      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines');
+      // Transfer is the reason this feature exists, but the button only means something while
+      // this pane is half of a live pair.
+      document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
+    }
+
+    // A handle whose end scrolled out of view stops at the edge rather than leaving with it.
+    function park(el, y, h) {
+      const c = Math.min(h - 12, Math.max(12, y));
+      el.style.top = c + 'px';
+      el.classList.toggle('parked', Math.abs(c - y) > 0.5);
+    }
+
+    // Called with every read. The selection follows its text; reanchorSel decides whether it
+    // survived at all.
+    function setPaneText(next) {
+      paneText = next;
+      paneRows = next.split('\n');
+      if (selA !== null) {
+        const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
+        if (!at) { clearSel(); return; }
+        [selA, selB] = at;
+      }
+      drawSel();
+    }
+
+    function copySel() {
+      const btn = document.getElementById('selCopy'), text = selText;
+      if (!text) return;
+      const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+      // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way
+      // this app is reached. The textarea path is the one that actually runs at home.
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done, () => { });
+        return;
+      }
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { if (document.execCommand('copy')) done(); } catch (e) { /* nothing else to offer */ }
+      ta.remove();
+    }
+
+    {
+      const ruler = document.getElementById('ruler');
+      const bubble = document.getElementById('selBubble');
+      let drag = null, autoTimer = null, lastY = 0;
+
+      function moveTo(clientY) {
+        const i = lineAt(clientY);
+        if (drag === 'top') selA = i; else selB = i;
+        drawSel();
+        const wrapTop = document.getElementById('termWrap').getBoundingClientRect().top;
+        bubble.textContent = (paneRows[i] || '').trim().slice(0, 40) || '(blank)';
+        bubble.style.top = Math.max(0, clientY - wrapTop - 12) + 'px';
+        bubble.hidden = false;
+      }
+
+      // Dragging a handle past the viewport edge has to keep growing the range, or a selection
+      // can never be larger than one screen.
+      function edgeScroll() {
+        const { el, lh } = lineGeom(), r = el.getBoundingClientRect();
+        const d = lastY < r.top + 40 ? -lh : lastY > r.bottom - 40 ? lh : 0;
+        if (!d) return;
+        el.scrollTop += d;
+        moveTo(lastY);
+      }
+
+      ruler.addEventListener('pointerdown', e => {
+        if (!rulerOn() || !paneRows.length) return;
+        e.preventDefault();
+        ruler.setPointerCapture(e.pointerId);
+        const id = e.target.id;
+        if (id === 'rulerTop' || id === 'rulerBot') drag = id === 'rulerTop' ? 'top' : 'bot';
+        else { selA = selB = lineAt(e.clientY); drag = 'bot'; }
+        lastY = e.clientY;
+        moveTo(e.clientY);
+        autoTimer = setInterval(edgeScroll, 60);
+      });
+
+      ruler.addEventListener('pointermove', e => {
+        if (!drag) return;
+        lastY = e.clientY;
+        moveTo(e.clientY);
+      });
+
+      function end() {
+        if (!drag) return;
+        drag = null;
+        clearInterval(autoTimer);
+        bubble.hidden = true;
+        // Ends swap once dragged past each other, as every selection UI does.
+        if (selA > selB) { const t = selA; selA = selB; selB = t; }
+        drawSel();
+      }
+      ruler.addEventListener('pointerup', end);
+      ruler.addEventListener('pointercancel', end);
+
+      // Tapping the text clears the range — but not when the tap was really a native drag-select,
+      // which desktop users still have and which this must not fight.
+      document.getElementById('termContent').addEventListener('click', () => {
+        const s = window.getSelection();
+        if (selA !== null && (!s || s.isCollapsed)) clearSel();
+      });
+    }
+
     const FONT_KEY = 'herdr_font_size', FONT_MIN = 6, FONT_MAX = 24, FONT_DEFAULT = 13;
 
     function currentFont() {
@@ -2312,6 +2652,7 @@
       try { localStorage.setItem(FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
       document.getElementById('fontValue').textContent = v + 'px';
       syncFontButtons();
+      drawSel();  // the line height just changed, so the band no longer covers those lines
     }
 
     // Fit width solves the size from the pane's column count, so A-/A+ cannot also own it.
@@ -2363,7 +2704,7 @@
       const place = currentPairPlace();
       const view = document.getElementById('terminalView');
       const strip = document.getElementById('pairStrip');
-      if (place === 'top') view.insertBefore(strip, document.getElementById('termContent'));
+      if (place === 'top') view.insertBefore(strip, document.getElementById('termWrap'));
       else if (place === 'bottom') view.appendChild(strip);
       else view.insertBefore(strip, view.querySelector('.term-input'));
       strip.classList.toggle('at-bottom', place === 'bottom');
@@ -2576,8 +2917,10 @@
     function openTransfer() {
       const pair = pairFor(pairs, activePane);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
-      // Capture before anything can steal the selection — switching panes clears it.
-      transferSelection = String(window.getSelection() || '').trim();
+      // The ruler's range wins when there is one: it is the deliberate selection, and on a phone
+      // the native one is usually empty anyway. Capture before anything can steal it — switching
+      // panes clears both.
+      transferSelection = selText || String(window.getSelection() || '').trim();
       const partner = partnerOf(pair, activePane);
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
@@ -2702,6 +3045,8 @@
       renderAgentTabs();  // the tab for this pane has to read as active straight away
       paneStampAt = null;  // the previous pane's timestamp is not this one's
       paneCols = null;     // and its column count is not this one's either
+      paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
+      clearSel();
       applyWrapMode();
       renderStatusBar();
       document.getElementById('terminalView').classList.add('active');
@@ -2727,6 +3072,7 @@
 
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
+      clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
       renderAgentTabs();
@@ -2935,6 +3281,7 @@
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
+      drawSel();  // the band lives outside the scroller, so it has to be re-placed by hand
       if (el.scrollTop === 0 && paneLines < 5000) loadMore();
     });
 
