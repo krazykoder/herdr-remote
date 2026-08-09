@@ -1,12 +1,13 @@
 # Decision — How the PWA shell is served over the external listener
 
 **Date:** 2026-08-09
-**Status:** **Proposed — needs sign-off before P5 is implemented**
-**Class:** **B** — architectural extension. It amends an access-control invariant frozen four commits
-ago (`301df19`, "dual listeners for token-free LAN and token-required tunnel") and recorded in
-`relay/herdr_relay.py:564` — `require_token` "gates the whole HTTP surface — the WebSocket upgrade,
-GET / serving the web app, and the event-push endpoint". Audit required. This is **not** the Class A
-change the P5 plan header claimed.
+**Status:** **Accepted — option A.** The relay's HTTP surface stays fully token-gated. The web app and
+PWA are hosted from a static HTTPS origin (Cloudflare Pages today, GitHub Pages intended); the tunnel
+carries relay traffic only.
+**Class:** B — it was raised as an amendment to a frozen access-control invariant
+(`301df19`, "dual listeners for token-free LAN and token-required tunnel";
+`relay/herdr_relay.py:564` — `require_token` "gates the whole HTTP surface"). **Resolved by not
+amending it.** No access control changes, so no audit is triggered.
 
 ## Problem
 
@@ -14,52 +15,63 @@ Browsers issue sub-resource requests themselves, against the resolved URL, and t
 inherit the document's query string. Over the tunnel the app is reached as
 `https://<tunnel>/?token=…`, so:
 
-- `<link rel="manifest" href="manifest.webmanifest">` → `GET /manifest.webmanifest`, no token → 401.
-- `navigator.serviceWorker.register('sw.js')` → `GET /sw.js`, no token → 401. **This is already
-  broken today**, which means service-worker registration and therefore push notifications do not
-  work over the external listener. P5 surfaces the bug; it does not create it.
-- `<link rel="apple-touch-icon">` and the manifest icons → same, 401.
-- A standalone launch navigates to the manifest's `start_url` (`./` → `/`) with no token at all, so
-  even the document 401s and the installed app opens to "Invalid token".
+- `<link rel="manifest">`, `navigator.serviceWorker.register('sw.js')`, `apple-touch-icon` and the
+  manifest icons all arrive with no token → 401. Service-worker registration, and therefore push,
+  **already fail over the external listener today**.
+- A standalone launch navigates to `start_url` with no token at all, so even the document 401s.
 
 Storing the token in `localStorage` does not help: the app's JavaScript never issues these requests.
 
-## Options
+## Options considered
 
-**A — Serve the app from Cloudflare Pages; the tunnel carries data only.** The web app is already
-deployed to Pages on push to `main`, and clients already point at a *different* origin's `wss://`
-relay, so cross-origin is the normal mode. Install the PWA from the Pages origin, where every asset
-is genuinely static and public by design. The relay's HTTP surface stays fully token-gated, and the
-only thing that must cross the tunnel is the WebSocket, which already carries `?token=`.
-*Relay change: none.*
+**A — Host the app on a static HTTPS origin; the tunnel carries data only.** *Adopted.*
+**B — Allowlist the static shell as unauthenticated on every listener.** Rejected: it turns the tunnel
+endpoint from indistinguishable-from-nothing into a discoverable herdr relay. No agent state or
+control capability would leak, but discoverability is what the blanket gate buys, and the stated goal
+is not to loosen security.
+**C — Propagate the token into sub-resource URLs** (`manifest.webmanifest?token=`, `start_url:
+"./?token="`). Rejected: the manifest would have to be generated per-token, and the token ends up
+baked into the installed home-screen shortcut.
 
-**B — Allowlist the static shell as unauthenticated on every listener.** `/`, `/index.html`,
-`/manifest.webmanifest`, `/sw.js`, `/logo.svg`, `/icons/*` served without a token; WebSocket
-upgrades, event push, `/api/*`, and all other paths stay gated. Straightforward and it fixes the
-`sw.js` bug for relay-origin use. Cost: an unauthenticated visitor to the tunnel URL receives the
-app shell instead of an opaque 401, which turns the endpoint from indistinguishable-from-nothing
-into a discoverable herdr relay. No agent state and no control capability leak — the shell is public
-source already — but discoverability is the thing the blanket gate was buying.
+## Consequences
 
-**C — Propagate the token into sub-resource URLs.** `manifest.webmanifest?token=…`,
-`register('sw.js?token=…')`, `start_url: "./?token=…"`. Keeps the gate absolute, but the manifest
-must then be generated per-token by the relay rather than served as a file, and the token ends up
-baked into the installed home-screen shortcut. Most moving parts, worst secret hygiene.
+**1. Mixed content splits hosting into two non-overlapping modes.** A page served over HTTPS cannot
+open a `ws://` connection. So:
 
-## Recommendation
+| App served from | Can reach | Installable |
+|---|---|---|
+| Static HTTPS origin (Pages) | `wss://` tunnel only | yes — full PWA, service worker, push |
+| Relay over `http://<lan-ip>:8375` | `ws://` LAN **and** `wss://` tunnel | no real install (see 2) |
 
-**A.** It is the only option that changes no access control at all, it needs no relay code, and it
-uses the deployment path that already exists. B is the fallback if installing directly from the
-tunnel origin turns out to be a requirement — in which case this entry gets re-opened, accepted
-explicitly, and the discoverability cost is accepted in writing rather than inherited from a plan
-header. C is rejected.
+LAN-direct use therefore keeps working exactly as today, in a browser tab served by the relay.
 
-Under A, P5 keeps everything else — fullscreen, the real manifest file, the PNG icons, `viewport-fit`
-and safe-area handling — and drops only the relay auth exception. The relay still needs its
-allowlisted static-asset routes so the LAN listener (which runs token-free under `HERDR_LAN_OPEN=1`)
-and local use serve the manifest and icons.
+**2. "Install over LAN, then use it over the tunnel" does not work off-LAN.** Recorded because it was
+proposed as a fallback. An app installed from `http://192.168.x.x:8375` loads its document from that
+origin at every launch, and a plain-http LAN address is not a secure context, so no service worker
+can cache the shell to make it launchable offline. Off the LAN the launch simply fails. Android
+Chrome will not offer a real install there at all (no secure context, no service worker); iOS *Add to
+Home Screen* does produce a standalone window, but only usable while on the LAN, and with no push. A
+static HTTPS origin is the only path to an installable app usable from anywhere.
 
-## Consequence if left unresolved
+**3. The relay keeps its allowlisted manifest and icon routes.** Independent of this decision: the
+LAN listener runs token-free under `HERDR_LAN_OPEN=1`, and a LAN browser tab or an iOS home-screen
+shortcut should not 404 on them. Additive, Class A.
 
-P5 cannot be implemented as written: spec S7.7 and the P5 plan's "external static-shell
-authentication" section both assume option B was accepted.
+**4. The `sw.js`-over-tunnel 401 is resolved by architecture, not by code.** The service worker lives
+on the Pages origin, where it registers normally and push works. Loading the app *directly* from the
+tunnel origin remains a degraded mode — no service worker, no push, no install — and that is
+documented rather than fixed, because fixing it means option B.
+
+**5. Origin is not enforced, so cross-origin already works.** `handle_client` reads the `Origin`
+header for the connection log only (`relay/herdr_relay.py:683, 706`). A Pages-hosted app connecting
+to `wss://<tunnel>/?token=…` needs no relay change.
+
+**6. Separate bug, found while resolving this — the VAPID fetch sends no token.**
+`web/index.html:2316` does `fetch(httpUrl + '/api/vapid-public-key')` with no credentials, so
+enabling push against the external listener 401s and surfaces as a JSON parse error. The relay
+already accepts `?token=` (`herdr_relay.py:578–584`), so the fix appends the stored token and
+loosens nothing. Tracked with P5's push work.
+
+**7. Cloudflare Pages vs GitHub Pages is immaterial here.** Both are static HTTPS origins with no
+secrets. Current deployment is Cloudflare Pages on push to `main`; the intent is to move to GitHub
+Pages. This decision holds either way.

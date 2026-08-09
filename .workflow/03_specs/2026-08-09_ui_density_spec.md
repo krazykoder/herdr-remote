@@ -123,8 +123,9 @@ raises nothing to the user.
 
 ## S7 — PWA installability · *P5*
 
-**S7.1** The manifest is served as a real file at a same-origin path, from both the relay and
-Cloudflare Pages, with `Content-Type: application/manifest+json`.
+**S7.1** The manifest is served as a real file at a same-origin path, from both the relay and the
+static Pages origin, with `Content-Type: application/manifest+json`. Installability is only claimed
+for the Pages origin; see S7.7 and S7.9.
 
 **S7.2** The manifest declares `name`, `short_name`, relative `start_url: "./"`, relative
 `scope: "./"`, `display: standalone`, `background_color`, `theme_color`, and 192px/512px PNG icons.
@@ -140,17 +141,21 @@ obscured by the status bar or home indicator.
 **S7.6** The iOS home-screen icon is a committed 180px PNG referenced by `apple-touch-icon`; it is
 not deferred.
 
-**S7.7 — pending a decision, do not implement yet.** Whether the external listener serves static
-shell assets without a token is **Class B and unresolved**:
-`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
-recommended resolution installs the PWA from the Cloudflare Pages origin and changes no relay access
-control, in which case this clause is struck. If instead the exception is accepted, it reads: on the
-external listener, static shell assets are public, while WebSocket upgrades, event push, VAPID/API
-requests, and all other relay paths still require the token; LAN behaviour is unchanged.
+**S7.7** Relay access control is unchanged. The external listener continues to require a token for
+every HTTP request, static assets included. The installable PWA is served from a static HTTPS origin
+(Pages), not from the relay — decision:
+`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
 
-**S7.8** The relay serves the manifest and icons from an allowlisted static-asset map on whichever
-listeners already serve `/index.html`. This is independent of S7.7 — the LAN listener runs token-free
-under `HERDR_LAN_OPEN=1` and needs these assets regardless.
+**S7.8** The relay serves the manifest and icons from an allowlisted static-asset map, on whichever
+listeners already serve `/index.html` and under the same authentication those listeners already
+apply. The LAN listener runs token-free under `HERDR_LAN_OPEN=1`, so a LAN tab must not 404 on them.
+
+**S7.9** Loading the app directly from the tunnel origin is a supported but degraded mode: no service
+worker, no push, no install. It must not error or appear broken — the app works, those three features
+are simply unavailable.
+
+**S7.10** Enabling push against a token-gated listener must succeed. The VAPID key request carries the
+stored token as `?token=`, which the relay already accepts.
 
 ## S8 — Non-regressions
 

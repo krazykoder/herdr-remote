@@ -5,10 +5,9 @@
 **Depends on:** `.workflow/04_implementation_plans/2026-08-09_p4_ui_density.md` (P4) — must be
 merged and verified first
 **Classification:** Class A — feature-only. Additive allowlisted static-asset routes; no protocol
-change. **Except** the external-listener auth exception below, which is Class B and unresolved:
-`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
-**Status:** Ready for implementation after P4, **minus** the auth section, which is blocked on that
-decision. Everything else here — fullscreen, manifest, icons, safe-area — is unblocked.
+change; **no access-control change** — settled in
+`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md` (option A).
+**Status:** Ready for implementation after P4. Nothing blocked.
 
 ## Goal
 
@@ -194,35 +193,35 @@ will not match the `#e1e2e7` splash. Check the rendered icon on a device; if it 
 the 180px variant from a copy of the SVG with an opaque `#e1e2e7` background rect rather than
 post-processing the PNG. Android is unaffected — `purpose: "any"` icons keep their transparency.
 
-### `[BLOCKED]` external static-shell authentication — **do not implement without sign-off**
+### `[NO CHANGE]` external listener authentication
 
-Tracked as Class B, Proposed:
-`.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
-recommendation there is *not* to make this change: install the PWA from the Cloudflare Pages origin,
-which is already the deployment target and already public, and leave the relay's HTTP surface fully
-gated. What follows is the fallback implementation if the exception is accepted instead.
+Decided: `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`,
+option A. **Relay access control is not touched.** The external listener keeps requiring a token for
+every HTTP request, static assets included. The installable app is served from the static HTTPS Pages
+origin instead, and the tunnel carries relay traffic only.
 
-The external listener currently authenticates every HTTP request (`relay/herdr_relay.py:564` — the
-docstring states the gate covers the whole HTTP surface). A PWA cannot launch that way: the manifest,
-service worker and icon requests are issued **by the browser**, against a resolved URL that does not
-inherit the document's `?token=` query string, and a standalone launch navigates to `start_url` with
-no token at all. Reading the token from `localStorage` cannot help, because the app's JavaScript
-never issues those requests. Note this already breaks `sw.js` registration — and therefore push — over
-the tunnel today; it is a pre-existing bug, not one P5 introduces.
+Implementers: do not add an auth exception, an unauthenticated allowlist, or any `Origin`/`Host`/IP
+based inference. If installability appears to need one, the answer is to install from the Pages
+origin.
 
-On the external listener, allow unauthenticated `GET`/`HEAD` only for this exact static allowlist:
+Loading the app directly from the tunnel origin stays supported but degraded — no service worker, no
+push, no install (S7.9). It must not look broken; those three features are simply unavailable there.
 
-```text
-/, /index.html, /manifest.webmanifest, /sw.js, /logo.svg,
-/icons/herdr-180.png, /icons/herdr-192.png, /icons/herdr-512.png
+### `[MODIFY] web/index.html` — VAPID fetch carries the token
+
+Separate pre-existing bug, found while resolving the decision above. `web/index.html:2316` fetches the
+VAPID key with no credentials, so enabling push against any token-gated listener returns 401 and
+surfaces as a JSON parse error. The relay already accepts `?token=` (`herdr_relay.py:578–584`), so
+this loosens nothing.
+
+```js
+          const relayUrl = localStorage.getItem('herdr_relay_url') || '';
+          const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
+          // The relay gates /api the same as everything else; a bare fetch 401s on any
+          // token-required listener.
+          const tok = localStorage.getItem('herdr_relay_token') || '';
+          const resp = await fetch(httpUrl + '/api/vapid-public-key' + (tok ? '?token=' + encodeURIComponent(tok) : ''));
 ```
-
-Keep the token requirement for WebSocket upgrades, event-push requests, VAPID/API requests, and
-every other path. The LAN listener keeps its existing configured policy. Do not trust `Origin`,
-`Host`, forwarded headers, or source IP to infer access.
-
-The public shell contains no agent snapshot or control data. After launch, the browser uses the
-token in `localStorage` for the authenticated WebSocket connection.
 
 ---
 
@@ -230,10 +229,17 @@ token in `localStorage` for the authenticated WebSocket connection.
 
 A PWA is the site itself — no store, no signing, no review.
 
-- **iPhone / iPad, Safari:** Share → *Add to Home Screen*. Launches chrome-free.
+- **Install from the Pages origin** (Cloudflare Pages today, GitHub Pages intended), then point it at
+  your `wss://` tunnel URL in Settings. This is the only combination that installs properly *and*
+  works from anywhere.
+- **iPhone / iPad, Safari:** Share → *Add to Home Screen*.
 - **Android, Chrome:** ⋮ → *Install app*.
-- **Requires HTTPS.** The Cloudflare tunnel URL qualifies; a bare `http://192.168.x.x` LAN address
-  does not — Android will not offer installation, and iOS will add a shortcut that still shows chrome.
+- **Not installable from the relay over LAN.** `http://192.168.x.x:8375` is not a secure context, so
+  there is no service worker: Android offers no install, and an iOS home-screen shortcut only works
+  while on that LAN, because the app loads its document from that origin at every launch. LAN use is
+  a browser tab, as today.
+- **A Pages-hosted app cannot reach `ws://`.** Mixed content blocks it, so the installed app is
+  tunnel-only. That is the intended topology.
 
 ---
 
@@ -261,12 +267,18 @@ grep -n "application/json,{&quot;name" web/index.html    # expect nothing
 .venv313/bin/python -m unittest discover -s tests -t tests
 ```
 
-**Only if the Class B auth exception is accepted**, verify the boundary separately with the external
-listener enabled: static shell paths return 200 without a token; WebSocket upgrade,
-`/api/vapid-public-key`, event-push, and unknown paths return 401 without one and succeed with the
-correct token. If the recommendation stands instead, verify the opposite — every external path,
-static assets included, still returns 401 without a token — and install the PWA from the Cloudflare
-Pages origin.
+With the external listener enabled, verify the gate is **still absolute** — this is a regression check
+on the decision, not a new boundary:
+
+```bash
+# every external path, static assets included, must 401 without a token
+for p in / /index.html /manifest.webmanifest /sw.js /logo.svg /icons/herdr-192.png /api/vapid-public-key; do
+  printf "%-28s " "$p"; curl -so /dev/null -w "%{http_code}\n" "http://127.0.0.1:$HERDR_EXTERNAL_PORT$p"
+done   # expect 401 on every line
+
+# and succeed with one
+curl -so /dev/null -w "%{http_code}\n" "http://127.0.0.1:$HERDR_EXTERNAL_PORT/api/vapid-public-key?token=$HERDR_RELAY_TOKEN"   # expect 200
+```
 
 Manual:
 

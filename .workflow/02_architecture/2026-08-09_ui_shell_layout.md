@@ -9,11 +9,11 @@ altered, no relay state change. The relay edits are additive allowlisted static-
 - P4 — shell, density, text size: `.workflow/04_implementation_plans/2026-08-09_p4_ui_density.md`
 - P5 — fullscreen, PWA installability: `.workflow/04_implementation_plans/2026-08-09_p5_fullscreen_pwa.md`
 
-> **One carve-out, and it is not Class A.** Serving the shell *without a token on the external
-> listener* amends a frozen access-control invariant and is tracked separately as **Class B,
-> Proposed**: `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
-> P5 cannot ship its auth section until that entry is signed off. Everything else in this document is
-> unaffected by the outcome.
+> **Hosting is settled and access control is untouched.** Serving the shell without a token on the
+> external listener was raised as a Class B amendment and **rejected**:
+> `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
+> installable app is served from a static HTTPS origin (Cloudflare Pages today, GitHub Pages
+> intended) and points at the `wss://` tunnel; the relay's HTTP surface stays fully gated.
 
 §§5–6 below (browser chrome, PWA) are P5. They land on top of the P4 shell, not beside it:
 a standalone or fullscreen launch inherits the same layout, so removing the chrome first would only
@@ -218,13 +218,21 @@ Gaps closed by this change:
 
 4. Over the external listener the shell's sub-resources 401. The browser — not the app's JavaScript —
    issues the manifest, service-worker, and icon requests, and they do not inherit the document's
-   `?token=` query string; a standalone launch navigates to `start_url` with no token at all. Note
-   this already breaks `sw.js` registration, and therefore push, over the tunnel today: P5 surfaces
-   a pre-existing bug rather than introducing one. **Unresolved** — three options, recommendation,
-   and cost are in
-   `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`. The
-   recommendation is to install from the Cloudflare Pages origin and change no relay access control;
-   the relay's allowlisted static routes are still needed for the token-free LAN listener.
+   `?token=` query string; a standalone launch navigates to `start_url` with no token at all. This
+   already breaks `sw.js` registration, and therefore push, over the tunnel today. **Resolved by
+   hosting, not by code**: the installable app lives on the static Pages origin, where its service
+   worker registers normally, and it connects out to `wss://<tunnel>?token=…`. Relay access control
+   is unchanged. Loading the app directly from the tunnel origin stays supported but degraded — no
+   service worker, no push, no install. Decision and the two rejected alternatives:
+   `.workflow/02_architecture/decision_log/2026-08-09_external_listener_static_shell.md`.
+
+Two consequences worth stating up front, because they constrain what "installable" can mean:
+
+- **Mixed content splits hosting in two.** An HTTPS page cannot open `ws://`, so a Pages-hosted app
+  is tunnel-only, and LAN-direct use stays a relay-served browser tab.
+- **Installing from the LAN relay does not give a portable app.** `http://<lan-ip>:8375` is not a
+  secure context, so there is no service worker to cache the shell; the app fetches its document from
+  that origin at every launch and simply fails off-LAN. Android offers no real install there at all.
 
 `viewport-fit=cover` is added alongside these so the composer can hug the home indicator; it pairs
 with `padding-top: env(safe-area-inset-top)` on `body`, required because the status bar style is

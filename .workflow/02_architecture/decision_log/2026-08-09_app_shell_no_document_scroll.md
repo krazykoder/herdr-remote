@@ -22,5 +22,6 @@ implements element fullscreen for `<video>` only — and we reject scroll-jackin
 the URL bar back by reintroducing the document scroll this decision exists to remove.
 
 **Class:** A — feature-only. No contract or protocol change; additive allowlisted relay static assets.
-Serving that shell *unauthenticated on the external listener* is a separate Class B decision, still
-Proposed: `2026-08-09_external_listener_static_shell.md`.
+Serving that shell *unauthenticated on the external listener* was raised as a separate Class B
+amendment and rejected: `2026-08-09_external_listener_static_shell.md`. The installable app is hosted
+on a static HTTPS origin instead, so relay access control is untouched.
