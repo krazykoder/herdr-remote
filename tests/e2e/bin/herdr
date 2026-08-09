@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Fake herdr. Reports different panes per HERDR_FAKE_HOST; logs writes to $FAKE_LOG."""
+import json, os, sys
+
+host = os.environ.get("HERDR_FAKE_HOST", "local")
+log = os.environ.get("FAKE_LOG", "/tmp/fake_herdr.log")
+args = sys.argv[1:]
+
+PANES = {
+    "local": [
+        {"pane_id": "w1:p1", "agent": "claude", "label": "Architect 1", "agent_status": "idle",
+         "cwd": "/work/charts/relay", "workspace_id": "w1", "tab_id": "w1:t1"},
+        {"pane_id": "w8:p1", "agent": "codex", "label": "scratch", "agent_status": "working",
+         "cwd": "/tmp", "workspace_id": "w8", "tab_id": "w8:t1"},
+    ],
+    "box": [
+        {"pane_id": "w8:p1", "agent": "claude", "label": "Reviewer 1", "agent_status": "idle",
+         "cwd": "/srv/relay", "workspace_id": "w8", "tab_id": "w8:t1"},
+        {"pane_id": "w2:p1", "agent": "pi", "label": "pi", "agent_status": "working",
+         "cwd": "/srv/relay/web", "workspace_id": "w2", "tab_id": "w2:t1"},
+    ],
+}
+
+with open(log, "a") as f:
+    f.write(f"{host} {' '.join(args)}\n")
+
+# FAKE_FAIL names a subcommand pair that should fail, e.g. "agent start".
+fail = os.environ.get("FAKE_FAIL", "")
+if fail and " ".join(args[:2]) == fail:
+    if os.environ.get("FAKE_FAIL_MODE") == "no_id":
+        print(json.dumps({"result": {}}))
+        sys.exit(0)
+    print("boom", file=sys.stderr)
+    sys.exit(2)
+
+if args[:2] == ["pane", "list"]:
+    print(json.dumps({"result": {"panes": PANES.get(host, [])}}))
+elif args[:2] == ["workspace", "create"]:
+    print(json.dumps({"result": {"workspace": {"workspace_id": f"{host}:wNew"}}}))
+elif args[:2] == ["tab", "create"]:
+    print(json.dumps({"result": {"tab": {"tab_id": f"{host}:tNew"}}}))
+elif args[:2] == ["agent", "start"]:
+    print(json.dumps({"result": {"agent": {"pane_id": f"{host}:pNew"}}}))
+else:
+    print(json.dumps({"result": {}}))

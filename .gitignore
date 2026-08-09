@@ -8,3 +8,5 @@ __pycache__/
 .venv/
 .wrangler/
 .venv313/
+tests/e2e/logs/
+tests/e2e/fake_herdr.log

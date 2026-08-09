@@ -1,0 +1,5 @@
+[
+  {"id": "charts", "label": "Charts", "cwd": "/work/charts", "host": "local"},
+  {"id": "relay", "label": "Relay", "cwd": "/srv/relay", "host": "box"},
+  {"id": "empty", "label": "Empty Project", "cwd": "/work/empty", "host": "local"}
+]

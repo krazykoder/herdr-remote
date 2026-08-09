@@ -50,7 +50,15 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 ```bash
 # Run tests (tests/ has no __init__.py, so -t must point at it)
 .venv313/bin/python -m unittest discover -s tests -t tests
+
+# End-to-end: spawns real relays against a fake herdr on two simulated hosts.
+# Not picked up by discover — it binds a port, so run it deliberately.
+.venv313/bin/python tests/e2e/e2e_start_agent.py
 ```
+
+`tests/e2e/bin/` holds a fake `herdr` and a fake `ssh`. The fake ssh sets `HERDR_FAKE_HOST`
+and execs locally, which is what lets one machine present two hosts — the only way to
+reproduce the pane-ID and workspace-ID collisions the relay's guards exist for.
 
 External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only),
 `node`/`npx` (demo worker only).
