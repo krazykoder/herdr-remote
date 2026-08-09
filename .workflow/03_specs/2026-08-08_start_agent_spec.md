@@ -108,7 +108,44 @@ amendment, not the agent binary; the binary remains the fixed argv element after
 > id seconds earlier and nothing of the user's can be inside it. Without the rollback every failed
 > start left an empty workspace behind.
 
-`herdr agent start` requires argv after `--`. Relay supplies the one fixed argv element from the already allowlisted `name`; the browser still sends no argv.
+> **Amended 2026-08-09 — herdr 0.8.0 moves pane creation out of `agent start`.** Minimum herdr
+> version is now 0.8.0. `agent start` no longer creates a pane: its grammar is
+> `agent start <name> --kind <kind> --pane <id> [--timeout <ms>]`, and it *attaches* an agent to a
+> pane already sitting at its interactive shell prompt. `--cwd`, `--workspace`, `--tab`, `--split`,
+> and `--focus` no longer exist on it. The table above is superseded by:
+>
+> | Placement | Relay calls |
+> |---|---|
+> | New workspace | `workspace create --cwd <cwd> --label <Project label> --focus`; parse `result.workspace.workspace_id` and `result.root_pane.pane_id`; `agent start <agent name> --kind <name> --pane <root pane> --timeout 30000` |
+> | New tab | `tab create --workspace <id> --cwd <cwd> --label <label> --focus`; parse `result.tab.tab_id` and `result.root_pane.pane_id`; `agent start` on that root pane |
+> | Split | `pane split <split_from> --direction right --cwd <cwd> --focus`; parse `result.pane.pane_id`; `agent start` on that pane |
+>
+> Consequences, all of which *delete* prior behaviour:
+>
+> 1. **The shell pane amendment above is repealed.** The container's `root_pane` is now the pane the
+>    agent takes over, so there is no idle shell to close. The relay issues no `pane close` on a
+>    successful start, for any placement.
+> 2. **Split no longer resolves the source pane's `tab_id`.** It splits by pane id, so the
+>    `pane has no tab_id` refusal is withdrawn and the plan carries `split_from` instead.
+> 3. **Split gains a rollback.** A failed split closes the pane the relay just created —
+>    `pane close <new pane>` — and touches no tab or workspace.
+> 4. `HERDR_START_AGENTS` is now an allowlist of herdr **agent kinds** (`--kind`), not of binaries on
+>    the target host's PATH. herdr owns the kind enum and refuses an unknown one with its own
+>    message; the relay does not mirror that enum.
+>
+> **The session name and the pane label are no longer the same string.** herdr 0.8.0 validates the
+> agent name against `^[a-z][a-z0-9_-]{0,31}$` *before* it looks at the pane, so every label this
+> spec derives — `Architect 1` — is refused outright as `invalid_agent_name`. The relay now slugs the
+> label into the agent name (`Architect 1` → `architect-1`, falling back to the kind when a label
+> slugs away to nothing) and keeps the label itself for `pane rename` and for the `label` in the
+> reply. §2's "that name is also the herdr agent name" is therefore narrowed: the label is what the
+> user sees and what the reply reports; the slug is what herdr is asked for. The uniqueness suffix
+> from the 2026-08-09 naming amendment moves onto the slug and its alphabet is lowercase.
+
+`agent start` blocks until the agent reaches interactive readiness. The relay passes `--timeout 30000`
+explicitly and gives that one subprocess a longer timeout than the 15s every other herdr call uses —
+otherwise a slow cold start is killed locally and reported as a failure while the agent is coming up.
+The poll loop keeps 15s so a dead SSH host still fails fast.
 
 Every call passes `remote=None` for `local`, otherwise configured SSH target. Commands use `run_herdr_result`; non-zero exits, malformed JSON, or missing returned IDs return `command_result {command:"start_agent", ok:false}`. Do not report success after a partial operation: created workspace/tab may remain as native empty layout, but no session is claimed.
 

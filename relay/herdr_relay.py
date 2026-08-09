@@ -16,13 +16,16 @@ from projects import (
     resolve_workspace_remote,
 )
 from start_agent import (
+    AGENT_START_TIMEOUT_MS,
     ROLES,
     StartAgentConfigError,
+    agent_name_from_label,
     agent_start_args,
     dig,
     unique_agent_name,
     load_start_agents,
     pane_rename_args,
+    pane_split_args,
     validate_pane_label,
     tab_create_args,
     validate_start_request,
@@ -249,12 +252,19 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
 _load_push_subs()
 
 
-def run_herdr_result(*args, remote=None):
+# agent start blocks until the agent is interactively ready (AGENT_START_TIMEOUT_MS), so its
+# subprocess must outlive herdr's own wait — otherwise a slow cold start is killed here and
+# reported as a failure while the agent is in fact coming up. Every other call keeps the
+# 15s default so the poll loop still fails fast on a dead SSH host.
+START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
+
+
+def run_herdr_result(*args, remote=None, timeout=15):
     if remote:
         cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", remote, HERDR, *args]
     else:
         cmd = [HERDR, *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def run_herdr(*args, remote=None):
@@ -296,24 +306,31 @@ def get_all_agents():
     return annotate_agents(agents, PROJECTS)
 
 
-def pane_cols(pane_id, remote=None):
-    """The pane's width in terminal cells, or None if herdr cannot say.
+def pane_cols(pane_id, lines, remote=None):
+    """The wrap column of the scrollback being sent, or None if it cannot be established.
 
-    `pane read` hands back scrollback already hard-wrapped at this width, so without it the
-    browser re-wraps rows that were already wrapped and no line break can be attributed to
-    the agent rather than to the viewport. Read per request, never cached: splitting or
-    resizing a pane changes it.
+    The browser lays unwrapped output out at this width, so a wrong number is worse than no
+    number. It is measured from the pane's own hard-wrapped scrollback rather than taken from
+    `pane layout`: that rect is herdr's *layout model* of an attached client's window, and it
+    disagrees with the PTY whenever the pane was resized after it was created. A pane started
+    under the pre-0.8.0 split-then-close flow reported 54 there while its recent output
+    demonstrably wrapped at 138 — the client then scaled every glyph to a pane half the real
+    width.
+
+    `--source recent` is the same scrollback `recent-unwrapped` returns with the terminal's own
+    breaks left in, so the longest line in it *is* the column those breaks were made at. Sampled
+    over exactly the lines being sent, not deeper: a pane that has been made narrower still holds
+    wider lines further back, and reporting one of those would lay the text out too wide. Read
+    per request, never cached — splitting or resizing a pane changes it.
     """
-    raw = run_herdr("pane", "layout", "--pane", pane_id, remote=remote)
-    try:
-        panes = json.loads(raw).get("result", {}).get("layout", {}).get("panes", [])
-    except (json.JSONDecodeError, AttributeError):
-        return None
-    for p in panes:
-        if p.get("pane_id") == pane_id:
-            width = p.get("rect", {}).get("width")
-            return width if isinstance(width, int) and width > 0 else None
-    return None
+    raw = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+                    "--source", "recent", remote=remote)
+    # ponytail: a sample that happens to hold no wrapped line reads narrower than the pane is.
+    # Only ever an under-estimate, and a harmless one — nothing wrapped, so nothing is laid out
+    # wrongly and the text is merely scaled larger than it had to be. Take the width off the PTY
+    # instead if herdr ever exposes it.
+    widest = max((len(line.rstrip()) for line in raw.splitlines()), default=0)
+    return widest or None
 
 
 def read_pane(pane_id, remote=None):
@@ -383,11 +400,11 @@ def _herdr_reason(result):
     return message
 
 
-def _herdr_json(*args, remote=None):
+def _herdr_json(*args, remote=None, timeout=15):
     """Run a herdr command that returns JSON. Returns (data, error)."""
     where = " ".join(args[:2])
     try:
-        result = run_herdr_result(*args, remote=remote)
+        result = run_herdr_result(*args, remote=remote, timeout=timeout)
     except Exception as e:
         return None, f"herdr {where} failed: {e}"
     if result.returncode != 0:
@@ -431,45 +448,53 @@ def start_agent_exec(plan):
     """Run a validated start plan. Returns (pane_id, error).
 
     Blocking; call through asyncio.to_thread. Never claims success after a partial
-    operation — a created workspace or tab may remain as empty native layout, but no
+    operation — a created workspace, tab, or pane may remain as empty native layout, but no
     session is reported unless the agent actually started (spec §3).
     """
     remote = plan["remote"]
     placement = plan["placement"]
-    # Settle the name before anything is created: it is the herdr agent name as well as the pane
-    # label, and a collision fails the start after a workspace or tab already exists.
-    plan["label"] = unique_agent_name(plan["label"], live_agent_names(remote))
+    # Settle the herdr agent name before anything is created: a collision fails the start after
+    # a container already exists. It is derived from the label rather than being the label —
+    # herdr's agent names are lowercase and space-free, pane labels are not.
+    plan["agent_name"] = unique_agent_name(
+        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
 
-    # A new workspace or tab is born holding one shell pane, and `agent start` anchored to that
-    # container splits it rather than reusing it — so every session came up at half width beside
-    # an idle shell. Remember the shell to close it once the agent pane exists, and to roll the
-    # whole container back if the agent never starts.
-    shell_pane = rollback = None
+    # herdr attaches an agent to a pane already sitting at its shell prompt, so the relay
+    # creates that pane. A new workspace or tab is born holding exactly one — that one becomes
+    # the agent's pane, so there is no idle shell left over to close. Remember what was created
+    # to roll it back if the agent never starts.
+    rollback = None
 
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
         if err:
             return None, err
         workspace_id = dig(data, "result", "workspace", "workspace_id")
-        if not workspace_id:
-            return None, "workspace create returned no workspace_id"
-        shell_pane = dig(data, "result", "root_pane", "pane_id")
+        target_pane = dig(data, "result", "root_pane", "pane_id")
+        if not workspace_id or not target_pane:
+            return None, "workspace create returned no workspace_id or root pane"
         rollback = ("workspace", "close", workspace_id)
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "workspace", workspace_id)
     elif placement == "new_tab":
-        data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
+        data, err = _herdr_json(
+            *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
         if err:
             return None, err
         tab_id = dig(data, "result", "tab", "tab_id")
-        if not tab_id:
-            return None, "tab create returned no tab_id"
-        shell_pane = dig(data, "result", "root_pane", "pane_id")
+        target_pane = dig(data, "result", "root_pane", "pane_id")
+        if not tab_id or not target_pane:
+            return None, "tab create returned no tab_id or root pane"
         rollback = ("tab", "close", tab_id)
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", tab_id)
-    else:  # split — the source pane's tab already exists, and its sibling is the user's own
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", plan["tab_id"], split=True)
+    else:  # split — the source pane's sibling is the user's own, so only the new pane rolls back
+        data, err = _herdr_json(*pane_split_args(plan["split_from"], plan["cwd"]), remote=remote)
+        if err:
+            return None, err
+        target_pane = dig(data, "result", "pane", "pane_id")
+        if not target_pane:
+            return None, "pane split returned no pane_id"
+        rollback = ("pane", "close", target_pane)
 
-    data, err = _herdr_json(*args, remote=remote)
+    data, err = _herdr_json(*agent_start_args(plan["name"], plan["agent_name"], target_pane),
+                            remote=remote, timeout=START_EXEC_TIMEOUT)
     if err:
         _rollback_layout(rollback, remote)
         return None, err
@@ -477,15 +502,6 @@ def start_agent_exec(plan):
     if not pane_id:
         _rollback_layout(rollback, remote)
         return None, "agent start returned no pane_id"
-
-    # After the agent pane exists, never before: the shell is the container's only other pane, so
-    # closing it first would take the tab or workspace down with it.
-    if shell_pane and shell_pane != pane_id:
-        _, close_err = _herdr_json("pane", "close", shell_pane, remote=remote)
-        if close_err:
-            # The session is up and usable; it is only sharing the tab. Say so, do not fail it.
-            log.warning("Started %s but could not close the empty shell pane %s: %s",
-                        pane_id, shell_pane, close_err)
 
     try:
         rename = run_herdr_result(*pane_rename_args(pane_id, plan["label"]), remote=remote)
@@ -778,8 +794,9 @@ async def handle_client(ws, listener="lan"):
                 # result out at the pane's true width instead of guessing.
                 content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
                                     "--source", "recent-unwrapped", remote=remote)
-                await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id,
-                                          "content": content, "cols": pane_cols(pane_id, remote=remote)}))
+                await ws.send(json.dumps({
+                    "type": "pane_content", "pane_id": pane_id, "content": content,
+                    "cols": pane_cols(pane_id, lines, remote=remote)}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -886,14 +903,15 @@ async def handle_client(ws, listener="lan"):
                           f"placement={plan['placement']} host={plan['remote'] or 'local'}")
                 log.info("Start agent from %s (%s): %s", ip, device, detail)
                 audit("start_agent", ip, device, "", detail)
-                # Up to three herdr calls, each with a 15s timeout — off the event loop.
+                # Several herdr calls, one of them waiting out the agent's startup — off the loop.
                 pane_id, exec_err = await asyncio.to_thread(start_agent_exec, plan)
                 if exec_err:
                     log.warning("Start agent failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": exec_err}))
                     continue
-                log.info("Start agent ok: pane=%s label=%r", pane_id, plan["label"])
+                log.info("Start agent ok: pane=%s label=%r name=%r",
+                         pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":

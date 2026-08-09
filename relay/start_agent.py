@@ -14,10 +14,18 @@ ROLES = ("architect", "reviewer", "agent")
 # Collision suffix: "-XBEOE". Random rather than a counter because the taken set is a snapshot —
 # two starts inside one poll interval both read it before either lands. I and O are out so a
 # name read off a phone screen is not retyped as 1 or 0.
-SUFFIX_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+SUFFIX_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 SUFFIX_LEN = 5
+# herdr's own rule for an agent name, enforced before it even looks at the pane:
+# "must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'".
+# Pane labels are not bound by this — "Architect 1" is a fine label and an illegal agent name.
+HERDR_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 DEFAULT_START_AGENTS = ["codex", "claude", "pi"]
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+# herdr waits this long for the agent to reach interactive readiness. Explicit rather than
+# left to herdr's 30s default because the relay's own subprocess timeout must exceed it —
+# see START_EXEC_TIMEOUT in herdr_relay.py.
+AGENT_START_TIMEOUT_MS = 30_000
 
 PLACEMENTS = {
     "new_workspace": None,
@@ -34,8 +42,9 @@ class StartAgentConfigError(Exception):
 def load_start_agents(raw):
     """Parse HERDR_START_AGENTS into an ordered allowlist. Unset yields the default set.
 
-    This allowlist is the boundary on *what* can be executed: the relay runs whatever
-    binary matches an allowlisted name on the target host's PATH.
+    This allowlist is the boundary on *what* can be executed: the names are herdr agent
+    kinds, passed to `agent start --kind`. herdr owns the kind enum and refuses an unknown
+    one with its own message, so mirroring that enum here would only rot on each release.
     """
     if not raw or not raw.strip():
         return list(DEFAULT_START_AGENTS)
@@ -77,17 +86,30 @@ def next_role_label(role, project_id, agents):
     return f"{prefix} {n}"
 
 
-def unique_agent_name(desired, taken):
-    """Return `desired`, or the next free "<base> N", so a start never hits agent_name_taken.
+def agent_name_from_label(label, fallback):
+    """Slug a pane label into a name herdr will accept as an agent name.
 
-    A herdr agent name is unique per host and `pane list` does not report it, so the label the
+    The label is what a human reads off the pane — "Architect 1", "Backend". herdr's agent
+    names are a separate, stricter namespace (HERDR_AGENT_NAME_RE), so the two cannot be the
+    same string any more; every label carrying a space or a capital would be refused outright.
+    `fallback` is the agent kind, used when a label slugs away to nothing (e.g. "___").
+    """
+    slug = re.sub(r"[^a-z0-9_-]+", "-", label.lower()).strip("-_")
+    slug = re.sub(r"-{2,}", "-", slug).lstrip("0123456789-_")
+    return (slug or fallback)[:32].rstrip("-_") or fallback
+
+
+def unique_agent_name(desired, taken):
+    """Return `desired`, or a suffixed variant, so a start never hits agent_name_taken.
+
+    A herdr agent name is unique per host and `pane list` does not report it, so a name the
     relay derives from live *pane labels* can collide with an agent name that no longer matches
     its label — a user rename moves the label and leaves the name behind. The result is bounded
-    to 32 characters to stay inside validate_pane_label's limit.
+    to 32 characters and stays inside HERDR_AGENT_NAME_RE.
     """
     if desired not in taken:
         return desired
-    base = desired[:32 - SUFFIX_LEN - 1].rstrip()
+    base = desired[:32 - SUFFIX_LEN - 1].rstrip("-_")
     while True:
         candidate = f"{base}-{''.join(random.choices(SUFFIX_ALPHABET, k=SUFFIX_LEN))}"
         if candidate not in taken:
@@ -180,10 +202,7 @@ def validate_start_request(msg, projects, agents, allowed):
             return None, "pane is not on this project's host"
         if source.get("project_id") != project["id"]:
             return None, "pane does not belong to this project"
-        tab_id = source.get("tab_id")
-        if not tab_id:
-            return None, "pane has no tab_id"
-        plan["tab_id"] = tab_id
+        plan["split_from"] = split_from
 
     return plan, None
 
@@ -192,24 +211,32 @@ def workspace_create_args(cwd, label):
     return ("workspace", "create", "--cwd", cwd, "--label", label, "--focus")
 
 
-def tab_create_args(workspace_id, label):
-    return ("tab", "create", "--workspace", workspace_id, "--label", label, "--focus")
+def tab_create_args(workspace_id, cwd, label):
+    return ("tab", "create", "--workspace", workspace_id, "--cwd", cwd,
+            "--label", label, "--focus")
 
 
-def agent_start_args(name, label, cwd, anchor_kind, anchor_id, split=False):
-    """herdr agent start requires argv after `--`; the relay supplies the allowlisted name.
+def pane_split_args(pane_id, cwd):
+    """Split an existing pane to the right, landing a shell at the Project's cwd.
 
-    The positional is herdr's *agent name*, which is unique per host — passing the binary name
-    there let the first start of an agent succeed and every later one fail agent_name_taken.
-    The session label goes there instead; `name` stays the allowlisted binary in argv.
-
-    anchor_kind is "workspace" or "tab" — never a client-supplied value.
+    herdr attaches an agent to a pane that already exists, so the relay creates the pane
+    itself instead of asking `agent start` to split one.
     """
-    args = ["agent", "start", label, "--cwd", cwd, f"--{anchor_kind}", anchor_id]
-    if split:
-        args += ["--split", "right"]
-    args += ["--focus", "--", name]
-    return tuple(args)
+    return ("pane", "split", pane_id, "--direction", "right", "--cwd", cwd, "--focus")
+
+
+def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
+    """herdr attaches an agent to an existing pane sitting at its shell prompt.
+
+    The positional is herdr's *agent name*, which is unique per host — passing the agent kind
+    there let the first start of an agent succeed and every later one fail agent_name_taken.
+    The session label goes there instead; `kind` is the allowlisted herdr agent kind.
+
+    pane_id is always a pane the relay just created or one that passed
+    validate_start_request — never a raw client value.
+    """
+    return ("agent", "start", label, "--kind", kind, "--pane", pane_id,
+            "--timeout", str(timeout_ms))
 
 
 def pane_rename_args(pane_id, label):

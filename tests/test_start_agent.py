@@ -7,12 +7,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from start_agent import (
+    AGENT_START_TIMEOUT_MS,
     DEFAULT_START_AGENTS,
+    HERDR_AGENT_NAME_RE,
+    SUFFIX_ALPHABET,
     StartAgentConfigError,
+    agent_name_from_label,
     agent_start_args,
     dig,
     load_start_agents,
     next_role_label,
+    pane_split_args,
     tab_create_args,
     unique_agent_name,
     validate_pane_label,
@@ -182,7 +187,7 @@ class SplitTests(unittest.TestCase):
         plan, err = validate_start_request(
             start(placement="split", split_from="w1:p2"), PROJECTS, LIVE, ALLOWED)
         self.assertIsNone(err)
-        self.assertEqual(plan["tab_id"], "t1")
+        self.assertEqual(plan["split_from"], "w1:p2")
 
     def test_missing_split_from(self):
         _, err = validate_start_request(start(placement="split"), PROJECTS, LIVE, ALLOWED)
@@ -210,56 +215,89 @@ class SplitTests(unittest.TestCase):
             start(placement="split", split_from="w7:p1"), PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "pane does not belong to this project")
 
-    def test_pane_without_tab_id_refused(self):
-        agents = [agent("w1:p1", tab_id="", project_id="charts")]
-        _, err = validate_start_request(
-            start(placement="split", split_from="w1:p1"), PROJECTS, agents, ALLOWED)
-        self.assertEqual(err, "pane has no tab_id")
-
 
 class ArgsTests(unittest.TestCase):
     def test_new_tab_uses_the_role_label(self):
-        args = tab_create_args("w3", "Architect 1")
-        self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--label", "Architect 1", "--focus"))
+        args = tab_create_args("w3", "/work/charts", "Architect 1")
+        self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--cwd", "/work/charts",
+                                "--label", "Architect 1", "--focus"))
 
-    def test_argv_is_the_allowlisted_name(self):
-        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
-        self.assertEqual(args[-2:], ("--", "claude"))
-        self.assertIn("--workspace", args)
-        self.assertNotIn("--split", args)
+    def test_kind_is_the_allowlisted_name(self):
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
+        self.assertEqual(args[args.index("--kind") + 1], "claude")
+        self.assertEqual(args[args.index("--pane") + 1], "w3:p1")
 
-    def test_herdr_agent_name_is_the_label_not_the_binary(self):
-        # The binary name there is what made every start after the first fail agent_name_taken.
-        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
+    def test_herdr_agent_name_is_the_label_not_the_kind(self):
+        # The kind there is what made every start after the first fail agent_name_taken.
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
         self.assertEqual(args[:3], ("agent", "start", "Architect 1"))
 
-    def test_split_adds_right(self):
-        args = agent_start_args("codex", "Agent 2", "/work/charts", "tab", "t1", split=True)
-        self.assertEqual(args[args.index("--split") + 1], "right")
-        self.assertIn("--tab", args)
+    def test_start_waits_for_interactive_readiness(self):
+        # herdr blocks until the agent is ready; the relay's subprocess timeout is sized off this.
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
+        self.assertEqual(args[args.index("--timeout") + 1], str(AGENT_START_TIMEOUT_MS))
+
+    def test_pane_split_goes_right_at_the_project_cwd(self):
+        args = pane_split_args("w1:p2", "/work/charts")
+        self.assertEqual(args[:3], ("pane", "split", "w1:p2"))
+        self.assertEqual(args[args.index("--direction") + 1], "right")
+        self.assertEqual(args[args.index("--cwd") + 1], "/work/charts")
+
+
+class AgentNameFromLabelTests(unittest.TestCase):
+    """herdr refuses an agent name that is not ^[a-z][a-z0-9_-]{0,31}$, and every label the
+    relay derives ("Architect 1") violates it. The slug is what makes a start possible at all."""
+
+    def test_role_labels_become_legal_names(self):
+        for label in ("Architect 1", "Reviewer 12", "Agent 3"):
+            got = agent_name_from_label(label, "claude")
+            self.assertRegex(got, HERDR_AGENT_NAME_RE.pattern, label)
+
+    def test_spaces_and_case_are_folded(self):
+        self.assertEqual(agent_name_from_label("Architect 1", "claude"), "architect-1")
+
+    def test_punctuation_collapses_to_one_dash(self):
+        self.assertEqual(agent_name_from_label("Web // API!!", "claude"), "web-api")
+
+    def test_leading_digits_are_dropped_so_the_name_starts_with_a_letter(self):
+        self.assertEqual(agent_name_from_label("2nd Backend", "claude"), "nd-backend")
+
+    def test_label_that_slugs_away_falls_back_to_the_kind(self):
+        for label in ("___", "!!!", "42", "   "):
+            self.assertEqual(agent_name_from_label(label, "claude"), "claude", label)
+
+    def test_result_is_bounded_to_32(self):
+        out = agent_name_from_label("Very Long " * 10, "claude")
+        self.assertLessEqual(len(out), 32)
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
 
 
 class UniqueAgentNameTests(unittest.TestCase):
     def test_free_name_is_returned_unchanged(self):
-        self.assertEqual(unique_agent_name("Architect 1", {"codex", "claude"}), "Architect 1")
+        self.assertEqual(unique_agent_name("architect-1", {"codex", "claude"}), "architect-1")
 
     def test_taken_name_gets_a_random_suffix(self):
-        out = unique_agent_name("Architect 1", {"Architect 1"})
-        self.assertNotEqual(out, "Architect 1")
-        self.assertRegex(out, r"^Architect 1-[A-HJ-NP-Z2-9]{5}$")
+        out = unique_agent_name("architect-1", {"architect-1"})
+        self.assertNotEqual(out, "architect-1")
+        self.assertRegex(out, r"^architect-1-[a-km-z2-9]{5}$")
 
-    def test_suffix_keeps_the_name_inside_the_label_limit(self):
-        out = unique_agent_name("X" * 32, {"X" * 32})
+    def test_suffix_keeps_the_name_legal_for_herdr(self):
+        out = unique_agent_name("x" * 32, {"x" * 32})
         self.assertLessEqual(len(out), 32)
-        self.assertEqual(validate_pane_label(out)[1], "")
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
+
+    def test_a_trailing_dash_never_survives_truncation(self):
+        # "aaaa…-" truncated at the suffix boundary would otherwise yield "base--suffix".
+        out = unique_agent_name("a" * 25 + "-" + "b" * 6, {"a" * 25 + "-" + "b" * 6})
+        self.assertNotIn("--", out)
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
 
     def test_retries_past_a_taken_suffix(self):
         # Every 5-char suffix but one is taken, so the loop must keep drawing rather than
         # return a colliding name.
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         import itertools
-        taken = {"A"} | {"A-" + "".join(c) for c in itertools.product(alphabet, repeat=2)}
-        out = unique_agent_name("A", taken)
+        taken = {"a"} | {"a-" + "".join(c) for c in itertools.product(SUFFIX_ALPHABET, repeat=2)}
+        out = unique_agent_name("a", taken)
         self.assertNotIn(out, taken)
 
 

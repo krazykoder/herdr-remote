@@ -24,6 +24,27 @@ the client lays out confidently to whatever it is given.
 
 Read per request. Splitting or resizing a pane changes it mid-session.
 
+> **Superseded 2026-08-09 — `pane layout` is not the PTY.** `rect.width` describes herdr's *layout
+> model* of an attached client's window, not the pseudo-terminal the agent writes into. With no
+> client attached herdr models a default 80×24 window with a 26-column sidebar and reports
+> `width: 54` for every pane on the host, whatever their real size; the value also lags a pane that
+> was resized after it was created. Observed on a live pane whose recent output demonstrably wrapped
+> at 138 while this function returned 54 — the client then solved `fit` for a pane less than half the
+> real width, which is the "terminal is half width" report that found this.
+>
+> The signature is now `pane_cols(pane_id, lines, remote=None)` and the width is **measured**:
+> `pane read --source recent` returns the same scrollback `recent-unwrapped` does with the
+> terminal's own breaks left in, so the longest line in it *is* the column those breaks were made
+> at. No `pane layout` call remains anywhere in the relay.
+>
+> The sample is bounded to the same `lines` the client asked for, deliberately. A pane that has been
+> made *narrower* still holds wider rows further back in its scrollback, and a deeper sample would
+> find one and lay the visible text out too wide. Bounded this way the function can only ever
+> under-report — when nothing in the sample wrapped — and an under-report is harmless: nothing was
+> wrapped, so nothing is laid out wrongly and the text is merely scaled larger than it had to be.
+> Empty output or blank lines still return `None`. Call count is unchanged: one read replaced one
+> layout.
+
 **WS `read_pane` handler** — two changes:
 
 - `--source recent` becomes `--source recent-unwrapped`, which drops the line breaks the terminal
@@ -102,6 +123,16 @@ pane_content pane=w1:p1 cols=87
 local pane layout --pane w1:p1
 local pane read w1:p1 --lines 30 --source recent-unwrapped
 ```
+
+> **Superseded 2026-08-09, with the measurement change above.** `tests/test_pane_cols.py` was
+> rewritten around the wrap column: it asserts the width survives a short final line (every read
+> ends in a partial one), that trailing padding is not counted as width, that a *widened* pane
+> reports its new width rather than the old one — the 54-then-138 regression itself — that the read
+> is bounded to the lines the client asked for, and that it reads `recent` rather than
+> `recent-unwrapped`, which would drop the very breaks being measured. The fake herdr's
+> `pane layout` branch is gone, replaced by a `pane read` branch emitting hard-wrapped rows at a
+> known width. The e2e suite gained **W1**, asserting `pane_content.cols == 87` and that no
+> `pane layout` call is made at all — the gap that let this ship.
 
 ## Manual checks
 

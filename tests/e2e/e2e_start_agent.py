@@ -152,6 +152,23 @@ async def gate_on_run():
             check("allowlist is the relay's, in order", opts["agents"] == ["claude", "codex"], opts)
             check("roles are fixed", opts["roles"] == ["architect", "reviewer", "agent"], opts)
 
+            # --- W1 pane width. The browser lays unwrapped output out at `cols`, so a wrong
+            # number scales every glyph to the wrong pane. It is measured from the wrapped
+            # scrollback, not from `pane layout`, whose rect reports a pane's birth width
+            # forever once the pane has been resized.
+            open(LOG, "w").close()
+            await ws.send(json.dumps({"type": "read_pane", "pane_id": "w1:p1", "lines": 12}))
+            while True:
+                m = json.loads(await ws.recv())
+                if m["type"] == "pane_content":
+                    break
+            check("W1 pane_content carries the measured wrap column", m.get("cols") == 87, m)
+            await asyncio.sleep(0.3)
+            check("W1 the width is measured, never asked of pane layout",
+                  not log_lines("pane layout")
+                  and "local pane read w1:p1 --lines 12 --source recent" in log_lines("pane read"),
+                  log_lines("pane read") + log_lines("pane layout"))
+
             # --- refusals (no herdr call may happen) ---
             open(LOG, "w").close()
             cases = [
@@ -204,14 +221,13 @@ async def gate_on_run():
                   log_lines("workspace create"))
             check("A1 agent start carries fixed argv on local",
                   log_lines("agent start") ==
-                  ["local agent start Architect 2 --cwd /work/charts --workspace local:wNew --focus -- claude"],
+                  ["local agent start architect-2 --kind claude --pane local:pShell --timeout 30000"],
                   log_lines("agent start"))
             check("A9 pane renamed",
                   log_lines("pane rename") == ["local pane rename local:pNew Architect 2"],
                   log_lines("pane rename"))
-            check("L1 the workspace's shell pane is closed, so the agent gets the full tab",
-                  log_lines("pane close") == ["local pane close local:pShell"],
-                  log_lines("pane close"))
+            check("L1 the workspace's own shell pane becomes the agent's — nothing is closed",
+                  not log_lines("pane close"), log_lines("pane close"))
 
             # --- A1 new workspace, remote project ---
             open(LOG, "w").close()
@@ -222,7 +238,7 @@ async def gate_on_run():
             check("A1 remote calls all landed on box",
                   log_lines("workspace create") == ["box workspace create --cwd /srv/relay --label Relay --focus"]
                   and log_lines("agent start") ==
-                  ["box agent start Reviewer 2 --cwd /srv/relay --workspace box:wNew --focus -- codex"],
+                  ["box agent start reviewer-2 --kind codex --pane box:pShell --timeout 30000"],
                   log_lines("workspace create") + log_lines("agent start"))
             check("A1 nothing ran on local", not [l for l in log_lines("create") if l.startswith("local")])
 
@@ -232,16 +248,16 @@ async def gate_on_run():
                                "project_id": "relay", "placement": "new_tab", "workspace_id": "w2"})
             check("A2 new tab ok", r.get("ok") is True, r)
             await asyncio.sleep(0.3)
-            check("A2 tab created on the workspace's host, carrying the pane's label",
-                  log_lines("tab create") == ["box tab create --workspace w2 --label Agent 1 --focus"],
+            check("A2 tab created on the workspace's host, carrying the pane's label and cwd",
+                  log_lines("tab create") ==
+                  ["box tab create --workspace w2 --cwd /srv/relay --label Agent 1 --focus"],
                   log_lines("tab create"))
-            check("A2 agent anchored to the returned tab id",
+            check("A2 agent attached to the tab's own root pane",
                   log_lines("agent start") ==
-                  ["box agent start Agent 1 --cwd /srv/relay --tab box:tNew --focus -- claude"],
+                  ["box agent start agent-1 --kind claude --pane box:pShell --timeout 30000"],
                   log_lines("agent start"))
-            check("L1 the new tab's shell pane is closed too",
-                  log_lines("pane close") == ["box pane close box:pShell"],
-                  log_lines("pane close"))
+            check("L1 the new tab's shell pane is the agent's — nothing is closed",
+                  not log_lines("pane close"), log_lines("pane close"))
 
             # --- A3 split beside a live pane (local) ---
             open(LOG, "w").close()
@@ -249,11 +265,15 @@ async def gate_on_run():
                                "project_id": "charts", "placement": "split", "split_from": "w1:p1"})
             check("A3 split ok", r.get("ok") is True, r)
             await asyncio.sleep(0.3)
-            check("A3 split reuses the source pane's tab, no tab created",
-                  log_lines("agent start") ==
-                  ["local agent start Architect 2 --cwd /work/charts --tab w1:t1 --split right --focus -- claude"]
+            check("A3 split splits the source pane itself, no tab created",
+                  log_lines("pane split") ==
+                  ["local pane split w1:p1 --direction right --cwd /work/charts --focus"]
                   and not log_lines("tab create"),
-                  log_lines("agent start") + log_lines("tab create"))
+                  log_lines("pane split") + log_lines("tab create"))
+            check("A3 agent attached to the pane the split returned",
+                  log_lines("agent start") ==
+                  ["local agent start architect-2 --kind claude --pane local:pSplit --timeout 30000"],
+                  log_lines("agent start"))
             check("L2 split closes nothing — the sibling pane is the user's own",
                   not log_lines("pane close"), log_lines("pane close"))
     finally:
@@ -277,7 +297,7 @@ async def failure_run():
             check("L3 the workspace created for the failed start is rolled back",
                   log_lines("workspace close") == ["local workspace close local:wNew"],
                   log_lines("workspace close"))
-            check("L3 the shell pane is not closed on the way out — the rollback takes it",
+            check("L3 the root pane is not closed separately — the workspace rollback takes it",
                   not log_lines("pane close"), log_lines("pane close"))
 
             open(LOG, "w").close()
@@ -287,6 +307,20 @@ async def failure_run():
             await asyncio.sleep(0.3)
             check("L3 the tab created for the failed start is rolled back",
                   log_lines("tab close") == ["local tab close local:tNew"], log_lines("tab close"))
+
+            # A failed split is the one rollback that reaches into a workspace the user is
+            # already using, so the relay must close exactly the pane it just made and nothing else.
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "split", "split_from": "w1:p1"})
+            check("L3c split failure reported as not ok", r.get("ok") is False, r)
+            await asyncio.sleep(0.3)
+            check("L3c only the pane the split created is rolled back",
+                  log_lines("pane close") == ["local pane close local:pSplit"],
+                  log_lines("pane close"))
+            check("L3c the split rollback touches no tab or workspace",
+                  not log_lines("tab close") and not log_lines("workspace close"),
+                  log_lines("tab close") + log_lines("workspace close"))
     finally:
         stop_relay(proc)
 
@@ -310,7 +344,7 @@ async def failure_run():
 async def naming_run():
     """N1-N5: the session name — client-supplied, collision-proof, and honestly reported.
 
-    The herdr agent name is unique per host, so passing the allowlisted binary name there let
+    The herdr agent name is unique per host, so passing the allowlisted agent kind there let
     the first start of an agent work and every later one fail agent_name_taken.
     """
     proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
@@ -324,9 +358,9 @@ async def naming_run():
                                "label": "Backend"})
             check("N1 client label accepted", r.get("ok") is True and r.get("label") == "Backend", r)
             await asyncio.sleep(0.3)
-            check("N1 label is the herdr agent name, binary stays in argv",
+            check("N1 the label is slugged into a name herdr will accept",
                   log_lines("agent start") ==
-                  ["local agent start Backend --cwd /work/charts --workspace local:wNew --focus -- claude"],
+                  ["local agent start backend --kind claude --pane local:pShell --timeout 30000"],
                   log_lines("agent start"))
 
             for label, bad, want in [
@@ -345,7 +379,7 @@ async def naming_run():
     # A name already held by a live agent — the case that produced "exited 1" on every start
     # after the first, because pane list never reports the name that herdr enforces.
     proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
-                       HERDR_START_AGENTS="claude", FAKE_TAKEN_NAMES="Backend,Architect 2")
+                       HERDR_START_AGENTS="claude", FAKE_TAKEN_NAMES="backend,architect-2")
     try:
         async with connect(url()) as ws:
             await drain_to_agents(ws)
@@ -353,20 +387,26 @@ async def naming_run():
             r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
                                "project_id": "charts", "placement": "new_workspace",
                                "label": "Backend"})
-            got = r.get("label", "")
-            check("N3 taken name starts anyway under a suffixed name",
-                  r.get("ok") is True and re.fullmatch(r"Backend-[A-HJ-NP-Z2-9]{5}", got), r)
+            check("N3 taken name starts anyway, and the label the client sees is untouched",
+                  r.get("ok") is True and r.get("label") == "Backend", r)
             await asyncio.sleep(0.3)
-            check("N3 the suffixed name is what herdr was asked for",
-                  log_lines("agent start") ==
-                  [f"local agent start {got} --cwd /work/charts --workspace local:wNew --focus -- claude"],
+            check("N3 the suffix lands on the herdr agent name, not the pane label",
+                  re.fullmatch(
+                      r"local agent start backend-[a-km-z2-9]{5} --kind claude "
+                      r"--pane local:pShell --timeout 30000", "".join(log_lines("agent start"))),
                   log_lines("agent start"))
 
             open(LOG, "w").close()
             r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
                                "project_id": "charts", "placement": "new_workspace"})
             check("N4 a taken derived name is suffixed too",
-                  r.get("ok") is True and re.fullmatch(r"Architect 2-[A-HJ-NP-Z2-9]{5}", r.get("label", "")), r)
+                  r.get("ok") is True and r.get("label") == "Architect 2", r)
+            await asyncio.sleep(0.3)
+            check("N4 the derived name is slugged and suffixed for herdr",
+                  re.fullmatch(
+                      r"local agent start architect-2-[a-km-z2-9]{5} --kind claude "
+                      r"--pane local:pShell --timeout 30000", "".join(log_lines("agent start"))),
+                  log_lines("agent start"))
     finally:
         stop_relay(proc)
 
