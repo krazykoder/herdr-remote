@@ -78,12 +78,18 @@ present in the terminal header, and it reflects the same three states as the app
 **S3.4** Chrome padding is reduced per the architecture doc §4; no control may become clipped or
 overlap another at any supported width, including the 380px breakpoint.
 
-**S3.5** The composer occupies two rows: `/`, the text area, and send on the first; the prompts,
-quick-actions and keys triggers on the second. The text area is two rows tall when empty, grows with
-its content to a six-row ceiling, and never collapses back to one row.
+**S3.5** The composer is three columns: a stack of four controls on the left — `/`, prompts, quick
+actions, keys — then the text area, then a stack of two large ones on the right: send, with clear
+directly beneath it. Send is the largest control in the composer and the only filled one.
 
-> Rationale: five controls sharing one row left the text area barely wider than the buttons on a
-> phone. The second row costs ~36px once and is not paid again while typing.
+The left stack sets the composer's resting height: four stacked targets at S3.3's 44px floor plus
+their gaps. The text area matches that height and grows from it, and the right stack divides the
+same height between two controls, so both are comfortably above the floor.
+
+> Rationale: the height is a consequence of the 44px floor and four stacked controls, not a
+> preference — the composer cannot be shorter without putting a target under the floor. Clear is
+> large because it shares the right stack, and is guarded by its double tap (S3.9) rather than by
+> being small enough to miss.
 
 **S3.6** No focusable field — `input`, `textarea`, `select` — renders below 16px, in any view, at any
 breakpoint. iOS Safari zooms the layout viewport when a field under that threshold takes focus,
@@ -100,11 +106,19 @@ section is absent only when none survives.
 > Rationale: recents are the same sessions, so they read as the same objects. A second visual
 > vocabulary for them was a distinction without a difference, and it cost a horizontal scroller.
 
+**S3.8** Focusing the text area closes any open dock. A dock and the on-screen keyboard together
+leave almost no pane visible, and a user who has just tapped the composer is reading what they are
+answering.
+
+**S3.9** Clearing the composer takes two taps on the clear control within a short window; a single
+tap arms it visibly and the armed state expires on its own. It sits beside two non-destructive
+controls, so a single stray tap must not discard typed text.
+
 ## S4 — Prompt shortcuts
 
 **S4.1** The dedicated instruction row is removed. The prompt list opens from a **`P` button in the
-composer, immediately right of the `/` command button**, into its own dock above the composer. It
-costs no vertical space while closed.
+composer's left stack, directly below the `/` command button**, into its own dock above the composer.
+It costs no vertical space while closed.
 
 **S4.2** Prompt entries insert at the cursor position in the composer and never send. This existing
 behaviour is unchanged.
@@ -127,9 +141,10 @@ Values outside the range are clamped, not rejected. A stored non-numeric value f
 default. 6px is below comfortable reading and is offered deliberately: it buys a wide-output pane a
 readable line count on a phone, and nothing else in the app follows it down (S5.3).
 
-**S5.3** The size applies to the terminal content **only**. No other element changes size: not the
-headers, the composer, the docks, the keys, the agent list, or Settings. Touch targets are unaffected
-at either bound, by construction rather than by convention.
+**S5.3** This control's size applies to the terminal content **only**. No other element follows it:
+not the headers, the composer, the docks, the keys, the agent list, or Settings. The composer has its
+own independent control (S5.9). Touch targets are unaffected at either bound, by construction rather
+than by convention.
 
 **S5.4** The setting persists across reloads under `localStorage` key `herdr_font_size`, matching the
 existing `herdr_*` key convention. It is global, not per pane.
@@ -140,6 +155,15 @@ default-sized terminal text.
 **S5.6** At the increment/decrement bounds the corresponding control is disabled, not silently inert.
 
 **S5.7** The gear menu closes on a click outside it, on Escape, and when the pane is closed.
+
+**S5.9** The gear menu carries a second, independent text-size control for the composer, persisted
+under `herdr_input_font_size`. Its range is **16–24px, default 16** — the floor is S3.6's iOS
+threshold, not a preference, so this control may not reach the 6px the terminal control can. The two
+controls do not affect each other.
+
+**S5.10** While the pane belongs to a pair, the gear menu also carries `Edit pair` and `Unpair`.
+`Unpair` always confirms before removing the pair; there is no path that removes one in a single
+tap.
 
 **S5.8** Renaming a pane is an item in the same gear menu. The pane title in the terminal header is
 plain text: not a button, not focusable, not clickable. Choosing the item closes the menu and then
@@ -224,3 +248,17 @@ CDN down) may disable optional embellishment but must not block launch or raise 
 - No WebSocket message type, field, or direction changes.
 - The web app remains a single self-contained file with no build step; editing it still requires only
   a browser reload.
+
+## S9 — Pair strip
+
+**S9.1** The pair strip carries exactly two controls: switch-to-partner on the left, transfer on the
+right, with the pair name between them. Edit and unpair move to the gear menu (S5.10).
+
+**S9.2** Transfer remains absent — not disabled — while the pair is stale, so the UI can never offer
+an unverified target. The stale reason keeps its own line.
+
+**S9.3** The strip's position in the pane is a setting in the gear menu with three values: top of the
+pane, above the composer, or bottom. **Above the composer is the default** — on a phone the switch
+and transfer controls belong next to the thumb already resting on the composer, not a pane away. The
+choice persists under `herdr_pair_place`. At the bottom the strip's separator faces up, since it is
+then the pane's last element.

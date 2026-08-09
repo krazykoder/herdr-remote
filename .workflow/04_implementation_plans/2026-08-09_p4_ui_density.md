@@ -29,23 +29,22 @@ numbers stay valid, or match on the quoted text.
 ```
 BEFORE                                   AFTER
 ┌──────────────────────────────────────┐ ┌──────────────────────────────────────┐
-│ ● herdr        3 agents   [◷]  [⚙]   │ │ ‹ ● claude · herdr-remote        [↻]  │  36px
+│ ● herdr        3 agents   [◷]  [⚙]   │ │ ‹ ● claude · herdr-remote   [↻] [⚙]  │  36px
 ├──────────────────────────────────────┤ ├──────────────────────────────────────┤
 │ ‹  claude · herdr-remote        [↻]  │ │                                      │
 ├──────────────────────────────────────┤ │  $ pytest tests/                     │
 │  $ pytest tests/                     │ │  ..........                          │
 │  ..........                          │ │  10 passed in 2.1s                   │
-│  10 passed in 2.1s                   │ │                                      │
-│  › _                                 │ │  › _                                 │  flex
-├──────────────────────────────────────┤ │                                      │  (+~95px)
-│      [ Instructions          ▾ ]     │ │                                      │
-├──────────────────────────────────────┤ │                                      │
-│ [/] [ Type…            ] [⚡][⌨][➤]  │ ├──────────────────────────────────────┤
-└──────────────────────────────────────┘ │ [/] [ Type…              ] [➤]       │  86px
-┊ composer clipped, doc scrolls 20px   ┊ │ [P]        [⚡]        [⌨]           │
-┊ [ chrome url bar — never collapses ] ┊ └──────────────────────────────────────┘
-└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    no document scroll
-                                            (url bar addressed in P5)
+│  10 passed in 2.1s                   │ │  › _                                 │  flex
+│  › _                                 │ │                                      │
+├──────────────────────────────────────┤ ├──────────────────────────────────────┤
+│      [ Instructions          ▾ ]     │ │ [/] ┌──────────────┐ ┌────┐          │  188px
+├──────────────────────────────────────┤ │ [P] │ Type…        │ │ ➤  │          │  ← send, largest
+│ [/] [ Type…            ] [⚡][⌨][➤]  │ │ [⚡] │              │ └────┘         │
+└──────────────────────────────────────┘ │ [⌨] └──────────────┘ [ ✕  ]          │  ← clear, two taps
+┊ composer clipped, doc scrolls 20px   ┊ └──────────────────────────────────────┘    no document scroll
+┊ [ chrome url bar — never collapses ] ┊     (url bar addressed in P5)
+└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
 ```
 
 The ⛶ fullscreen control shown in the architecture doc's mockup arrives in P5; the term-header
@@ -64,8 +63,10 @@ in this phase is back · dot · title · refresh · gear.
 │  10 passed in 2.1s                                        │
 │  › _                                                      │
 ├───────────────────────────────────────────────────────────┤
-│ [/] [ Type…  ⌘/Ctrl+Enter sends        ] [➤]              │  86px  ← on the fold
-│ [P]             [⚡]             [⌨]                      │
+│ [/] ┌───────────────────────────────┐ ┌─────┐             │  188px ← on the fold
+│ [P] │ Type…  ⌘/Ctrl+Enter sends     │ │  ➤  │             │
+│ [⚡] │                               │ └─────┘            │
+│ [⌨] └───────────────────────────────┘ [  ✕  ]             │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -76,9 +77,13 @@ in this phase is back · dot · title · refresh · gear.
                                                       │
                                        ┌──────────────▼──┐
                                        │ Rename pane     │
+                                       │ Edit pair       │  ← only while paired
+                                       │ Unpair…         │  ← always confirms
                                        ├─────────────────┤
-                                       │ TEXT SIZE       │
+                                       │ TERMINAL TEXT   │
                                        │ [A−]  13px  [A+]│
+                                       │ COMPOSER TEXT   │
+                                       │ [A−]  16px  [A+]│
                                        └─────────────────┘
 
 terminal text at   6px          13px            24px
@@ -459,44 +464,55 @@ The outside-click listener is safe against the gear's own handler: the button is
 
 Boot call next to `loadPairs()`: `setFont(currentFont());`
 
-### `[MODIFY]` composer becomes two rows
+### `[MODIFY]` composer becomes three columns
 
-`.term-input` turns into a column of two `.term-input-row`s (S3.5). The first keeps `/`, the text
-area and send; the second takes `P`, quick actions and keys, stretched to fill:
+`.term-input` becomes `align-items: stretch` over three children: a `.term-input-side` stack of four
+(`/`, `P`, quick actions, keys), the text area, and a second stack of two (send, clear) — S3.5.
 
 ```css
-    .term-input {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .term-input-row {
+    .term-input-side {
       display: flex;
-      align-items: flex-end;
-      gap: 6px;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+      width: 46px;
     }
 
-    .term-input-actions button {
+    .term-input-side button {
       flex: 1;
-      /* centring + min-height: 36px */
+      /* centring, radius, no padding — height comes from the stack */
+    }
+
+    .term-input-side button.send {
+      flex: 1.6;
+      border: none;
+      background: var(--blue);
+      color: #fff;
     }
 ```
 
-The text area goes to `rows="2"`. `autoGrow` writes an inline `height` from `scrollHeight`, which
-would pull an empty box back to one row, so the floor is a CSS `min-height` — it beats an inline
-`height` and needs no change in `autoGrow`:
+The height is not a taste call. Four stacked controls at S3.3's 44px floor plus three 4px gaps is
+188px, and the text area's `min-height` is set to exactly that so the stacks have something to
+stretch against:
 
 ```css
     .term-input textarea {
-      /* Two rows minimum. min-height beats the inline height autoGrow writes, so the composer
-         cannot collapse to one row when empty — no change needed in autoGrow. */
-      min-height: calc(2.8em + 22px);   /* 2 lines at line-height 1.4, plus padding and borders */
-      max-height: 8.4em;                /* unchanged six-row ceiling */
+      min-height: 188px;
+      max-height: 280px;
     }
 ```
 
-The `@media (max-width: 380px)` override of `.term-input` still applies; its `gap` now spaces the two
-rows rather than the buttons, which is the wanted effect at that width.
+`min-height` beats the inline `height` that `autoGrow` writes, so nothing in `autoGrow` changes. The
+right stack divides the same 188px between two controls, which is why both are large and why send
+can take the bigger share without pushing anything under the floor.
+
+**Cost, stated plainly:** the composer is ~100px taller than the two-row version it replaces. On a
+390×844 phone with the keyboard raised that leaves roughly 280px of terminal. If that proves too
+tight, the lever is the left stack — four controls in a 2×2 grid would halve the height — not the
+44px floor.
+
+The `@media (max-width: 380px)` override of `.term-input` still applies; its `gap` now spaces the
+three columns.
 
 ### `[MODIFY]` 16px floor on focusable fields
 
@@ -562,6 +578,27 @@ detached the node and forced the cache; a sibling is never touched.
 It stays outside `.agents`, so the desktop grid does not apply and the list is vertical at every
 width, as asked.
 
+### `[MODIFY]` pair strip and its gear-menu items
+
+The strip keeps switch on the left and transfer on the right with the pair name between; `Edit` and
+`Unpair` move into the gear menu as `Edit pair` and `Unpair…` (S9.1, S5.10). `unpair()` already
+confirms before removing — that stays, and is now the only path to it.
+
+`renderPairStrip` gains a second output: it fills `#termMenuPair` when a pair exists and empties it
+otherwise, so the menu can never offer pair actions on an unpaired pane.
+
+Placement is a three-value setting persisted under `herdr_pair_place`, defaulting to `above`
+(S9.3). `placePairStrip` moves the existing node rather than re-rendering it:
+
+```js
+      if (place === 'top') view.insertBefore(strip, document.getElementById('termContent'));
+      else if (place === 'bottom') view.appendChild(strip);
+      else view.insertBefore(strip, view.querySelector('.term-input'));
+```
+
+`renderPairStrip` rebuilds `className` wholesale, so it reapplies `at-bottom` itself; forgetting that
+would drop the flipped separator on the next snapshot.
+
 ### `[MODIFY]` rename moves into the gear menu
 
 `Rename pane` becomes the first item in the same menu, and `#termTitle` loses the `role="button"`,
@@ -613,7 +650,13 @@ Manual, with the relay running:
 | M16 | Tap `P`, pick a prompt; then open keys dock and tap `P` | Text inserted at cursor, dock closes; opening one dock closes the other two |
 | M17 | Open the gear menu, then click the terminal body; then reopen and press Escape; then reopen and close the pane | Menu dismisses in all three cases |
 | M18 | Tap the pane title | Nothing happens — it is plain text; rename lives in the gear menu |
-| M19 | Empty composer; then type six lines; then clear it | Two rows at rest, grows to the six-row ceiling, returns to two rows — never one |
+| M19 | Empty composer; then type ten lines; then clear it | Rests at the stack height, grows to the ceiling, returns to the stack height |
+| M24 | Measure every composer button at the default text size | All ≥44px in both directions; send is the largest |
+| M25 | Open a dock, then tap the text area | Dock closes |
+| M26 | Tap clear once, wait a second, tap once more | Text survives both; two taps inside the window clear it |
+| M27 | Gear → Composer text A− at 16px | Disabled — the iOS floor, not a preference |
+| M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
+| M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
 | M21 | Open three panes, return to the landing page | A `Recents` section below the agent list, same cards, up to five; each opens its pane |
 | M22 | Kill a recent pane in herdr, then reload the landing page | Its entry is gone, not inert |
@@ -636,7 +679,13 @@ Manual, with the relay running:
 8. Focusing any field on iOS Safari does not zoom or shift the page (M20).
 9. The landing page offers up to five live recent panes as a vertical section below the agent
    list, using the same cards (M21–M23).
-10. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
+10. The composer is 4 + text area + 2, every button ≥44px, send largest; focus closes docks; clear
+    needs two taps (M19, M24–M26).
+11. The gear menu carries an independent 16–24px composer text size, and the pair items with a
+    confirming unpair (M27, M28).
+12. The pair strip carries only switch and transfer, and its placement is settable and persisted,
+    defaulting to above the composer (M28, M29).
+13. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
 acceptance criteria for this phase.

@@ -512,6 +512,10 @@
       background: var(--border);
     }
 
+    .term-menu .menu-item.danger {
+      color: var(--red);
+    }
+
     .term-menu .menu-sep {
       height: 1px;
       background: var(--border);
@@ -594,39 +598,59 @@
       background: var(--bg);
       color: var(--text);
       font-family: monospace;
+      /* Never below 16px — see the base input rule. The gear menu's composer control clamps there. */
+      font-size: var(--input-font, 16px);
       min-width: 0;
+    }
+
+    /* Four stacked controls, the text area, two large ones. The text area's min-height sets the
+       row height; the stacks stretch to it, so the buttons size themselves. */
+    .term-input {
+      align-items: stretch;
     }
 
     .term-input textarea {
       resize: none;
       overflow-y: auto;
       line-height: 1.4;
-      /* Two rows minimum. min-height beats the inline height autoGrow writes, so the composer
-         cannot collapse to one row when empty — no change needed in autoGrow. */
-      min-height: calc(2.8em + 22px);
-      max-height: 8.4em;
+      /* Four stacked 44px targets plus three 4px gaps — the left stack is what sets this, and
+         44px is S3.3's floor. min-height beats the inline height autoGrow writes, so the composer
+         cannot collapse below the stacks beside it. */
+      min-height: 188px;
+      max-height: 280px;
     }
 
-    /* Two rows: composer on top, the docks and their triggers below. Splitting them keeps the
-       textarea wide on a phone instead of sharing its row with four buttons. */
-    .term-input {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .term-input-row {
+    .term-input-side {
       display: flex;
-      align-items: flex-end;
-      gap: 6px;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+      width: 46px;
     }
 
-    .term-input-actions button {
+    .term-input-side button {
       flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      min-height: 36px;
+      padding: 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    /* The right stack holds two controls in the height four take on the left, so both are large.
+       Send takes the larger share and the only filled treatment — it is the one with a
+       consequence, and clear is guarded by its double tap rather than by being small. */
+    .term-input-side button.send {
+      flex: 1.6;
+      border: none;
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .term-input-side button.clear.armed {
+      border-color: var(--red);
+      color: var(--red);
     }
 
     .pair-strip {
@@ -648,6 +672,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* Last child of the pane: its separator has to face the other way. */
+    .pair-strip.at-bottom {
+      border-bottom: none;
+      border-top: 1px solid var(--border);
     }
 
     /* The reason a pair went stale gets its own line — truncated to "is no lo…" it is useless. */
@@ -1001,13 +1031,28 @@
           </svg></button>
         <div class="term-menu" id="termMenu" style="display:none" role="menu">
           <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
+          <!-- Pair items, present only while this pane belongs to a pair — renderPairStrip owns it. -->
+          <div id="termMenuPair"></div>
           <div class="menu-sep"></div>
-          <div class="menu-label">Text size</div>
+          <div class="menu-label">Terminal text</div>
           <div style="display:flex;align-items:center;gap:8px">
-            <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller text">A−</button>
+            <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller terminal text">A−</button>
             <span id="fontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
-            <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger text">A+</button>
+            <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger terminal text">A+</button>
           </div>
+          <div class="menu-label" style="margin-top:10px">Composer text</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
+            <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+            <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
+          </div>
+          <div class="menu-label" style="margin-top:10px">Pair bar</div>
+          <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
+            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <option value="top">Top of the pane</option>
+            <option value="above">Above the composer</option>
+            <option value="bottom">Bottom</option>
+          </select>
         </div>
       </div>
     </div>
@@ -1016,32 +1061,38 @@
     <div class="term-content" id="termContent">Loading…</div>
     <div class="quick-actions" id="quickActions"></div>
     <div class="term-input">
-      <div class="term-input-row">
+      <div class="term-input-side">
         <button onclick="openCommandPalette()" aria-label="Commands"
-          style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
-        <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
-          autocapitalize="off" spellcheck="false"></textarea>
-        <button onclick="sendText()" aria-label="Send"
-          style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg
-            width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-          </svg></button>
-      </div>
-      <div class="term-input-row term-input-actions">
+          style="border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px">/</button>
         <button onclick="toggleDock('promptDock')" aria-label="Prompts"
-          style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">P</button>
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">P</button>
         <button onclick="toggleQuickDock()" aria-label="Quick actions"
-          style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange)"><svg
-            width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          style="border:1px solid var(--border);background:var(--bg);color:var(--orange)"><svg width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
             <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
           </svg></button>
         <button onclick="toggleKeysDock()" aria-label="Keys"
-          style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg
-            width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
             <rect x="2" y="4" width="20" height="16" rx="2" />
             <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10" />
+          </svg></button>
+      </div>
+      <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
+        autocapitalize="off" spellcheck="false"></textarea>
+      <div class="term-input-side">
+        <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
+            fill="currentColor" stroke="none">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg></button>
+        <button class="clear" id="clearBtn" onclick="clearComposer(this)" aria-label="Clear the composer (tap twice)"
+          title="Tap twice to clear" style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg
+            width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
           </svg></button>
       </div>
     </div>
@@ -1808,6 +1859,53 @@
 
     function bumpFont(d) { setFont(currentFont() + d); }
 
+    // The composer floor is 16, not 6: below it iOS Safari zooms the layout viewport on focus.
+    // See the base input rule — this control may not undercut it.
+    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 16, INPUT_MAX = 24, INPUT_DEFAULT = 16;
+
+    function currentInputFont() {
+      const v = parseInt(localStorage.getItem(INPUT_FONT_KEY), 10);
+      return Number.isFinite(v) ? Math.min(INPUT_MAX, Math.max(INPUT_MIN, v)) : INPUT_DEFAULT;
+    }
+
+    function setInputFont(px) {
+      const v = Math.min(INPUT_MAX, Math.max(INPUT_MIN, px));
+      document.documentElement.style.setProperty('--input-font', v + 'px');
+      try { localStorage.setItem(INPUT_FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
+      document.getElementById('inputFontValue').textContent = v + 'px';
+      document.getElementById('inputFontDec').disabled = v <= INPUT_MIN;
+      document.getElementById('inputFontInc').disabled = v >= INPUT_MAX;
+      autoGrow(document.getElementById('termInput'));
+    }
+
+    function bumpInputFont(d) { setInputFont(currentInputFont() + d); }
+
+    // Where the pair bar sits in the pane. Default 'above': on a phone the switch and transfer
+    // controls are wanted next to the thumb that is already on the composer, not a pane away.
+    const PAIR_PLACE_KEY = 'herdr_pair_place', PAIR_PLACES = ['top', 'above', 'bottom'];
+
+    function currentPairPlace() {
+      const v = localStorage.getItem(PAIR_PLACE_KEY);
+      return PAIR_PLACES.includes(v) ? v : 'above';
+    }
+
+    function placePairStrip() {
+      const place = currentPairPlace();
+      const view = document.getElementById('terminalView');
+      const strip = document.getElementById('pairStrip');
+      if (place === 'top') view.insertBefore(strip, document.getElementById('termContent'));
+      else if (place === 'bottom') view.appendChild(strip);
+      else view.insertBefore(strip, view.querySelector('.term-input'));
+      strip.classList.toggle('at-bottom', place === 'bottom');
+      document.getElementById('pairPlace').value = place;
+    }
+
+    function setPairPlace(v) {
+      try { localStorage.setItem(PAIR_PLACE_KEY, PAIR_PLACES.includes(v) ? v : 'above'); }
+      catch (e) { /* private mode: session-only */ }
+      placePairStrip();
+    }
+
     function toggleTermMenu() {
       const el = document.getElementById('termMenu');
       const show = el.style.display === 'none';
@@ -1946,8 +2044,9 @@
     // absent whenever the pair is stale, so the UI can never offer an unverified target.
     function renderPairStrip() {
       const strip = document.getElementById('pairStrip');
+      const menu = document.getElementById('termMenuPair');
       const pair = activePane ? pairFor(pairs, activePane) : null;
-      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; menu.innerHTML = ''; return; }
       const health = pairHealth(pair, agents);
       const partner = partnerOf(pair, activePane);
       const mine = memberOf(pair, activePane);
@@ -1957,17 +2056,22 @@
       // Falls back to the pinned name, then the pane ID, so the button is never blank.
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
-      strip.className = 'pair-strip' + (ok ? '' : ' stale');
+      // Rebuilt wholesale, so the placement class has to be reapplied with it.
+      strip.className = 'pair-strip' + (ok ? '' : ' stale') +
+        (currentPairPlace() === 'bottom' ? ' at-bottom' : '');
       strip.innerHTML =
         // Switch sits first, on the left: it is the control reached most often, and the thumb
         // is already there from the back button above it.
         (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
         `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
         (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
-        `<button onclick="openPairDialog(activePane)">Edit</button>` +
-        `<button onclick="unpair()">Unpair</button>` +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
       strip.style.display = 'flex';
+      // Edit and Unpair live in the gear menu: the strip is for the two controls used while
+      // working, and pair management is neither frequent nor something to hit by accident.
+      menu.innerHTML =
+        `<button class="menu-item" role="menuitem" onclick="closeTermMenu(); openPairDialog(activePane)">Edit pair</button>` +
+        `<button class="menu-item danger" role="menuitem" onclick="closeTermMenu(); unpair()">Unpair…</button>`;
     }
 
     // Renames the pane in herdr itself, not just in this browser. A frontend-only alias would
@@ -2231,12 +2335,39 @@
     // The three docks share the space above the composer, so only one is ever open.
     const DOCKS = ['termKeys', 'quickDock', 'promptDock'];
 
+    function closeDocks() {
+      DOCKS.forEach(d => { document.getElementById(d).style.display = 'none'; });
+    }
+
     function toggleDock(id) {
       const el = document.getElementById(id);
       const show = el.style.display === 'none';
-      DOCKS.forEach(d => { document.getElementById(d).style.display = 'none'; });
+      closeDocks();
       el.style.display = show ? '' : 'none';
       if (window.cue) cue(show ? 'page' : 'tick');
+    }
+
+    // Typing wins over browsing: a dock and the on-screen keyboard together leave almost no pane
+    // visible, and the user who just tapped the composer wants to read what they are answering.
+    document.getElementById('termInput').addEventListener('focus', closeDocks);
+
+    // Clearing is destructive and sits next to two controls that are not, so it takes two taps.
+    // The armed state expires on its own — a stray first tap must not leave a live trigger behind.
+    let clearArmedAt = 0;
+    function clearComposer(btn) {
+      if (Date.now() - clearArmedAt > 600) {
+        clearArmedAt = Date.now();
+        btn.classList.add('armed');
+        setTimeout(() => btn.classList.remove('armed'), 600);
+        return;
+      }
+      clearArmedAt = 0;
+      btn.classList.remove('armed');
+      const input = document.getElementById('termInput');
+      input.value = '';
+      autoGrow(input);
+      input.focus();
+      if (window.cue) cue('tick');
     }
 
     function toggleKeysDock() { toggleDock('termKeys'); }
@@ -2490,6 +2621,8 @@
 
     loadPairs();
     setFont(currentFont());
+    setInputFont(currentInputFont());
+    placePairStrip();
     document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
       `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
   </script>
