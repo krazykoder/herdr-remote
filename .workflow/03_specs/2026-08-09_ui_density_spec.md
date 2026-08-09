@@ -96,20 +96,34 @@ opening one closes the others. At most one is open at a time.
 
 ## S5 — Text size
 
-**S5.1** Settings exposes a text-size control with decrement, current value, and increment.
+**S5.1** The text-size control — decrement, current value, increment — lives in a **gear menu in the
+terminal header, immediately right of the refresh button**, not in app Settings. It is where the text
+it resizes is, and it costs no space while closed.
 
-**S5.2** Range 12–22px inclusive, step 1, default 16. Values outside the range are clamped, not
-rejected. A stored non-numeric value falls back to the default.
+**S5.2** Range 9–24px inclusive, step 1, default 13 — the size the terminal already rendered at.
+Values outside the range are clamped, not rejected. A stored non-numeric value falls back to the
+default.
 
-**S5.3** The chosen size is the document root font size. Everything expressed in `rem` scales with it;
-everything expressed in `px` does not, so touch targets hold at the small end.
+**S5.3** The size applies to the terminal content **only**. No other element changes size: not the
+headers, the composer, the docks, the keys, the agent list, or Settings. Touch targets are unaffected
+at either bound, by construction rather than by convention.
 
 **S5.4** The setting persists across reloads under `localStorage` key `herdr_font_size`, matching the
-existing `herdr_*` key convention.
+existing `herdr_*` key convention. It is global, not per pane.
 
-**S5.5** The stored size is applied before first paint. No flash of default-sized text.
+**S5.5** The stored size is applied before the terminal view is first shown. No flash of
+default-sized terminal text.
 
 **S5.6** At the increment/decrement bounds the corresponding control is disabled, not silently inert.
+
+**S5.7** The gear menu closes on a click outside it, on Escape, and when the pane is closed.
+
+**S5.8** Renaming a pane is an item in the same gear menu. The pane title in the terminal header is
+plain text: not a button, not focusable, not clickable. Choosing the item closes the menu and then
+prompts. The rename protocol, its 32-character limit, and its optimistic-update rules are unchanged.
+
+> Rationale: a title that silently doubled as a rename button was undiscoverable, and it made the
+> one text most likely to be tapped for selection do something else instead.
 
 **Failure modes**
 

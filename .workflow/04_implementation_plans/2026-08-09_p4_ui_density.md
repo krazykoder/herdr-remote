@@ -83,14 +83,14 @@ in this phase is back · dot · title · refresh.
 ### `[MODIFY]` head (lines 6–9)
 
 `interactive-widget=resizes-content` makes the on-screen keyboard resize the shell instead of
-covering the composer — part of the height model, not of P5. The pre-paint script satisfies
-S5.5; a deferred one flashes default-sized text.
+covering the composer — part of the height model, not of P5.
 
 ```html
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
-  <!-- Applied before first paint: a deferred script would flash default-sized text. -->
-  <script>try{var f=parseInt(localStorage.getItem('herdr_font_size'),10);if(f>=12&&f<=22)document.documentElement.style.fontSize=f+'px'}catch(e){}</script>
 ```
+
+No pre-paint script is needed: the text size scopes to the terminal content (S5.3), which is not
+rendered until the user opens a pane, long after the boot script has applied it.
 
 `viewport-fit=cover` is deliberately **not** added here — it only pays off with the standalone
 status-bar handling in P5, and adding it alone puts content under the iOS status bar.
@@ -352,39 +352,75 @@ function toggleTimeline() {
 
 The terminal is exclusive on every viewport. A subsequent pane selection opens it again.
 
-### `[NEW]` text size control
+### `[NEW]` text size control, in a pane gear menu
 
-Markup, as a new `.setting-group` after the Push Notifications group (line 873):
+The control lives with the text it resizes: a gear button in `.term-header` right of the refresh
+button, opening a small menu (S5.1). Nothing is added to app Settings.
+
+The size is scoped to the terminal content through a custom property, so nothing else in the app can
+follow it by accident (S5.3). `.term-content` swaps its `font-size: 0.8rem` for:
+
+```css
+      /* px, not rem: this is the one thing the pane's text-size control resizes. 13px is what
+         the old 0.8rem resolved to at the default root size. */
+      font-size: var(--term-font, 13px);
+```
+
+The menu is absolutely positioned against a `.term-menu-wrap` of its own rather than against
+`.term-header`, whose other children must stay in normal flow:
+
+```css
+    .term-menu-wrap {
+      position: relative;
+      display: flex;
+      flex-shrink: 0;
+    }
+
+    .term-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      min-width: 180px;
+      /* surface, border, radius, shadow */
+    }
+```
+
+Markup, appended inside `.term-header` after the refresh button — the gear reuses `.refresh-btn` and
+the app header's own gear path, so no new icon vocabulary appears:
 
 ```html
-    <div class="setting-group">
-      <label>Text size</label>
-      <div style="display:flex;align-items:center;gap:12px">
-        <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller text"
-          style="margin:0;min-width:44px;min-height:44px;background:var(--border);color:var(--text)">A−</button>
-        <span id="fontValue" style="font-size:0.8rem;min-width:44px;text-align:center"></span>
-        <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger text"
-          style="margin:0;min-width:44px;min-height:44px;background:var(--border);color:var(--text)">A+</button>
+      <div class="term-menu-wrap">
+        <button class="refresh-btn" id="termMenuBtn" onclick="toggleTermMenu()" aria-label="Pane settings"
+          aria-haspopup="true" aria-expanded="false"><!-- gear svg --></button>
+        <div class="term-menu" id="termMenu" style="display:none" role="menu">
+          <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
+          <div class="menu-sep"></div>
+          <div class="menu-label">Text size</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller text">A−</button>
+            <span id="fontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+            <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger text">A+</button>
+          </div>
+        </div>
       </div>
-      <div class="hint">Scales the terminal and chrome. Keys and inputs keep their size.</div>
-    </div>
 ```
 
 Logic, placed beside the other `localStorage` helpers:
 
 ```js
-    const FONT_KEY = 'herdr_font_size', FONT_MIN = 12, FONT_MAX = 22, FONT_DEFAULT = 16;
+    const FONT_KEY = 'herdr_font_size', FONT_MIN = 9, FONT_MAX = 24, FONT_DEFAULT = 13;
 
     function currentFont() {
       const v = parseInt(localStorage.getItem(FONT_KEY), 10);
       return Number.isFinite(v) ? Math.min(FONT_MAX, Math.max(FONT_MIN, v)) : FONT_DEFAULT;
     }
 
-    // Root font size, so every rem-sized element follows and every px-sized one — inputs, nav keys,
-    // digit keys — deliberately does not: touch targets must hold at the small end.
+    // Scoped to the pane's own text via --term-font. Deliberately not the root font size: chrome,
+    // keys and inputs must keep their sizes and their 44px hit areas at the small end.
     function setFont(px) {
       const v = Math.min(FONT_MAX, Math.max(FONT_MIN, px));
-      document.documentElement.style.fontSize = v + 'px';
+      document.documentElement.style.setProperty('--term-font', v + 'px');
       try { localStorage.setItem(FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
       document.getElementById('fontValue').textContent = v + 'px';
       document.getElementById('fontDec').disabled = v <= FONT_MIN;
@@ -392,9 +428,28 @@ Logic, placed beside the other `localStorage` helpers:
     }
 
     function bumpFont(d) { setFont(currentFont() + d); }
+
+    function toggleTermMenu() { /* flips #termMenu display and aria-expanded */ }
+    function closeTermMenu() { /* hides it and resets aria-expanded */ }
+
+    // Dismiss on any click outside the menu and its button, and on Escape.
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTermMenu(); });
 ```
 
-Boot call next to `loadPairs()` (line 2349): `setFont(currentFont());`
+The outside-click listener is safe against the gear's own handler: the button is inside
+`.term-menu-wrap`, so the bubbled document click does not immediately re-close what it just opened.
+`closeTerminal` also calls `closeTermMenu`, so the menu can never outlive its pane (S5.7).
+
+Boot call next to `loadPairs()`: `setFont(currentFont());`
+
+### `[MODIFY]` rename moves into the gear menu
+
+`Rename pane` becomes the first item in the same menu, and `#termTitle` loses the `role="button"`,
+`tabindex`, `title`, `onclick`, `onkeydown` and `cursor:pointer` that made it a hidden control
+(S5.8). It reduces to `<span class="title" id="termTitle"></span>`. `renamePane` itself is untouched.
 
 ---
 
@@ -430,12 +485,14 @@ Manual, with the relay running:
 | M8 | Same, open keys dock and quick dock | Composer and dock fully on screen, nothing clipped |
 | M9 | Same, raise the on-screen keyboard | Composer sits directly above the keyboard |
 | M10 | Paired pane with a stale reason wrapping to a second line | Nothing clips |
-| M11 | Settings → A− to 12px, reload | 12px persists, no flash of 16px on load |
-| M12 | A− at 12px, A+ at 22px | Respective button disabled |
-| M13 | 12px, then check nav keys and composer | Key and input sizes unchanged; hit areas ≥44px |
+| M11 | Pane gear → A− to 9px, reload, reopen the pane | 9px persists; no flash of 13px |
+| M12 | A− at 9px, A+ at 24px | Respective button disabled |
+| M13 | 9px, then check headers, nav keys, composer, agent list | Only the terminal text changed; hit areas ≥44px |
 | M14 | 380px-wide viewport | No control clipped or overlapping |
 | M15 | Desktop terminal open → click Settings, then Timeline | Terminal closes before selected panel appears; views never stack |
 | M16 | Tap `P`, pick a prompt; then open keys dock and tap `P` | Text inserted at cursor, dock closes; opening one dock closes the other two |
+| M17 | Open the gear menu, then click the terminal body; then reopen and press Escape; then reopen and close the pane | Menu dismisses in all three cases |
+| M18 | Tap the pane title | Nothing happens — it is plain text; rename lives in the gear menu |
 
 ## Acceptance criteria
 
@@ -447,9 +504,11 @@ Manual, with the relay running:
 4. Mobile terminal view gains ≈130px of content height; desktop keeps its app header (M7).
 5. The instruction `<select>` and its CSS are gone; the `P` button opens the prompts dock, entries
    insert at the cursor without sending, and the dock closes on selection (M7, M16, S4.1–S4.5).
-6. Text size persists across reloads, clamps to 12–22, applies before first paint, disables at the
-   bounds, and leaves px-sized controls alone (M11–M13).
-7. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
+6. Text size lives in the pane gear menu, persists across reloads, clamps to 9–24, disables at the
+   bounds, and resizes the terminal content and nothing else (M11–M13).
+7. Rename is a gear-menu item; the pane title is inert text; the menu dismisses on outside click,
+   Escape, and pane close (M17, M18).
+8. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
 acceptance criteria for this phase.

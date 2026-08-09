@@ -4,8 +4,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
-  <!-- Applied before first paint: a deferred script would flash default-sized text. -->
-  <script>try{var f=parseInt(localStorage.getItem('herdr_font_size'),10);if(f>=12&&f<=22)document.documentElement.style.fontSize=f+'px'}catch(e){}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest"
@@ -443,6 +441,71 @@
       cursor: pointer;
     }
 
+    /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
+       rather than the header, whose other children must stay in normal flow. */
+    .term-menu-wrap {
+      position: relative;
+      display: flex;
+      flex-shrink: 0;
+    }
+
+    .term-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      min-width: 180px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .term-menu .menu-label {
+      font-size: 0.6rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .term-menu button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .term-menu button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .term-menu .menu-item {
+      width: 100%;
+      text-align: left;
+      padding: 0 10px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .term-menu .menu-item:hover {
+      background: var(--border);
+    }
+
+    .term-menu .menu-sep {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 0;
+    }
+
     .term-content {
       flex: 1;
       min-height: 0;
@@ -451,7 +514,9 @@
       padding: 8px 10px;
       background: var(--term-bg);
       font-family: 'SF Mono', 'Menlo', monospace;
-      font-size: 0.8rem;
+      /* px, not rem: this is the one thing the pane's text-size control resizes. 13px is what
+         the old 0.8rem resolved to at the default root size. */
+      font-size: var(--term-font, 13px);
       line-height: 1.5;
       white-space: pre-wrap;
       word-wrap: break-word;
@@ -861,18 +926,6 @@
     </div>
 
     <div class="setting-group">
-      <label>Text size</label>
-      <div style="display:flex;align-items:center;gap:12px">
-        <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller text"
-          style="margin:0;min-width:44px;min-height:44px;background:var(--border);color:var(--text)">A−</button>
-        <span id="fontValue" style="font-size:0.8rem;min-width:44px;text-align:center"></span>
-        <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger text"
-          style="margin:0;min-width:44px;min-height:44px;background:var(--border);color:var(--text)">A+</button>
-      </div>
-      <div class="hint">Scales the terminal and chrome. Keys and inputs keep their size.</div>
-    </div>
-
-    <div class="setting-group">
       <label>Status</label>
       <div id="settingsStatus" style="font-size:0.75rem"></div>
     </div>
@@ -897,8 +950,7 @@
           <path d="m15 18-6-6 6-6" />
         </svg></button>
       <span class="dot status-dot"></span>
-      <span class="title" id="termTitle" role="button" tabindex="0" title="Rename this pane" onclick="renamePane()"
-        onkeydown="if(event.key==='Enter'){renamePane()}" style="cursor:pointer"></span>
+      <span class="title" id="termTitle"></span>
       <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -907,6 +959,25 @@
           <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
           <path d="M16 16h5v5" />
         </svg></button>
+      <div class="term-menu-wrap">
+        <button class="refresh-btn" id="termMenuBtn" onclick="toggleTermMenu()" aria-label="Pane settings"
+          aria-haspopup="true" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg></button>
+        <div class="term-menu" id="termMenu" style="display:none" role="menu">
+          <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
+          <div class="menu-sep"></div>
+          <div class="menu-label">Text size</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller text">A−</button>
+            <span id="fontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+            <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger text">A+</button>
+          </div>
+        </div>
+      </div>
     </div>
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
@@ -1693,18 +1764,18 @@
       localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
     }
 
-    const FONT_KEY = 'herdr_font_size', FONT_MIN = 12, FONT_MAX = 22, FONT_DEFAULT = 16;
+    const FONT_KEY = 'herdr_font_size', FONT_MIN = 9, FONT_MAX = 24, FONT_DEFAULT = 13;
 
     function currentFont() {
       const v = parseInt(localStorage.getItem(FONT_KEY), 10);
       return Number.isFinite(v) ? Math.min(FONT_MAX, Math.max(FONT_MIN, v)) : FONT_DEFAULT;
     }
 
-    // Root font size, so every rem-sized element follows and every px-sized one — inputs, nav keys,
-    // digit keys — deliberately does not: touch targets must hold at the small end.
+    // Scoped to the pane's own text via --term-font. Deliberately not the root font size: chrome,
+    // keys and inputs must keep their sizes and their 44px hit areas at the small end.
     function setFont(px) {
       const v = Math.min(FONT_MAX, Math.max(FONT_MIN, px));
-      document.documentElement.style.fontSize = v + 'px';
+      document.documentElement.style.setProperty('--term-font', v + 'px');
       try { localStorage.setItem(FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
       document.getElementById('fontValue').textContent = v + 'px';
       document.getElementById('fontDec').disabled = v <= FONT_MIN;
@@ -1712,6 +1783,24 @@
     }
 
     function bumpFont(d) { setFont(currentFont() + d); }
+
+    function toggleTermMenu() {
+      const el = document.getElementById('termMenu');
+      const show = el.style.display === 'none';
+      el.style.display = show ? '' : 'none';
+      document.getElementById('termMenuBtn').setAttribute('aria-expanded', String(show));
+    }
+
+    function closeTermMenu() {
+      document.getElementById('termMenu').style.display = 'none';
+      document.getElementById('termMenuBtn').setAttribute('aria-expanded', 'false');
+    }
+
+    // Dismiss on any click outside the menu and its button, and on Escape.
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTermMenu(); });
 
     function fingerprint(a, role) {
       return {
@@ -2030,6 +2119,7 @@
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
       document.getElementById('terminalView').classList.remove('active');
+      closeTermMenu();
       document.body.classList.remove('terminal-open');
       document.getElementById('agentListView').style.display = '';
     }
