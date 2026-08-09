@@ -41,7 +41,7 @@ BEFORE                                   AFTER
 │      [ Instructions          ▾ ]     │ │                                      │
 ├──────────────────────────────────────┤ │                                      │
 │ [/] [ Type…            ] [⚡][⌨][➤]  │ ├──────────────────────────────────────┤
-└──────────────────────────────────────┘ │ [/] [ Type…            ] [⚡][⌨][➤]  │  50px
+└──────────────────────────────────────┘ │ [/][P] [ Type…       ] [⚡][⌨][➤]    │  50px
 ┊ composer clipped, doc scrolls 20px   ┊ └──────────────────────────────────────┘
 ┊ [ chrome url bar — never collapses ] ┊    no document scroll
 └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    (url bar addressed in P5)
@@ -63,7 +63,7 @@ in this phase is back · dot · title · refresh.
 │  10 passed in 2.1s                                        │
 │  › _                                                      │
 ├───────────────────────────────────────────────────────────┤
-│ [/] [ Type…  ⌘/Ctrl+Enter sends      ] [⚡] [⌨] [➤]       │  50px  ← on the fold
+│ [/][P] [ Type…  ⌘/Ctrl+Enter sends ] [⚡] [⌨] [➤]         │  50px  ← on the fold
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -224,10 +224,44 @@ A flex sibling, not a fixed overlay. No `top`, no `inset`, no `z-index`, no `49p
 - CSS lines 487–504: the whole `.term-shortcuts` and `.term-shortcuts select` rules.
 - Markup lines 913–917: the comment, the `<div class="term-shortcuts">`, and its `<select id="shortcutPick">`.
 - Boot lines 2352–2354: the `shortcutPick.innerHTML = …` assignment.
-- The `pickShortcut` function, **only if** `shortcutPick` was its sole caller — grep before deleting.
+- The `pickShortcut` function — `shortcutPick` was its sole caller.
 
-`#shortcutRow` in the quick dock (line 1011, rendered at 2350–2351 from the same `SHORTCUTS` array)
-remains the single instruction path, satisfying S4.1–S4.3.
+### `[NEW]` prompts dock, opened from the composer
+
+`#shortcutRow` stays the single render path from the one `SHORTCUTS` array (S4.3), but it moves out of
+the quick-actions dock into a dock of its own so it has a direct entry point. A `P` button sits in the
+composer immediately right of the `/` command button:
+
+```html
+      <button onclick="toggleDock('promptDock')" aria-label="Prompts"
+        style="padding:10px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px;flex-shrink:0">P</button>
+```
+
+The dock is a third `.term-keys` sibling inside `.terminal-view`, after `#quickDock`, holding the
+relocated `#shortcutRow`. The `Instructions` heading and `#shortcutRow` are removed from `#quickDock`
+so no second copy exists.
+
+`toggleKeysDock` and `toggleQuickDock` each hid exactly one sibling; with three docks that pairwise
+logic no longer holds, so both collapse onto one helper (S4.5):
+
+```js
+    // The three docks share the space above the composer, so only one is ever open.
+    const DOCKS = ['termKeys', 'quickDock', 'promptDock'];
+
+    function toggleDock(id) {
+      const el = document.getElementById(id);
+      const show = el.style.display === 'none';
+      DOCKS.forEach(d => { document.getElementById(d).style.display = 'none'; });
+      el.style.display = show ? '' : 'none';
+      if (window.cue) cue(show ? 'page' : 'tick');
+    }
+
+    function toggleKeysDock() { toggleDock('termKeys'); }
+
+    function toggleQuickDock() { toggleDock('quickDock'); }
+```
+
+`insertShortcut` closes the dock after inserting, so the composer and its new text are visible (S4.4).
 
 ### `[MODIFY]` desktop media block (lines 759–767)
 
@@ -401,6 +435,7 @@ Manual, with the relay running:
 | M13 | 12px, then check nav keys and composer | Key and input sizes unchanged; hit areas ≥44px |
 | M14 | 380px-wide viewport | No control clipped or overlapping |
 | M15 | Desktop terminal open → click Settings, then Timeline | Terminal closes before selected panel appears; views never stack |
+| M16 | Tap `P`, pick a prompt; then open keys dock and tap `P` | Text inserted at cursor, dock closes; opening one dock closes the other two |
 
 ## Acceptance criteria
 
@@ -410,8 +445,8 @@ Manual, with the relay running:
 3. Opening a pane hides the agent list, settings, and timeline; closing restores the agent list only
    (M5, M6).
 4. Mobile terminal view gains ≈130px of content height; desktop keeps its app header (M7).
-5. The instruction `<select>` and its CSS are gone; the quick dock's instruction list still inserts
-   at the cursor without sending (M7, S4.2).
+5. The instruction `<select>` and its CSS are gone; the `P` button opens the prompts dock, entries
+   insert at the cursor without sending, and the dock closes on selection (M7, M16, S4.1–S4.5).
 6. Text size persists across reloads, clamps to 12–22, applies before first paint, disables at the
    bounds, and leaves px-sized controls alone (M11–M13).
 7. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.

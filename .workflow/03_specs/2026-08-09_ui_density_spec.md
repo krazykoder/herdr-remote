@@ -78,15 +78,21 @@ present in the terminal header, and it reflects the same three states as the app
 **S3.4** Chrome padding is reduced per the architecture doc §4; no control may become clipped or
 overlap another at any supported width, including the 380px breakpoint.
 
-## S4 — Instruction shortcuts
+## S4 — Prompt shortcuts
 
-**S4.1** The dedicated instruction row is removed. The instruction list remains reachable from the
-quick-actions dock.
+**S4.1** The dedicated instruction row is removed. The prompt list opens from a **`P` button in the
+composer, immediately right of the `/` command button**, into its own dock above the composer. It
+costs no vertical space while closed.
 
-**S4.2** Instruction entries insert at the cursor position in the composer and never send. This
-existing behaviour is unchanged.
+**S4.2** Prompt entries insert at the cursor position in the composer and never send. This existing
+behaviour is unchanged.
 
-**S4.3** The instruction list has exactly one render path and one source array. No second copy exists.
+**S4.3** The prompt list has exactly one render path and one source array. No second copy exists.
+
+**S4.4** Choosing a prompt closes the dock, so the inserted text is visible in the composer.
+
+**S4.5** The keys dock, quick-actions dock, and prompts dock share the space above the composer;
+opening one closes the others. At most one is open at a time.
 
 ## S5 — Text size
 
