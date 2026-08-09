@@ -81,8 +81,8 @@ they had already moved on from.
 composer, at every width. It is the same element in the same DOM position, reordered — not a second
 bar, and not re-rendered. Its separator faces up there, since it is then the shell's last element.
 
-It carries, left to right: the connection dot, `herdr`, the agent count, the agent tab strip, then
-Activity and Settings. The connection state is the dot's colour alone — no text label.
+It carries, left to right: the connection dot, `herdr`, the agent tab strip, then Activity and
+Settings. The connection state is the dot's colour alone — no text label, and no agent count.
 
 > Rationale: in a pane the thumb is at the bottom on the composer, and the term header above already
 > carries back, status, title and refresh. The earlier decision to hide the header outright reclaimed
@@ -124,16 +124,36 @@ pinch-zoom stay available: the app never suppresses the user's own zoom, so `use
 `maximum-scale=1` are rejected — the first is ignored by modern iOS Safari anyway, and where either
 is honoured it removes zoom from people who need it.
 
-**S3.11** The app header carries an **agent tab strip**: one badge per live agent, labelled with the
-pane name and carrying its status colour. Selecting a tab opens that pane and marks the tab as
-current; **selection never reorders the strip**. Order comes from the snapshot, not from recency —
-a tab that moves the moment it is selected cannot be aimed at twice.
+**S3.11** **Inside a pane only**, the app header carries an **agent tab strip**: one badge per live
+agent, labelled with the pane name and carrying its status colour. Selecting a tab opens that pane
+and marks the tab as current; **selection never reorders the strip**. Order comes from the snapshot,
+not from recency — a tab that moves the moment it is selected cannot be aimed at twice.
+
+The landing page shows no strip: the agent list is already on screen there, and the tabs exist to
+move between panes without leaving one.
 
 The current tab is a filled badge, not a tinted border: at this size in a crowded bar a border-only
-cue is not legible on a phone.
+cue is not legible on a phone. **The current tab has its own hover state**, distinct from an
+unselected tab's, or pointing at a neighbour makes the selection look like it moved.
 
-The strip takes the header's slack and gives it up first: at any width Activity and Settings keep
-their full hit areas, and the tabs truncate instead. Where the tabs overflow, **touch widths scroll
+The strip sits directly after the title, left-aligned, and takes the header's slack: at any width
+Activity and Settings keep their full hit areas, and the tabs truncate instead.
+
+Where the tabs overflow, **every tab stays reachable at every width**. The scrollbar is hidden — a
+15px bar inside a 44px bar is most of the bar — so the strip is driven by touch fling, and on
+desktop by vertical wheel translated to horizontal. A tab that cannot be reached is worse than a
+scrollbar. **Edge fades** mark the side that has more tabs behind it, per side, so a strip at its
+start never fades a tab that is fully visible. Selecting a tab **centres** it rather than pulling it
+flush to an edge, which would hide the neighbour most likely wanted next. Snapping is `proximity`,
+not `mandatory`: a fling settles on a tab edge, a deliberate small drag stops where released.
+
+The strip is rebuilt only when its own contents change — labels, statuses, or the set of live
+panes. Selection is applied to the existing buttons. Rebuilding on every snapshot made the tabs
+flicker several times a second, dropped hover mid-point, and re-fired the scroll-into-view.
+
+**Tab dots never animate.** Colour alone carries the state — green working, red blocked, muted
+otherwise. The strip is on screen the whole time a pane is open, so a blinking dot in it is motion
+the user can neither dismiss nor look away from. Where the tabs overflow, **touch widths scroll
 the strip horizontally; desktop widths show only what fits** — a mouse has no fling scroll, so an
 overflowing strip would strand the last tabs behind a hidden scrollbar. The agent list carries the
 rest at every width. When the strip scrolls, the current tab is scrolled into view.
@@ -145,7 +165,12 @@ Panes with a duplicated `pane_id` are omitted, the same fail-closed rule the age
 
 **S3.12** The connection state is shown by the status dot's colour alone. The `(live)` /
 `(connecting…)` / `(offline)` text beside it stated the same fact a second time and cost the tab
-strip its room; the wording survives as the dot's tooltip.
+strip its room; the wording survives as the dot's tooltip. The agent count is gone for the same
+reason — the list and the strip both show the agents themselves.
+
+**S3.13** The app header carries no vertical padding: the 44px controls inside already set its
+height, and padding on top of them made the bar taller than anything it contains requires. Hit
+areas are unchanged — the height came off the bar, not off the targets.
 
 **S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
 agent list, as a vertical list using the same section header and the same cards as the list above —

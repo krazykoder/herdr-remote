@@ -99,8 +99,10 @@
       touch-action: manipulation;
     }
 
+    /* No vertical padding: the 44px controls inside already set the bar's height, and padding on
+       top of them only made it taller than anything it contains needs. */
     .header {
-      padding: 8px 12px;
+      padding: 0 12px;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -118,42 +120,80 @@
 
     /* One badge per live agent, in the bar that is always on screen. Snapshot order, never
        recency: a tab that moves the moment you select it is a tab you cannot aim at twice.
-       Takes the slack in the header and gives it up first, so the two icon buttons keep
-       their full hit area. */
+       Sits directly after the title and takes the header's slack, so the two icon buttons on the
+       right keep their full hit area and the tabs truncate instead. */
     .agent-tabs {
-      display: flex;
-      gap: 6px;
-      margin-left: auto;
+      /* Only inside a pane. On the landing page the agent list is right there and a duplicate
+         strip above it is noise; the tabs exist to move between panes without leaving one. */
+      display: none;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
       min-width: 0;
-      /* Mobile: fling past the ones that do not fit. Desktop overrides this to hidden. */
+      /* The scrollbar is hidden at every width — a 15px bar inside a 44px bar is most of the bar.
+         Touch flings it; a mouse gets wheel-to-horizontal from JS, since neither has a bar to drag.
+         Snapping is `proximity`, not `mandatory`: a fling should settle on a tab edge, but a
+         deliberate small drag must be allowed to stop where the user let go. */
       overflow-x: auto;
       overflow-y: hidden;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      scroll-behavior: smooth;
+      scroll-snap-type: x proximity;
+      scroll-padding: 0 12px;
+    }
+
+    body.terminal-open .agent-tabs {
+      display: flex;
     }
 
     .agent-tabs::-webkit-scrollbar {
       display: none;
     }
 
+    /* With no scrollbar, the only thing saying "there are more tabs that way" is the edge fade.
+       Applied per side, so a strip scrolled to its start never fades a tab that is fully visible. */
+    .agent-tabs.fade-left {
+      mask-image: linear-gradient(to right, transparent 0, #000 20px);
+    }
+
+    .agent-tabs.fade-right {
+      mask-image: linear-gradient(to left, transparent 0, #000 20px);
+    }
+
+    .agent-tabs.fade-left.fade-right {
+      mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .agent-tabs {
+        scroll-behavior: auto;
+      }
+    }
+
+    /* 44px tall for the hit area, but only ~28px of it is painted: the pill is drawn by an inset
+       shadow inside a transparent button, so the bar reads light while the target stays full-size. */
     .agent-tab {
       display: flex;
       align-items: center;
       gap: 6px;
       flex: 0 0 auto;
-      max-width: 132px;
+      scroll-snap-align: start;
+      max-width: 128px;
       min-height: 44px;
-      padding: 0 10px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--surface);
+      padding: 0 11px;
+      border: none;
+      border-radius: 8px;
+      background: none;
+      box-shadow: inset 0 0 0 1px var(--border);
       color: var(--muted);
       font-size: 0.72rem;
       font-weight: 600;
+      letter-spacing: -0.01em;
       white-space: nowrap;
       overflow: hidden;
       cursor: pointer;
-      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      transition: box-shadow 0.15s, color 0.15s, background 0.15s;
     }
 
     .agent-tab .label {
@@ -162,21 +202,31 @@
     }
 
     .agent-tab:hover {
+      background: var(--surface);
+      box-shadow: inset 0 0 0 1px var(--muted);
       color: var(--text);
-      border-color: var(--muted);
     }
 
     /* Selection is a filled pill, not a tinted border: at 0.72rem in a crowded bar a border-only
-       cue is invisible on a phone, and the ring keeps the status dot legible on the fill. */
+       cue is invisible on a phone. */
     .agent-tab.active {
       background: var(--blue);
-      border-color: var(--blue);
+      box-shadow: inset 0 0 0 1px var(--blue);
       color: var(--bg);
       font-weight: 700;
     }
 
+    /* The selected tab needs its own hover, or pointing at it makes it look like every other
+       hovered tab and the selection appears to move. Brighter and lifted, never repainted. */
+    .agent-tab.active:hover {
+      background: var(--blue);
+      box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px color-mix(in srgb, var(--blue) 30%, transparent);
+      color: var(--bg);
+    }
+
+    /* The dot sits on a saturated fill once selected; the ring is what keeps it readable there. */
     .agent-tab.active .dot {
-      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
     }
 
     .header h1 {
@@ -977,12 +1027,6 @@
       .chip-strip {
         grid-column: 1 / -1;
       }
-
-      /* No fling scroll with a mouse, so an overflowing strip would strand the last tabs
-         behind an invisible scrollbar. Show what fits; the agent list has the rest. */
-      .agent-tabs {
-        overflow-x: hidden;
-      }
     }
 
     @media (min-width: 1200px) {
@@ -996,9 +1040,6 @@
     }
 
     @media (max-width: 380px) {
-      .header {
-        padding: 10px 12px;
-      }
 
       .header h1 {
         font-size: 0.9rem;
@@ -1037,7 +1078,6 @@
   <div class="header">
     <span class="dot status-dot"></span>
     <h1>herdr</h1>
-    <span id="agentCount" style="font-size:0.7rem;color:var(--muted)"></span>
     <!-- One badge per live agent, selectable like tabs. Filled by renderAgentTabs. -->
     <div class="agent-tabs" id="agentTabs"></div>
     <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -1534,22 +1574,65 @@
     // in the bar that is always on screen. Snapshot order, deliberately not recency: selecting a
     // tab must not move it, or the next selection lands somewhere else.
     // Duplicate pane IDs are dropped rather than shown twice — same fail-closed rule as the list.
+    // render() runs on every snapshot, so rewriting innerHTML unconditionally rebuilt the whole
+    // strip a few times a second: the tabs flickered, hover was dropped mid-point, and
+    // scrollIntoView re-fired. Rebuild only when the strip's own contents change, and apply the
+    // selection separately — switching panes then never touches the markup.
+    let tabsSig = '', tabsActive = null;
+
     function renderAgentTabs() {
       const el = document.getElementById('agentTabs');
       const live = agents.filter(a => agents.filter(x => x.pane_id === a.pane_id).length === 1);
-      el.innerHTML = live.map(a => {
-        const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
-        const on = a.pane_id === activePane;
-        return `<button class="agent-tab${on ? ' active' : ''}" ` +
-          `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}"` +
-          `${on ? ' aria-current="page"' : ''}>` +
-          `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
-          `<span class="label">${escapeHtml(paneLabel(a))}</span></button>`;
-      }).join('');
-      // The selected tab can sit past the right edge on a phone; scroll it into view rather than
-      // leaving the user with no visible selection at all.
-      const sel = el.querySelector('.agent-tab.active');
-      if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const sig = live.map(a => `${a.pane_id} | ${paneLabel(a)} | ${a.status}`).join(' /// ');
+      if (sig !== tabsSig) {
+        tabsSig = sig;
+        el.innerHTML = live.map(a => {
+          // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
+          // bar that is always on screen is motion the user cannot turn off or look away from.
+          const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          return `<button class="agent-tab" data-pane="${escapeHtml(a.pane_id)}" ` +
+            `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+            `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
+            `<span class="label">${escapeHtml(paneLabel(a))}</span></button>`;
+        }).join('');
+        tabsActive = null;  // the buttons are new, so the class has to be applied again
+      }
+      syncTabFades();
+      if (tabsActive === activePane) return;
+      tabsActive = activePane;
+      el.querySelectorAll('.agent-tab').forEach(b => {
+        const on = b.dataset.pane === activePane;
+        b.classList.toggle('active', on);
+        if (!on) { b.removeAttribute('aria-current'); return; }
+        b.setAttribute('aria-current', 'page');
+        // Centred, not 'nearest': landing the selection flush against an edge hides whichever
+        // neighbour you are most likely to want next. Centring always shows both.
+        b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      });
+    }
+
+    // With the scrollbar hidden, nothing else says there are more tabs off-screen.
+    function syncTabFades() {
+      const el = document.getElementById('agentTabs');
+      const max = el.scrollWidth - el.clientWidth;
+      el.classList.toggle('fade-left', el.scrollLeft > 1);
+      el.classList.toggle('fade-right', el.scrollLeft < max - 1);
+    }
+
+    {
+      const el = document.getElementById('agentTabs');
+      el.addEventListener('scroll', syncTabFades, { passive: true });
+      addEventListener('resize', syncTabFades);
+      // A mouse has no horizontal fling and there is no scrollbar to drag, so vertical wheel over
+      // the strip moves it sideways. Without this, tabs past the edge are unreachable on desktop.
+      el.addEventListener('wheel', e => {
+        const max = el.scrollWidth - el.clientWidth;
+        if (max <= 0 || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        e.preventDefault();
+        // behavior:'auto' overrides the CSS `scroll-behavior: smooth`, which would otherwise
+        // animate every wheel notch and make the strip feel like it is lagging the hand.
+        el.scrollBy({ left: e.deltaY, behavior: 'auto' });
+      }, { passive: false });
     }
 
     // A jump is a destination, so it drops any panel the user was in and the pane it would
@@ -1727,7 +1810,6 @@
     }
 
     function render() {
-      document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
@@ -2391,13 +2473,15 @@
       clearInterval(refreshInterval);
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       noteRecent(paneId);
-      renderAgentTabs();  // the tab for this pane has to read as active straight away
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
       document.getElementById('agentListView').style.display = 'none';
       document.getElementById('settingsView').style.display = 'none';
       document.getElementById('timelineView').style.display = 'none';
       document.body.classList.add('terminal-open');
+      // After the class, never before: the strip is display:none outside a pane, and a hidden
+      // element measures zero — the edge fades and the scroll-into-view would both no-op.
+      renderAgentTabs();  // the tab for this pane has to read as active straight away
       document.getElementById('terminalView').classList.add('active');
       const qa = document.getElementById('quickActions');
       const ak = document.getElementById('actionKeys');

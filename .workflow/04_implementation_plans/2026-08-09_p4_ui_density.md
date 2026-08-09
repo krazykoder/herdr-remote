@@ -695,8 +695,60 @@ stays legible.
 
 Overflow is split by width: `overflow-x: auto` (scrollbar hidden) by default, overridden to
 `hidden` inside the existing 768px desktop block. A mouse has no fling scroll, so a scrolling strip
-on desktop would strand the last tabs behind an invisible scrollbar. After each render the current
-tab is `scrollIntoView`'d with `inline: 'nearest'`, or the selection can sit off-screen on a phone.
+on desktop would strand the last tabs behind an invisible scrollbar. The current tab is
+`scrollIntoView`'d with `inline: 'nearest'` when the selection changes, or it can sit off-screen on
+a phone.
+
+### `[MODIFY]` tab strip: pane-only, lighter bar, no flicker
+
+`.agent-tabs` defaults to `display: none` and is shown by `body.terminal-open .agent-tabs`. On the
+landing page the agent list is already on screen, so the strip was a second copy of it.
+
+The strip moves from `margin-left: auto` to `flex: 1`, so it sits directly after the title instead
+of being pushed against Activity. `#agentCount` and its line in `render()` are deleted — the strip
+and the list each show the agents themselves, so a number beside `herdr` was a third telling.
+
+`.header` loses its vertical padding (`8px 12px` to `0 12px`), and the `max-width: 380px` block's
+`.header` override goes with it. The bar drops 60px to 44px with no hit area touched: the 44px
+controls inside were always what set its height. The tab is still 44px tall but paints as a ~28px
+pill — the border is an inset `box-shadow` inside a transparent button, so the bar reads light
+while the target stays full size.
+
+`.agent-tab.active:hover` is its own rule. Without it, hovering the selected tab produced the
+unselected hover treatment and the selection appeared to move to whatever the pointer was over.
+It keeps the fill and adds a `color-mix` glow; where `color-mix` is unsupported the declaration is
+dropped and the tab falls back to `.agent-tab.active`'s shadow, which is still correct.
+
+**The flicker.** `render()` runs on every snapshot, and `renderAgentTabs` rewrote `innerHTML`
+unconditionally — the strip was rebuilt several times a second, so the tabs flickered, hover was
+dropped mid-point, and `scrollIntoView` re-fired. It now keeps a signature of pane IDs, labels and
+statuses (`tabsSig`) and rebuilds only when that changes, and tracks the applied selection
+(`tabsActive`) so switching panes toggles a class instead of rewriting markup. A rebuild resets
+`tabsActive` to `null`, since the new buttons carry no class.
+
+Tab dots stay solid — no `.pulse`, no animation. Colour already carries the state, and the strip is
+on screen for as long as the pane is, so a blink there is motion with no off switch.
+
+**Scroll and navigation.** The desktop `overflow-x: hidden` override is deleted: it made overflowing
+tabs unreachable with a mouse, which is a worse outcome than any scrollbar. The scrollbar stays
+hidden at every width, and reachability comes from a `wheel` listener that translates vertical wheel
+to `scrollBy({ left, behavior: 'auto' })` — `auto` on purpose, since the CSS `scroll-behavior:
+smooth` would otherwise animate every notch and feel like lag. The listener is `passive: false`
+because it calls `preventDefault`, and it bails when the strip does not overflow or when the gesture
+is already horizontal, so trackpad side-swipes and page scrolling are untouched.
+
+`syncTabFades` toggles `.fade-left` / `.fade-right`, each a `mask-image` gradient, from `scrollLeft`
+against `scrollWidth - clientWidth`. Bound to `scroll` (passive) and `resize`, and called from
+`renderAgentTabs` so a changed tab set re-evaluates.
+
+`scrollIntoView` moves from `inline: 'nearest'` to `'center'`: `nearest` lands the selection flush
+against whichever edge it came from, hiding the neighbour the user is most likely to want next.
+`scroll-snap-type: x proximity` with `scroll-snap-align: start` settles a fling on a tab edge without
+fighting a deliberate short drag, and `prefers-reduced-motion` drops the smooth behaviour.
+
+`renderAgentTabs` moves **after** `classList.add('terminal-open')` in `openTerminal`. The strip is
+`display: none` outside a pane, a hidden element measures zero, and both the fades and the
+scroll-into-view would have silently no-opped on the render that matters most.
 
 ### `[MODIFY]` connection state loses its text, term header gains a gap
 
@@ -782,6 +834,15 @@ Manual, with the relay running:
 | M44 | Settings → Appearance → Light, reload | Light, with no dark flash before paint |
 | M45 | Open a pane in Light | The terminal body stays dark; only the shell is light |
 | M46 | In a pane, tap refresh then the gear repeatedly | No mis-taps; the two are visibly separated |
+| M47 | Landing page | No tab strip and no agent count; the strip appears only once a pane is open |
+| M48 | In a pane, watch the strip for 30s with agents idle | No flicker, no rebuild; hover survives a stationary pointer |
+| M50 | Hover the current tab, then a neighbour | Two clearly different treatments; the selection does not appear to move |
+| M51 | Measure the app header | 44px tall; every control in it still ≥44px |
+| M52 | Desktop, eight agents, wheel over the strip | Strip scrolls sideways, tracks the wheel with no lag, and the page does not scroll |
+| M53 | Same, scroll to each end | The fade appears only on the side that has more tabs; neither end fades a fully visible tab |
+| M54 | Open the eighth tab from the first | It lands centred with a neighbour visible on both sides |
+| M55 | Mobile, fling the strip | Settles on a tab edge; a short deliberate drag stops where released |
+| M56 | Block an agent, watch its tab | The dot turns red and stays solid — nothing in the strip blinks |
 | M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
 | M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
@@ -812,9 +873,14 @@ Manual, with the relay running:
     items with a confirming unpair (M27, M28).
 14. Settings and Activity return to wherever the user was, including the pane; a pane shortcut does
     not (M30–M34).
-15. The header carries one tab per live agent that opens its pane directly, selection never reorders
-    the strip, the strip scrolls on touch and truncates on desktop, and switching panes leaves
-    exactly one poller running (M34, M36–M42).
+15. Inside a pane the header carries one tab per live agent that opens its pane directly, selection
+    never reorders the strip, the strip scrolls on touch and truncates on desktop, and switching
+    panes leaves exactly one poller running (M34, M36–M42, M47).
+20. The strip is rebuilt only when its contents change, and no dot animates (M48, M56).
+23. Every tab is reachable at every width — touch fling and desktop wheel — with edge fades marking
+    overflow and selection centring on jump (M52–M55).
+21. The current tab's hover is distinct from an unselected tab's (M50).
+22. The app header is 44px tall with no control below 44px, and carries no agent count (M47, M51).
 17. Dark is the default with no OS dependency; Light is opt-in from Settings, persists, and applies
     before first paint (M43–M45).
 18. `(live)` / `(connecting…)` / `(offline)` text is gone; the status dot alone carries the state,
