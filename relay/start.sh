@@ -9,12 +9,13 @@ RELAY_PID=""
 TUNNEL_PID=""
 
 cleanup() {
+    STATUS=$?
     echo ""
     echo "Shutting down..."
     [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null && wait "$TUNNEL_PID" 2>/dev/null
     [ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null && wait "$RELAY_PID" 2>/dev/null
     echo "Done."
-    exit 0
+    exit "$STATUS"
 }
 
 trap cleanup INT TERM EXIT
@@ -26,14 +27,23 @@ echo ""
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 
 # 1. Start relay
+if lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+    echo "Error: port $WS_PORT is already in use:"
+    lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P
+    exit 1
+fi
+
 echo "Starting relay on :$WS_PORT..."
 uv run "$SCRIPT_DIR/herdr_relay.py" &
 RELAY_PID=$!
 sleep 2
 
 if ! kill -0 "$RELAY_PID" 2>/dev/null; then
-    echo "Error: Relay failed to start. Check if port $WS_PORT is in use."
-    echo "  lsof -iTCP:$WS_PORT"
+    # The relay exits non-zero on bad config (fail-closed) and on a missing token when
+    # write extensions are enabled. Its own message is on stderr, directly above this.
+    RELAY_STATUS=0
+    wait "$RELAY_PID" 2>/dev/null || RELAY_STATUS=$?
+    echo "Error: relay exited with status $RELAY_STATUS — see its output above."
     RELAY_PID=""
     exit 1
 fi
