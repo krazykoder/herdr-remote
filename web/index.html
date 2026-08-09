@@ -59,7 +59,9 @@
 
     /* iOS Safari zooms the layout viewport whenever a focused field renders below 16px, which
        pushes the page edges outside the visual viewport and does not spring back. 16px is a
-       platform threshold, not a design choice: no field rule below may set a smaller size. */
+       platform threshold, not a design choice: no field rule below may set a smaller size.
+       The one sanctioned exception is the composer, which the user can take down to 8px from the
+       gear menu and which accepts the zoom as the price — see --input-font. */
     input,
     textarea,
     select {
@@ -97,10 +99,13 @@
       border-bottom: 1px solid var(--border);
     }
 
-    /* The term header already carries back, status, title and refresh, so on a phone the app
-       header is pure loss while a pane is open. Desktop keeps it — see the 768px block. */
+    /* In a pane the app header moves to the bottom, under the composer: the thumb is already
+       down there, and the term header above already carries back, status, title and refresh.
+       `order` moves the same node, so nothing is re-rendered and no state is rebuilt. */
     body.terminal-open > .header {
-      display: none;
+      order: 9;
+      border-bottom: none;
+      border-top: 1px solid var(--border);
     }
 
     .header h1 {
@@ -602,7 +607,8 @@
       background: var(--bg);
       color: var(--text);
       font-family: monospace;
-      /* Never below 16px — see the base input rule. The gear menu's composer control clamps there. */
+      /* Default 16px keeps iOS from zooming on focus; the gear menu can take it to 8px, which
+         re-enables that zoom deliberately. See the base input rule. */
       font-size: var(--input-font, 16px);
       min-width: 0;
     }
@@ -884,11 +890,6 @@
         padding: 0 16px;
       }
 
-      /* Desktop has room: keep the app header while a pane is open. */
-      body.terminal-open > .header {
-        display: flex;
-      }
-
       .agents {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -958,12 +959,21 @@
     <h1>herdr</h1>
     <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
     <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
-    <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+    <button id="navAgents" onclick="goAgents()" aria-label="Agents"><svg width="18" height="18" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="8" y1="6" x2="21" y2="6" />
+        <line x1="8" y1="12" x2="21" y2="12" />
+        <line x1="8" y1="18" x2="21" y2="18" />
+        <line x1="3" y1="6" x2="3.01" y2="6" />
+        <line x1="3" y1="12" x2="3.01" y2="12" />
+        <line x1="3" y1="18" x2="3.01" y2="18" />
+      </svg></button>
+    <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg></button>
-    <button onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+    <button id="navSettings" onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path
           d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -1390,28 +1400,60 @@
 
 
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
-    function toggleSettings() {
-      if (activePane) closeTerminal();
-      const s = document.getElementById('settingsView');
-      const show = s.style.display !== 'block';
-      s.style.display = show ? 'block' : 'none';
-      document.getElementById('agentListView').style.display = show ? 'none' : '';
-      document.getElementById('timelineView').style.display = 'none';
-      if (show) {
-        document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
-          ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
-          : `<span style="color:var(--red)">● Disconnected</span>`;
+    // Settings and Activity are toggles onto wherever the user already was, not one-way doors.
+    // The pane they came from is remembered so a second tap puts it back; without this, leaving
+    // Settings always dumped them on the agent list and they had to find the pane again.
+    let panelReturnPane = null;
+
+    function panelIsOpen() {
+      return document.getElementById('settingsView').style.display === 'block'
+        || document.getElementById('timelineView').style.display === 'block';
+    }
+
+    function openPanel(id) {
+      // Only capture on the way in. Switching Settings → Activity must not overwrite the pane
+      // with the null that closing the terminal already left behind.
+      if (!panelIsOpen()) {
+        panelReturnPane = activePane;
+        if (activePane) closeTerminal();
       }
+      document.getElementById('agentListView').style.display = 'none';
+      document.getElementById('settingsView').style.display = id === 'settingsView' ? 'block' : 'none';
+      document.getElementById('timelineView').style.display = id === 'timelineView' ? 'block' : 'none';
+    }
+
+    function closePanel() {
+      document.getElementById('settingsView').style.display = 'none';
+      document.getElementById('timelineView').style.display = 'none';
+      const back = panelReturnPane;
+      panelReturnPane = null;
+      // The pane may have died while the panel was open; openTerminal falls back to the ID, so
+      // check the live snapshot first and land on the list rather than on a dead pane.
+      if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
+      else document.getElementById('agentListView').style.display = '';
+    }
+
+    // The agent list is a destination, not a toggle: it discards the remembered pane.
+    function goAgents() {
+      panelReturnPane = null;
+      document.getElementById('settingsView').style.display = 'none';
+      document.getElementById('timelineView').style.display = 'none';
+      if (activePane) closeTerminal();
+      else document.getElementById('agentListView').style.display = '';
+    }
+
+    function toggleSettings() {
+      if (document.getElementById('settingsView').style.display === 'block') { closePanel(); return; }
+      openPanel('settingsView');
+      document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
+        ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
+        : `<span style="color:var(--red)">● Disconnected</span>`;
     }
 
     function toggleTimeline() {
-      if (activePane) closeTerminal();
-      const t = document.getElementById('timelineView');
-      const show = t.style.display !== 'block';
-      t.style.display = show ? 'block' : 'none';
-      document.getElementById('agentListView').style.display = show ? 'none' : '';
-      document.getElementById('settingsView').style.display = 'none';
-      if (show) renderTimeline();
+      if (document.getElementById('timelineView').style.display === 'block') { closePanel(); return; }
+      openPanel('timelineView');
+      renderTimeline();
     }
 
     function renderTimeline() {
@@ -1462,7 +1504,7 @@
       const color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
       document.querySelectorAll('.status-dot').forEach(d => { d.style.background = color; });
       const label = document.getElementById('connLabel');
-      label.textContent = s === 'connected' ? 'live' : s === 'connecting' ? 'connecting…' : 'offline';
+      label.textContent = s === 'connected' ? '(live)' : s === 'connecting' ? '(connecting…)' : '(offline)';
       label.style.color = color;
     }
 
@@ -1863,9 +1905,11 @@
 
     function bumpFont(d) { setFont(currentFont() + d); }
 
-    // The composer floor is 16, not 6: below it iOS Safari zooms the layout viewport on focus.
-    // See the base input rule — this control may not undercut it.
-    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 16, INPUT_MAX = 24, INPUT_DEFAULT = 16;
+    // Floor is 8, below iOS Safari's 16px focus-zoom threshold, at the user's explicit direction.
+    // Under 16 the composer will zoom the layout viewport when focused on iPhone; that is the
+    // documented cost of the setting (S5.9), not an oversight. Default stays at 16, so the zoom
+    // is opt-in rather than something a fresh install walks into.
+    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 16;
 
     function currentInputFont() {
       const v = parseInt(localStorage.getItem(INPUT_FONT_KEY), 10);

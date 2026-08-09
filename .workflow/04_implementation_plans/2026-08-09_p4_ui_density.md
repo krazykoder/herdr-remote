@@ -31,20 +31,20 @@ BEFORE                                   AFTER
 ┌──────────────────────────────────────┐ ┌──────────────────────────────────────┐
 │ ● herdr        3 agents   [◷]  [⚙]   │ │ ‹ ● claude · herdr-remote   [↻] [⚙]  │  36px
 ├──────────────────────────────────────┤ ├──────────────────────────────────────┤
-│ ‹  claude · herdr-remote        [↻]  │ │                                      │
-├──────────────────────────────────────┤ │  $ pytest tests/                     │
-│  $ pytest tests/                     │ │  ..........                          │
-│  ..........                          │ │  10 passed in 2.1s                   │
-│  10 passed in 2.1s                   │ │  › _                                 │  flex
-│  › _                                 │ │                                      │
-├──────────────────────────────────────┤ ├──────────────────────────────────────┤
-│      [ Instructions          ▾ ]     │ │ [/] ┌──────────────┐ ┌────┐          │  188px
-├──────────────────────────────────────┤ │ [P] │ Type…        │ │ ➤  │          │  ← send, largest
-│ [/] [ Type…            ] [⚡][⌨][➤]  │ │ [⚡] │              │ └────┘         │
-└──────────────────────────────────────┘ │ [⌨] └──────────────┘ [ ✕  ]          │  ← clear, two taps
-┊ composer clipped, doc scrolls 20px   ┊ └──────────────────────────────────────┘    no document scroll
-┊ [ chrome url bar — never collapses ] ┊     (url bar addressed in P5)
-└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
+│ ‹  claude · herdr-remote        [↻]  │ │  $ pytest tests/                     │
+├──────────────────────────────────────┤ │  ..........                          │
+│  $ pytest tests/                     │ │  10 passed in 2.1s                   │
+│  ..........                          │ │  › _                                 │  flex
+│  10 passed in 2.1s                   │ │                                      │
+│  › _                                 │ ├──────────────────────────────────────┤
+├──────────────────────────────────────┤ │ [/] ┌──────────────┐ ┌────┐          │  188px
+│      [ Instructions          ▾ ]     │ │ [P] │ Type…        │ │ ➤  │          │  ← send, largest
+├──────────────────────────────────────┤ │ [⚡] │              │ └────┘         │
+│ [/] [ Type…            ] [⚡][⌨][➤]  │ │ [⌨] └──────────────┘ [ ✕  ]          │  ← clear, two taps
+└──────────────────────────────────────┘ ├──────────────────────────────────────┤
+┊ composer clipped, doc scrolls 20px   ┊ │ ● herdr (live)   3   [☰][◷][⚙]       │  ← app header, now
+┊ [ chrome url bar — never collapses ] ┊ └──────────────────────────────────────┘     at the bottom
+└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘     no document scroll
 ```
 
 The ⛶ fullscreen control shown in the architecture doc's mockup arrives in P5; the term-header
@@ -159,14 +159,20 @@ predate `dvh`.
     }
 ```
 
-Add, immediately after the `.header` rule — the terminal header already carries back, title and
-status, so on mobile the app header is pure loss (S3.1):
+Add, immediately after the `.header` rule. In a pane the app header moves to the bottom rather than
+disappearing (S3.1) — `order` relocates the same node, so no state is rebuilt and the desktop
+exemption in the 768px block goes away entirely:
 
 ```css
     body.terminal-open > .header {
-      display: none;
+      order: 9;
+      border-bottom: none;
+      border-top: 1px solid var(--border);
     }
 ```
+
+The header gains an Agents control (`goAgents`) beside Activity and Settings, and `setStatus`
+renders the connection state parenthesised — `(live)` / `(connecting…)` / `(offline)`.
 
 ### `[MODIFY]` scrollers (lines 129–142)
 
@@ -464,6 +470,40 @@ The outside-click listener is safe against the gear's own handler: the button is
 
 Boot call next to `loadPairs()`: `setFont(currentFont());`
 
+### `[MODIFY]` Settings and Activity become real toggles
+
+They hid the current view and never restored it: leaving Settings always landed on the agent list,
+so a glance at Settings cost the user the pane they were reading (S2.3–S2.5). The fix is one
+remembered pane and a shared open/close pair:
+
+```js
+    let panelReturnPane = null;
+
+    function openPanel(id) {
+      // Only capture on the way in. Switching Settings → Activity must not overwrite the pane
+      // with the null that closing the terminal already left behind.
+      if (!panelIsOpen()) {
+        panelReturnPane = activePane;
+        if (activePane) closeTerminal();
+      }
+      ...
+    }
+
+    function closePanel() {
+      const back = panelReturnPane;
+      panelReturnPane = null;
+      if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
+      else document.getElementById('agentListView').style.display = '';
+    }
+```
+
+Two traps worth naming. Capturing on every `openPanel` would lose the pane the moment the user moved
+from Settings to Activity, because the terminal is already closed by then. And restoring blind would
+reopen a pane that died while the panel was open — `openTerminal` falls back to the raw ID and would
+render a dead pane, so the live snapshot is checked first (S2.4).
+
+`goAgents` is deliberately not a toggle: it clears the remembered pane (S2.5).
+
 ### `[MODIFY]` composer becomes three columns
 
 `.term-input` becomes `align-items: stretch` over three children: a `.term-input-side` stack of four
@@ -638,13 +678,14 @@ Manual, with the relay running:
 | M4 | Open Settings with a long panel at 375×600 | Settings scrolls internally, page does not |
 | M5 | Open Settings, then open a pane | Settings hidden, terminal shown, nothing stacked |
 | M6 | Open Timeline, then open a pane, then close it | Agent list returns; no residual timeline |
-| M7 | Mobile 390×844, open a pane | App header gone; status dot visible in term header; ~95px more terminal |
+| M7 | Mobile 390×844, open a pane | App header sits below the composer with its separator facing up; status dot visible in term header |
 | M8 | Same, open keys dock and quick dock | Composer and dock fully on screen, nothing clipped |
 | M9 | Same, raise the on-screen keyboard | Composer sits directly above the keyboard |
 | M10 | Paired pane with a stale reason wrapping to a second line | Nothing clips |
 | M11 | Pane gear → A− to 6px, reload, reopen the pane | 6px persists; no flash of 13px |
 | M12 | A− at 6px, A+ at 24px | Respective button disabled |
 | M13 | 6px, then check headers, nav keys, composer, agent list | Only the terminal text changed; hit areas ≥44px |
+| M35 | Mobile, open a pane with the keyboard raised | Composer and the bottom app header both fully on screen |
 | M14 | 380px-wide viewport | No control clipped or overlapping |
 | M15 | Desktop terminal open → click Settings, then Timeline | Terminal closes before selected panel appears; views never stack |
 | M16 | Tap `P`, pick a prompt; then open keys dock and tap `P` | Text inserted at cursor, dock closes; opening one dock closes the other two |
@@ -654,7 +695,12 @@ Manual, with the relay running:
 | M24 | Measure every composer button at the default text size | All ≥44px in both directions; send is the largest |
 | M25 | Open a dock, then tap the text area | Dock closes |
 | M26 | Tap clear once, wait a second, tap once more | Text survives both; two taps inside the window clear it |
-| M27 | Gear → Composer text A− at 16px | Disabled — the iOS floor, not a preference |
+| M27 | Gear → Composer text down to 8px, then focus the composer on iPhone | Renders at 8px; the focus zoom returns — expected, documented in S5.9 |
+| M30 | Open a pane → Settings → Settings again | Returns to that pane, not the agent list |
+| M31 | Open a pane → Settings → Activity → Activity | Returns to the same pane; the switch did not lose it |
+| M32 | Open a pane → Settings, kill the pane in herdr, then Settings again | Lands on the agent list, no dead pane |
+| M33 | Agent list → Activity → Activity | Returns to the agent list |
+| M34 | In a pane, tap Agents | Agent list; a later Settings toggle does not jump back to the pane |
 | M28 | Paired pane: gear → Edit pair, then gear → Unpair… | Strip shows only switch and transfer; unpair confirms first |
 | M29 | Gear → Pair bar → each of the three values, then reload | Strip moves and the choice persists; at Bottom its separator faces up |
 | M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
@@ -681,11 +727,13 @@ Manual, with the relay running:
    list, using the same cards (M21–M23).
 10. The composer is 4 + text area + 2, every button ≥44px, send largest; focus closes docks; clear
     needs two taps (M19, M24–M26).
-11. The gear menu carries an independent 16–24px composer text size, and the pair items with a
-    confirming unpair (M27, M28).
+11. The gear menu carries an independent 8–24px composer text size defaulting to 16, and the pair
+    items with a confirming unpair (M27, M28).
+14. Settings and Activity return to wherever the user was, including the pane; Agents does not
+    (M30–M34).
 12. The pair strip carries only switch and transfer, and its placement is settable and persisted,
     defaulting to above the composer (M28, M29).
-13. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
+15. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
 acceptance criteria for this phase.

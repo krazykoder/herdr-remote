@@ -57,17 +57,36 @@ active, on every supported viewport, both orientations.
 
 **S2.2** Closing a pane restores the agent list, and only the agent list.
 
-**S2.3** Toggling settings or timeline while a pane is open is not reachable on mobile (the app header
-is hidden per S3.1). On desktop, the action first closes the terminal, then opens the selected panel;
-two flex panes are never simultaneously visible.
+**S2.3** Settings and Activity are **toggles**, not one-way doors. Opening either from a pane closes
+the terminal and remembers that pane; tapping the same control again returns to it. Tapping it from
+the agent list returns to the agent list. Switching directly from one panel to the other preserves
+the remembered pane rather than overwriting it.
+
+**S2.4** If the remembered pane is no longer live when the panel closes, the app lands on the agent
+list rather than opening a dead pane.
+
+**S2.5** Agents is a destination, not a toggle: it goes to the agent list and discards any remembered
+pane.
+
+**S2.6** Two flex panes are never simultaneously visible.
 
 > Rationale: with the terminal as a flex sibling rather than a fixed overlay, two simultaneously
-> visible panes would stack rather than overlay. Previously this was masked, not handled.
+> visible panes would stack rather than overlay. And leaving Settings used to dump the user on the
+> agent list whatever they had been looking at, so every glance at Settings cost them their place.
 
 ## S3 — Density
 
-**S3.1** While a pane is open on a viewport narrower than 768px, the app header is not rendered. At
-768px and wider it remains rendered.
+**S3.1** While a pane is open, the app header moves to the **bottom** of the shell, below the
+composer, at every width. It is the same element in the same DOM position, reordered — not a second
+bar, and not re-rendered. Its separator faces up there, since it is then the shell's last element.
+
+It carries, left to right: the connection dot, `herdr`, the connection state in parentheses, the
+agent count, then Agents, Activity and Settings.
+
+> Rationale: in a pane the thumb is at the bottom on the composer, and the term header above already
+> carries back, status, title and refresh. The earlier decision to hide the header outright reclaimed
+> ~69px; putting it back at the bottom spends that again, deliberately, to keep the three
+> destinations reachable without leaving the pane.
 
 **S3.2** Connection status stays visible in every state: while a pane is open the status indicator is
 present in the terminal header, and it reflects the same three states as the app header's
@@ -163,9 +182,15 @@ default-sized terminal text.
 **S5.7** The gear menu closes on a click outside it, on Escape, and when the pane is closed.
 
 **S5.9** The gear menu carries a second, independent text-size control for the composer, persisted
-under `herdr_input_font_size`. Its range is **16–24px, default 16** — the floor is S3.6's iOS
-threshold, not a preference, so this control may not reach the 6px the terminal control can. The two
-controls do not affect each other.
+under `herdr_input_font_size`. Its range is **8–24px, default 16**. The two controls do not affect
+each other.
+
+The default is 16 and the floor is 8, which is below S3.6's threshold. **Choosing any value under 16
+re-enables iOS Safari's focus zoom for the composer**: on iPhone the page will widen and its edges
+will leave the visual viewport when the composer takes focus. This is a known, accepted cost of the
+setting, taken at the user's explicit direction — not an oversight. It is opt-in: a fresh install
+sits at 16 and never sees it, and the terminal control (S5.2) reaches 6px with no such cost because
+terminal content is not focusable.
 
 **S5.10** While the pane belongs to a pair, the gear menu also carries `Edit pair` and `Unpair`.
 `Unpair` always confirms before removing the pair; there is no path that removes one in a single
