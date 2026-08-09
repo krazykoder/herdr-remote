@@ -29,7 +29,7 @@ Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` �
 
 For every live pane, relay matches same-host configured roots using `cwd == root` or `cwd.startswith(root.rstrip("/") + "/")`; longest root wins. Thus local agents started from a configured root or a subdirectory appear under that Project; unmatched panes stay visible as Other sessions. Matching is lexical: no git, worktree, or symlink resolution. Plain `startswith` is wrong — it groups `/code/x-old` under `/code/x`.
 
-An unmatched pane **omits the `project_id` key entirely** — not `null`, not `""`. This is a correctness rule, not a style preference: `agent_state.py:24` treats an empty value as "keep the previous value", and `apply_agent_message:49` merges with `dict.update`, so a `null` is indistinguishable from "unchanged" and can resurrect a stale grouping after a pane's cwd changes. Absent is unambiguous.
+Full `agents` snapshots omit `project_id` for an unmatched pane. Incremental `agent_update` messages instead carry `project_id: null` when a pane becomes unmatched. This distinction is required: `apply_agent_message:49` merges updates with `dict.update`, so omitting the field preserves an old Project assignment; `null` clears it. `project_id` is optional in `AGENT_EVENT_FIELDS`, never required; resolve it again after enriching the event with cached pane state.
 
 ## 3. Layout and browser behaviour
 
@@ -92,7 +92,7 @@ On every poll, recompute pane IDs present on more than one host. For these IDs, 
 | # | Given | Then |
 |---|---|---|
 | A1 | Pane cwd equals or is below configured root | Correct `project_id`; longest root wins |
-| A2 | Pane cwd is sibling prefix or wrong host | No `project_id`; shown as Other sessions |
+| A2 | Pane cwd is sibling prefix/wrong host, or update becomes unmatched | Snapshot omits `project_id`; incremental update uses `null` to clear prior grouping; shown as Other sessions |
 | A3 | Zero-session configured Project | Visible card with “No sessions” |
 | A4 | Config disabled | Existing workspace/tab navigation and `create_tab` remain available |
 | A5 | Fresh client connects | Receives `projects`, then cached `agents` |

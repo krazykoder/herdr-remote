@@ -76,7 +76,7 @@ For every live pane, relay matches `host` and `cwd` against configured Projects.
 - Agent started locally from subdirectory of configured Project root: **grouped under that Project**; longest root wins.
 - Agent outside every configured root: shown under **Other sessions**, never hidden.
 
-An unmatched pane carries **no `project_id` field at all** — the key is absent rather than `null` or `""`. This matters for `agent_state.py`: `complete_agent_update_message:24` treats empty values as "keep the previous value" for required fields, and `apply_agent_message:49` merges with `dict.update`, so a `null` would be indistinguishable from "unchanged" and could resurrect a stale grouping after a pane's cwd changes. Absent is unambiguous. The frontend buckets every agent without a `project_id` into **Other sessions**.
+An unmatched pane in a full snapshot carries **no `project_id` field**. An incremental `agent_update` for a pane that becomes unmatched carries `project_id: null` instead. This difference matters: `apply_agent_message:49` merges an update with `dict.update`, so an omitted key keeps stale Project state while `null` clears it. Resolve the Project after enriching the event from cached pane state; `project_id` remains optional, never a required event field. The frontend buckets a missing or null `project_id` into **Other sessions**.
 
 The path-boundary test is exact-or-descendant: `cwd == root` or `cwd.startswith(root + "/")`. Plain `startswith` is wrong — it groups `/code/herdr-remote-old` under `/code/herdr-remote`.
 
