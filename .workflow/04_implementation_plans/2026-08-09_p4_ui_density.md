@@ -11,7 +11,7 @@ fullscreen + PWA; both are wanted, and both land on top of this shell)
 ## Goal
 
 Make `web/index.html` an app shell that owns exactly one viewport, delete the two hardcoded header
-offsets that put the desktop composer below the fold, reclaim ~130px of vertical space on mobile, and
+offsets that put the desktop composer below the fold, reclaim ~95px of vertical space on mobile, and
 add a persisted text-size control.
 
 P5 (fullscreen, PWA installability) depends on this shell being correct first: a standalone
@@ -37,18 +37,19 @@ BEFORE                                   AFTER
 │  ..........                          │ │  10 passed in 2.1s                   │
 │  10 passed in 2.1s                   │ │                                      │
 │  › _                                 │ │  › _                                 │  flex
-├──────────────────────────────────────┤ │                                      │  (+~130px)
+├──────────────────────────────────────┤ │                                      │  (+~95px)
 │      [ Instructions          ▾ ]     │ │                                      │
 ├──────────────────────────────────────┤ │                                      │
 │ [/] [ Type…            ] [⚡][⌨][➤]  │ ├──────────────────────────────────────┤
-└──────────────────────────────────────┘ │ [/][P] [ Type…       ] [⚡][⌨][➤]    │  50px
-┊ composer clipped, doc scrolls 20px   ┊ └──────────────────────────────────────┘
-┊ [ chrome url bar — never collapses ] ┊    no document scroll
-└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    (url bar addressed in P5)
+└──────────────────────────────────────┘ │ [/] [ Type…              ] [➤]       │  86px
+┊ composer clipped, doc scrolls 20px   ┊ │ [P]        [⚡]        [⌨]           │
+┊ [ chrome url bar — never collapses ] ┊ └──────────────────────────────────────┘
+└╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘    no document scroll
+                                            (url bar addressed in P5)
 ```
 
 The ⛶ fullscreen control shown in the architecture doc's mockup arrives in P5; the term-header
-in this phase is back · dot · title · refresh.
+in this phase is back · dot · title · refresh · gear.
 
 ### Desktop ≥768px, after
 
@@ -63,18 +64,31 @@ in this phase is back · dot · title · refresh.
 │  10 passed in 2.1s                                        │
 │  › _                                                      │
 ├───────────────────────────────────────────────────────────┤
-│ [/][P] [ Type…  ⌘/Ctrl+Enter sends ] [⚡] [⌨] [➤]         │  50px  ← on the fold
+│ [/] [ Type…  ⌘/Ctrl+Enter sends        ] [➤]              │  86px  ← on the fold
+│ [P]             [⚡]             [⌨]                      │
 └───────────────────────────────────────────────────────────┘
 ```
 
-### Settings — text size
+### Terminal header — gear menu
 
 ```
-┌ Text size ────────────────────────────┐      12px         16px        20px
-│  [ A− ]   16px   [ A+ ]               │    ┌────────┐  ┌────────┐  ┌────────┐
-│  Scales the terminal and chrome.      │    │28 lines│  │21 lines│  │16 lines│
-└───────────────────────────────────────┘    └────────┘  └────────┘  └────────┘
+‹  ● claude · herdr-remote                      [↻]  [⚙]
+                                                      │
+                                       ┌──────────────▼──┐
+                                       │ Rename pane     │
+                                       ├─────────────────┤
+                                       │ TEXT SIZE       │
+                                       │ [A−]  13px  [A+]│
+                                       └─────────────────┘
+
+terminal text at   6px          13px            24px
+                 ┌────────┐  ┌────────┐     ┌────────┐
+                 │61 lines│  │28 lines│     │15 lines│
+                 └────────┘  └────────┘     └────────┘
 ```
+
+Only the terminal text moves with it — the headers, docks, keys and composer above and below the
+pane stay exactly where they are at either bound.
 
 ---
 
@@ -409,7 +423,7 @@ the app header's own gear path, so no new icon vocabulary appears:
 Logic, placed beside the other `localStorage` helpers:
 
 ```js
-    const FONT_KEY = 'herdr_font_size', FONT_MIN = 9, FONT_MAX = 24, FONT_DEFAULT = 13;
+    const FONT_KEY = 'herdr_font_size', FONT_MIN = 6, FONT_MAX = 24, FONT_DEFAULT = 13;
 
     function currentFont() {
       const v = parseInt(localStorage.getItem(FONT_KEY), 10);
@@ -445,6 +459,86 @@ The outside-click listener is safe against the gear's own handler: the button is
 
 Boot call next to `loadPairs()`: `setFont(currentFont());`
 
+### `[MODIFY]` composer becomes two rows
+
+`.term-input` turns into a column of two `.term-input-row`s (S3.5). The first keeps `/`, the text
+area and send; the second takes `P`, quick actions and keys, stretched to fill:
+
+```css
+    .term-input {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .term-input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .term-input-actions button {
+      flex: 1;
+      /* centring + min-height: 36px */
+    }
+```
+
+The text area goes to `rows="2"`. `autoGrow` writes an inline `height` from `scrollHeight`, which
+would pull an empty box back to one row, so the floor is a CSS `min-height` — it beats an inline
+`height` and needs no change in `autoGrow`:
+
+```css
+    .term-input textarea {
+      /* Two rows minimum. min-height beats the inline height autoGrow writes, so the composer
+         cannot collapse to one row when empty — no change needed in autoGrow. */
+      min-height: calc(2.8em + 22px);   /* 2 lines at line-height 1.4, plus padding and borders */
+      max-height: 8.4em;                /* unchanged six-row ceiling */
+    }
+```
+
+The `@media (max-width: 380px)` override of `.term-input` still applies; its `gap` now spaces the two
+rows rather than the buttons, which is the wanted effect at that width.
+
+### `[MODIFY]` 16px floor on focusable fields
+
+Five rules put a field below 16px: `.setting-group input`, `.setting-group select` (13px),
+`.start-field select/input`, `.term-input input/textarea` (14px), and `#cmdSearch` inline (14px).
+Focusing any of them makes iOS Safari zoom the layout viewport and shove the page edges out of view
+(S3.6). The fix is one base rule and the deletion of all five declarations, rather than five edits
+that the next field would not inherit:
+
+```css
+    /* iOS Safari zooms the layout viewport whenever a focused field renders below 16px, which
+       pushes the page edges outside the visual viewport and does not spring back. 16px is a
+       platform threshold, not a design choice: no field rule below may set a smaller size. */
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+```
+
+`#cmdSearch` carries its size inline, which outranks any stylesheet rule, so that one is deleted at
+the element. `maximum-scale=1` on the viewport would also stop the zoom and is rejected: it disables
+pinch-zoom for everyone to paper over five declarations.
+
+With the composer at 16px, `autoGrow`'s `Math.min(el.scrollHeight, 118)` capped growth at roughly
+four rows instead of the six `max-height` intends. The px cap goes; CSS owns both bounds:
+
+```js
+    // The ceiling lives in CSS (max-height) and the floor in min-height, so this only has to
+    // report the content height — a px cap here would drift the moment the font size changes.
+    function autoGrow(el) {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    }
+```
+
+### `[MODIFY]` recents on the landing page
+
+The chip strip already exists; it was capped at six and hidden below two live entries (S3.7).
+`MAX_RECENTS` becomes 5, the gate becomes `!live.length`, and `renderRecents` slices as well as
+`noteRecent` — a list written under the old cap must not render six chips.
+
 ### `[MODIFY]` rename moves into the gear menu
 
 `Rename pane` becomes the first item in the same menu, and `#termTitle` loses the `role="button"`,
@@ -469,6 +563,9 @@ grep -n "shortcutPick" web/index.html
 
 # 4. Every flex:1 scroller declares min-height:0
 grep -c "min-height: 0" web/index.html    # expect 4: .view, .settings, .terminal-view, .term-content
+
+# 5. No focusable field is left below the 16px iOS zoom threshold — expect no input/textarea/select
+grep -nE "font-size: ?(1[0-5]|[0-9])px" web/index.html
 ```
 
 Manual, with the relay running:
@@ -481,18 +578,22 @@ Manual, with the relay running:
 | M4 | Open Settings with a long panel at 375×600 | Settings scrolls internally, page does not |
 | M5 | Open Settings, then open a pane | Settings hidden, terminal shown, nothing stacked |
 | M6 | Open Timeline, then open a pane, then close it | Agent list returns; no residual timeline |
-| M7 | Mobile 390×844, open a pane | App header gone; status dot visible in term header; ~130px more terminal |
+| M7 | Mobile 390×844, open a pane | App header gone; status dot visible in term header; ~95px more terminal |
 | M8 | Same, open keys dock and quick dock | Composer and dock fully on screen, nothing clipped |
 | M9 | Same, raise the on-screen keyboard | Composer sits directly above the keyboard |
 | M10 | Paired pane with a stale reason wrapping to a second line | Nothing clips |
-| M11 | Pane gear → A− to 9px, reload, reopen the pane | 9px persists; no flash of 13px |
-| M12 | A− at 9px, A+ at 24px | Respective button disabled |
-| M13 | 9px, then check headers, nav keys, composer, agent list | Only the terminal text changed; hit areas ≥44px |
+| M11 | Pane gear → A− to 6px, reload, reopen the pane | 6px persists; no flash of 13px |
+| M12 | A− at 6px, A+ at 24px | Respective button disabled |
+| M13 | 6px, then check headers, nav keys, composer, agent list | Only the terminal text changed; hit areas ≥44px |
 | M14 | 380px-wide viewport | No control clipped or overlapping |
 | M15 | Desktop terminal open → click Settings, then Timeline | Terminal closes before selected panel appears; views never stack |
 | M16 | Tap `P`, pick a prompt; then open keys dock and tap `P` | Text inserted at cursor, dock closes; opening one dock closes the other two |
 | M17 | Open the gear menu, then click the terminal body; then reopen and press Escape; then reopen and close the pane | Menu dismisses in all three cases |
 | M18 | Tap the pane title | Nothing happens — it is plain text; rename lives in the gear menu |
+| M19 | Empty composer; then type six lines; then clear it | Two rows at rest, grows to the six-row ceiling, returns to two rows — never one |
+| M20 | iPhone Safari: focus the composer, then the command-palette search, then a Settings field | No zoom, no horizontal shift; both page edges stay on screen |
+| M21 | Open three panes, return to the landing page | Up to five recent chips above the agent list; each opens its pane |
+| M22 | Kill a recent pane in herdr, then reload the landing page | Its chip is gone, not inert |
 
 ## Acceptance criteria
 
@@ -501,14 +602,16 @@ Manual, with the relay running:
    scrolling (M1–M4, M7, M8).
 3. Opening a pane hides the agent list, settings, and timeline; closing restores the agent list only
    (M5, M6).
-4. Mobile terminal view gains ≈130px of content height; desktop keeps its app header (M7).
+4. Mobile terminal view gains ≈95px of content height; desktop keeps its app header (M7).
 5. The instruction `<select>` and its CSS are gone; the `P` button opens the prompts dock, entries
    insert at the cursor without sending, and the dock closes on selection (M7, M16, S4.1–S4.5).
-6. Text size lives in the pane gear menu, persists across reloads, clamps to 9–24, disables at the
+6. Text size lives in the pane gear menu, persists across reloads, clamps to 6–24, disables at the
    bounds, and resizes the terminal content and nothing else (M11–M13).
 7. Rename is a gear-menu item; the pane title is inert text; the menu dismisses on outside click,
    Escape, and pane close (M17, M18).
-8. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
+8. Focusing any field on iOS Safari does not zoom or shift the page (M20).
+9. The landing page offers up to five live recent panes as one-tap chips (M21, M22).
+10. `node --test tests/test_pairs.js` and the unittest suite pass unchanged.
 
 Spec items S6 (fullscreen) and S7 (PWA installability) are **not** in scope here and are not
 acceptance criteria for this phase.

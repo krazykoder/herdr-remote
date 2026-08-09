@@ -78,6 +78,24 @@ present in the terminal header, and it reflects the same three states as the app
 **S3.4** Chrome padding is reduced per the architecture doc §4; no control may become clipped or
 overlap another at any supported width, including the 380px breakpoint.
 
+**S3.5** The composer occupies two rows: `/`, the text area, and send on the first; the prompts,
+quick-actions and keys triggers on the second. The text area is two rows tall when empty, grows with
+its content to a six-row ceiling, and never collapses back to one row.
+
+> Rationale: five controls sharing one row left the text area barely wider than the buttons on a
+> phone. The second row costs ~36px once and is not paid again while typing.
+
+**S3.6** No focusable field — `input`, `textarea`, `select` — renders below 16px, in any view, at any
+breakpoint. iOS Safari zooms the layout viewport when a field under that threshold takes focus,
+pushing the page edges outside the visual viewport with no way back. The floor is a platform
+constraint, so it is expressed once as a base rule that no later rule may undercut, rather than
+repeated per field. Non-focusable elements — buttons, labels, chips — are unaffected and keep their
+sizes.
+
+**S3.7** The landing page lists up to five recently opened panes as chips, one tap from the pane,
+above the agent list and below the Projects strip when there is one. Entries whose pane is no longer
+live are omitted rather than shown inert, and the strip is absent only when none survives.
+
 ## S4 — Prompt shortcuts
 
 **S4.1** The dedicated instruction row is removed. The prompt list opens from a **`P` button in the
@@ -100,9 +118,10 @@ opening one closes the others. At most one is open at a time.
 terminal header, immediately right of the refresh button**, not in app Settings. It is where the text
 it resizes is, and it costs no space while closed.
 
-**S5.2** Range 9–24px inclusive, step 1, default 13 — the size the terminal already rendered at.
+**S5.2** Range 6–24px inclusive, step 1, default 13 — the size the terminal already rendered at.
 Values outside the range are clamped, not rejected. A stored non-numeric value falls back to the
-default.
+default. 6px is below comfortable reading and is offered deliberately: it buys a wide-output pane a
+readable line count on a phone, and nothing else in the app follows it down (S5.3).
 
 **S5.3** The size applies to the terminal content **only**. No other element changes size: not the
 headers, the composer, the docks, the keys, the agent list, or Settings. Touch targets are unaffected

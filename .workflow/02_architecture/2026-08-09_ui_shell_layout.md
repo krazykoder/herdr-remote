@@ -102,27 +102,29 @@ re-litigated per-feature:
 
 ```
 ┌──────────────────────────────────────┐ ← viewport top
-│ ‹ ● claude · herdr-remote     [⛶][↻] │  36px  ← dot moves here, app header hidden
+│ ‹ ● claude · herdr-remote  [⛶][↻][⚙] │  36px  ← dot moves here, app header hidden
 ├──────────────────────────────────────┤
 │                                      │
 │  $ pytest tests/                     │
 │  ..........                          │
 │  10 passed in 2.1s                   │
 │                                      │
-│  › _                                 │  flex  (+~130px vs before)
+│  › _                                 │  flex  (+~95px vs before)
 │                                      │
 │                                      │
 │                                      │
 │                                      │
 ├──────────────────────────────────────┤
-│ [/] [ Type…            ] [⚡][⌨][➤]  │  50px  ← ⚡ dock holds Instructions
+│ [/] [ Type…              ] [➤]       │  86px  ← two rows, see spec S3.5
+│ [P]        [⚡]        [⌨]           │
 └──────────────────────────────────────┘ ← viewport bottom, composer fully on screen
    no document scroll · url bar: see §5
 ```
 
-Reclaimed: 69 (app header) + 34 (instruction row) + ~30 (padding trim) ≈ **130px**, roughly six extra
-terminal lines at the default size. The ⛶ control is P5; after P4 the term-header reads
-back · dot · title · refresh.
+Reclaimed: 69 (app header) + 34 (instruction row) + ~30 (padding trim), less ~36 given back to the
+composer's second row ≈ **95px**, roughly four extra terminal lines at the default size. The ⛶
+control is P5; after P4 the term-header reads back · dot · title · refresh · gear, the gear holding
+rename and the pane's text-size control.
 
 ### 4.3 Mobile — agent list
 
