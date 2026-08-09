@@ -1132,6 +1132,13 @@
       { label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
     ];
 
+    // codex invokes its prompts with $; every other agent uses /. Only a line-leading slash is
+    // rewritten, so a path or URL inside the shortcut text is left alone. Keyed off the pane the
+    // text is going into, not the one it came from.
+    function agentSlash(text, agent) {
+      return agent === 'codex' ? text.replace(/^\//gm, '$') : text;
+    }
+
     // A corrupt blob must not brick the terminal view — it loads as no pairs at all.
     function parsePairs(raw) {
       let data;
@@ -1679,6 +1686,9 @@
 
     function paneLabel(a) { return a.label || a.project || a.agent; }
 
+    // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.
+    function agentOf(paneId) { return (agents.find(a => a.pane_id === paneId) || {}).agent; }
+
     // One display form everywhere: project · agent · name, e.g. "charts.TS · claude · Architect 1".
     // Each part is dropped when absent, so an unnamed pane degrades to "charts.TS · claude" rather
     // than showing an empty segment or repeating the project as its own name.
@@ -1879,7 +1889,9 @@
         return;
       }
       const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
-      const instruction = shortcutIndex >= 0 ? SHORTCUTS[shortcutIndex].text : '';
+      // The partner's agent, not this pane's: the instruction is about to be typed over there.
+      const instruction = shortcutIndex >= 0
+        ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
       const out = composeTransfer(instruction, mine.role, transferSelection);
       if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
       closeTransfer();
@@ -1896,7 +1908,7 @@
 
     function insertShortcut(i) {
       const input = document.getElementById('termInput');
-      const text = SHORTCUTS[i].text;
+      const text = agentSlash(SHORTCUTS[i].text, agentOf(activePane));
       const at = input.selectionStart ?? input.value.length;
       input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
       input.selectionStart = input.selectionEnd = at + text.length;

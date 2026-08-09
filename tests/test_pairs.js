@@ -21,14 +21,14 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'recentFingerprint', 'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
+               'recentFingerprint', 'agentSlash', 'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
 // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
-       pairCandidates, composeTransfer, recentFingerprint, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       pairCandidates, composeTransfer, recentFingerprint, agentSlash, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -196,6 +196,35 @@ test('a payload exactly at the cap is allowed', () => {
   const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX - overhead));
   assert.equal(out.error, undefined);
   assert.equal(out.text.length, SEND_TEXT_MAX);
+});
+
+// --- agent-specific slash prefix ---
+
+test('codex gets $ for every line-leading slash', () => {
+  assert.equal(agentSlash('/ponytail\n/caveman', 'codex'), '$ponytail\n$caveman');
+});
+
+test('every other agent keeps /', () => {
+  for (const a of ['claude', 'pi', undefined, '']) {
+    assert.equal(agentSlash('/ponytail\n/caveman', a), '/ponytail\n/caveman');
+  }
+});
+
+test('a slash inside a line is never rewritten', () => {
+  // The Architect shortcut carries a path; rewriting mid-line would corrupt it.
+  const text = '/ponytail\n@.agent/prompts/System_Prompt_2_Architect.md\nsee http://x/y';
+  assert.equal(agentSlash(text, 'codex'),
+    '$ponytail\n@.agent/prompts/System_Prompt_2_Architect.md\nsee http://x/y');
+});
+
+test('text with no slash commands is untouched for codex', () => {
+  assert.equal(agentSlash(SHORTCUTS[0].text, 'codex'), SHORTCUTS[0].text);
+});
+
+test('transfer picks the prefix from the destination pane, not the source', () => {
+  const start = HTML.indexOf('function doTransfer');
+  const end = HTML.indexOf('function insertShortcut', start);
+  assert.match(HTML.slice(start, end), /agentSlash\(SHORTCUTS\[shortcutIndex\]\.text, agentOf\(partner\.pane_id\)\)/);
 });
 
 // --- constants ---
