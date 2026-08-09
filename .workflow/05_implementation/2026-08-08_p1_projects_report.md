@@ -1,7 +1,7 @@
 # Implementation Report — P1: Projects and Native Layout
 
 **Date:** 2026-08-08
-**Branch:** `feat/projects` (3 code commits: `51aa010`, `5b7daef`, `558a34d`)
+**Branch:** `feat/projects` (two code commits: `51aa010`, `5b7daef`; contract docs: `558a34d`)
 **Spec:** `.workflow/03_specs/2026-08-08_projects_spec.md`
 **Plan:** `.workflow/04_implementation_plans/2026-08-08_p1_projects.md`
 **Architecture:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs.md`
@@ -144,7 +144,7 @@ for exactly this reason.
 
 | # | Item | Blocks | Owner |
 |---|---|---|---|
-| 1 | **P3 bracketed-paste preflight is INCONCLUSIVE.** Both attempts read empty — the scratch pane exited, the existing pane produced no visible text. INCONCLUSIVE is not FAIL; the sending path cannot be chosen from it. Retry needs a visible, focused pane. The FAIL fallback also requires adding `M-Enter` to `SAFE_KEYS`, so a wrong call costs a protocol change, not a constant. | P3 | User |
+| 1 | **P3 bracketed-paste preflight is INCONCLUSIVE.** Both attempts read empty — the scratch pane exited, the existing pane produced no visible text. INCONCLUSIVE is not FAIL; the sending path cannot be chosen from it. Retry needs a visible, focused pane. The FAIL fallback also requires adding `M-Enter` to `SAFE_KEYS`, so a wrong call costs a protocol change, not a constant. | P3 | P3 implementer |
 | 2 | **Relay wedge, cause unproven.** One instance hung with the event loop blocked acquiring a threading lock; HTTP and WebSocket both stopped, and `SIGTERM` could not kill it because the handler runs on the blocked loop. Ruled out: slow herdr (0.00s), dependency skew (identical versions under `uv run` and the venv), log rotation (7KB, never rotated). Pre-existing — nothing in P1 touches threads, locks, or logging, and the pre-P1 relay ran three hours before being killed. **If it recurs, do not kill it**; a live `sample` while its threads exist would settle the cause. | nothing | — |
 | 3 | **`start.sh` misreports startup failures.** It prints "Check if port 8375 is in use" for *any* death within 2s, including a fail-closed config `exit(1)` whose real message goes to stderr. This actively misled diagnosis once already. | nothing | — |
 | 4 | Promotion of these docs from `07_dev_notes/` to `02_architecture/` | — | User |
@@ -173,10 +173,10 @@ usage: herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID]
 
 Because argv is required, the relay must always supply it. It supplies a fixed `-- <name>`
 derived from the already-allowlisted agent name, so D4 holds: no argv, env, cwd, host, tab
-ID, or prompt text reaches the CLI from a client. The consequence worth stating plainly is
-that the relay will exec whatever binary matches an allowlisted name on the target host's
-PATH — **`HERDR_START_AGENTS` is doing all of the security work**, which is the intended
-design, not an oversight.
+ID, or prompt text reaches the CLI from a client. The relay will exec whatever binary matches
+an allowlisted name on the target host's PATH. `HERDR_START_AGENTS` defines that executable
+boundary; `HERDR_ENABLE_WRITE_EXT` plus the mandatory token defines who may invoke it. Both
+are required for P2's network process-spawn surface.
 
 Nothing left to discover for P2. Remaining work is new code: the `start_agent` handler,
 `HERDR_START_AGENTS`, the `HERDR_ENABLE_WRITE_EXT` + mandatory-token gate, `start_options`
