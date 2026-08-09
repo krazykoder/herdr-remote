@@ -29,7 +29,11 @@ Each entry has a unique `id` matching `^[a-z0-9_-]{1,64}$`, non-empty `label` �
 
 For every live pane, relay matches same-host configured roots using `cwd == root` or `cwd.startswith(root.rstrip("/") + "/")`; longest root wins. Thus local agents started from a configured root or a subdirectory appear under that Project; unmatched panes stay visible as Other sessions. Matching is lexical: no git, worktree, or symlink resolution. Plain `startswith` is wrong — it groups `/code/x-old` under `/code/x`.
 
-Full `agents` snapshots omit `project_id` for an unmatched pane. Incremental `agent_update` messages instead carry `project_id: null` when a pane becomes unmatched. This distinction is required: `apply_agent_message:49` merges updates with `dict.update`, so omitting the field preserves an old Project assignment; `null` clears it. `project_id` is optional in `AGENT_EVENT_FIELDS`, never required; resolve it again after enriching the event with cached pane state.
+**Only full `agents` snapshots carry grouping (D10).** An unmatched pane omits `project_id` entirely — not `null`, not `""`. `complete_agent_update_message:24` treats an empty value as "keep the previous value" for tracked fields and `apply_agent_message:49` merges with `dict.update`, so `null` in a snapshot is indistinguishable from "unchanged".
+
+Incremental `agent_update` messages never carry `project_id`: the field stays **out of** `AGENT_EVENT_FIELDS`, so an update cannot disturb grouping, and the browser keeps the last snapshot's value until the next snapshot replaces the list wholesale (`apply_agent_message:36`). Worst-case staleness is one `POLL_INTERVAL`.
+
+Do **not** resolve Projects inside `event_push`. `agent_update_message:13-16` normalizes `host` against `socket.gethostname()`, so events identify a pane by hostname while Projects are keyed by `"local"` or the SSH target from `HERDR_REMOTES`; for remote panes those never match, and clearing on a failed resolve would replace 2s of staleness with a persistent wrong answer.
 
 ## 3. Layout and browser behaviour
 
@@ -92,7 +96,8 @@ On every poll, recompute pane IDs present on more than one host. For these IDs, 
 | # | Given | Then |
 |---|---|---|
 | A1 | Pane cwd equals or is below configured root | Correct `project_id`; longest root wins |
-| A2 | Pane cwd is sibling prefix/wrong host, or update becomes unmatched | Snapshot omits `project_id`; incremental update uses `null` to clear prior grouping; shown as Other sessions |
+| A2 | Pane cwd is sibling prefix or wrong host | Snapshot omits the `project_id` key entirely; pane shown under Other sessions |
+| A2b | An `agent_event` arrives for a grouped pane | The broadcast `agent_update` contains no `project_id`; the browser's grouping is unchanged |
 | A3 | Zero-session configured Project | Visible card with “No sessions” |
 | A4 | Config disabled | Existing workspace/tab navigation and `create_tab` remain available |
 | A5 | Fresh client connects | Receives `projects`, then cached `agents` |

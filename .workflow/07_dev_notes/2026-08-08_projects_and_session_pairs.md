@@ -24,7 +24,7 @@ No `.codegraph/` or `graphify-out/` in this repo; the map below was built by rea
 | `relay/herdr_relay.py:437` `handle_client` | Client command switch and connection setup | `[MODIFY]` send Projects and handle `start_agent` |
 | `relay/herdr_relay.py:523` `send_text` length guard | Caps client text at 1000 chars | `[MODIFY]` raise cap (§6.4) |
 | `relay/herdr_relay.py:530` `create_tab` | Native workspace layout control | `[MODIFY]` resolve its host and retain it |
-| `relay/agent_state.py` | Snapshot/merge helpers | `[MODIFY]` add `project_id` to field tuple |
+| `relay/agent_state.py` | Snapshot/merge helpers | **No change** — `project_id` stays out of `AGENT_EVENT_FIELDS` (D10) |
 | `web/index.html:427-511` | Project, workspace and tab navigation | `[MODIFY]` add Projects above existing workspace/tab controls |
 | `web/index.html:531-573` | Terminal view, `sendText` | `[MODIFY]` selection, shortcuts, transfer UI |
 | `relay/herdr_tui.py`, `relay/herdr_telegram.py`, `herdi-mac/`, `herdi-ios/` | Consume `agents` snapshot | **No change** — additive fields, unknown types ignored |
@@ -76,7 +76,11 @@ For every live pane, relay matches `host` and `cwd` against configured Projects.
 - Agent started locally from subdirectory of configured Project root: **grouped under that Project**; longest root wins.
 - Agent outside every configured root: shown under **Other sessions**, never hidden.
 
-An unmatched pane in a full snapshot carries **no `project_id` field**. An incremental `agent_update` for a pane that becomes unmatched carries `project_id: null` instead. This difference matters: `apply_agent_message:49` merges an update with `dict.update`, so an omitted key keeps stale Project state while `null` clears it. Resolve the Project after enriching the event from cached pane state; `project_id` remains optional, never a required event field. The frontend buckets a missing or null `project_id` into **Other sessions**.
+**Grouping is derived from polled snapshots only (D10).** An unmatched pane's snapshot entry carries **no `project_id` field** — the key is absent, not `null` or `""`. `complete_agent_update_message:24` treats an empty value as "keep the previous value" for tracked fields, and `apply_agent_message:49` merges with `dict.update`, so a `null` in a *snapshot* would be indistinguishable from "unchanged". Absent is unambiguous. The frontend buckets every agent without a `project_id` into **Other sessions**.
+
+Incremental `agent_update` messages carry no `project_id` at all — the field stays out of `AGENT_EVENT_FIELDS`. An update therefore never touches the browser's grouping, which keeps the value from the last snapshot until the next one replaces it wholesale (`apply_agent_message:36`). Maximum staleness is one `POLL_INTERVAL`, 2 seconds, and only for the rare case of an agent `cd`-ing across a configured root.
+
+The alternative — resolving the Project inside `event_push` and emitting `project_id: null` to clear stale grouping — is correct as a merge rule and wrong as a design, because the host it would resolve against is untrustworthy. `agent_update_message:13-16` normalizes `host` by comparing it to `socket.gethostname()`, so a pushed event describes a pane by *hostname*, while configured Projects are keyed by `"local"` or the **SSH target string** from `HERDR_REMOTES`. For any remote pane those do not match, the resolve returns nothing, and the `null` then clears a grouping that was correct — turning a 2-second staleness window into a persistent wrong answer, on every event. Keeping the field out of the event path removes the trap and the mechanism together.
 
 The path-boundary test is exact-or-descendant: `cwd == root` or `cwd.startswith(root + "/")`. Plain `startswith` is wrong — it groups `/code/herdr-remote-old` under `/code/herdr-remote`.
 
@@ -367,6 +371,7 @@ Logged in `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs_decision
 | D7 | Projects render in configured file order and never reorder by activity |
 | D8 | Projects contain native workspaces/tabs; pairs contain agent panes; Start session has New workspace/New tab/Split placements |
 | D9 | Start role names the tab/pane only; prompts use explicit multiline-composer shortcuts |
+| D10 | Grouping is snapshot-derived only; `project_id` never travels on an incremental `agent_update` |
 
 ---
 
