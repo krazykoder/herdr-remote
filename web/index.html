@@ -83,6 +83,10 @@
       display: flex;
       flex-direction: column;
       width: 100%;
+      /* Kills double-tap-to-zoom, which fires on a mistimed second tap on a key or dock button and
+         leaves the pane zoomed. Panning and pinch-zoom are untouched — this is not user-scalable=no,
+         which takes zoom away from the user entirely. */
+      touch-action: manipulation;
     }
 
     .header {

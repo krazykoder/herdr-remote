@@ -98,6 +98,12 @@ constraint, so it is expressed once as a base rule that no later rule may underc
 repeated per field. Non-focusable elements — buttons, labels, chips — are unaffected and keep their
 sizes.
 
+**S3.10** Double-tap-to-zoom is disabled page-wide via `touch-action: manipulation`. A mistimed second
+tap on a key or dock button otherwise leaves the pane zoomed with no obvious way back. Panning and
+pinch-zoom stay available: the app never suppresses the user's own zoom, so `user-scalable=no` and
+`maximum-scale=1` are rejected — the first is ignored by modern iOS Safari anyway, and where either
+is honoured it removes zoom from people who need it.
+
 **S3.7** The landing page lists up to five recently opened panes in a `Recents` section **below** the
 agent list, as a vertical list using the same section header and the same cards as the list above —
 not a chip strip. Entries whose pane is no longer live are omitted rather than shown inert, and the
