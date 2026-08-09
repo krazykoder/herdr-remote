@@ -7,6 +7,25 @@
 import asyncio, json, logging, os, re, shutil, signal, socket, subprocess, time
 
 from agent_state import complete_agent_update_message
+from projects import (
+    ProjectConfigError,
+    ambiguous_pane_ids,
+    annotate_agents,
+    load_projects,
+    public_projects,
+    resolve_workspace_remote,
+)
+from start_agent import (
+    ROLES,
+    StartAgentConfigError,
+    agent_start_args,
+    dig,
+    load_start_agents,
+    pane_rename_args,
+    tab_create_args,
+    validate_start_request,
+    workspace_create_args,
+)
 
 try:
     from websockets.asyncio.server import serve
@@ -56,6 +75,30 @@ PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 # Remote hosts: comma-separated SSH targets
 REMOTES = [r.strip() for r in os.environ.get("HERDR_REMOTES", "").split(",") if r.strip()]
 
+# Configured Projects: read once at startup, fail closed. Unset means Projects are disabled.
+try:
+    PROJECTS = load_projects(os.environ.get("HERDR_PROJECTS_FILE", ""), valid_hosts=REMOTES)
+except ProjectConfigError as e:
+    print(f"herdr-remote: bad Projects config: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Write extensions (P2 start_agent) spawn processes on this machine and on any configured
+# SSH target. The relay binds 0.0.0.0, so enabling them without a shared secret would hand
+# process spawn to anyone on the LAN. Refuse to boot rather than run that way.
+WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
+if WRITE_EXT and not AUTH_TOKEN:
+    print(
+        "herdr-remote: HERDR_ENABLE_WRITE_EXT=1 requires HERDR_RELAY_TOKEN to be set",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+try:
+    START_AGENTS = load_start_agents(os.environ.get("HERDR_START_AGENTS", ""))
+except StartAgentConfigError as e:
+    print(f"herdr-remote: bad start agent allowlist: {e}", file=sys.stderr)
+    sys.exit(1)
+
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
 SUBAGENT_OPTIONS = ["approve all pending", "configure individually", "exit (cancel subagents)"]
 CHROME_RE = re.compile(
@@ -72,6 +115,8 @@ event_queue = asyncio.Queue()
 pane_remote_map = {}
 known_panes = set()
 agent_cache = {}
+ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
+latest_agents = []  # last full snapshot, replayed to each client on connect
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
 SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "Up", "Down", "Left", "Right", "BSpace"} | {
@@ -202,7 +247,7 @@ def get_all_agents():
     agents = get_agents_from_host(remote=None)
     for remote in REMOTES:
         agents.extend(get_agents_from_host(remote=remote))
-    return agents
+    return annotate_agents(agents, PROJECTS)
 
 
 def read_pane(pane_id, remote=None):
@@ -244,8 +289,85 @@ async def poll_loop():
         await asyncio.sleep(POLL_INTERVAL)
 
 
+def pane_guard(pane_id):
+    """Return an error string if this pane may not be addressed, else None.
+
+    Bare pane IDs are per-server counters, so the same ID on two hosts routes to
+    whichever was polled last. Refuse rather than guess (D6); clears within one poll.
+    """
+    if pane_id not in known_panes:
+        return "unknown pane_id"
+    if pane_id in ambiguous_panes:
+        return "ambiguous pane_id (same id on multiple hosts)"
+    return None
+
+
+def _herdr_json(*args, remote=None):
+    """Run a herdr command that returns JSON. Returns (data, error)."""
+    where = " ".join(args[:2])
+    try:
+        result = run_herdr_result(*args, remote=remote)
+    except Exception as e:
+        return None, f"herdr {where} failed: {e}"
+    if result.returncode != 0:
+        return None, f"herdr {where} exited {result.returncode}"
+    try:
+        return json.loads(result.stdout), None
+    except json.JSONDecodeError:
+        return None, f"herdr {where} returned malformed JSON"
+
+
+def start_agent_exec(plan):
+    """Run a validated start plan. Returns (pane_id, error).
+
+    Blocking; call through asyncio.to_thread. Never claims success after a partial
+    operation — a created workspace or tab may remain as empty native layout, but no
+    session is reported unless the agent actually started (spec §3).
+    """
+    remote = plan["remote"]
+    placement = plan["placement"]
+
+    if placement == "new_workspace":
+        data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
+        if err:
+            return None, err
+        workspace_id = dig(data, "result", "workspace", "workspace_id")
+        if not workspace_id:
+            return None, "workspace create returned no workspace_id"
+        args = agent_start_args(plan["name"], plan["cwd"], "workspace", workspace_id)
+    elif placement == "new_tab":
+        data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
+        if err:
+            return None, err
+        tab_id = dig(data, "result", "tab", "tab_id")
+        if not tab_id:
+            return None, "tab create returned no tab_id"
+        args = agent_start_args(plan["name"], plan["cwd"], "tab", tab_id)
+    else:  # split — the source pane's tab already exists
+        args = agent_start_args(plan["name"], plan["cwd"], "tab", plan["tab_id"], split=True)
+
+    data, err = _herdr_json(*args, remote=remote)
+    if err:
+        return None, err
+    pane_id = dig(data, "result", "agent", "pane_id")
+    if not pane_id:
+        return None, "agent start returned no pane_id"
+
+    try:
+        rename = run_herdr_result(*pane_rename_args(pane_id, plan["label"]), remote=remote)
+    except Exception as e:
+        return None, f"agent started as {pane_id} but pane rename failed: {e}"
+    if rename.returncode != 0:
+        return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
+    return pane_id, None
+
+
 async def _poll_once():
+        global latest_agents
         agents = get_all_agents()
+        latest_agents = agents
+        ambiguous_panes.clear()
+        ambiguous_panes.update(ambiguous_pane_ids(agents))
         # Always broadcast (even empty list) so clients stay in sync
         for a in agents:
             pane_remote_map[a["pane_id"]] = a.get("remote")
@@ -461,6 +583,17 @@ async def handle_client(ws):
     clients.add(ws)
     connected_at = time.monotonic()
     try:
+        # Preserve the legacy wire behavior when Projects are disabled. When enabled,
+        # Projects must arrive before the cached snapshot so the client can group it.
+        if PROJECTS:
+            await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
+            # Presence of start_options is the browser's feature gate. Without Projects a
+            # start can never resolve a cwd, so the control would only ever error (spec §3).
+            if WRITE_EXT:
+                await ws.send(json.dumps({
+                    "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+                }))
+            await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -469,8 +602,9 @@ async def handle_client(ws):
             msg_type = msg.get("type")
             if msg_type == "respond":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
                 if text.strip().lower() not in SAFE_RESPONSES:
@@ -484,8 +618,9 @@ async def handle_client(ws):
                 event_queue.put_nowait(msg)
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 lines = msg.get("lines", "30")
                 remote = pane_remote_map.get(pane_id)
@@ -493,8 +628,9 @@ async def handle_client(ws):
                 await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id, "content": content}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 keys = msg.get("keys", [])
                 if not all(k in SAFE_KEYS for k in keys):
@@ -516,8 +652,9 @@ async def handle_client(ws):
                 await ws.send(json.dumps({"type": "command_result", "command": "send_keys", "ok": True}))
             elif msg_type == "send_text":
                 pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
                 if not text or len(text) > 1000:
@@ -529,13 +666,46 @@ async def handle_client(ws):
                 run_herdr("pane", "send-text", pane_id, text, remote=remote)
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
-                if workspace_id:
-                    log.info("Create tab from %s (%s): workspace=%s", ip, device, workspace_id)
-                    audit("create_tab", ip, device, "", f"workspace={workspace_id}")
-                    run_herdr("tab", "create", "--workspace", workspace_id, "--focus")
-                    await ws.send(json.dumps({"type": "tab_created", "ok": True}))
-                else:
+                if not workspace_id:
                     await ws.send(json.dumps({"type": "error", "message": "workspace_id required"}))
+                    continue
+                # workspace_id is its own ID space and collides like pane_id does, so it
+                # gets its own guard — the pane ambiguity set says nothing about it (D6).
+                remote, ws_err = resolve_workspace_remote(latest_agents, workspace_id)
+                if ws_err:
+                    await ws.send(json.dumps({"type": "error", "message": ws_err}))
+                    continue
+                log.info("Create tab from %s (%s): workspace=%s host=%s", ip, device, workspace_id, remote or "local")
+                audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
+                run_herdr("tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
+                await ws.send(json.dumps({"type": "tab_created", "ok": True}))
+            elif msg_type == "start_agent":
+                # The connection itself is already authenticated when a token is set
+                # (process_request rejects the handshake), and the relay refuses to boot
+                # with WRITE_EXT and no token — so reaching here means both hold.
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
+                if start_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": start_err}))
+                    continue
+                detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
+                          f"placement={plan['placement']} host={plan['remote'] or 'local'}")
+                log.info("Start agent from %s (%s): %s", ip, device, detail)
+                audit("start_agent", ip, device, "", detail)
+                # Up to three herdr calls, each with a 15s timeout — off the event loop.
+                pane_id, exec_err = await asyncio.to_thread(start_agent_exec, plan)
+                if exec_err:
+                    log.warning("Start agent failed (%s): %s", detail, exec_err)
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": exec_err}))
+                    continue
+                log.info("Start agent ok: pane=%s label=%r", pane_id, plan["label"])
+                await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                          "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
                 if sub and sub not in push_subscriptions:
@@ -576,7 +746,17 @@ def start_mdns():
             addresses=[sock_mod.inet_aton(ip)], port=WS_PORT,
         )
         zc = Zeroconf()
-        threading.Thread(target=zc.register_service, args=(info,), daemon=True).start()
+
+        def register():
+            # A second relay on the same LAN takes the same service name. Without
+            # allow_name_change that raises inside this thread, and the traceback lands
+            # on stderr looking like a crash while the relay is in fact serving fine.
+            try:
+                zc.register_service(info, allow_name_change=True)
+            except Exception as e:
+                log.warning("mDNS registration failed: %s", e)
+
+        threading.Thread(target=register, daemon=True).start()
         log.info("mDNS registering at %s", ip)
         return zc, info
     except Exception as e:

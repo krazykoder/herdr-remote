@@ -1,5 +1,7 @@
-## Herdr remote workspace concept to add 
-8/8/2026 
+# Initial Notes — Workspace and Session Pair
+
+**Date:** 2026-08-08
+**Status:** Superseded by `2026-08-08_projects_and_session_pairs.md`
 
 - Workspace manager ->  by code root directory; currently the app lists out active agents in herdr which is grerat  
 - Agent manager already exits - integrate into workspace 

@@ -50,7 +50,15 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 ```bash
 # Run tests (tests/ has no __init__.py, so -t must point at it)
 .venv313/bin/python -m unittest discover -s tests -t tests
+
+# End-to-end: spawns real relays against a fake herdr on two simulated hosts.
+# Not picked up by discover — it binds a port, so run it deliberately.
+.venv313/bin/python tests/e2e/e2e_start_agent.py
 ```
+
+`tests/e2e/bin/` holds a fake `herdr` and a fake `ssh`. The fake ssh sets `HERDR_FAKE_HOST`
+and execs locally, which is what lets one machine present two hosts — the only way to
+reproduce the pane-ID and workspace-ID collisions the relay's guards exist for.
 
 External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only),
 `node`/`npx` (demo worker only).
@@ -119,6 +127,9 @@ cd herdi-ios && xcodegen generate
 | `HERDR_RELAY_PORT` | Relay WebSocket port (default: 8375) |
 | `HERDR_RELAY_TOKEN` | Optional shared secret for auth |
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
+| `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
+| `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Requires `HERDR_RELAY_TOKEN` or the relay refuses to boot |
+| `HERDR_START_AGENTS` | Comma-separated agent allowlist for Start session (default: `codex,claude,pi`) |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 
