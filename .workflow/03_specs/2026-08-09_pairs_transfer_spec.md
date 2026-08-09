@@ -4,7 +4,7 @@
 **Source:** `.workflow/07_dev_notes/2026-08-08_projects_and_session_pairs.md` §3, §6, §7.2
 **Depends on:** P1 (grouping, `pane_guard`). P2 is optional — a pair works on any two live panes.
 **Preflight:** Bracketed paste **PASS** (2026-08-09, dev-notes §6.4). One `send_text` carries the payload.
-**Status:** Draft.
+**Status:** Approved — implementation-ready.
 
 ---
 
@@ -26,7 +26,7 @@ The pair is a frontend binding, not a channel. It does not move text — §4 doe
 | Transfer: select → shortcut → prefill partner's composer | Auto-send, auto-relay, any A→B hop without a human |
 | Multiline composer, Ctrl/Cmd+Enter to send | Changing how `send_text` reaches herdr |
 | `send_text` cap 1000 → 4000 | Any other relay behaviour |
-| Instruction shortcut dropdown | Prompt copy authored by the implementer — paths only |
+| Instruction shortcut buttons | Prompt copy authored by the implementer — paths only |
 
 **One relay-side change exists in this phase: the cap constant.** Everything else is
 `web/index.html`. If a change requires a new message type, it is out of scope — say so and stop.
@@ -54,6 +54,28 @@ renameable; it appears in the payload attribution (§4.2) and never reaches a sh
 
 An unreadable or wrong-`version` value is discarded and replaced with an empty set. A corrupt blob
 must not brick the terminal view.
+
+### 3.1a Pair editor
+
+Each agent card has a **Pair** control. Clicking it opens a small Pair sheet listing live partner
+panes on the same host, excluding only the source pane. Existing pair membership is shown beside a
+candidate name. Selecting a partner shows three editable fields before save:
+
+- Pair name, default `<source label> ↔ <partner label>`, each falling back to its agent name when
+  the pane carries no label; required, maximum 64 characters.
+- Source display role, default source agent name.
+- Partner display role, default partner agent name.
+
+Save generates the pair `id` as `'p_' + Math.random().toString(36).slice(2, 10)`, captures both
+fingerprints, persists the pair, and closes the sheet. Not `crypto.randomUUID()` — it is `undefined`
+in a non-secure context, and the relay serves this page over plain HTTP on a LAN address, which is
+exactly how a phone reaches it. The ID only needs to be unique among at most 32 local entries. If either candidate already belongs to a pair, the sheet instead shows
+that pair's name and requires a replacement confirmation; saving removes the old pair before adding
+the new one. Cross-host candidates are not listed, and a 32-pair limit disables save with its reason.
+
+The terminal header shows the pair name and member roles for the active pane, with **Edit** (same
+sheet) and **Unpair** controls. Pairing is never inferred from workspace, tab, Project, role label,
+or agent name.
 
 ### 3.2 Health, recomputed from every snapshot
 
@@ -110,9 +132,9 @@ TRANSFER>>>
 `Proceed to implement` is indistinguishable from the user's own instruction. The delimiter gives
 the receiving agent an unambiguous boundary.
 
-If the selection itself contains `TRANSFER>>>` at line start, the transfer is refused with a
-message. Escaping or renaming the fence per payload is more machinery than the case deserves;
-refusing is honest and the user can trim the selection.
+If the selection itself contains either `<<<TRANSFER` or `TRANSFER>>>` at line start, the transfer
+is refused with a message. Escaping or renaming the fence per payload is more machinery than the
+case deserves; refusing is honest and the user can trim the selection.
 
 Over 4000 chars after composition: refuse in the frontend, naming the size. Do not silently
 truncate a diff, and do not chunk — a partial payload landing in an agent is worse than a refusal.
@@ -179,19 +201,20 @@ Removing any one of these is a security change, not a UX change. **No auto-relay
 | # | Check |
 |---|---|
 | A1 | Pin two same-host panes; pair persists across reload |
-| A2 | Cross-host pin refused at creation, with the reason shown |
+| A2 | Cross-host panes are absent from the candidate list, and a stored cross-host pair reads stale |
 | A3 | Pinning an already-paired pane confirms, then replaces |
 | A4 | Closing a member's pane turns the pair stale; **transfer control disappears** |
 | A5 | A pane ID reused by a different session (different `cwd`) reads stale, not healthy |
 | A6 | A `pane_id` duplicated across two hosts in one snapshot reads stale |
 | A7 | Transfer with a selection prefills the **partner's** composer and sends nothing |
 | A8 | The prefilled payload carries instruction, attribution, and fence, in that order |
-| A9 | A selection containing `TRANSFER>>>` is refused |
+| A9 | A selection containing either transfer fence sentinel is refused |
 | A10 | A composed payload over 4000 chars is refused, naming the size, and sends nothing |
 | A11 | Enter in the composer inserts a newline; Ctrl/Cmd+Enter sends |
 | A12 | A multi-line payload arrives in the agent's composer as one unsubmitted entry (preflight path) |
 | A13 | A corrupt `herdr_pairs` value loads as empty; the terminal view still works |
-| A14 | With no pairs configured, the UI is identical to P2 — no control, not a disabled one |
+| A14 | With no pairs configured, the terminal view is identical to P2 — no pair header, no transfer control, not disabled ones. The **Pair** control on agent cards is always present, since it is how the first pair is made |
+| A15 | A pane with no live same-host partner opens the Pair sheet to an empty list explaining why, and cannot save |
 
 Pair health, fingerprint matching, payload composition, and cap/fence refusal are pure functions
 and get unit tests. A12 needs one live pane.
