@@ -27,11 +27,13 @@ echo ""
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 
 # 1. Start relay
-if lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
-    echo "Error: port $WS_PORT is already in use:"
-    lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P
-    exit 1
-fi
+for port in "$WS_PORT" ${HERDR_EXTERNAL_PORT:+$HERDR_EXTERNAL_PORT}; do
+    if lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
+        echo "Error: port $port is already in use:"
+        lsof -iTCP:"$port" -sTCP:LISTEN -n -P
+        exit 1
+    fi
+done
 
 echo "Starting relay on :$WS_PORT..."
 uv run "$SCRIPT_DIR/herdr_relay.py" &
@@ -67,9 +69,20 @@ if command -v cloudflared >/dev/null 2>&1; then
         fi
     fi
 
+    # A tunnel must terminate on the token-required listener. Pointing it at the LAN port
+    # publishes whatever that port's policy is — and with HERDR_LAN_OPEN=1 that is no policy
+    # at all, i.e. an unauthenticated relay on the public internet.
+    TUNNEL_TARGET_PORT="${HERDR_EXTERNAL_PORT:-$WS_PORT}"
+    if [ -z "$HERDR_EXTERNAL_PORT" ] && [ "$HERDR_LAN_OPEN" = "1" ]; then
+        echo "Error: HERDR_LAN_OPEN=1 with no HERDR_EXTERNAL_PORT — refusing to tunnel to a"
+        echo "       token-free listener. Set HERDR_EXTERNAL_PORT (and HERDR_RELAY_TOKEN),"
+        echo "       or use start-local.sh for LAN-only."
+        exit 1
+    fi
+
     if [ "$TUNNEL_MODE" = "temp" ]; then
-        echo "Starting temp tunnel..."
-        cloudflared tunnel --url "http://localhost:$WS_PORT" 2>&1 &
+        echo "Starting temp tunnel to 127.0.0.1:$TUNNEL_TARGET_PORT..."
+        cloudflared tunnel --url "http://127.0.0.1:$TUNNEL_TARGET_PORT" 2>&1 &
         TUNNEL_PID=$!
         sleep 4
 

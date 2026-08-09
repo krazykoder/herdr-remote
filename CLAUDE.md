@@ -126,11 +126,14 @@ cd herdi-ios && xcodegen generate
 
 | Variable | Purpose |
 |----------|---------|
-| `HERDR_RELAY_PORT` | Relay WebSocket port (default: 8375) |
-| `HERDR_RELAY_TOKEN` | Optional shared secret for auth |
+| `HERDR_RELAY_PORT` | LAN listener port (default: 8375) |
+| `HERDR_RELAY_TOKEN` | Shared secret. Guards every listener unless `HERDR_LAN_OPEN=1` exempts the LAN one |
+| `HERDR_LAN_BIND` | LAN listener bind address (default: `0.0.0.0`). Set to one interface to stay off VPNs and container bridges |
+| `HERDR_LAN_OPEN` | `1` runs the LAN listener with no token — local mode. Explicit by design |
+| `HERDR_EXTERNAL_PORT` | Loopback-only second listener for a tunnel to terminate on. Always requires a token; unset = no external listener |
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
-| `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Requires `HERDR_RELAY_TOKEN` or the relay refuses to boot |
+| `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
 | `HERDR_START_AGENTS` | Comma-separated agent allowlist for Start session (default: `codex,claude,pi`) |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |

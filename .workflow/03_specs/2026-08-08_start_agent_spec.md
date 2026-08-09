@@ -33,6 +33,12 @@ On success, close dialog and wait for normal poll snapshot. Browser does not inv
 
 Relay sends this read-only options message immediately after the `projects` message on connect, and **only when `start_agent` will actually be accepted** — that is, `HERDR_ENABLE_WRITE_EXT=1` and `HERDR_RELAY_TOKEN` set (§7.3 of the architecture; the relay refuses to boot on the first without the second).
 
+> **Amended 2026-08-09.** The token half of that rule is repealed for one configuration:
+> `HERDR_LAN_OPEN=1` runs the LAN listener without a token by explicit choice, and `start_options`
+> then reaches an unauthenticated LAN client. The external listener is never exempt, and without
+> `HERDR_LAN_OPEN` the original refusal stands unchanged. See
+> `.workflow/02_architecture/2026-08-09_dual_listener_access.md`.
+
 ```json
 {"type":"start_options","agents":["codex","claude","pi"],"roles":["architect","reviewer","agent"]}
 ```

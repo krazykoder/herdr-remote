@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, json, logging, os, re, shutil, signal, socket, subprocess, time
+import asyncio, functools, hmac, json, logging, os, re, shutil, signal, socket, subprocess, time
 
 from agent_state import complete_agent_update_message
 from projects import (
@@ -66,6 +66,15 @@ WS_PORT = int(os.environ.get("HERDR_RELAY_PORT", "8375"))
 POLL_INTERVAL = 2
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
 
+# Two listeners, one process. cloudflared forwards tunnel requests from a local process, so at
+# this relay a tunnel request is indistinguishable from a LAN one — a single listener cannot be
+# token-free for the phone on the Wi-Fi without also being token-free for the internet. Separate
+# sockets make the boundary structural instead of a guess about the request.
+#   .workflow/02_architecture/2026-08-09_dual_listener_access.md
+LAN_BIND = os.environ.get("HERDR_LAN_BIND", "0.0.0.0")
+LAN_OPEN = os.environ.get("HERDR_LAN_OPEN", "") == "1"
+EXTERNAL_PORT = int(os.environ.get("HERDR_EXTERNAL_PORT", "0") or 0)
+
 # An agent TUI needs a beat after a bracketed paste before it treats Enter as submit; sent
 # immediately, the Enter is swallowed and the text just sits in the composer. Measured against
 # codex 0.145.0: 0 ms leaves it sitting, 100 ms submits, single-line and multi-line alike.
@@ -91,15 +100,43 @@ except ProjectConfigError as e:
     sys.exit(1)
 
 # Write extensions (P2 start_agent) spawn processes on this machine and on any configured
-# SSH target. The relay binds 0.0.0.0, so enabling them without a shared secret would hand
-# process spawn to anyone on the LAN. Refuse to boot rather than run that way.
+# SSH target, so an unauthenticated listener that reaches them is process spawn granted to the
+# network. Still fail-closed, but the rule is now per listener rather than global.
 WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
-if WRITE_EXT and not AUTH_TOKEN:
+
+# An externally reachable listener is never token-free. This is the one rule with no opt-out:
+# the external port exists to be published through a tunnel.
+if EXTERNAL_PORT and not AUTH_TOKEN:
     print(
-        "herdr-remote: HERDR_ENABLE_WRITE_EXT=1 requires HERDR_RELAY_TOKEN to be set",
+        "herdr-remote: HERDR_EXTERNAL_PORT requires HERDR_RELAY_TOKEN to be set",
         file=sys.stderr,
     )
     sys.exit(1)
+
+# Same port for both listeners would bind the LAN socket first and then fail on the external one,
+# leaving a half-configured relay whose surviving listener is the *open* one. Refuse instead.
+if EXTERNAL_PORT and EXTERNAL_PORT == WS_PORT:
+    print(
+        f"herdr-remote: HERDR_EXTERNAL_PORT and HERDR_RELAY_PORT are both {WS_PORT}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# P2 refused to boot on WRITE_EXT without a token, full stop. That rule is repealed only for a
+# LAN operator who says so in as many words, because HERDR_LAN_OPEN=1 is the whole of local mode.
+# Deriving it from anything else — the absence of a token, the presence of a tunnel — would let a
+# configuration change silently drop authentication from the port the whole network can reach.
+if WRITE_EXT and not AUTH_TOKEN and not LAN_OPEN:
+    print(
+        "herdr-remote: HERDR_ENABLE_WRITE_EXT=1 requires HERDR_RELAY_TOKEN, "
+        "or HERDR_LAN_OPEN=1 to run the LAN listener without one",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Per-listener authentication policy. The LAN listener keeps requiring a token whenever one is
+# set: adding a tunnel must never be the thing that opens the LAN port.
+LAN_REQUIRES_TOKEN = bool(AUTH_TOKEN) and not LAN_OPEN
 
 try:
     START_AGENTS = load_start_agents(os.environ.get("HERDR_START_AGENTS", ""))
@@ -455,13 +492,17 @@ async def event_push():
             await broadcast(update)
 
 
-async def process_request(connection, request):
-    """Handle HTTP POST on the same port as WebSocket."""
+async def process_request(connection, request, require_token=True):
+    """Handle HTTP POST on the same port as WebSocket.
+
+    `require_token` comes from the listener that accepted this connection, not from a global.
+    It gates the whole HTTP surface — the WebSocket upgrade, GET / serving the web app, and the
+    event-push endpoint below — because they all arrive through here.
+    """
     from websockets.http11 import Response
     from websockets.datastructures import Headers
 
-    # Token auth (if configured)
-    if AUTH_TOKEN:
+    if require_token:
         token = None
         for key, value in request.headers.raw_items():
             if key.lower() == "authorization":
@@ -472,7 +513,9 @@ async def process_request(connection, request):
             _, qs = request.path.split("?", 1) if "?" in request.path else (request.path, "")
             params = urllib.parse.parse_qs(qs)
             token = params.get("token", [None])[0]
-        if token != AUTH_TOKEN:
+        # compare_digest, not !=: the external listener is published to the internet through a
+        # tunnel, and a short-circuiting compare leaks the token prefix through timing.
+        if not (token and hmac.compare_digest(token, AUTH_TOKEN)):
             headers = Headers([("Content-Type", "text/plain")])
             return Response(401, "Unauthorized", headers, b"Invalid token\n")
 
@@ -564,7 +607,7 @@ async def process_request(connection, request):
     return Response(404, "Not Found", headers, b"not found\n")
 
 
-async def handle_client(ws):
+async def handle_client(ws, listener="lan"):
     remote_addr = ws.remote_address
     ip = remote_addr[0] if remote_addr else "unknown"
     ua = ws.request.headers.get("User-Agent", "unknown") if ws.request else "unknown"
@@ -587,6 +630,10 @@ async def handle_client(ws):
     elif "python" in ua_lower:
         device = "script"
 
+    # The listener is part of the identity of a write: on an open LAN listener the ip is the only
+    # other attribution there is, and "which door did this come through" is the first question
+    # anyone reading the audit log will ask.
+    device = f"{device}/{listener}"
     log.info("Client connected: ip=%s device=%s origin=%s", ip, device, origin or "-")
     clients.add(ws)
     connected_at = time.monotonic()
@@ -726,9 +773,12 @@ async def handle_client(ws):
                 run_herdr("tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
                 await ws.send(json.dumps({"type": "tab_created", "ok": True}))
             elif msg_type == "start_agent":
-                # The connection itself is already authenticated when a token is set
-                # (process_request rejects the handshake), and the relay refuses to boot
-                # with WRITE_EXT and no token — so reaching here means both hold.
+                # Reaching here proves write extensions are on — nothing more. It used to prove
+                # the connection was authenticated too, because the relay refused to boot with
+                # WRITE_EXT and no token; HERDR_LAN_OPEN=1 repeals that on the LAN listener by
+                # explicit choice. On an open listener the audit line below is the only record of
+                # who spawned what, and `ip` is the only attribution available.
+                # See .workflow/02_architecture/2026-08-09_dual_listener_access.md
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": "write extensions disabled"}))
@@ -790,6 +840,9 @@ class UDPPlugin(asyncio.DatagramProtocol):
 
 
 def start_mdns():
+    # Only the LAN listener is advertised — a loopback port is no use to anything on the network.
+    # Note this actively broadcasts an open listener when HERDR_LAN_OPEN=1: obscurity is not part
+    # of the threat model, HERDR_LAN_BIND is.
     try:
         from zeroconf import Zeroconf, ServiceInfo
         import socket as sock_mod
@@ -825,17 +878,42 @@ async def main():
         await loop.create_datagram_endpoint(UDPPlugin, local_addr=("127.0.0.1", 8376))
     except OSError:
         log.warning("UDP 8376 in use, plugin push disabled")
+    # One poll loop and one event pump, whatever the listener count: both servers hand work to
+    # the same handle_client and read the same cached state.
     asyncio.create_task(poll_loop())
     asyncio.create_task(event_push())
-    server = await serve(handle_client, "0.0.0.0", WS_PORT, process_request=process_request)
+
+    servers = [await serve(
+        functools.partial(handle_client, listener="lan"), LAN_BIND, WS_PORT,
+        process_request=functools.partial(process_request, require_token=LAN_REQUIRES_TOKEN),
+    )]
+    log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s",
+             LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none")
+    if LAN_OPEN:
+        log.warning("HERDR_LAN_OPEN=1: %s:%d accepts writes%s from any peer that can reach it",
+                    LAN_BIND, WS_PORT, " and agent starts" if WRITE_EXT else "")
+
+    if EXTERNAL_PORT:
+        # Loopback only, always token: this is the port a tunnel is pointed at, and it must not
+        # be reachable from the network on its own.
+        servers.append(await serve(
+            functools.partial(handle_client, listener="external"), "127.0.0.1", EXTERNAL_PORT,
+            process_request=functools.partial(process_request, require_token=True),
+        ))
+        log.info("herdr-remote external listener on 127.0.0.1:%d auth=token", EXTERNAL_PORT)
+        # The relay cannot see the cloudflared config, and pointing the tunnel at the LAN port
+        # would publish an unauthenticated relay to the internet. Print the line it should hold,
+        # so a wrong one is visible next to the right one at every boot.
+        log.info("  tunnel ingress must read: service: http://127.0.0.1:%d", EXTERNAL_PORT)
+
     hosts = ["local"] + REMOTES
-    log.info("herdr-remote relay on :%d (WebSocket + HTTP POST)", WS_PORT)
     log.info("Polling: %s", ", ".join(hosts))
     stop = loop.create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set_result, None)
     await stop
-    server.close()
+    for server in servers:
+        server.close()
     if zc and info:
         zc.unregister_service(info)
         zc.close()

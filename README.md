@@ -126,11 +126,57 @@ export HERDR_RELAY_TOKEN="$(openssl rand -hex 32)"
 uv run relay/herdr_relay.py
 ```
 
+## Local Mode and Tunnel Mode
+
+cloudflared forwards tunnel requests from a local process, so at the relay a tunnel request looks
+exactly like a LAN one. A single listener therefore cannot be token-free for the phone on your
+Wi-Fi without also being token-free for the internet. Two listeners in one process make the
+boundary structural:
+
+| Listener | Bind | Token | For |
+|---|---|---|---|
+| LAN | `HERDR_LAN_BIND`, default `0.0.0.0`, port 8375 | unless `HERDR_LAN_OPEN=1` | Phone on your network |
+| External | `127.0.0.1:HERDR_EXTERNAL_PORT` | always | What the tunnel terminates on |
+
+**Local only** — no token, no tunnel:
+
+```bash
+relay/start-local.sh
+```
+
+**Both** — token-free on the LAN, token-required through the tunnel:
+
+```bash
+export HERDR_RELAY_TOKEN="$(openssl rand -hex 32)"
+export HERDR_LAN_OPEN=1
+export HERDR_EXTERNAL_PORT=8377
+relay/start.sh
+```
+
+The tunnel must terminate on the external port:
+
+```yaml
+ingress:
+  - hostname: relay.example.com
+    service: http://127.0.0.1:8377
+```
+
+`start.sh` refuses to start a tunnel when the LAN listener is open and no external port exists,
+because that combination publishes an unauthenticated relay to the internet.
+
+> `HERDR_LAN_OPEN=1` means any peer that can reach this machine can read panes, type into agents,
+> and start sessions — and a pane in auto-approve mode will act on what it is sent. With
+> `0.0.0.0` that includes café and hotel Wi-Fi, guest VLANs, container bridges, and VPN peers.
+> `HERDR_LAN_BIND=192.168.1.20` narrows it to one interface.
+
+Full rationale: `.workflow/02_architecture/2026-08-09_dual_listener_access.md`
+
 ## Remote Start Session
 
 Off by default. Starting an agent from a phone spawns a process on the relay's machine or on a
-configured SSH target, so it is opt-in and requires a token — the relay **refuses to start**
-with the flag set and no `HERDR_RELAY_TOKEN`.
+configured SSH target, so it is opt-in and needs a token — the relay **refuses to start** with the
+flag set and no `HERDR_RELAY_TOKEN`, unless `HERDR_LAN_OPEN=1` says the LAN listener is
+deliberately open.
 
 ```bash
 export HERDR_PROJECTS_FILE="$HOME/.config/herdr-remote/projects.json"

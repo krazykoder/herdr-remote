@@ -19,6 +19,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 PY = sys.executable
 LOG = f"{HERE}/fake_herdr.log"
 PORT = os.environ.get("HERDR_E2E_PORT", "8399")
+EXT_PORT = str(int(PORT) + 1)
 TOKEN = "s3cret"
 
 fails = []
@@ -44,6 +45,9 @@ def relay_env(**extra):
     env.pop("HERDR_ENABLE_WRITE_EXT", None)
     env.pop("HERDR_RELAY_TOKEN", None)
     env.pop("HERDR_START_AGENTS", None)
+    env.pop("HERDR_LAN_OPEN", None)
+    env.pop("HERDR_LAN_BIND", None)
+    env.pop("HERDR_EXTERNAL_PORT", None)
     env.update(extra)
     return env
 
@@ -282,16 +286,153 @@ async def failure_run():
         stop_relay(proc)
 
 
+def http_status(port, token=None):
+    """GET / and report the status. 401 is the interesting one — process_request gates the whole
+    HTTP surface, not only the WebSocket upgrade."""
+    import urllib.error, urllib.request
+    u = f"http://127.0.0.1:{port}/" + (f"?token={token}" if token else "")
+    try:
+        with urllib.request.urlopen(u, timeout=5) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def dual_boot_gate_run():
+    """Boot refusals that only exist once there are two listeners."""
+    proc = subprocess.Popen([PY, f"{REPO}/relay/herdr_relay.py"],
+                            env=relay_env(HERDR_EXTERNAL_PORT=EXT_PORT),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out, _ = proc.communicate(timeout=20)
+    check("D1 external port without token refuses to boot", proc.returncode == 1, proc.returncode)
+    check("D1 refusal names both variables",
+          "HERDR_EXTERNAL_PORT" in out and "HERDR_RELAY_TOKEN" in out, out.strip())
+
+    # HERDR_LAN_OPEN must not be a way around the external listener's token.
+    proc = subprocess.Popen([PY, f"{REPO}/relay/herdr_relay.py"],
+                            env=relay_env(HERDR_EXTERNAL_PORT=EXT_PORT, HERDR_LAN_OPEN="1",
+                                          HERDR_ENABLE_WRITE_EXT="1"),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out, _ = proc.communicate(timeout=20)
+    check("D2 lan_open does not excuse the external listener", proc.returncode == 1, proc.returncode)
+
+    # The repealed rule still holds without the explicit opt-in.
+    proc = subprocess.Popen([PY, f"{REPO}/relay/herdr_relay.py"],
+                            env=relay_env(HERDR_ENABLE_WRITE_EXT="1"),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out, _ = proc.communicate(timeout=20)
+    check("D3 write ext without token still refuses without lan_open", proc.returncode == 1,
+          proc.returncode)
+    check("D3 refusal offers the opt-in by name", "HERDR_LAN_OPEN" in out, out.strip())
+
+    # Both listeners on one port binds the LAN socket, then fails on the external one — leaving
+    # the open listener up and the authenticated one gone.
+    proc = subprocess.Popen([PY, f"{REPO}/relay/herdr_relay.py"],
+                            env=relay_env(HERDR_EXTERNAL_PORT=PORT, HERDR_RELAY_TOKEN=TOKEN),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out, _ = proc.communicate(timeout=20)
+    check("D11 identical ports refuse to boot", proc.returncode == 1, proc.returncode)
+
+
+async def lan_open_run():
+    """Local mode: no token on the LAN listener, and it is fully capable."""
+    proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_LAN_OPEN="1",
+                       HERDR_START_AGENTS="claude")
+    try:
+        check("D4 open LAN listener serves without a token", http_status(PORT) == 200)
+        async with connect(url(token=None)) as ws:
+            seen, _ = await drain_to_agents(ws)
+            types = [m["type"] for m in seen]
+            check("D5 start_options reaches an unauthenticated LAN client",
+                  types[:3] == ["projects", "start_options", "agents"], types)
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
+                               "project_id": "charts", "placement": "new_workspace"})
+            check("D6 an unauthenticated LAN client can start an agent", r.get("ok") is True, r)
+    finally:
+        stop_relay(proc)
+
+
+async def dual_listener_run():
+    """Both listeners at once, with a token set: the safety rule 5 regression."""
+    proc = start_relay(HERDR_ENABLE_WRITE_EXT="1", HERDR_RELAY_TOKEN=TOKEN,
+                       HERDR_EXTERNAL_PORT=EXT_PORT, HERDR_START_AGENTS="claude")
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", int(EXT_PORT)), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError(f"external listener never bound {EXT_PORT}")
+
+        # The regression this whole variable split exists to prevent: adding a tunnel must not
+        # be the thing that drops authentication from the port the LAN can reach.
+        check("D7 LAN listener still requires the token when lan_open is unset",
+              http_status(PORT) == 401, http_status(PORT))
+        check("D7 LAN listener accepts the token", http_status(PORT, TOKEN) == 200)
+        check("D8 external listener refuses without a token", http_status(EXT_PORT) == 401)
+        check("D8 external listener refuses a wrong token", http_status(EXT_PORT, "nope") == 401)
+        check("D8 external listener accepts the token", http_status(EXT_PORT, TOKEN) == 200)
+
+        # One poll loop, whatever the listener and client count.
+        async with connect(f"ws://127.0.0.1:{PORT}?token={TOKEN}") as a, \
+                   connect(f"ws://127.0.0.1:{EXT_PORT}?token={TOKEN}") as b:
+            _, snap_a = await drain_to_agents(a)
+            _, snap_b = await drain_to_agents(b)
+            check("D9 both listeners see the same sessions",
+                  [x["pane_id"] for x in snap_a["agents"]] == [x["pane_id"] for x in snap_b["agents"]])
+            open(LOG, "w").close()
+            await asyncio.sleep(4.5)          # >2 poll intervals
+            polls = len(log_lines("pane list"))
+            # Two hosts (local + the fake box) per tick, two ticks in the window, a little slack
+            # for where the sleep lands. Two clients on two listeners must not multiply it.
+            check("D9 one poll loop, not one per listener or client", polls <= 8, polls)
+    finally:
+        stop_relay(proc)
+
+
+async def lan_bind_run():
+    """HERDR_LAN_BIND narrows exposure rather than merely documenting it."""
+    lan_ip = None
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 53))            # no packet sent; just picks the default route
+        lan_ip = s.getsockname()[0]
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+    proc = start_relay(HERDR_LAN_OPEN="1", HERDR_LAN_BIND="127.0.0.1")
+    try:
+        check("D10 loopback bind still serves loopback", http_status(PORT) == 200)
+        if lan_ip and lan_ip != "127.0.0.1":
+            try:
+                with socket.create_connection((lan_ip, int(PORT)), timeout=2):
+                    check("D10 loopback bind is unreachable on the LAN address", False,
+                          f"connected to {lan_ip}:{PORT}")
+            except OSError:
+                check("D10 loopback bind is unreachable on the LAN address", True)
+        else:
+            print("SKIP D10 LAN address check — no routable address")
+    finally:
+        stop_relay(proc)
+
+
 def preflight():
     os.makedirs(f"{HERE}/logs", exist_ok=True)
-    probe = socket.socket()
-    try:
-        probe.connect(("127.0.0.1", int(PORT)))
-    except OSError:
-        return
-    finally:
-        probe.close()
-    sys.exit(f"port {PORT} is in use — set HERDR_E2E_PORT to a free port")
+    for port in (PORT, EXT_PORT):
+        probe = socket.socket()
+        try:
+            probe.connect(("127.0.0.1", int(port)))
+        except OSError:
+            continue
+        finally:
+            probe.close()
+        sys.exit(f"port {port} is in use — set HERDR_E2E_PORT to a free port (it also uses +1)")
 
 
 async def main():
@@ -300,6 +441,10 @@ async def main():
     await gate_off_run()
     await gate_on_run()
     await failure_run()
+    dual_boot_gate_run()
+    await lan_open_run()
+    await dual_listener_run()
+    await lan_bind_run()
     print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
     sys.exit(1 if fails else 0)
 
