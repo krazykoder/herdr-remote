@@ -140,8 +140,8 @@ two panes both called `claude` distinguish nothing.
 
 | # | Item | Blocks | Owner |
 |---|---|---|---|
-| 1 | **Nothing is pushed.** `origin/main` is 37 commits behind and carries all of P1, P2 and P3. | — | User |
-| 2 | **The Pages deploy workflow was removed** in `271bda8` (`.github/workflows/pages.yml`, untracked by the user). Pushing `main` no longer deploys `web/` by itself — confirm how the web app is meant to reach Cloudflare Pages before relying on a push to publish it. | Deploy | User |
+| 1 | ~~**Nothing is pushed.**~~ **Closed** — the user pushed through `c617081`; P1, P2 and P3 are all on `origin/main`. | — | Done |
+| 2 | **The Pages deploy workflow cannot be pushed.** `.github/workflows/pages.yml` exists on disk but `.gitignore:13` ignores `.github/workflows/*`, so it is deliberately excluded, not merely untracked. Pushing `main` does not deploy `web/` and cannot until that line changes — every P3 change is frontend, so none of it is live. | Deploy | User |
 | 3 | **Real *remote* smoke start still untested** (P2 open item 1). No `HERDR_REMOTES` on this machine; remote routing evidence is still the fake-ssh harness. | — | User |
 | 4 | Smoke workspace `wB` is still open with a live claude — `herdr workspace close wB`. | — | User |
 | 5 | Promotion of the Projects/Pairs docs from `07_dev_notes/` to `02_architecture/`. | — | User |
