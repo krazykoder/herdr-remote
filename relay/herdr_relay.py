@@ -621,7 +621,15 @@ async def process_request(connection, request, require_token=True):
         # compare_digest, not !=: the external listener is published to the internet through a
         # tunnel, and a short-circuiting compare leaks the token prefix through timing.
         if not (token and hmac.compare_digest(token, AUTH_TOKEN)):
-            headers = Headers([("Content-Type", "text/plain")])
+            # CORS on the rejection too. The web app is served from a different origin than the
+            # relay whenever it is hosted (GitHub Pages, Cloudflare Pages), and a 401 without this
+            # header is unreadable to the caller — the browser reports an opaque network failure
+            # and the app cannot tell "wrong token" from "relay is down". Allowing the *response*
+            # to be read grants nothing: the request was already refused.
+            headers = Headers([
+                ("Content-Type", "text/plain"),
+                ("Access-Control-Allow-Origin", "*"),
+            ])
             return Response(401, "Unauthorized", headers, b"Invalid token\n")
 
     # Check if this is a WebSocket upgrade

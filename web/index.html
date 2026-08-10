@@ -3430,7 +3430,18 @@
         try {
           const relayUrl = localStorage.getItem('herdr_relay_url') || '';
           const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
-          const resp = await fetch(httpUrl + '/api/vapid-public-key');
+          // The token gates the relay's whole HTTP surface, not only the socket upgrade, so this
+          // has to carry it exactly as the WebSocket URL does. Without it the tunnel listener
+          // answers 401 and push can never be enabled from a hosted copy of this app.
+          const pushToken = localStorage.getItem('herdr_relay_token');
+          const keyUrl = httpUrl + '/api/vapid-public-key' +
+            (pushToken ? '?token=' + encodeURIComponent(pushToken) : '');
+          const resp = await fetch(keyUrl);
+          if (!resp.ok) {
+            document.getElementById('pushStatus').textContent =
+              resp.status === 401 ? 'Relay rejected the token' : `Relay returned ${resp.status}`;
+            return;
+          }
           const { publicKey } = await resp.json();
           if (!publicKey) {
             document.getElementById('pushStatus').textContent = 'VAPID key not configured on relay';
