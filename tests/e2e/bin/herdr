@@ -45,14 +45,20 @@ if args[:2] == ["agent", "list"]:
                                             for i, n in enumerate(TAKEN)]}}))
 elif args[:2] == ["pane", "list"]:
     print(json.dumps({"result": {"panes": PANES.get(host, [])}}))
+elif args[:2] == ["pane", "read"]:
+    # Plain text, not JSON — herdr's read is the one command that is not a JSON envelope.
+    # Hard-wrapped rows at a known width, so pane_cols has a wrap column to measure.
+    print("\n".join(["x" * 87] * 3 + ["done."]))
 elif args[:2] == ["workspace", "create"]:
-    # A new workspace and a new tab each come up holding one shell pane, which is why the relay
-    # closes it once the agent's own pane exists.
+    # A new workspace and a new tab each come up holding one shell pane, and that pane is the
+    # one the relay hands to `agent start` — the agent takes it over rather than splitting it.
     print(json.dumps({"result": {"workspace": {"workspace_id": f"{host}:wNew"},
                                  "root_pane": {"pane_id": f"{host}:pShell"}}}))
 elif args[:2] == ["tab", "create"]:
     print(json.dumps({"result": {"tab": {"tab_id": f"{host}:tNew"},
                                  "root_pane": {"pane_id": f"{host}:pShell"}}}))
+elif args[:2] == ["pane", "split"]:
+    print(json.dumps({"result": {"pane": {"pane_id": f"{host}:pSplit"}}}))
 elif args[:2] == ["agent", "start"]:
     print(json.dumps({"result": {"agent": {"pane_id": f"{host}:pNew"}}}))
 else:

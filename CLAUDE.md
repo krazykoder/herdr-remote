@@ -55,6 +55,10 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # Not picked up by discover — it binds a port, so run it deliberately.
 .venv313/bin/python tests/e2e/e2e_start_agent.py
 
+# Pane slots against the REAL herdr, in a throwaway workspace. Covers herdr's geometry
+# contract — run it after a herdr upgrade.
+.venv313/bin/python tests/e2e/e2e_pane_slots.py
+
 # Frontend pair/transfer logic. Extracts the pure block from web/index.html
 # between its markers, so the single-file app keeps its no-build-step property.
 node --test tests/test_pairs.js
@@ -67,7 +71,7 @@ GET and serves it `no-cache`. Editing `relay/` needs a relay restart.
 and execs locally, which is what lets one machine present two hosts — the only way to
 reproduce the pane-ID and workspace-ID collisions the relay's guards exist for.
 
-External binaries: `herdr` (required, polled by the relay), `cloudflared` (optional, tunnel only).
+External binaries: `herdr` 0.8.0 or newer (required, polled by the relay), `cloudflared` (optional, tunnel only).
 
 ## Project Overview
 
@@ -134,23 +138,36 @@ cd herdi-ios && xcodegen generate
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
 | `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
-| `HERDR_START_AGENTS` | Comma-separated agent allowlist for Start session (default: `codex,claude,pi`) |
+| `HERDR_START_AGENTS` | Comma-separated allowlist of herdr agent *kinds* for Start session (default: `codex,claude,pi`) |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
+| `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |
+| `WEBHOOK_URL` | Optional. `start.sh` posts the new `wss://` URL here on startup, fenced as a code block and nothing else. Never carries the token. `HERDR_NOTIFY_WEBHOOK` overrides |
+| `HERDR_APP_URL` | App URL used in the printed/posted link (default: the GitHub Pages deploy) |
 
 ## Web App
 
-The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, and agent-icon detection.
+The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, agent-icon detection, and a
+line ruler for picking a range of pane lines with a finger.
 
 ## WebSocket Protocol
 
 Messages are JSON with a `type` field:
 
-**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read)
+**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols`)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`)
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate)
 
 ## Deployment
 
-- Web app: Cloudflare Pages (push to main deploys `web/`)
+- Web app → GitHub Pages: `make deploy-web` (or `./web/deploy.sh`) publishes `web/` to
+  `https://eagerkoder.github.io/mini/`. Manual, using your own git credentials — no token lives in
+  this repo. The script owns `mini/` and only `mini/`; the target repo's root is never touched.
+  Override with `HERDR_PAGES_REPO`, `HERDR_PAGES_BRANCH`, `HERDR_PAGES_SUBDIR`.
+- Web app → Cloudflare Pages: push to main deploys `web/`. Still wired up; the two are independent.
 - macOS app: `herdi-mac/build.sh` produces `dist/Herdi.app`
+
+**A page served over HTTPS cannot open a `ws://` socket.** From `eagerkoder.github.io` the relay
+must be reached over `wss://` — the Cloudflare tunnel. A LAN relay at `ws://192.168.x.x:8375` is
+blocked as mixed content by every browser. That is also why the app does not auto-connect on
+`github.io`: `isSelfRelay` excludes it, so the setup screen asks for the URL.

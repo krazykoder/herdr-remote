@@ -7,12 +7,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from start_agent import (
+    AGENT_START_TIMEOUT_MS,
     DEFAULT_START_AGENTS,
+    HERDR_AGENT_NAME_RE,
+    SUFFIX_ALPHABET,
     StartAgentConfigError,
+    agent_name_from_label,
     agent_start_args,
+    claimable_spacer,
     dig,
+    SPACER_LABEL,
     load_start_agents,
     next_role_label,
+    pane_split_args,
+    plan_slot,
+    slot_advice,
     tab_create_args,
     unique_agent_name,
     validate_pane_label,
@@ -182,7 +191,7 @@ class SplitTests(unittest.TestCase):
         plan, err = validate_start_request(
             start(placement="split", split_from="w1:p2"), PROJECTS, LIVE, ALLOWED)
         self.assertIsNone(err)
-        self.assertEqual(plan["tab_id"], "t1")
+        self.assertEqual(plan["split_from"], "w1:p2")
 
     def test_missing_split_from(self):
         _, err = validate_start_request(start(placement="split"), PROJECTS, LIVE, ALLOWED)
@@ -210,56 +219,89 @@ class SplitTests(unittest.TestCase):
             start(placement="split", split_from="w7:p1"), PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "pane does not belong to this project")
 
-    def test_pane_without_tab_id_refused(self):
-        agents = [agent("w1:p1", tab_id="", project_id="charts")]
-        _, err = validate_start_request(
-            start(placement="split", split_from="w1:p1"), PROJECTS, agents, ALLOWED)
-        self.assertEqual(err, "pane has no tab_id")
-
 
 class ArgsTests(unittest.TestCase):
     def test_new_tab_uses_the_role_label(self):
-        args = tab_create_args("w3", "Architect 1")
-        self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--label", "Architect 1", "--focus"))
+        args = tab_create_args("w3", "/work/charts", "Architect 1")
+        self.assertEqual(args, ("tab", "create", "--workspace", "w3", "--cwd", "/work/charts",
+                                "--label", "Architect 1", "--focus"))
 
-    def test_argv_is_the_allowlisted_name(self):
-        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
-        self.assertEqual(args[-2:], ("--", "claude"))
-        self.assertIn("--workspace", args)
-        self.assertNotIn("--split", args)
+    def test_kind_is_the_allowlisted_name(self):
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
+        self.assertEqual(args[args.index("--kind") + 1], "claude")
+        self.assertEqual(args[args.index("--pane") + 1], "w3:p1")
 
-    def test_herdr_agent_name_is_the_label_not_the_binary(self):
-        # The binary name there is what made every start after the first fail agent_name_taken.
-        args = agent_start_args("claude", "Architect 1", "/work/charts", "workspace", "w3")
+    def test_herdr_agent_name_is_the_label_not_the_kind(self):
+        # The kind there is what made every start after the first fail agent_name_taken.
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
         self.assertEqual(args[:3], ("agent", "start", "Architect 1"))
 
-    def test_split_adds_right(self):
-        args = agent_start_args("codex", "Agent 2", "/work/charts", "tab", "t1", split=True)
-        self.assertEqual(args[args.index("--split") + 1], "right")
-        self.assertIn("--tab", args)
+    def test_start_waits_for_interactive_readiness(self):
+        # herdr blocks until the agent is ready; the relay's subprocess timeout is sized off this.
+        args = agent_start_args("claude", "Architect 1", "w3:p1")
+        self.assertEqual(args[args.index("--timeout") + 1], str(AGENT_START_TIMEOUT_MS))
+
+    def test_pane_split_goes_right_at_the_project_cwd(self):
+        args = pane_split_args("w1:p2", "/work/charts")
+        self.assertEqual(args[:3], ("pane", "split", "w1:p2"))
+        self.assertEqual(args[args.index("--direction") + 1], "right")
+        self.assertEqual(args[args.index("--cwd") + 1], "/work/charts")
+
+
+class AgentNameFromLabelTests(unittest.TestCase):
+    """herdr refuses an agent name that is not ^[a-z][a-z0-9_-]{0,31}$, and every label the
+    relay derives ("Architect 1") violates it. The slug is what makes a start possible at all."""
+
+    def test_role_labels_become_legal_names(self):
+        for label in ("Architect 1", "Reviewer 12", "Agent 3"):
+            got = agent_name_from_label(label, "claude")
+            self.assertRegex(got, HERDR_AGENT_NAME_RE.pattern, label)
+
+    def test_spaces_and_case_are_folded(self):
+        self.assertEqual(agent_name_from_label("Architect 1", "claude"), "architect-1")
+
+    def test_punctuation_collapses_to_one_dash(self):
+        self.assertEqual(agent_name_from_label("Web // API!!", "claude"), "web-api")
+
+    def test_leading_digits_are_dropped_so_the_name_starts_with_a_letter(self):
+        self.assertEqual(agent_name_from_label("2nd Backend", "claude"), "nd-backend")
+
+    def test_label_that_slugs_away_falls_back_to_the_kind(self):
+        for label in ("___", "!!!", "42", "   "):
+            self.assertEqual(agent_name_from_label(label, "claude"), "claude", label)
+
+    def test_result_is_bounded_to_32(self):
+        out = agent_name_from_label("Very Long " * 10, "claude")
+        self.assertLessEqual(len(out), 32)
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
 
 
 class UniqueAgentNameTests(unittest.TestCase):
     def test_free_name_is_returned_unchanged(self):
-        self.assertEqual(unique_agent_name("Architect 1", {"codex", "claude"}), "Architect 1")
+        self.assertEqual(unique_agent_name("architect-1", {"codex", "claude"}), "architect-1")
 
     def test_taken_name_gets_a_random_suffix(self):
-        out = unique_agent_name("Architect 1", {"Architect 1"})
-        self.assertNotEqual(out, "Architect 1")
-        self.assertRegex(out, r"^Architect 1-[A-HJ-NP-Z2-9]{5}$")
+        out = unique_agent_name("architect-1", {"architect-1"})
+        self.assertNotEqual(out, "architect-1")
+        self.assertRegex(out, r"^architect-1-[a-km-z2-9]{5}$")
 
-    def test_suffix_keeps_the_name_inside_the_label_limit(self):
-        out = unique_agent_name("X" * 32, {"X" * 32})
+    def test_suffix_keeps_the_name_legal_for_herdr(self):
+        out = unique_agent_name("x" * 32, {"x" * 32})
         self.assertLessEqual(len(out), 32)
-        self.assertEqual(validate_pane_label(out)[1], "")
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
+
+    def test_a_trailing_dash_never_survives_truncation(self):
+        # "aaaa…-" truncated at the suffix boundary would otherwise yield "base--suffix".
+        out = unique_agent_name("a" * 25 + "-" + "b" * 6, {"a" * 25 + "-" + "b" * 6})
+        self.assertNotIn("--", out)
+        self.assertRegex(out, HERDR_AGENT_NAME_RE.pattern)
 
     def test_retries_past_a_taken_suffix(self):
         # Every 5-char suffix but one is taken, so the loop must keep drawing rather than
         # return a colliding name.
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         import itertools
-        taken = {"A"} | {"A-" + "".join(c) for c in itertools.product(alphabet, repeat=2)}
-        out = unique_agent_name("A", taken)
+        taken = {"a"} | {"a-" + "".join(c) for c in itertools.product(SUFFIX_ALPHABET, repeat=2)}
+        out = unique_agent_name("a", taken)
         self.assertNotIn(out, taken)
 
 
@@ -298,6 +340,200 @@ class DigTests(unittest.TestCase):
         self.assertEqual(dig({"result": None}, "result", "agent", "pane_id"), "")
         self.assertEqual(dig({"result": {"agent": {"pane_id": 7}}},
                              "result", "agent", "pane_id"), "")
+
+
+def pane(pane_id, tab_id="t1", agent="codex", cwd="/work/charts", label="", workspace_id="w1"):
+    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "cwd": cwd, "label": label,
+            "workspace_id": workspace_id}
+
+
+def spacer(pane_id, tab_id="t1", cwd="/work/charts", workspace_id="w1"):
+    """A pane this feature created: a shell holding columns, carrying the label that says so."""
+    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL, cwd=cwd,
+                workspace_id=workspace_id)
+
+
+class PlanSlotTests(unittest.TestCase):
+    def test_rejects_unknown_slot_and_pane(self):
+        panes = [pane("w1:p1")]
+        self.assertEqual(plan_slot(panes, "w1:p1", "half")[0], None)
+        self.assertEqual(plan_slot(panes, "w1:p9", "wide")[0], None)
+
+    def test_already_in_slot_is_no_work(self):
+        self.assertEqual(plan_slot([pane("w1:p1")], "w1:p1", "wide"), ([], None))
+        two = [pane("w1:p1"), pane("w1:p2")]
+        self.assertEqual(plan_slot(two, "w1:p1", "narrow"), ([], None))
+
+    def test_wide_closes_spacers_rather_than_moving(self):
+        # Moving out would widen this pane too, but leave a tab holding an idle shell.
+        panes = [pane("w1:p1"), spacer("w1:p2")]
+        steps, err = plan_slot(panes, "w1:p1", "wide")
+        self.assertIsNone(err)
+        self.assertEqual(steps, [("pane", "close", "w1:p2")])
+
+    def test_wide_never_closes_a_sibling_running_a_session(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude")]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_a_bare_shell_is_not_a_spacer(self):
+        # A pane the user split themselves has no agent either. Closing it to reclaim columns
+        # would kill whatever they were running in it, so this moves out instead.
+        panes = [pane("w1:p1"), pane("w1:p2", agent="", label="build")]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_the_spacer_label_alone_does_not_make_a_pane_closable(self):
+        # Otherwise renaming a live session to the spacer label would make it disposable.
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude", label=SPACER_LABEL)]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_narrow_from_alone_splits_in_place(self):
+        steps, err = plan_slot([pane("w1:p1")], "w1:p1", "narrow")
+        self.assertIsNone(err)
+        self.assertEqual(steps, [("pane", "split", "w1:p1", "--direction", "right",
+                                  "--cwd", "/work/charts")])
+        # Focus stays with the session, not the shell that was just made to sit beside it.
+        self.assertNotIn("--focus", steps[0])
+
+    def test_narrow_from_a_crowded_tab_leaves_first(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude"), pane("w1:p3", agent="pi")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0], ("pane", "move", "w1:p1", "--new-tab"))
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+        # The siblings are live sessions; nothing of theirs is touched.
+        self.assertEqual(len(steps), 2)
+
+    def test_narrow_from_a_tab_of_spacers_clears_them(self):
+        panes = [pane("w1:p1"), spacer("w1:p2"), spacer("w1:p3")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0], ("pane", "move", "w1:p1", "--new-tab"))
+        self.assertIn(("pane", "close", "w1:p2"), steps)
+        self.assertIn(("pane", "close", "w1:p3"), steps)
+
+    def test_other_tabs_are_not_siblings(self):
+        # A spacer in another tab does not make this pane narrow, so `wide` has nothing to do.
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t2")]
+        self.assertEqual(plan_slot(panes, "w1:p1", "wide"), ([], None))
+
+    def test_narrow_takes_a_stranded_spacer_instead_of_making_another(self):
+        # The spacer is alone in t2 — nothing reclaimed it. Moving in beside it costs one
+        # command and leaves no second spacer behind; splitting t1 would leave two.
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--tab", "t2", "--split", "right",
+                                  "--target-pane", "w1:p2", "--no-focus")])
+
+    def test_narrow_takes_a_spacers_half_and_closes_it(self):
+        # t2 holds a session and its spacer. This pane takes the spacer's half: two sessions
+        # side by side, both narrow, and one fewer idle shell than before.
+        panes = [pane("w1:p1", tab_id="t1"),
+                 pane("w1:p2", tab_id="t2", agent="claude"), spacer("w1:p3", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--tab", "t2", "--split", "right",
+                                  "--target-pane", "w1:p3", "--no-focus"),
+                                 ("pane", "close", "w1:p3")])
+
+    def test_a_crowded_tab_is_not_a_free_slot(self):
+        # Moving into a tab of three takes a third of the area, which is not the narrow slot.
+        panes = [pane("w1:p1", tab_id="t1"),
+                 pane("w1:p2", tab_id="t2", agent="claude"),
+                 pane("w1:p3", tab_id="t2", agent="pi"), spacer("w1:p4", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+
+    def test_a_spacer_in_another_workspace_is_left_alone(self):
+        # herdr renumbers a pane that crosses workspaces, and pane IDs are what clients hold.
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w2:p1", tab_id="t9", workspace_id="w2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+
+    def test_leaving_a_tab_of_spacers_for_a_free_slot_closes_both(self):
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t1"),
+                 spacer("w1:p3", tab_id="t1"), spacer("w1:p4", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0][:2], ("pane", "move"))
+        self.assertIn(("pane", "close", "w1:p2"), steps)
+        self.assertIn(("pane", "close", "w1:p3"), steps)
+        self.assertNotIn(("pane", "close", "w1:p4"), steps)  # that one is the new sibling
+
+    def test_missing_cwd_still_yields_a_runnable_split(self):
+        steps, _ = plan_slot([{"pane_id": "w1:p1", "tab_id": "t1", "agent": "codex"}],
+                             "w1:p1", "narrow")
+        self.assertEqual(steps[0][-1], ".")
+
+
+class ClaimableSpacerTests(unittest.TestCase):
+    def test_it_finds_a_spacer_in_this_workspace_at_this_cwd(self):
+        panes = [pane("w1:p1"), spacer("w1:p2")]
+        self.assertEqual(claimable_spacer(panes, "w1", "/work/charts"), "w1:p2")
+
+    def test_the_cwd_has_to_match(self):
+        # herdr starts the agent in the pane's directory, so a spacer sitting somewhere else
+        # would put the session in the wrong Project.
+        panes = [spacer("w1:p2", cwd="/elsewhere")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
+
+    def test_the_workspace_has_to_match(self):
+        panes = [spacer("w2:p1", workspace_id="w2")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
+
+    def test_a_live_pane_is_never_claimed(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="", label="build")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
+
+
+class SlotAdviceTests(unittest.TestCase):
+    def test_the_whole_band_is_accepted(self):
+        # 69 and 70 both read fine on the phone, so three areas are on target and none of them
+        # is worth spending a column to reach.
+        self.assertIsNone(slot_advice(138, 32))  # 69|69
+        self.assertIsNone(slot_advice(139, 31))  # 70|69 — the odd column goes left
+        self.assertIsNone(slot_advice(140, 30))  # 70|70
+
+    def test_both_panes_have_to_fit_not_just_the_narrower_one(self):
+        # Either pane can end up holding the agent, so the wider one is the binding constraint.
+        self.assertIsNotNone(slot_advice(141, 29))  # 71|70 — 71 is too wide
+        self.assertIsNotNone(slot_advice(137, 33))  # 69|68 — 68 is too narrow
+
+    def test_it_suggests_the_widest_area_that_fits(self):
+        # Measured on this machine: terminal 170, sidebar 22, area 148 -> 74|74. Aiming at 138
+        # would also land in the band, and would throw away two columns of desktop to do it.
+        msg = slot_advice(148, 22)
+        self.assertIn("74|74", msg)
+        self.assertIn("ui.sidebar_width = 30", msg)  # 22 + 148 - 140
+        self.assertIn("area 140 gives 70|70", msg)
+        self.assertIn("terminal 170", msg)
+
+    def test_falls_back_to_the_terminal_when_the_sidebar_cannot_reach(self):
+        # A terminal so narrow that even the minimum sidebar leaves too little.
+        msg = slot_advice(100, 20)
+        self.assertNotIn("sidebar_width", msg)
+        self.assertIn("resize the herdr terminal to 160 cols", msg)
+
+    def test_says_nothing_when_the_geometry_is_unreadable(self):
+        for area, sidebar in ((None, 22), (0, 22), (148, None), (148, 0), (2, 22)):
+            self.assertIsNone(slot_advice(area, sidebar), (area, sidebar))
+
+    def test_the_band_is_adjustable(self):
+        self.assertIsNone(slot_advice(160, 22, band=(80, 80)))
+
+
+class SlotOnStartTests(unittest.TestCase):
+    def test_slot_is_optional_and_absent_reads_as_none(self):
+        plan, err = validate_start_request(start(), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertIsNone(plan["slot"])
+
+    def test_slot_is_carried_into_the_plan(self):
+        plan, err = validate_start_request(start(slot="narrow"), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertEqual(plan["slot"], "narrow")
+
+    def test_unknown_slot_is_refused(self):
+        _, err = validate_start_request(start(slot="tiny"), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "unknown slot")
 
 
 class PaneLabelTests(unittest.TestCase):

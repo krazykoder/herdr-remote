@@ -16,13 +16,20 @@ from projects import (
     resolve_workspace_remote,
 )
 from start_agent import (
+    AGENT_START_TIMEOUT_MS,
     ROLES,
+    SPACER_LABEL,
     StartAgentConfigError,
+    agent_name_from_label,
     agent_start_args,
+    claimable_spacer,
     dig,
     unique_agent_name,
     load_start_agents,
     pane_rename_args,
+    pane_split_args,
+    plan_slot,
+    slot_advice,
     validate_pane_label,
     tab_create_args,
     validate_start_request,
@@ -165,7 +172,10 @@ ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane c
 latest_agents = []  # last full snapshot, replayed to each client on connect
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
-SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "Up", "Down", "Left", "Right", "BSpace"} | {
+# "ctrl+l" and not "C-l": herdr accepts C-c as a legacy spelling but answers
+# {"code":"invalid_key","message":"unsupported key C-l"} for the rest of that family.
+SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "ctrl+l",
+             "Up", "Down", "Left", "Right", "BSpace"} | {
     str(number) for number in range(10)
 }
 
@@ -249,12 +259,19 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
 _load_push_subs()
 
 
-def run_herdr_result(*args, remote=None):
+# agent start blocks until the agent is interactively ready (AGENT_START_TIMEOUT_MS), so its
+# subprocess must outlive herdr's own wait — otherwise a slow cold start is killed here and
+# reported as a failure while the agent is in fact coming up. Every other call keeps the
+# 15s default so the poll loop still fails fast on a dead SSH host.
+START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
+
+
+def run_herdr_result(*args, remote=None, timeout=15):
     if remote:
         cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", remote, HERDR, *args]
     else:
         cmd = [HERDR, *args]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def run_herdr(*args, remote=None):
@@ -294,6 +311,33 @@ def get_all_agents():
     for remote in REMOTES:
         agents.extend(get_agents_from_host(remote=remote))
     return annotate_agents(agents, PROJECTS)
+
+
+def pane_cols(pane_id, lines, remote=None):
+    """The wrap column of the scrollback being sent, or None if it cannot be established.
+
+    The browser lays unwrapped output out at this width, so a wrong number is worse than no
+    number. It is measured from the pane's own hard-wrapped scrollback rather than taken from
+    `pane layout`: that rect is herdr's *layout model* of an attached client's window, and it
+    disagrees with the PTY whenever the pane was resized after it was created. A pane started
+    under the pre-0.8.0 split-then-close flow reported 54 there while its recent output
+    demonstrably wrapped at 138 — the client then scaled every glyph to a pane half the real
+    width.
+
+    `--source recent` is the same scrollback `recent-unwrapped` returns with the terminal's own
+    breaks left in, so the longest line in it *is* the column those breaks were made at. Sampled
+    over exactly the lines being sent, not deeper: a pane that has been made narrower still holds
+    wider lines further back, and reporting one of those would lay the text out too wide. Read
+    per request, never cached — splitting or resizing a pane changes it.
+    """
+    raw = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+                    "--source", "recent", remote=remote)
+    # ponytail: a sample that happens to hold no wrapped line reads narrower than the pane is.
+    # Only ever an under-estimate, and a harmless one — nothing wrapped, so nothing is laid out
+    # wrongly and the text is merely scaled larger than it had to be. Take the width off the PTY
+    # instead if herdr ever exposes it.
+    widest = max((len(line.rstrip()) for line in raw.splitlines()), default=0)
+    return widest or None
 
 
 def read_pane(pane_id, remote=None):
@@ -363,11 +407,11 @@ def _herdr_reason(result):
     return message
 
 
-def _herdr_json(*args, remote=None):
+def _herdr_json(*args, remote=None, timeout=15):
     """Run a herdr command that returns JSON. Returns (data, error)."""
     where = " ".join(args[:2])
     try:
-        result = run_herdr_result(*args, remote=remote)
+        result = run_herdr_result(*args, remote=remote, timeout=timeout)
     except Exception as e:
         return None, f"herdr {where} failed: {e}"
     if result.returncode != 0:
@@ -407,49 +451,136 @@ def _rollback_layout(rollback, remote):
         log.warning("Could not roll back %s after a failed start: %s", " ".join(rollback), err)
 
 
+def slot_exec(pane_id, slot, remote=None):
+    """Put a pane into a slot. Returns an error string, or None.
+
+    Blocking; call through asyncio.to_thread. The pane list is read here rather than taken from
+    the poll snapshot because that snapshot drops panes with no agent (`get_agents_from_host`
+    filters them out) — and those are exactly the spacers this has to be able to see and close.
+    """
+    data, err = _herdr_json("pane", "list", remote=remote)
+    if err:
+        return err
+    steps, plan_err = plan_slot(dig_panes(data), pane_id, slot)
+    if plan_err:
+        return plan_err
+    for step in steps:
+        result, err = _herdr_json(*step, remote=remote)
+        if err:
+            # No rollback. Every step is a layout change that stands on its own, and undoing a
+            # half-applied one means guessing which half — leaving it and saying so is honest.
+            return err
+        if step[:2] == ("pane", "split"):
+            # Label it immediately. Until this lands the pane is an unmarked shell, and an
+            # unmarked shell is one this code will refuse to clean up later — the failure mode is
+            # a stranded spacer, which is the right way round.
+            spacer = dig(result, "result", "pane", "pane_id")
+            if not spacer:
+                return "pane split returned no pane_id"
+            _, err = _herdr_json(*pane_rename_args(spacer, SPACER_LABEL), remote=remote)
+            if err:
+                return err
+    return None
+
+
+def dig_panes(data):
+    panes = ((data or {}).get("result") or {}).get("panes")
+    return panes if isinstance(panes, list) else []
+
+
+def log_tab_geometry():
+    """Report at boot how wide the two slots land, and what to change if narrow is off target.
+
+    The area's `x` is the sidebar width: herdr lays the tab area out to the right of it, and the
+    two have summed to the terminal width in every reading (22+148, 26+139, 26+144). Inferred
+    rather than read, because the API reports the area and not the chrome beside it — so this
+    only ever produces advice, never an action.
+    """
+    data, err = _herdr_json("api", "snapshot")
+    if err:
+        log.debug("Could not read herdr geometry: %s", err)
+        return
+    layouts = (((data or {}).get("result") or {}).get("snapshot") or {}).get("layouts") or []
+    area = (layouts[0].get("area") or {}) if layouts else {}
+    width, sidebar = area.get("width"), area.get("x")
+    if not width:
+        return
+    log.info("herdr tab area %d cols: slots are %d (wide) and %d (narrow)",
+             width, width, width // 2)
+    advice = slot_advice(width, sidebar)
+    if advice:
+        log.warning(advice)
+
+
 def start_agent_exec(plan):
     """Run a validated start plan. Returns (pane_id, error).
 
     Blocking; call through asyncio.to_thread. Never claims success after a partial
-    operation — a created workspace or tab may remain as empty native layout, but no
+    operation — a created workspace, tab, or pane may remain as empty native layout, but no
     session is reported unless the agent actually started (spec §3).
     """
     remote = plan["remote"]
     placement = plan["placement"]
-    # Settle the name before anything is created: it is the herdr agent name as well as the pane
-    # label, and a collision fails the start after a workspace or tab already exists.
-    plan["label"] = unique_agent_name(plan["label"], live_agent_names(remote))
+    # Settle the herdr agent name before anything is created: a collision fails the start after
+    # a container already exists. It is derived from the label rather than being the label —
+    # herdr's agent names are lowercase and space-free, pane labels are not.
+    plan["agent_name"] = unique_agent_name(
+        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
 
-    # A new workspace or tab is born holding one shell pane, and `agent start` anchored to that
-    # container splits it rather than reusing it — so every session came up at half width beside
-    # an idle shell. Remember the shell to close it once the agent pane exists, and to roll the
-    # whole container back if the agent never starts.
-    shell_pane = rollback = None
+    # herdr attaches an agent to a pane already sitting at its shell prompt, so the relay
+    # creates that pane. A new workspace or tab is born holding exactly one — that one becomes
+    # the agent's pane, so there is no idle shell left over to close. Remember what was created
+    # to roll it back if the agent never starts.
+    rollback = None
 
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
         if err:
             return None, err
         workspace_id = dig(data, "result", "workspace", "workspace_id")
-        if not workspace_id:
-            return None, "workspace create returned no workspace_id"
-        shell_pane = dig(data, "result", "root_pane", "pane_id")
+        target_pane = dig(data, "result", "root_pane", "pane_id")
+        if not workspace_id or not target_pane:
+            return None, "workspace create returned no workspace_id or root pane"
         rollback = ("workspace", "close", workspace_id)
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "workspace", workspace_id)
     elif placement == "new_tab":
-        data, err = _herdr_json(*tab_create_args(plan["workspace_id"], plan["label"]), remote=remote)
+        # A spacer in this workspace is already a shell sitting at the Project's cwd, which is
+        # exactly what `agent start --pane` wants. Claiming it fills a half-width slot that
+        # exists rather than opening a tab beside it and leaving the shell idle. Only when the
+        # client asked for narrow: a wide start landing in a spacer would come up half-width and
+        # have to move straight back out. A `pane list` that fails just falls through to a tab.
+        target_pane = None
+        if plan.get("slot") == "narrow":
+            listing, list_err = _herdr_json("pane", "list", remote=remote)
+            if list_err:
+                log.debug("Could not look for a spacer to reuse: %s", list_err)
+            else:
+                target_pane = claimable_spacer(
+                    dig_panes(listing), plan["workspace_id"], plan["cwd"])
+        if target_pane:
+            # No rollback: the spacer stood here before this start, and a failed agent start
+            # leaves it exactly as it was found — still labelled, still reusable.
+            log.info("Reusing spacer %s for the new session", target_pane)
+        else:
+            data, err = _herdr_json(
+                *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
+            if err:
+                return None, err
+            tab_id = dig(data, "result", "tab", "tab_id")
+            target_pane = dig(data, "result", "root_pane", "pane_id")
+            if not tab_id or not target_pane:
+                return None, "tab create returned no tab_id or root pane"
+            rollback = ("tab", "close", tab_id)
+    else:  # split — the source pane's sibling is the user's own, so only the new pane rolls back
+        data, err = _herdr_json(*pane_split_args(plan["split_from"], plan["cwd"]), remote=remote)
         if err:
             return None, err
-        tab_id = dig(data, "result", "tab", "tab_id")
-        if not tab_id:
-            return None, "tab create returned no tab_id"
-        shell_pane = dig(data, "result", "root_pane", "pane_id")
-        rollback = ("tab", "close", tab_id)
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", tab_id)
-    else:  # split — the source pane's tab already exists, and its sibling is the user's own
-        args = agent_start_args(plan["name"], plan["label"], plan["cwd"], "tab", plan["tab_id"], split=True)
+        target_pane = dig(data, "result", "pane", "pane_id")
+        if not target_pane:
+            return None, "pane split returned no pane_id"
+        rollback = ("pane", "close", target_pane)
 
-    data, err = _herdr_json(*args, remote=remote)
+    data, err = _herdr_json(*agent_start_args(plan["name"], plan["agent_name"], target_pane),
+                            remote=remote, timeout=START_EXEC_TIMEOUT)
     if err:
         _rollback_layout(rollback, remote)
         return None, err
@@ -458,21 +589,20 @@ def start_agent_exec(plan):
         _rollback_layout(rollback, remote)
         return None, "agent start returned no pane_id"
 
-    # After the agent pane exists, never before: the shell is the container's only other pane, so
-    # closing it first would take the tab or workspace down with it.
-    if shell_pane and shell_pane != pane_id:
-        _, close_err = _herdr_json("pane", "close", shell_pane, remote=remote)
-        if close_err:
-            # The session is up and usable; it is only sharing the tab. Say so, do not fail it.
-            log.warning("Started %s but could not close the empty shell pane %s: %s",
-                        pane_id, shell_pane, close_err)
-
     try:
         rename = run_herdr_result(*pane_rename_args(pane_id, plan["label"]), remote=remote)
     except Exception as e:
         return None, f"agent started as {pane_id} but pane rename failed: {e}"
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
+
+    # Width last, and never fatal. The session is up and usable at whatever width the placement
+    # gave it; failing the start here would roll back a working agent over a layout preference.
+    if plan.get("slot"):
+        slot_err = slot_exec(pane_id, plan["slot"], remote)
+        if slot_err:
+            log.warning("Agent started as %s but slot %r was not applied: %s",
+                        pane_id, plan["slot"], slot_err)
     return pane_id, None
 
 
@@ -585,7 +715,15 @@ async def process_request(connection, request, require_token=True):
         # compare_digest, not !=: the external listener is published to the internet through a
         # tunnel, and a short-circuiting compare leaks the token prefix through timing.
         if not (token and hmac.compare_digest(token, AUTH_TOKEN)):
-            headers = Headers([("Content-Type", "text/plain")])
+            # CORS on the rejection too. The web app is served from a different origin than the
+            # relay whenever it is hosted (GitHub Pages, Cloudflare Pages), and a 401 without this
+            # header is unreadable to the caller — the browser reports an opaque network failure
+            # and the app cannot tell "wrong token" from "relay is down". Allowing the *response*
+            # to be read grants nothing: the request was already refused.
+            headers = Headers([
+                ("Content-Type", "text/plain"),
+                ("Access-Control-Allow-Origin", "*"),
+            ])
             return Response(401, "Unauthorized", headers, b"Invalid token\n")
 
     # Check if this is a WebSocket upgrade
@@ -753,8 +891,14 @@ async def handle_client(ws, listener="lan"):
                     continue
                 lines = msg.get("lines", "30")
                 remote = pane_remote_map.get(pane_id)
-                content = run_herdr("pane", "read", pane_id, "--lines", str(lines), "--source", "recent", remote=remote)
-                await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id, "content": content}))
+                # recent-unwrapped, not recent: it drops the line breaks the terminal itself
+                # inserted, leaving only the ones the agent wrote. cols lets the client lay the
+                # result out at the pane's true width instead of guessing.
+                content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+                                    "--source", "recent-unwrapped", remote=remote)
+                await ws.send(json.dumps({
+                    "type": "pane_content", "pane_id": pane_id, "content": content,
+                    "cols": pane_cols(pane_id, lines, remote=remote)}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -826,6 +970,30 @@ async def handle_client(ws, listener="lan"):
                     continue
                 await ws.send(json.dumps({"type": "command_result", "command": "rename_pane",
                                           "ok": True, "pane_id": pane_id, "label": label}))
+            elif msg_type == "set_slot":
+                # Behind the same gate as start_agent, unlike rename_pane: a narrow slot is made
+                # by splitting, and a split starts a shell. That is process creation on this
+                # machine, which is precisely what HERDR_ENABLE_WRITE_EXT governs.
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                pane_id = msg.get("pane_id", "")
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                              "ok": False, "error": pane_err}))
+                    continue
+                slot = msg.get("slot")
+                remote = pane_remote_map.get(pane_id)
+                log.info("Set slot from %s (%s): pane=%s slot=%s", ip, device, pane_id, slot)
+                audit("set_slot", ip, device, pane_id, f"slot={slot}")
+                slot_err = await asyncio.to_thread(slot_exec, pane_id, slot, remote)
+                if slot_err:
+                    log.warning("set_slot failed for pane %s: %s", pane_id, slot_err)
+                await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                          "ok": not slot_err, "pane_id": pane_id, "slot": slot,
+                                          **({"error": slot_err} if slot_err else {})}))
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
                 if not workspace_id:
@@ -861,14 +1029,15 @@ async def handle_client(ws, listener="lan"):
                           f"placement={plan['placement']} host={plan['remote'] or 'local'}")
                 log.info("Start agent from %s (%s): %s", ip, device, detail)
                 audit("start_agent", ip, device, "", detail)
-                # Up to three herdr calls, each with a 15s timeout — off the event loop.
+                # Several herdr calls, one of them waiting out the agent's startup — off the loop.
                 pane_id, exec_err = await asyncio.to_thread(start_agent_exec, plan)
                 if exec_err:
                     log.warning("Start agent failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": exec_err}))
                     continue
-                log.info("Start agent ok: pane=%s label=%r", pane_id, plan["label"])
+                log.info("Start agent ok: pane=%s label=%r name=%r",
+                         pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":
@@ -956,8 +1125,9 @@ async def main():
         functools.partial(handle_client, listener="lan"), LAN_BIND, WS_PORT,
         process_request=functools.partial(process_request, require_token=LAN_REQUIRES_TOKEN),
     )]
-    log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s",
-             LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none")
+    log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s agent-starts=%s",
+             LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none",
+             "on" if WRITE_EXT else "off (set HERDR_ENABLE_WRITE_EXT=1)")
     if LAN_OPEN:
         log.warning("HERDR_LAN_OPEN=1: %s:%d accepts writes%s from any peer that can reach it",
                     LAN_BIND, WS_PORT, " and agent starts" if WRITE_EXT else "")
@@ -969,7 +1139,11 @@ async def main():
             functools.partial(handle_client, listener="external"), "127.0.0.1", EXTERNAL_PORT,
             process_request=functools.partial(process_request, require_token=True),
         ))
-        log.info("herdr-remote external listener on 127.0.0.1:%d auth=token", EXTERNAL_PORT)
+        # agent-starts is stated on both listeners. When it is off the browser is simply not sent
+        # start_options and hides the control, so the only symptom is a button that is not there —
+        # which looks like a client bug rather than a relay that was never asked to allow starts.
+        log.info("herdr-remote external listener on 127.0.0.1:%d auth=token agent-starts=%s",
+                 EXTERNAL_PORT, "on" if WRITE_EXT else "off (set HERDR_ENABLE_WRITE_EXT=1)")
         # The relay cannot see the cloudflared config, and pointing the tunnel at the LAN port
         # would publish an unauthenticated relay to the internet. Print the line it should hold,
         # so a wrong one is visible next to the right one at every boot.
@@ -977,6 +1151,9 @@ async def main():
 
     hosts = ["local"] + REMOTES
     log.info("Polling: %s", ", ".join(hosts))
+    # After the listeners, so a herdr that is slow to answer delays only this line. Local herdr
+    # only: a remote host's terminal is not one this operator is sitting at.
+    await asyncio.to_thread(log_tab_geometry)
     stop = loop.create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set_result, None)

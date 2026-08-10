@@ -14,17 +14,47 @@ ROLES = ("architect", "reviewer", "agent")
 # Collision suffix: "-XBEOE". Random rather than a counter because the taken set is a snapshot —
 # two starts inside one poll interval both read it before either lands. I and O are out so a
 # name read off a phone screen is not retyped as 1 or 0.
-SUFFIX_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+SUFFIX_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 SUFFIX_LEN = 5
+# herdr's own rule for an agent name, enforced before it even looks at the pane:
+# "must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'".
+# Pane labels are not bound by this — "Architect 1" is a fine label and an illegal agent name.
+HERDR_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 DEFAULT_START_AGENTS = ["codex", "claude", "pi"]
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+# herdr waits this long for the agent to reach interactive readiness. Explicit rather than
+# left to herdr's 30s default because the relay's own subprocess timeout must exceed it —
+# see START_EXEC_TIMEOUT in herdr_relay.py.
+AGENT_START_TIMEOUT_MS = 30_000
 
 PLACEMENTS = {
     "new_workspace": None,
     "new_tab": "workspace_id",
     "split": "split_from",
 }
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label"}
+# A slot is a pane count, not a column count. herdr hands a pane the whole tab area when it is
+# alone in it and divides the area evenly otherwise, so the only two widths a client can ask for
+# are "alone" and "sharing with one sibling" — which land on the desktop/phone pair.
+#
+# Counting panes rather than columns is what makes that hold on any terminal. The area is the
+# attached client's window minus herdr's sidebar and is nobody's to set here: the same two slots
+# measured 139/69 and then 144/72 across a window resize, with no code involved either time.
+# Anything finer would be a resize, and herdr's `pane resize` is a ratio of the area that the
+# next split in that tab immediately undoes.
+SLOTS = ("wide", "narrow")
+# herdr has no placeholder pane — a pane is a PTY, so the thing holding the other half of a narrow
+# slot is a live shell. It is labelled at creation and identified by that label alone, never by
+# "has no agent": a shell the user split themselves and left a build running in has no agent
+# either, and closing it to reclaim columns would be destroying their work to widen a window.
+SPACER_LABEL = "· spacer ·"
+# The narrow slot exists to be read on a phone: 370px ÷ (0.6 × 9px) ≈ 68.5 columns. A band and
+# not a point, because both 69 and 70 read fine there — and insisting on one of them would throw
+# away a column of tab area to hit it.
+NARROW_SLOT_COLS = (69, 70)
+# herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
+# only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
+SIDEBAR_BOUNDS = (18, 36)
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
 
 
 class StartAgentConfigError(Exception):
@@ -34,8 +64,9 @@ class StartAgentConfigError(Exception):
 def load_start_agents(raw):
     """Parse HERDR_START_AGENTS into an ordered allowlist. Unset yields the default set.
 
-    This allowlist is the boundary on *what* can be executed: the relay runs whatever
-    binary matches an allowlisted name on the target host's PATH.
+    This allowlist is the boundary on *what* can be executed: the names are herdr agent
+    kinds, passed to `agent start --kind`. herdr owns the kind enum and refuses an unknown
+    one with its own message, so mirroring that enum here would only rot on each release.
     """
     if not raw or not raw.strip():
         return list(DEFAULT_START_AGENTS)
@@ -77,17 +108,30 @@ def next_role_label(role, project_id, agents):
     return f"{prefix} {n}"
 
 
-def unique_agent_name(desired, taken):
-    """Return `desired`, or the next free "<base> N", so a start never hits agent_name_taken.
+def agent_name_from_label(label, fallback):
+    """Slug a pane label into a name herdr will accept as an agent name.
 
-    A herdr agent name is unique per host and `pane list` does not report it, so the label the
+    The label is what a human reads off the pane — "Architect 1", "Backend". herdr's agent
+    names are a separate, stricter namespace (HERDR_AGENT_NAME_RE), so the two cannot be the
+    same string any more; every label carrying a space or a capital would be refused outright.
+    `fallback` is the agent kind, used when a label slugs away to nothing (e.g. "___").
+    """
+    slug = re.sub(r"[^a-z0-9_-]+", "-", label.lower()).strip("-_")
+    slug = re.sub(r"-{2,}", "-", slug).lstrip("0123456789-_")
+    return (slug or fallback)[:32].rstrip("-_") or fallback
+
+
+def unique_agent_name(desired, taken):
+    """Return `desired`, or a suffixed variant, so a start never hits agent_name_taken.
+
+    A herdr agent name is unique per host and `pane list` does not report it, so a name the
     relay derives from live *pane labels* can collide with an agent name that no longer matches
     its label — a user rename moves the label and leaves the name behind. The result is bounded
-    to 32 characters to stay inside validate_pane_label's limit.
+    to 32 characters and stays inside HERDR_AGENT_NAME_RE.
     """
     if desired not in taken:
         return desired
-    base = desired[:32 - SUFFIX_LEN - 1].rstrip()
+    base = desired[:32 - SUFFIX_LEN - 1].rstrip("-_")
     while True:
         candidate = f"{base}-{''.join(random.choices(SUFFIX_ALPHABET, k=SUFFIX_LEN))}"
         if candidate not in taken:
@@ -139,6 +183,13 @@ def validate_start_request(msg, projects, agents, allowed):
     else:
         label = next_role_label(role, project["id"], agents)
 
+    # Optional: absent means "whatever the placement gives you", which is what every client sent
+    # before slots existed. Present, it is applied after the agent is up (spec §3) — the width the
+    # phone wants is not worth failing a start over.
+    slot = msg.get("slot")
+    if slot is not None and slot not in SLOTS:
+        return None, "unknown slot"
+
     remote = _project_remote(project)
     plan = {
         "name": name,
@@ -149,6 +200,7 @@ def validate_start_request(msg, projects, agents, allowed):
         "remote": remote,
         "placement": placement,
         "label": label,
+        "slot": slot,
     }
 
     if placement == "new_tab":
@@ -180,10 +232,7 @@ def validate_start_request(msg, projects, agents, allowed):
             return None, "pane is not on this project's host"
         if source.get("project_id") != project["id"]:
             return None, "pane does not belong to this project"
-        tab_id = source.get("tab_id")
-        if not tab_id:
-            return None, "pane has no tab_id"
-        plan["tab_id"] = tab_id
+        plan["split_from"] = split_from
 
     return plan, None
 
@@ -192,24 +241,188 @@ def workspace_create_args(cwd, label):
     return ("workspace", "create", "--cwd", cwd, "--label", label, "--focus")
 
 
-def tab_create_args(workspace_id, label):
-    return ("tab", "create", "--workspace", workspace_id, "--label", label, "--focus")
+def tab_create_args(workspace_id, cwd, label):
+    return ("tab", "create", "--workspace", workspace_id, "--cwd", cwd,
+            "--label", label, "--focus")
 
 
-def agent_start_args(name, label, cwd, anchor_kind, anchor_id, split=False):
-    """herdr agent start requires argv after `--`; the relay supplies the allowlisted name.
+def pane_split_args(pane_id, cwd):
+    """Split an existing pane to the right, landing a shell at the Project's cwd.
 
-    The positional is herdr's *agent name*, which is unique per host — passing the binary name
-    there let the first start of an agent succeed and every later one fail agent_name_taken.
-    The session label goes there instead; `name` stays the allowlisted binary in argv.
-
-    anchor_kind is "workspace" or "tab" — never a client-supplied value.
+    herdr attaches an agent to a pane that already exists, so the relay creates the pane
+    itself instead of asking `agent start` to split one.
     """
-    args = ["agent", "start", label, "--cwd", cwd, f"--{anchor_kind}", anchor_id]
-    if split:
-        args += ["--split", "right"]
-    args += ["--focus", "--", name]
-    return tuple(args)
+    return ("pane", "split", pane_id, "--direction", "right", "--cwd", cwd, "--focus")
+
+
+def pane_spacer_args(pane_id, cwd):
+    """Split a pane to give it a sibling, halving its width. The sibling is a bare shell.
+
+    Deliberately not `--focus`: the point of this pane is to occupy columns, and stealing the
+    user's focus into an empty shell is the opposite of what they clicked for.
+    """
+    return ("pane", "split", pane_id, "--direction", "right", "--cwd", cwd)
+
+
+def is_spacer(pane):
+    """True only for a pane this feature created to hold columns and may therefore close.
+
+    Both halves of the test matter. The label alone would let a user relabel any pane into
+    something closable; no-agent alone would close the shell they were building in.
+    """
+    return not pane.get("agent") and pane.get("label") == SPACER_LABEL
+
+
+def _tab_panes(panes, tab_id):
+    return [p for p in panes if p.get("tab_id") == tab_id]
+
+
+def free_slot(panes, workspace_id, exclude_tab=None):
+    """A spacer elsewhere in this workspace whose half can be handed to another pane, or None.
+
+    A spacer is half a slot somebody already paid for. Moving onto it costs one command and
+    leaves nothing behind, where splitting would mint a *second* spacer and strand this one for
+    good — which is how a workspace ends up with more idle shells than sessions.
+
+    Same workspace only. herdr renumbers a pane that crosses workspaces (w28:p1 becomes w27:p3),
+    and pane IDs are what the relay hands to clients — a move that changes one under a phone
+    leaves it holding a dead id. A tab of three or more is skipped: taking a third of an area is
+    not the narrow slot.
+    """
+    for p in panes:
+        if not is_spacer(p) or p.get("workspace_id") != workspace_id:
+            continue
+        if exclude_tab is not None and p.get("tab_id") == exclude_tab:
+            continue
+        if len(_tab_panes(panes, p.get("tab_id"))) <= 2:
+            return p
+    return None
+
+
+def pane_move_beside_args(pane_id, target):
+    """Move a pane into `target`'s tab, splitting off `target`. herdr requires --tab as well.
+
+    `--no-focus` for the same reason the spacer split has no `--focus`: this is a layout change,
+    and a pane that steals focus on its way there is one the user has to click back out of.
+    """
+    return ("pane", "move", pane_id, "--tab", target["tab_id"], "--split", "right",
+            "--target-pane", target["pane_id"], "--no-focus")
+
+
+def claimable_spacer(panes, workspace_id, cwd):
+    """A spacer in this workspace already sitting at `cwd`, ready to be handed an agent.
+
+    A spacer is a shell at a prompt, which is exactly what `agent start --pane` wants — so a
+    start can fill a half-width slot that already exists instead of opening a tab beside it.
+    cwd has to match: herdr starts the agent in the pane's directory, and the Project's cwd is
+    not something a client may talk the relay out of.
+    """
+    return next((p["pane_id"] for p in panes
+                 if is_spacer(p) and p.get("workspace_id") == workspace_id
+                 and p.get("cwd") == cwd), None)
+
+
+def plan_slot(panes, pane_id, slot):
+    """Return (steps, error) — the herdr commands that put `pane_id` into the requested slot.
+
+    `panes` is a whole `pane list` for one host, *including panes with no agent* — the poll
+    snapshot drops those, and they are exactly what has to be seen here. Only a pane carrying
+    SPACER_LABEL may be closed. Anything else in the tab, agent or not, is somebody's: the pane
+    moves out to its own tab instead, which costs them nothing.
+
+    Pure: every step is argv, and nothing is read or run. Steps are ordered and must be applied
+    in order; an empty list means the pane is already in the slot asked for. The split step is
+    last so its caller can label the pane it creates.
+    """
+    if slot not in SLOTS:
+        return None, "unknown slot"
+    pane = next((p for p in panes if p.get("pane_id") == pane_id), None)
+    if pane is None:
+        return None, "unknown pane_id"
+
+    siblings = [p for p in panes
+                if p.get("tab_id") == pane.get("tab_id") and p.get("pane_id") != pane_id]
+    spacers = [p for p in siblings if is_spacer(p)]
+    only_spacers = siblings and len(spacers) == len(siblings)
+
+    if slot == "wide":
+        if not siblings:
+            return [], None
+        if only_spacers:
+            # Closing hands the columns straight back and leaves nothing behind. Moving out would
+            # widen this pane just the same, but strand a tab holding a shell nobody asked for.
+            return [("pane", "close", p["pane_id"]) for p in spacers], None
+        return [("pane", "move", pane_id, "--new-tab")], None
+
+    # narrow
+    if len(siblings) == 1:
+        return [], None
+    steps = []
+    free = free_slot(panes, pane.get("workspace_id"), pane.get("tab_id"))
+    if free:
+        steps.append(pane_move_beside_args(pane_id, free))
+        # A tab of two means the spacer's own half is the one being taken, so it goes. Alone in
+        # its tab it is a spacer nothing reclaimed, and it becomes this pane's sibling instead.
+        if len(_tab_panes(panes, free["tab_id"])) == 2:
+            steps.append(("pane", "close", free["pane_id"]))
+    elif siblings:
+        # Three or more panes divide the area into thirds or worse, and splitting again only
+        # makes it smaller. Leave for an empty tab first, then take half of that.
+        steps.append(("pane", "move", pane_id, "--new-tab"))
+    if only_spacers:
+        # Whichever route was taken, the spacers left behind in the old tab hold columns for
+        # nobody now. Before the split, so the split stays last for its caller to label.
+        steps += [("pane", "close", p["pane_id"]) for p in spacers]
+    if not free:
+        steps.append(pane_spacer_args(pane_id, pane.get("cwd") or "."))
+    return steps, None
+
+
+def slot_advice(area, sidebar, band=NARROW_SLOT_COLS):
+    """Return a one-line fix when a narrow slot falls outside `band`, or None when it fits.
+
+    Advisory, and deliberately never an action. The tab area is the user's terminal minus herdr's
+    sidebar; both are theirs, and a relay that quietly resized either would be moving furniture in
+    someone else's room. Said once at boot, because a narrow slot five columns wrong looks like a
+    client bug rather than a herdr setting.
+
+    An even area splits exactly (144 gives 72|72); an odd one hands the spare column to the left
+    pane (139 gives 70|69). Either pane can end up holding the agent, so *both* have to sit in the
+    band — which makes the widest usable area `hi * 2`, and that is what gets suggested. Aiming at
+    `lo * 2` instead would hit the band by throwing away two columns of desktop.
+    """
+    lo_cols, hi_cols = band
+    if not area or area < 4 or not sidebar:
+        return None
+    narrower, wider = area // 2, -(-area // 2)
+    if lo_cols <= narrower and wider <= hi_cols:
+        return None
+    want_area = hi_cols * 2
+    want_sidebar = sidebar + area - want_area
+    lo, hi = SIDEBAR_BOUNDS
+    # Config first, dragging second, because config.toml calls sidebar_width a *default* and a
+    # width the user has dragged is remembered in herdr's session.json — where it appears to win.
+    fix = (f"set ui.sidebar_width = {want_sidebar}, or drag the sidebar there"
+           if lo <= want_sidebar <= hi
+           else f"resize the herdr terminal to {want_area + sidebar} cols")
+    return (f"herdr tab area is {area} cols, so a narrow slot lands at {wider}|{narrower}, "
+            f"outside {lo_cols}-{hi_cols}. To fix: {fix} — area {want_area} gives "
+            f"{want_area // 2}|{want_area // 2} on a phone and {want_area} on a desktop. "
+            f"(terminal {area + sidebar} cols, sidebar {sidebar})")
+
+
+def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
+    """herdr attaches an agent to an existing pane sitting at its shell prompt.
+
+    The positional is herdr's *agent name*, which is unique per host — passing the agent kind
+    there let the first start of an agent succeed and every later one fail agent_name_taken.
+    The session label goes there instead; `kind` is the allowlisted herdr agent kind.
+
+    pane_id is always a pane the relay just created or one that passed
+    validate_start_request — never a raw client value.
+    """
+    return ("agent", "start", label, "--kind", kind, "--pane", pane_id,
+            "--timeout", str(timeout_ms))
 
 
 def pane_rename_args(pane_id, label):

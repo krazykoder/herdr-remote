@@ -3,19 +3,43 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#1a1b26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest"
-    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
+    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%231a1b26&quot;,&quot;theme_color&quot;:&quot;%231a1b26&quot;}">
   <title>herdr-remote</title>
+  <!-- Before first paint, or the light user gets a dark flash on every load. Inline and
+       synchronous for that reason; it must not wait for the module script below. -->
+  <script>
+    try {
+      if (localStorage.getItem('herdr_theme') === 'light') document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* storage blocked: stay on the default */ }
+  </script>
   <script type="module">
     import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
     window.cue = play;
     document.addEventListener('DOMContentLoaded', () => bind());
   </script>
   <style>
+    /* Dark is the product default, not the OS's: the terminal it wraps is dark either way, and a
+       light shell around a dark pane is the jarring combination. Light is opt-in from Settings. */
     :root {
+      --bg: #1a1b26;
+      --surface: #202331;
+      --border: #2f3549;
+      --text: #c0caf5;
+      --muted: #565f89;
+      --green: #9ece6a;
+      --red: #f7768e;
+      --blue: #7aa2f7;
+      --orange: #e0af68;
+      --term-bg: #1a1b26;
+      --term-text: #c0caf5;
+    }
+
+    :root[data-theme="light"] {
       --bg: #e1e2e7;
       --surface: #d8d9e0;
       --border: #b6bbd1;
@@ -27,22 +51,6 @@
       --orange: #8c6c3e;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #1a1b26;
-        --surface: #202331;
-        --border: #2f3549;
-        --text: #c0caf5;
-        --muted: #565f89;
-        --green: #9ece6a;
-        --red: #f7768e;
-        --blue: #7aa2f7;
-        --orange: #e0af68;
-        --term-bg: #1a1b26;
-        --term-text: #c0caf5;
-      }
     }
 
     * {
@@ -57,24 +65,234 @@
       border-radius: 4px;
     }
 
+    /* iOS Safari zooms the layout viewport whenever a focused field renders below 16px, which
+       pushes the page edges outside the visual viewport and does not spring back. 16px is a
+       platform threshold, not a design choice: no field rule below may set a smaller size.
+       The one sanctioned exception is the composer, which the user can take down to 8px from the
+       gear menu and which accepts the zoom as the price — see --input-font. */
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+
+    /* The document never scrolls: overflow lives on html because the iOS rubber-band scroll
+       originates there, and height:100% gives body a definite block before dvh support. */
+    html {
+      height: 100%;
+      overflow: hidden;
+    }
+
     body {
       font-family: -apple-system, system-ui, -webkit-system-font, sans-serif;
       background: var(--bg);
       color: var(--text);
-      min-height: 100dvh;
-      min-height: -webkit-fill-available;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
       width: 100%;
-      overflow-x: hidden;
+      /* Kills double-tap-to-zoom, which fires on a mistimed second tap on a key or dock button and
+         leaves the pane zoomed. Panning and pinch-zoom are untouched — this is not user-scalable=no,
+         which takes zoom away from the user entirely. */
+      touch-action: manipulation;
     }
 
+    /* No vertical padding: the 44px controls inside already set the bar's height, and padding on
+       top of them only made it taller than anything it contains needs. */
     .header {
-      padding: 12px 16px;
+      padding: 0 8px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       border-bottom: 1px solid var(--border);
+    }
+
+    /* In a pane the app header moves to the bottom, under the composer: the thumb is already
+       down there, and the term header above already carries back, status, title and refresh.
+       `order` moves the same node, so nothing is re-rendered and no state is rebuilt. */
+    body.terminal-open > .header {
+      order: 9;
+      border-bottom: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* The shell's last row at every width. Its bottom padding is as much the point as its
+       contents: ~20px keeps the text clear of the iPhone's bottom curve and home indicator.
+       env() resolves to 0 until P5 adds viewport-fit=cover, so the 20px stands alone for now and
+       the device inset simply adds to it once it starts reporting. */
+    .status-bar {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+      font-size: 0.65rem;
+      font-weight: 500;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .status-bar .left {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-bar .right {
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .status-bar .right.on {
+      color: var(--green);
+    }
+
+    /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
+    body.terminal-open>.status-bar {
+      order: 10;
+    }
+
+    /* One badge per live agent, in the bar that is always on screen. Snapshot order, never
+       recency: a tab that moves the moment you select it is a tab you cannot aim at twice.
+       Sits directly after the title and takes the header's slack, so the two icon buttons on the
+       right keep their full hit area and the tabs truncate instead. */
+    .agent-tabs {
+      /* Only inside a pane. On the landing page the agent list is right there and a duplicate
+         strip above it is noise; the tabs exist to move between panes without leaving one. */
+      display: none;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+      /* The scrollbar is hidden at every width — a 15px bar inside a 44px bar is most of the bar.
+         Touch flings it; a mouse gets wheel-to-horizontal from JS, since neither has a bar to drag.
+         Snapping is `proximity`, not `mandatory`: a fling should settle on a tab edge, but a
+         deliberate small drag must be allowed to stop where the user let go. */
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      /* A fling past the last tab otherwise chains to the page, where Chrome on macOS reads a
+         horizontal swipe as navigate-back and leaves the pane. */
+      overscroll-behavior-x: none;
+      scroll-behavior: smooth;
+      scroll-snap-type: x proximity;
+      scroll-padding: 0 12px;
+    }
+
+    body.terminal-open .agent-tabs {
+      display: flex;
+    }
+
+    /* The pair of icon buttons is one group, not two header children with a gap between them.
+       margin-left:auto pins the group right at every width and in every view — the tab strip is
+       display:none on the landing page, so relying on it to push them over left them next to the
+       title there. */
+    .header .nav-group {
+      display: flex;
+      flex-shrink: 0;
+      gap: 2px;
+      margin-left: auto;
+    }
+
+    .agent-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* With no scrollbar, the only thing saying "there are more tabs that way" is the edge fade.
+       Applied per side, so a strip scrolled to its start never fades a tab that is fully visible. */
+    .agent-tabs.fade-left {
+      mask-image: linear-gradient(to right, transparent 0, #000 20px);
+    }
+
+    .agent-tabs.fade-right {
+      mask-image: linear-gradient(to left, transparent 0, #000 20px);
+    }
+
+    .agent-tabs.fade-left.fade-right {
+      mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .agent-tabs {
+        scroll-behavior: auto;
+      }
+    }
+
+    /* 44px tall for the hit area, but only ~28px of it is painted: the pill is drawn by an inset
+       shadow inside a transparent button, so the bar reads light while the target stays full-size. */
+    /* The button is the 44px touch target and paints nothing; the pill inside it is what the eye
+       sees, and it is 28px. That split is the only way to have a tab that looks slim in a slim bar
+       without taking the hit area down with it. */
+    .agent-tab {
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      scroll-snap-align: start;
+      max-width: 132px;
+      min-width: 0;
+      min-height: 44px;
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .agent-tab .pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 7px;
+      box-shadow: inset 0 0 0 1px var(--border);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      transition: box-shadow 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .agent-tab .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .agent-tab:hover .pill {
+      background: var(--surface);
+      box-shadow: inset 0 0 0 1px var(--muted);
+      color: var(--text);
+    }
+
+    /* Selection is a filled pill, not a tinted border: at 0.72rem in a crowded bar a border-only
+       cue is invisible on a phone. */
+    .agent-tab.active .pill {
+      background: var(--blue);
+      box-shadow: inset 0 0 0 1px var(--blue);
+      color: var(--bg);
+      font-weight: 700;
+    }
+
+    /* The selected tab needs its own hover, or pointing at it makes it look like every other
+       hovered tab and the selection appears to move. Brighter and lifted, never repainted. */
+    .agent-tab.active:hover .pill {
+      background: var(--blue);
+      box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px color-mix(in srgb, var(--blue) 30%, transparent);
+      color: var(--bg);
+    }
+
+    /* The dot sits on a saturated fill once selected; the ring is what keeps it readable there. */
+    .agent-tab.active .dot {
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
     }
 
     .header h1 {
@@ -83,13 +301,16 @@
       letter-spacing: -0.02em;
     }
 
+    /* Narrower than the 44px square, on purpose: the tabs are what the user aims at in this bar
+       and every pixel here is a pixel they do not get. Full 44px height is kept, so the target
+       is squeezed on one axis only, and the two sit tight against each other. */
     .header button {
       background: none;
       border: none;
       color: var(--muted);
       cursor: pointer;
-      padding: 8px;
-      min-width: 44px;
+      padding: 0;
+      min-width: 36px;
       min-height: 44px;
       display: flex;
       align-items: center;
@@ -126,19 +347,21 @@
       }
     }
 
+    /* min-height:0 on every flex:1 scroller — without it the content-based automatic minimum
+       stops the pane shrinking and pushes body past one viewport. */
     .view {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
     }
 
     /* Settings */
     .settings {
       display: none;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
       padding: 16px;
-    }
-
-    .settings.active {
-      display: block;
     }
 
     .settings h2 {
@@ -167,7 +390,6 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 13px;
     }
 
     .setting-group select {
@@ -177,7 +399,6 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 13px;
     }
 
     .setting-group .hint {
@@ -202,6 +423,12 @@
     /* Agent list */
     .agents {
       padding: 12px;
+    }
+
+    /* Recents sit below the list and share its card styling; the section header supplies the
+       top gap, so only the sides and bottom are padded here. */
+    .recents {
+      padding: 0 12px 12px;
     }
 
     .section-header {
@@ -270,6 +497,7 @@
       padding: 8px 12px;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: none;  /* same swipe-back chaining as the tab strip */
     }
 
     .chip-strip::-webkit-scrollbar {
@@ -351,7 +579,6 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 14px;
       text-transform: none;
       letter-spacing: normal;
       font-weight: 400;
@@ -385,11 +612,9 @@
     .terminal-view {
       display: none;
       flex-direction: column;
-      position: fixed;
-      inset: 0;
-      top: 49px;
+      flex: 1;
+      min-height: 0;
       background: var(--bg);
-      z-index: 50;
     }
 
     .terminal-view.active {
@@ -397,7 +622,7 @@
     }
 
     .term-header {
-      padding: 10px 16px;
+      padding: 6px 12px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -428,25 +653,305 @@
       cursor: pointer;
     }
 
+    /* CLS sits in the header next to Refresh, which is the one it is easiest to mean instead.
+       Text and not an icon: it wipes what is on screen, and a glyph nobody recognises is not the
+       thing to put next to a button that is safe to press. Two taps — see armClear. */
+    .term-header .cls-btn {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      /* Fixed, so arming does not shuffle the buttons beside it as the label changes. */
+      min-width: 42px;
+      text-align: center;
+    }
+
+    .term-header .cls-btn[data-armed="1"] {
+      color: var(--bg);
+      background: var(--orange);
+      border-color: transparent;
+    }
+
+    /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
+       rather than the header, whose other children must stay in normal flow. */
+    .term-menu-wrap {
+      position: relative;
+      display: flex;
+      /* Refresh and the gear sit next to each other and do very different things; the header's
+         8px gap alone put them close enough to mis-tap. */
+      margin-left: 6px;
+      flex-shrink: 0;
+    }
+
+    .term-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      min-width: 180px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .term-menu .menu-label {
+      font-size: 0.6rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .term-menu button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .term-menu button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .term-menu .menu-item {
+      width: 100%;
+      text-align: left;
+      padding: 0 10px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .term-menu .menu-item:hover {
+      background: var(--border);
+    }
+
+    .term-menu .menu-item.danger {
+      color: var(--red);
+    }
+
+    .term-menu .menu-sep {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 0;
+    }
+
     .term-content {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 10px 12px;
+      padding: 8px 10px;
       background: var(--term-bg);
       font-family: 'SF Mono', 'Menlo', monospace;
-      font-size: 0.8rem;
+      /* px, not rem: this is the one thing the pane's text-size control resizes. 13px is what
+         the old 0.8rem resolved to at the default root size. */
+      font-size: var(--term-font, 13px);
       line-height: 1.5;
+      color: var(--term-text);
+      -webkit-overflow-scrolling: touch;
+      /* Split by axis, deliberately. `contain` stops scroll chaining but still permits the
+         elastic bounce, which True size made visible by turning on overflow-x — panning a wide
+         line stretched and snapped, in Chrome and Safari but not Firefox. `none` on x removes
+         the bounce as well, so panning ends where the line ends everywhere.
+
+         y stays `contain`: the bounce at the top of the scrollback is the only feedback that
+         loadMore() just fired, and it is the axis every terminal app on the platform bounces on. */
+      overscroll-behavior-x: none;
+      overscroll-behavior-y: contain;
+    }
+
+    /* Reflow — the viewport decides where lines break. The hanging indent is the honesty: a
+       continuation row is visibly indented, so a wrap the phone inserted never reads as a line
+       the agent wrote. */
+    .term-content.wrap-reflow {
+      overflow-x: hidden;
       white-space: pre-wrap;
       word-wrap: break-word;
       word-break: break-all;
-      color: var(--term-text);
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
+      text-indent: -2ch;
+      padding-left: calc(10px + 2ch);
+    }
+
+    /* True size and Fit width both keep the agent's breaks and only its breaks. `pre` is what
+       makes one logical line one visual row; the horizontal scroll is the price, and in Fit
+       width it never triggers because the font is solved to the pane's column count. */
+    .term-content.wrap-pre {
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    /* --- Line ruler ---------------------------------------------------------------------
+       The handles live in a column of their own, right of the text, so the finger dragging one
+       never covers the line it is selecting. That single property is what native selection
+       cannot offer and what makes this usable at a 9px terminal.
+
+       Selection is a range of line indices, never a character range — which is also what makes
+       it cheap: with `white-space: pre` one logical line is one visual row of known height, so
+       index <-> y is arithmetic and the whole feature costs one band element. Reflow breaks
+       that (a line spans an unknown number of rows), so the ruler is not offered there. */
+    .term-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      /* The band is positioned against this box and has to clip to it. */
+      overflow: hidden;
+    }
+
+    .term-wrap>.term-content {
+      flex: 1;
+    }
+
+    .ruler {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 32px;
+      /* The ruler owns its drags; without this the page pans out from under them on iOS. */
+      touch-action: none;
+      cursor: ns-resize;
+      z-index: 2;
+    }
+
+    /* Deliberately no background. In True size the text pans underneath, and a solid 32px strip
+       would hide a column of it — only the track and the handles paint. */
+    .ruler::before {
+      content: '';
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      left: 50%;
+      width: 3px;
+      margin-left: -1.5px;
+      border-radius: 2px;
+      background: var(--border);
+      opacity: 0.7;
+    }
+
+    .ruler-handle {
+      position: absolute;
+      left: 0;
+      width: 32px;
+      /* 44px of target for a 6px bar: the grip is deliberately far larger than its paint. */
+      height: 44px;
+      margin-top: -22px;
+      z-index: 3;
+    }
+
+    .ruler-handle::before {
+      content: '';
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: 19px;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--blue);
+      box-shadow: 0 0 0 1px var(--term-bg);
+    }
+
+    /* Parked at the viewport edge because the range continues past it. A handle that scrolled
+       away is a selection that cannot be adjusted, so it stops instead of leaving. */
+    .ruler-handle.parked::before {
+      opacity: 0.5;
+      left: 9px;
+      right: 9px;
+    }
+
+    .sel-band {
+      position: absolute;
+      left: 0;
+      right: 32px;
+      pointer-events: none;
+      background: color-mix(in srgb, var(--blue) 20%, transparent);
+      border-top: 1px solid var(--blue);
+      border-bottom: 1px solid var(--blue);
+      z-index: 1;
+    }
+
+    /* At 9px the user cannot read the row they are landing on. This is how they confirm the
+       line without needing pixel precision. */
+    .sel-bubble {
+      position: absolute;
+      right: 38px;
+      max-width: 62%;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: var(--text);
+      color: var(--bg);
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    .sel-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
+    .sel-bar[hidden] {
+      display: none;
+    }
+
+    .sel-bar .count {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sel-bar .spacer {
+      flex: 1;
+    }
+
+    .sel-bar button {
+      padding: 8px 12px;
+      min-height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .sel-bar button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: var(--bg);
+    }
+
+    /* Empty for most of a pane's life. Left displayed it still drew a top border and 12px of
+       padding, which read as dead space between the terminal and the composer. */
+    .quick-actions:empty {
+      display: none;
     }
 
     .quick-actions {
-      padding: 8px 12px;
+      padding: 6px 10px;
       border-top: 1px solid var(--border);
       display: flex;
       gap: 6px;
@@ -484,25 +989,6 @@
       color: #fff;
     }
 
-    .term-shortcuts {
-      display: flex;
-      justify-content: center;
-      padding: 6px 12px 0;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    .term-shortcuts select {
-      padding: 5px 10px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--muted);
-      font-size: 0.72rem;
-      max-width: 70%;
-    }
-
     .term-input {
       padding: 8px 12px;
       display: flex;
@@ -519,20 +1005,61 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 14px;
       font-family: monospace;
+      /* Default 16px keeps iOS from zooming on focus; the gear menu can take it to 8px, which
+         re-enables that zoom deliberately. See the base input rule. */
+      font-size: var(--input-font, 16px);
       min-width: 0;
+    }
+
+    /* Four stacked controls, the text area, two large ones. The text area's min-height sets the
+       row height; the stacks stretch to it, so the buttons size themselves. */
+    .term-input {
+      align-items: stretch;
     }
 
     .term-input textarea {
       resize: none;
       overflow-y: auto;
       line-height: 1.4;
-      max-height: 8.4em;
+      /* Four stacked 44px targets plus three 4px gaps — the left stack is what sets this, and
+         44px is S3.3's floor. min-height beats the inline height autoGrow writes, so the composer
+         cannot collapse below the stacks beside it. */
+      min-height: 188px;
+      max-height: 280px;
     }
 
-    .term-input {
-      align-items: flex-end;
+    .term-input-side {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+      width: 46px;
+    }
+
+    .term-input-side button {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    /* The right stack holds two controls in the height four take on the left, so both are large.
+       Send takes the larger share and the only filled treatment — it is the one with a
+       consequence, and clear is guarded by its double tap rather than by being small. */
+    .term-input-side button.send {
+      flex: 1.6;
+      border: none;
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .term-input-side button.clear.armed {
+      border-color: var(--red);
+      color: var(--red);
     }
 
     .pair-strip {
@@ -554,6 +1081,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* Last child of the pane: its separator has to face the other way. */
+    .pair-strip.at-bottom {
+      border-bottom: none;
+      border-top: 1px solid var(--border);
     }
 
     /* The reason a pair went stale gets its own line — truncated to "is no lo…" it is useless. */
@@ -756,16 +1289,6 @@
         padding: 0 16px;
       }
 
-      .terminal-view {
-        position: static;
-        display: none;
-      }
-
-      .terminal-view.active {
-        display: flex;
-        height: calc(100dvh - 49px);
-      }
-
       .agents {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -778,10 +1301,6 @@
 
       .chip-strip {
         grid-column: 1 / -1;
-      }
-
-      .term-content {
-        min-height: 400px;
       }
     }
 
@@ -796,9 +1315,6 @@
     }
 
     @media (max-width: 380px) {
-      .header {
-        padding: 10px 12px;
-      }
 
       .header h1 {
         font-size: 0.9rem;
@@ -835,21 +1351,23 @@
 <body>
 
   <div class="header">
-    <span class="dot" id="statusDot"></span>
+    <span class="dot status-dot"></span>
     <h1>herdr</h1>
-    <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
-    <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
-    <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg></button>
-    <button onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path
-          d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg></button>
+    <!-- One badge per live agent, selectable like tabs. Filled by renderAgentTabs. -->
+    <div class="agent-tabs" id="agentTabs"></div>
+    <div class="nav-group">
+      <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg></button>
+      <button id="navSettings" onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg></button>
+    </div>
   </div>
 
   <div class="settings" id="settingsView">
@@ -871,6 +1389,16 @@
       <button id="pushToggle" onclick="togglePush()">Enable Push</button>
       <div class="hint">Get notified when agents are blocked, even with this tab closed.</div>
     </div>
+
+    <div class="setting-group">
+      <label for="themePick">Appearance</label>
+      <select id="themePick" onchange="setTheme(this.value)">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+      <div class="hint">Dark is the default. The terminal itself is dark in both.</div>
+    </div>
+
     <div class="setting-group">
       <label>Status</label>
       <div id="settingsStatus" style="font-size:0.75rem"></div>
@@ -878,14 +1406,22 @@
   </div>
 
   <div class="view" id="agentListView">
-    <!-- Recently opened panes. Absent until there is more than one, so a fresh browser and a
-       single-agent setup both look exactly as they did before. -->
-    <div class="chip-strip" id="recents" style="display:none"></div>
     <div class="agents" id="agents"></div>
+    <!-- Up to five recently opened panes, below the list and rendered with the same cards. A
+       sibling of #agents, not a child: renderBody rewrites that node's innerHTML every snapshot. -->
+    <div class="recents" id="recents" style="display:none"></div>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
+  </div>
+
+  <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
+       anything. Deliberately sparse for now — the space exists as much for the iPhone's bottom
+       curve as for what it says. -->
+  <div class="status-bar" id="statusBar">
+    <span class="left" id="statusBarLeft"></span>
+    <span class="right" id="statusBarRight"></span>
   </div>
 
   <div class="terminal-view" id="terminalView">
@@ -895,8 +1431,12 @@
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
         </svg></button>
-      <span class="title" id="termTitle" role="button" tabindex="0" title="Rename this pane" onclick="renamePane()"
-        onkeydown="if(event.key==='Enter'){renamePane()}" style="cursor:pointer"></span>
+      <span class="dot status-dot"></span>
+      <span class="title" id="termTitle"></span>
+      <!-- Left of Refresh, and armed by the first tap: the two sit a thumb apart and one of them
+           throws away what is on screen. See armClear. -->
+      <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
+        aria-label="Clear screen">CLS</button>
       <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -905,39 +1445,104 @@
           <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
           <path d="M16 16h5v5" />
         </svg></button>
+      <div class="term-menu-wrap">
+        <button class="refresh-btn" id="termMenuBtn" onclick="toggleTermMenu()" aria-label="Pane settings"
+          aria-haspopup="true" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path
+              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg></button>
+        <div class="term-menu" id="termMenu" style="display:none" role="menu">
+          <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
+          <button class="menu-item" role="menuitem" onclick="closeTermMenu(); adjustPane()">Fit pane to this screen</button>
+          <!-- Pair items, present only while this pane belongs to a pair — renderPairStrip owns it. -->
+          <div id="termMenuPair"></div>
+          <div class="menu-sep"></div>
+          <div class="menu-label">Terminal text</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="fontDec" onclick="bumpFont(-1)" aria-label="Smaller terminal text">A−</button>
+            <span id="fontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+            <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger terminal text">A+</button>
+          </div>
+          <div class="menu-label" style="margin-top:10px">Composer text</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
+            <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+            <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
+          </div>
+          <div class="menu-label" style="margin-top:10px">Line width</div>
+          <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out"
+            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <option value="true">True size — pan sideways</option>
+            <option value="fit">Fit width — shrink to the pane</option>
+            <option value="reflow">Reflow — wrap to the screen</option>
+          </select>
+          <div id="wrapHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
+          <div class="menu-label" style="margin-top:10px">Pair bar</div>
+          <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
+            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <option value="top">Top of the pane</option>
+            <option value="above">Above the composer</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </div>
+      </div>
     </div>
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
-    <div class="term-content" id="termContent">Loading…</div>
-    <div class="quick-actions" id="quickActions"></div>
-    <!-- Instruction shortcuts, one tap from the composer. A native <select> so a phone opens its
-       own picker; it inserts at the cursor and never sends, like the copies in the quick dock. -->
-    <div class="term-shortcuts">
-      <select id="shortcutPick" onchange="pickShortcut(this)" aria-label="Insert an instruction"></select>
+    <div class="term-wrap" id="termWrap">
+      <div class="term-content" id="termContent">Loading…</div>
+      <div class="sel-band" id="selBand" hidden></div>
+      <div class="ruler" id="ruler" hidden aria-hidden="true">
+        <div class="ruler-handle" id="rulerTop" hidden></div>
+        <div class="ruler-handle" id="rulerBot" hidden></div>
+      </div>
+      <div class="sel-bubble" id="selBubble" hidden></div>
     </div>
+    <div class="sel-bar" id="selBar" hidden>
+      <span class="count" id="selCount"></span>
+      <span class="spacer"></span>
+      <button onclick="copySel()" id="selCopy">Copy</button>
+      <button class="primary" onclick="openTransfer()" id="selTransfer" hidden>Transfer ›</button>
+      <button onclick="clearSel()" aria-label="Clear selection">✕</button>
+    </div>
+    <div class="quick-actions" id="quickActions"></div>
     <div class="term-input">
-      <button onclick="openCommandPalette()" aria-label="Commands"
-        style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
-      <textarea id="termInput" rows="1" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
+      <div class="term-input-side">
+        <button onclick="openCommandPalette()" aria-label="Commands"
+          style="border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px">/</button>
+        <button onclick="toggleDock('promptDock')" aria-label="Prompts"
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">P</button>
+        <button onclick="toggleQuickDock()" aria-label="Quick actions"
+          style="border:1px solid var(--border);background:var(--bg);color:var(--orange)"><svg width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg></button>
+        <button onclick="toggleKeysDock()" aria-label="Keys"
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10" />
+          </svg></button>
+      </div>
+      <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
         autocapitalize="off" spellcheck="false"></textarea>
-      <button onclick="toggleQuickDock()" aria-label="Quick actions"
-        style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange);flex-shrink:0"><svg
-          width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
-        </svg></button>
-      <button onclick="toggleKeysDock()" aria-label="Keys"
-        style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);flex-shrink:0"><svg
-          width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="4" width="20" height="16" rx="2" />
-          <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10" />
-        </svg></button>
-      <button onclick="sendText()" aria-label="Send"
-        style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg
-          width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-        </svg></button>
+      <div class="term-input-side">
+        <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
+            fill="currentColor" stroke="none">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg></button>
+        <button class="clear" id="clearBtn" onclick="clearComposer(this)" aria-label="Clear the composer (tap twice)"
+          title="Tap twice to clear" style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg
+            width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg></button>
+      </div>
     </div>
     <div class="term-keys" id="termKeys" style="display:none">
       <!-- Key queue strip (visible when composing) -->
@@ -1005,9 +1610,18 @@
           <button class="nav-key" onclick="quickSend('skip')">skip</button>
           <button class="nav-key" onclick="quickSend('commit and push')">commit & push</button>
         </div>
-        <p style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:8px 0 4px">
-          Instructions</p>
-        <!-- These insert at the cursor and never send — unlike Confirm and Common above. -->
+      </div>
+    </div>
+    <!-- Prompts dock — the "P" button beside the composer. These insert at the cursor and
+       never send, unlike Confirm and Common in the quick dock. -->
+    <div class="term-keys" id="promptDock" style="display:none">
+      <div style="width:100%">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span
+            style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Prompts</span>
+          <button onclick="toggleDock('promptDock')" aria-label="Close"
+            style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
+        </div>
         <div id="shortcutRow" style="display:grid;gap:4px"></div>
       </div>
     </div>
@@ -1024,7 +1638,7 @@
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
       <input id="cmdSearch" type="text" placeholder="Search commands…" autocomplete="off" autocorrect="off"
-        style="margin:8px 12px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px"
+        style="margin:8px 12px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"
         oninput="filterCommands()" />
       <div id="cmdList" style="overflow-y:auto;padding:4px 12px;"></div>
     </div>
@@ -1205,40 +1819,214 @@
         return { error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less` };
       return { text: body };
     }
+
+    // A ruler selection is a pair of line indices, and `pane read` returns the *last* N lines —
+    // so anything the agent prints shifts every index up, and loading more scrollback shifts them
+    // down. The selection therefore follows its own text, not its position.
+    //
+    // Returns the new [a, b], or null when the block is gone — at which point the selection is
+    // gone too, which is the honest answer. A block that repeats verbatim resolves to the first
+    // match; distinguishing them would need an anchor the pane does not give us.
+    function reanchorSel(text, selText, a, b) {
+      if (!selText) return null;
+      const rows = text.split('\n');
+      if (rows.slice(a, b + 1).join('\n') === selText) return [a, b];
+      // Whole lines only. A mid-line match, or one that stops short of the line's end, is a
+      // different selection that happens to share characters.
+      const whole = (i) => (i === 0 || text[i - 1] === '\n') &&
+        (i + selText.length === text.length || text[i + selText.length] === '\n');
+      let at = text.indexOf(selText);
+      while (at >= 0 && !whole(at)) at = text.indexOf(selText, at + 1);
+      if (at < 0) return null;
+      const start = text.slice(0, at).split('\n').length - 1;
+      return [start, start + selText.split('\n').length - 1];
+    }
     // --- P3 pair logic (pure) --- end
 
     // Settings — auto-detect relay when served from same origin
     const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
     const isSelfRelay = !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io');
-    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
-    const urlToken = new URLSearchParams(location.search).get('token');
+    // A temp tunnel mints a new hostname on every restart, so the relay address is handed over as
+    // a link rather than retyped on a phone. Scheme-checked: this writes the address the app will
+    // connect to, so anything that is not a WebSocket URL is ignored.
+    const q = new URLSearchParams(location.search);
+    const urlRelay = q.get('relay');
+    if (urlRelay && /^wss?:\/\/[^\s]+$/i.test(urlRelay)) localStorage.setItem('herdr_relay_url', urlRelay);
+    const urlToken = q.get('token');
     if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
+    // Both are credentials in a URL: they persist in the address bar, in history, and in any
+    // screenshot of the phone. Stored, then stripped — everything downstream reads localStorage.
+    if (urlRelay || urlToken) {
+      q.delete('relay');
+      q.delete('token');
+      const rest = q.toString();
+      history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+    }
+    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
     const savedToken = localStorage.getItem('herdr_relay_token') || '';
     document.getElementById('relayUrl').value = savedUrl;
     document.getElementById('relayToken').value = savedToken;
 
+    // Theme. The head script already applied it before paint; this only keeps the control honest.
+    const THEME_KEY = 'herdr_theme';
 
+    function setTheme(name) {
+      const light = name === 'light';
+      if (light) document.documentElement.dataset.theme = 'light';
+      else delete document.documentElement.dataset.theme;
+      try { localStorage.setItem(THEME_KEY, light ? 'light' : 'dark'); } catch (e) { /* private mode: session-only */ }
+      document.getElementById('themePick').value = light ? 'light' : 'dark';
+      // The installed PWA paints its chrome from this, so it has to track the choice.
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.content = light ? '#e1e2e7' : '#1a1b26';
+    }
+
+    setTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+
+
+
+    // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
+    // Settings and Activity are toggles onto wherever the user already was, not one-way doors.
+    // The pane they came from is remembered so a second tap puts it back; without this, leaving
+    // Settings always dumped them on the agent list and they had to find the pane again.
+    let panelReturnPane = null;
+
+    function panelIsOpen() {
+      return document.getElementById('settingsView').style.display === 'block'
+        || document.getElementById('timelineView').style.display === 'block';
+    }
+
+    function openPanel(id) {
+      // Only capture on the way in. Switching Settings → Activity must not overwrite the pane
+      // with the null that closing the terminal already left behind.
+      if (!panelIsOpen()) {
+        panelReturnPane = activePane;
+        if (activePane) closeTerminal();
+      }
+      document.getElementById('agentListView').style.display = 'none';
+      document.getElementById('settingsView').style.display = id === 'settingsView' ? 'block' : 'none';
+      document.getElementById('timelineView').style.display = id === 'timelineView' ? 'block' : 'none';
+    }
+
+    function closePanel() {
+      document.getElementById('settingsView').style.display = 'none';
+      document.getElementById('timelineView').style.display = 'none';
+      const back = panelReturnPane;
+      panelReturnPane = null;
+      // The pane may have died while the panel was open; openTerminal falls back to the ID, so
+      // check the live snapshot first and land on the list rather than on a dead pane.
+      if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
+      else document.getElementById('agentListView').style.display = '';
+    }
+
+    // Jumping between panes is the most frequent move in the app, so every live agent gets a tab
+    // in the bar that is always on screen. Snapshot order, deliberately not recency: selecting a
+    // tab must not move it, or the next selection lands somewhere else.
+    // Duplicate pane IDs are dropped rather than shown twice — same fail-closed rule as the list.
+    // render() runs on every snapshot, so rewriting innerHTML unconditionally rebuilt the whole
+    // strip a few times a second: the tabs flickered, hover was dropped mid-point, and
+    // scrollIntoView re-fired. Rebuild only when the strip's own contents change, and apply the
+    // selection separately — switching panes then never touches the markup.
+    let tabsSig = '', tabsActive = null;
+
+    function renderAgentTabs() {
+      const el = document.getElementById('agentTabs');
+      const live = agents.filter(a => agents.filter(x => x.pane_id === a.pane_id).length === 1);
+      const sig = live.map(a => `${a.pane_id} | ${paneLabel(a)} | ${a.status}`).join(' /// ');
+      if (sig !== tabsSig) {
+        tabsSig = sig;
+        el.innerHTML = live.map(a => {
+          // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
+          // bar that is always on screen is motion the user cannot turn off or look away from.
+          const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          return `<button class="agent-tab" data-pane="${escapeHtml(a.pane_id)}" ` +
+            `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
+            `<span class="pill">` +
+            `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
+            `<span class="label">${escapeHtml(paneLabel(a))}</span></span></button>`;
+        }).join('');
+        tabsActive = null;  // the buttons are new, so the class has to be applied again
+      }
+      syncTabFades();
+      if (tabsActive === activePane) return;
+      tabsActive = activePane;
+      el.querySelectorAll('.agent-tab').forEach(b => {
+        const on = b.dataset.pane === activePane;
+        b.classList.toggle('active', on);
+        if (!on) { b.removeAttribute('aria-current'); return; }
+        b.setAttribute('aria-current', 'page');
+        // Centred, not 'nearest': landing the selection flush against an edge hides whichever
+        // neighbour you are most likely to want next. Centring always shows both.
+        b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      });
+    }
+
+    // --- Bottom status bar ---
+    // Left: when the open pane's content last actually changed. Stamping every poll would read
+    // "now" forever and mean nothing, so the stamp is taken only when the text differs.
+    let paneStampAt = null;
+
+    function fmtStamp(d) {
+      const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return `${t} · ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+    }
+
+    function renderStatusBar() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const on = !!a && a.status === 'working';
+      document.getElementById('statusBarLeft').textContent =
+        a && paneStampAt ? fmtStamp(paneStampAt) : '';
+      const right = document.getElementById('statusBarRight');
+      right.textContent = a ? (on ? 'active' : 'idle') : '';
+      right.classList.toggle('on', on);
+    }
+
+    // With the scrollbar hidden, nothing else says there are more tabs off-screen.
+    function syncTabFades() {
+      const el = document.getElementById('agentTabs');
+      const max = el.scrollWidth - el.clientWidth;
+      el.classList.toggle('fade-left', el.scrollLeft > 1);
+      el.classList.toggle('fade-right', el.scrollLeft < max - 1);
+    }
+
+    {
+      const el = document.getElementById('agentTabs');
+      el.addEventListener('scroll', syncTabFades, { passive: true });
+      // Fit width is solved against the viewport, so a rotation has to re-solve it.
+      addEventListener('resize', () => { syncTabFades(); applyWrapMode(); });
+      // A mouse has no horizontal fling and there is no scrollbar to drag, so vertical wheel over
+      // the strip moves it sideways. Without this, tabs past the edge are unreachable on desktop.
+      el.addEventListener('wheel', e => {
+        const max = el.scrollWidth - el.clientWidth;
+        if (max <= 0 || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        e.preventDefault();
+        // behavior:'auto' overrides the CSS `scroll-behavior: smooth`, which would otherwise
+        // animate every wheel notch and make the strip feel like it is lagging the hand.
+        el.scrollBy({ left: e.deltaY, behavior: 'auto' });
+      }, { passive: false });
+    }
+
+    // A jump is a destination, so it drops any panel the user was in and the pane it would
+    // have returned to — otherwise closing Settings later would yank them back to an older pane.
+    function jumpToPane(paneId) {
+      panelReturnPane = null;
+      document.getElementById('settingsView').style.display = 'none';
+      document.getElementById('timelineView').style.display = 'none';
+      openTerminal(paneId);
+    }
 
     function toggleSettings() {
-      const s = document.getElementById('settingsView');
-      const show = s.style.display !== 'block';
-      s.style.display = show ? 'block' : 'none';
-      document.getElementById('agentListView').style.display = show ? 'none' : '';
-      document.getElementById('timelineView').style.display = 'none';
-      if (show) {
-        document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
-          ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
-          : `<span style="color:var(--red)">● Disconnected</span>`;
-      }
+      if (document.getElementById('settingsView').style.display === 'block') { closePanel(); return; }
+      openPanel('settingsView');
+      document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
+        ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
+        : `<span style="color:var(--red)">● Disconnected</span>`;
     }
 
     function toggleTimeline() {
-      const t = document.getElementById('timelineView');
-      const show = t.style.display !== 'block';
-      t.style.display = show ? 'block' : 'none';
-      document.getElementById('agentListView').style.display = show ? 'none' : '';
-      document.getElementById('settingsView').style.display = 'none';
-      if (show) renderTimeline();
+      if (document.getElementById('timelineView').style.display === 'block') { closePanel(); return; }
+      openPanel('timelineView');
+      renderTimeline();
     }
 
     function renderTimeline() {
@@ -1283,12 +2071,16 @@
       ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
     }
 
+    // One update path for every status dot: the app header's and the term header's, so the
+    // connection stays visible on mobile where the app header is hidden. The dot carries the
+    // whole signal — the text beside it said the same thing twice and cost tab room.
     function setStatus(s) {
-      const dot = document.getElementById('statusDot');
-      const label = document.getElementById('connLabel');
-      dot.style.background = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
-      label.textContent = s === 'connected' ? 'live' : s === 'connecting' ? 'connecting…' : 'offline';
-      label.style.color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+      const color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+      const label = s === 'connected' ? 'Connected' : s === 'connecting' ? 'Connecting…' : 'Offline';
+      document.querySelectorAll('.status-dot').forEach(d => {
+        d.style.background = color;
+        d.title = label;
+      });
     }
 
     function showSetup() {
@@ -1326,6 +2118,15 @@
           closeStart();
         }
         else setStartError(msg.error || 'start failed');
+      }
+      else if (msg.type === 'command_result' && msg.command === 'set_slot') {
+        if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
+        else if (activePane === msg.pane_id) {
+          // The relay reports a pane's width by measuring its scrollback, so the new number only
+          // appears once the pane has redrawn at it. One delayed read beats guessing the width
+          // here and laying the text out at a column count herdr may not have agreed to.
+          setTimeout(refreshPane, 600);
+        }
       }
       else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
         // Same rule: apply the label only once the relay confirms herdr took it. Painting it
@@ -1377,7 +2178,14 @@
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
         const prevScroll = el.scrollTop;
-        el.textContent = msg.content || '(empty)';
+        const next = msg.content || '(empty)';
+        // Splitting or resizing a pane changes its width mid-session, so this is re-applied
+        // on change rather than read once when the pane opens.
+        const cols = Number.isInteger(msg.cols) && msg.cols > 0 ? msg.cols : null;
+        if (cols !== paneCols) { paneCols = cols; applyWrapMode(); }
+        // Only a real change is activity. The pane is re-read every 3s regardless.
+        if (next !== el.textContent) { paneStampAt = new Date(); renderStatusBar(); }
+        el.textContent = next;
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
           const growth = el.scrollHeight - prevHeight;
@@ -1385,14 +2193,17 @@
         } else {
           el.scrollTop = el.scrollHeight;
         }
+        // After the scroll settles, not before: the band is drawn against scrollTop.
+        setPaneText(next);
       }
     }
 
     function render() {
-      document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+      renderStatusBar();
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
-      renderRecents();  // after the body: it is positioned relative to markup renderBody just wrote
+      renderRecents();
+      renderAgentTabs();
     }
 
     function renderBody() {
@@ -1413,7 +2224,7 @@
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
       let html = hoistHtml(agents);
-      html += `<div class="chip-strip project-strip"><span class="chip-label">Projects</span>`;
+      html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
@@ -1546,6 +2357,21 @@
       return options.length;
     }
 
+    // The dialog reopens on the choices it was last used with. Spawning is repetitive — the same
+    // agent into the same kind of place, several times an hour — and restating it every time is
+    // the tax. Browser-local, like the rest of the per-device preferences.
+    const START_AGENT_KEY = 'herdr_start_agent';
+    const START_PLACE_KEY = 'herdr_start_placement';
+
+    function restoreStartChoice(id, key, fallback) {
+      const el = document.getElementById(id);
+      // Falls back when the remembered value is gone — an agent dropped from the relay's
+      // allowlist leaves a stored name that matches no option, and silently ignoring it beats
+      // opening the dialog on a blank select.
+      const want = localStorage.getItem(key) || fallback;
+      if (want && [...el.options].some(o => o.value === want)) el.value = want;
+    }
+
     function setStartError(text) {
       const el = document.getElementById('startError');
       el.textContent = text || '';
@@ -1560,11 +2386,20 @@
       document.getElementById('startProject').textContent = p ? p.label : '';
       fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
       fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
-      fillSelect('startPlacement', [['new_workspace', 'New workspace'], ['new_tab', 'New tab'], ['split', 'Split']]);
+      fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
+      restoreStartChoice('startAgent', START_AGENT_KEY);
+      restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
       document.getElementById('startName').value = '';  // blank means "let the relay name it"
       setStartError('');
       document.getElementById('startSubmit').disabled = false;
       renderStartTarget();  // may disable submit again when the Project has no live target
+      // New tab and Split both need something of this Project's already running. Falling back
+      // keeps the dialog usable instead of opening it disabled on a choice that cannot apply
+      // here — the first session in a Project has nowhere to go but a new workspace.
+      if (document.getElementById('startSubmit').disabled) {
+        document.getElementById('startPlacement').value = 'new_workspace';
+        renderStartTarget();
+      }
       document.getElementById('startSheet').style.display = 'block';
     }
 
@@ -1606,6 +2441,11 @@
         project_id: startProjectId,
         placement: placement,
       };
+      // Spawn at the width of the screen doing the spawning, so a session started from a phone is
+      // readable on it without a second round trip. Not for a split: "beside that pane" is already
+      // a statement about width, and a desktop asking for "wide" would move the new session
+      // straight back out of the split the user picked.
+      if (placement !== 'split') msg.slot = slotFor();
       // Omitted, not empty: the relay derives "Role N" when the field is absent, and an empty
       // string is a label it would reject.
       const name = document.getElementById('startName').value.trim();
@@ -1617,6 +2457,12 @@
       }
       setStartError('');
       document.getElementById('startSubmit').disabled = true;
+      // Remembered on send rather than on change: what the user actually spawned is the choice
+      // worth reopening on, not one they scrolled past.
+      try {
+        localStorage.setItem(START_AGENT_KEY, msg.name);
+        localStorage.setItem(START_PLACE_KEY, placement);
+      } catch (e) { /* private mode: session-only */ }
       ws.send(JSON.stringify(msg));
     }
 
@@ -1625,16 +2471,7 @@
     // pairs: the relay has no notion of which panes this device visited.
 
     const RECENTS_KEY = 'herdr_recents';
-    const MAX_RECENTS = 6;
-    let recentsEl = null;
-
-    // Recents belong under the Projects chips — the chips choose a scope, recents jump inside it, so
-    // scope reads first. With no Projects configured there is no strip and it stays at the top.
-    function placeRecents(el) {
-      const strip = document.querySelector('#agents .project-strip');
-      if (strip) strip.after(el);
-      else document.getElementById('agentListView').insertBefore(el, document.getElementById('agents'));
-    }
+    const MAX_RECENTS = 5;
 
     function loadRecents() {
       try {
@@ -1656,21 +2493,18 @@
     // Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
     // pane IDs, so a stale entry could open a pane the user never visited.
     function renderRecents() {
-      // Held as a live reference, not re-queried: #agents innerHTML is rewritten every render, which
-      // detaches this node when it sits inside the Projects layer.
-      const el = recentsEl || (recentsEl = document.getElementById('recents'));
-      placeRecents(el);
+      const el = document.getElementById('recents');
+      // Sliced here too, not only on write: a list stored under an older, larger cap must not
+      // render six entries just because it predates the current one.
       const live = loadRecents()
         .map(r => agents.find(a => memberMatches(r, a)))
-        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1);
-      if (live.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
-      el.innerHTML = `<span style="font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);flex-shrink:0">Recents</span>` +
-        live.map(a => {
-          const dot = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
-          return `<button class="chip" onclick="openTerminal('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
-            `<span class="dot" style="background:${dot};margin-right:6px" aria-hidden="true"></span>${escapeHtml(paneLabel(a))}</button>`;
-        }).join('');
-      el.style.display = 'flex';
+        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1)
+        .slice(0, MAX_RECENTS);
+      if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      // Same section header and same cards as the list above, so a recent reads as the session it
+      // is rather than as a second kind of thing.
+      el.innerHTML = section('Recents', 'var(--blue)', live);
+      el.style.display = '';
     }
 
     // --- Pairs (storage and UI) ---
@@ -1679,6 +2513,323 @@
     function savePairs() {
       localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
     }
+
+    // --- Line width ---
+    // herdr hands back scrollback already hard-wrapped at the pane's column count, so every long
+    // line the browser wraps again is wrapped twice and no break can be attributed to the agent
+    // rather than to the phone. `cols` from the relay is what closes that gap.
+    //
+    // The arithmetic is unforgiving and worth stating: an 87-column pane in ~370 usable points is
+    // 4.2 points per column. There is no font size that is both readable and fits. Hence three
+    // modes rather than one behaviour — True size keeps the agent's breaks and pans; Fit width
+    // shrinks to the pane, which is comfortable on a tablet and unreadable on a phone; Reflow is
+    // the old behaviour, kept, and marked so a viewport wrap looks like one.
+    const WRAP_KEY = 'herdr_wrap_mode', WRAP_MODES = ['true', 'fit', 'reflow'], WRAP_DEFAULT = 'true';
+    let paneCols = null;   // the open pane's width in cells; null until the relay says
+
+    function currentWrapMode() {
+      const v = localStorage.getItem(WRAP_KEY);
+      return WRAP_MODES.includes(v) ? v : WRAP_DEFAULT;
+    }
+
+    // Advance width of one cell, as a fraction of the font size. Measured, never assumed: the
+    // stack is 'SF Mono', 'Menlo', monospace and which one resolves depends on the platform.
+    let cellRatio = 0;
+
+    function measureCellRatio() {
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:100px;' +
+        "font-family:'SF Mono','Menlo',monospace";
+      probe.textContent = '0'.repeat(100);
+      document.body.appendChild(probe);
+      const ratio = probe.getBoundingClientRect().width / 100 / 100;
+      probe.remove();
+      // A zero would divide by zero downstream; fall back to the usual monospace advance.
+      cellRatio = ratio > 0 ? ratio : 0.6;
+    }
+
+    function applyWrapMode() {
+      const mode = currentWrapMode();
+      const el = document.getElementById('termContent');
+      el.classList.toggle('wrap-reflow', mode === 'reflow');
+      el.classList.toggle('wrap-pre', mode !== 'reflow');
+      document.getElementById('wrapMode').value = mode;
+
+      // Fit width overrides the chosen text size; the other two use it as-is.
+      if (mode === 'fit' && paneCols && cellRatio) {
+        const avail = el.clientWidth - 20;  // the padding the text cannot use
+        const px = avail / (paneCols * cellRatio);
+        // Never below 4px: past that the text is a texture, and silently rendering it would
+        // look like a bug rather than like the pane being too wide for the screen.
+        el.style.fontSize = Math.max(4, Math.floor(px * 10) / 10) + 'px';
+      } else {
+        el.style.fontSize = '';
+      }
+      renderWrapHint();
+      syncFontButtons();
+      // Reflow makes line index <-> y unknowable, so the ruler goes away with it.
+      drawSel();
+    }
+
+    function renderWrapHint() {
+      const mode = currentWrapMode();
+      const el = document.getElementById('wrapHint');
+      if (!paneCols) { el.textContent = 'Pane width unknown — the relay did not report it.'; return; }
+      if (mode === 'reflow') { el.textContent = `Pane is ${paneCols} cols; lines re-wrap to the screen.`; return; }
+      const size = document.getElementById('termContent').style.fontSize;
+      el.textContent = mode === 'fit' && size
+        ? `${paneCols} cols at ${size}` : `Pane is ${paneCols} cols.`;
+    }
+
+    function setWrapMode(mode) {
+      if (!WRAP_MODES.includes(mode)) return;
+      try { localStorage.setItem(WRAP_KEY, mode); } catch (e) { /* private mode: session-only */ }
+      applyWrapMode();
+    }
+
+    // --- Line ruler ---
+    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — that
+    // is what the non-wrapping modes bought, and it is why the ruler is hidden in Reflow.
+    let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
+
+    function rulerOn() { return currentWrapMode() !== 'reflow' && !!activePane; }
+
+    function clearSel() { selA = selB = null; selText = ''; drawSel(); }
+
+    function lineGeom() {
+      const el = document.getElementById('termContent'), cs = getComputedStyle(el);
+      return { el, lh: parseFloat(cs.lineHeight) || 16, pad: parseFloat(cs.paddingTop) || 0 };
+    }
+
+    function lineAt(clientY) {
+      const { el, lh, pad } = lineGeom();
+      const y = clientY - el.getBoundingClientRect().top + el.scrollTop - pad;
+      return Math.min(paneRows.length - 1, Math.max(0, Math.floor(y / lh)));
+    }
+
+    function drawSel() {
+      const ruler = document.getElementById('ruler');
+      const band = document.getElementById('selBand');
+      const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
+      const bar = document.getElementById('selBar');
+      ruler.hidden = !rulerOn();
+      const on = rulerOn() && selA !== null && paneRows.length > 0;
+      band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
+      if (!on) return;
+      const { el, lh, pad } = lineGeom();
+      const a = Math.min(selA, selB), b = Math.max(selA, selB);
+      selText = paneRows.slice(a, b + 1).join('\n');
+      const y0 = pad + a * lh - el.scrollTop, y1 = y0 + (b - a + 1) * lh;
+      band.style.top = y0 + 'px';
+      band.style.height = (y1 - y0) + 'px';
+      const h = document.getElementById('termWrap').clientHeight;
+      park(top, y0, h);
+      park(bot, y1, h);
+      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines');
+      // Transfer is the reason this feature exists, but the button only means something while
+      // this pane is half of a live pair.
+      document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
+    }
+
+    // A handle whose end scrolled out of view stops at the edge rather than leaving with it.
+    function park(el, y, h) {
+      const c = Math.min(h - 12, Math.max(12, y));
+      el.style.top = c + 'px';
+      el.classList.toggle('parked', Math.abs(c - y) > 0.5);
+    }
+
+    // Called with every read. The selection follows its text; reanchorSel decides whether it
+    // survived at all.
+    function setPaneText(next) {
+      paneText = next;
+      paneRows = next.split('\n');
+      if (selA !== null) {
+        const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
+        if (!at) { clearSel(); return; }
+        [selA, selB] = at;
+      }
+      drawSel();
+    }
+
+    function copySel() {
+      const btn = document.getElementById('selCopy'), text = selText;
+      if (!text) return;
+      const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
+      // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way
+      // this app is reached. The textarea path is the one that actually runs at home.
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done, () => { });
+        return;
+      }
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { if (document.execCommand('copy')) done(); } catch (e) { /* nothing else to offer */ }
+      ta.remove();
+    }
+
+    {
+      const ruler = document.getElementById('ruler');
+      const bubble = document.getElementById('selBubble');
+      let drag = null, autoTimer = null, lastY = 0;
+
+      function moveTo(clientY) {
+        const i = lineAt(clientY);
+        if (drag === 'top') selA = i; else selB = i;
+        drawSel();
+        const wrapTop = document.getElementById('termWrap').getBoundingClientRect().top;
+        bubble.textContent = (paneRows[i] || '').trim().slice(0, 40) || '(blank)';
+        bubble.style.top = Math.max(0, clientY - wrapTop - 12) + 'px';
+        bubble.hidden = false;
+      }
+
+      // Dragging a handle past the viewport edge has to keep growing the range, or a selection
+      // can never be larger than one screen.
+      function edgeScroll() {
+        const { el, lh } = lineGeom(), r = el.getBoundingClientRect();
+        const d = lastY < r.top + 40 ? -lh : lastY > r.bottom - 40 ? lh : 0;
+        if (!d) return;
+        el.scrollTop += d;
+        moveTo(lastY);
+      }
+
+      ruler.addEventListener('pointerdown', e => {
+        if (!rulerOn() || !paneRows.length) return;
+        e.preventDefault();
+        ruler.setPointerCapture(e.pointerId);
+        const id = e.target.id;
+        if (id === 'rulerTop' || id === 'rulerBot') drag = id === 'rulerTop' ? 'top' : 'bot';
+        else { selA = selB = lineAt(e.clientY); drag = 'bot'; }
+        lastY = e.clientY;
+        moveTo(e.clientY);
+        autoTimer = setInterval(edgeScroll, 60);
+      });
+
+      ruler.addEventListener('pointermove', e => {
+        if (!drag) return;
+        lastY = e.clientY;
+        moveTo(e.clientY);
+      });
+
+      function end() {
+        if (!drag) return;
+        drag = null;
+        clearInterval(autoTimer);
+        bubble.hidden = true;
+        // Ends swap once dragged past each other, as every selection UI does.
+        if (selA > selB) { const t = selA; selA = selB; selB = t; }
+        drawSel();
+      }
+      ruler.addEventListener('pointerup', end);
+      ruler.addEventListener('pointercancel', end);
+
+      // Tapping the text clears the range — but not when the tap was really a native drag-select,
+      // which desktop users still have and which this must not fight.
+      document.getElementById('termContent').addEventListener('click', () => {
+        const s = window.getSelection();
+        if (selA !== null && (!s || s.isCollapsed)) clearSel();
+      });
+    }
+
+    const FONT_KEY = 'herdr_font_size', FONT_MIN = 6, FONT_MAX = 24, FONT_DEFAULT = 13;
+
+    function currentFont() {
+      const v = parseInt(localStorage.getItem(FONT_KEY), 10);
+      return Number.isFinite(v) ? Math.min(FONT_MAX, Math.max(FONT_MIN, v)) : FONT_DEFAULT;
+    }
+
+    // Scoped to the pane's own text via --term-font. Deliberately not the root font size: chrome,
+    // keys and inputs must keep their sizes and their 44px hit areas at the small end.
+    function setFont(px) {
+      const v = Math.min(FONT_MAX, Math.max(FONT_MIN, px));
+      document.documentElement.style.setProperty('--term-font', v + 'px');
+      try { localStorage.setItem(FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
+      document.getElementById('fontValue').textContent = v + 'px';
+      syncFontButtons();
+      drawSel();  // the line height just changed, so the band no longer covers those lines
+    }
+
+    // Fit width solves the size from the pane's column count, so A-/A+ cannot also own it.
+    function fontFixedByFit() {
+      return currentWrapMode() === 'fit' && !!paneCols && !!cellRatio;
+    }
+
+    function syncFontButtons() {
+      const v = currentFont(), fixed = fontFixedByFit();
+      document.getElementById('fontDec').disabled = fixed || v <= FONT_MIN;
+      document.getElementById('fontInc').disabled = fixed || v >= FONT_MAX;
+    }
+
+    function bumpFont(d) { setFont(currentFont() + d); }
+
+    // Floor is 8, below iOS Safari's 16px focus-zoom threshold, at the user's explicit direction.
+    // Under 16 the composer will zoom the layout viewport when focused on iPhone; that is the
+    // documented cost of the setting (S5.9), not an oversight. Default stays at 16, so the zoom
+    // is opt-in rather than something a fresh install walks into.
+    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 16;
+
+    function currentInputFont() {
+      const v = parseInt(localStorage.getItem(INPUT_FONT_KEY), 10);
+      return Number.isFinite(v) ? Math.min(INPUT_MAX, Math.max(INPUT_MIN, v)) : INPUT_DEFAULT;
+    }
+
+    function setInputFont(px) {
+      const v = Math.min(INPUT_MAX, Math.max(INPUT_MIN, px));
+      document.documentElement.style.setProperty('--input-font', v + 'px');
+      try { localStorage.setItem(INPUT_FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
+      document.getElementById('inputFontValue').textContent = v + 'px';
+      document.getElementById('inputFontDec').disabled = v <= INPUT_MIN;
+      document.getElementById('inputFontInc').disabled = v >= INPUT_MAX;
+      autoGrow(document.getElementById('termInput'));
+    }
+
+    function bumpInputFont(d) { setInputFont(currentInputFont() + d); }
+
+    // Where the pair bar sits in the pane. Default 'above': on a phone the switch and transfer
+    // controls are wanted next to the thumb that is already on the composer, not a pane away.
+    const PAIR_PLACE_KEY = 'herdr_pair_place', PAIR_PLACES = ['top', 'above', 'bottom'];
+
+    function currentPairPlace() {
+      const v = localStorage.getItem(PAIR_PLACE_KEY);
+      return PAIR_PLACES.includes(v) ? v : 'above';
+    }
+
+    function placePairStrip() {
+      const place = currentPairPlace();
+      const view = document.getElementById('terminalView');
+      const strip = document.getElementById('pairStrip');
+      if (place === 'top') view.insertBefore(strip, document.getElementById('termWrap'));
+      else if (place === 'bottom') view.appendChild(strip);
+      else view.insertBefore(strip, view.querySelector('.term-input'));
+      strip.classList.toggle('at-bottom', place === 'bottom');
+      document.getElementById('pairPlace').value = place;
+    }
+
+    function setPairPlace(v) {
+      try { localStorage.setItem(PAIR_PLACE_KEY, PAIR_PLACES.includes(v) ? v : 'above'); }
+      catch (e) { /* private mode: session-only */ }
+      placePairStrip();
+    }
+
+    function toggleTermMenu() {
+      const el = document.getElementById('termMenu');
+      const show = el.style.display === 'none';
+      el.style.display = show ? '' : 'none';
+      document.getElementById('termMenuBtn').setAttribute('aria-expanded', String(show));
+    }
+
+    function closeTermMenu() {
+      document.getElementById('termMenu').style.display = 'none';
+      document.getElementById('termMenuBtn').setAttribute('aria-expanded', 'false');
+    }
+
+    // Dismiss on any click outside the menu and its button, and on Escape.
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTermMenu(); });
 
     function fingerprint(a, role) {
       return {
@@ -1800,8 +2951,9 @@
     // absent whenever the pair is stale, so the UI can never offer an unverified target.
     function renderPairStrip() {
       const strip = document.getElementById('pairStrip');
+      const menu = document.getElementById('termMenuPair');
       const pair = activePane ? pairFor(pairs, activePane) : null;
-      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; menu.innerHTML = ''; return; }
       const health = pairHealth(pair, agents);
       const partner = partnerOf(pair, activePane);
       const mine = memberOf(pair, activePane);
@@ -1811,17 +2963,22 @@
       // Falls back to the pinned name, then the pane ID, so the button is never blank.
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
-      strip.className = 'pair-strip' + (ok ? '' : ' stale');
+      // Rebuilt wholesale, so the placement class has to be reapplied with it.
+      strip.className = 'pair-strip' + (ok ? '' : ' stale') +
+        (currentPairPlace() === 'bottom' ? ' at-bottom' : '');
       strip.innerHTML =
         // Switch sits first, on the left: it is the control reached most often, and the thumb
         // is already there from the back button above it.
         (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
         `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
         (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
-        `<button onclick="openPairDialog(activePane)">Edit</button>` +
-        `<button onclick="unpair()">Unpair</button>` +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
       strip.style.display = 'flex';
+      // Edit and Unpair live in the gear menu: the strip is for the two controls used while
+      // working, and pair management is neither frequent nor something to hit by accident.
+      menu.innerHTML =
+        `<button class="menu-item" role="menuitem" onclick="closeTermMenu(); openPairDialog(activePane)">Edit pair</button>` +
+        `<button class="menu-item danger" role="menuitem" onclick="closeTermMenu(); unpair()">Unpair…</button>`;
     }
 
     // Renames the pane in herdr itself, not just in this browser. A frontend-only alias would
@@ -1856,8 +3013,10 @@
     function openTransfer() {
       const pair = pairFor(pairs, activePane);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
-      // Capture before anything can steal the selection — switching panes clears it.
-      transferSelection = String(window.getSelection() || '').trim();
+      // The ruler's range wins when there is one: it is the deliberate selection, and on a phone
+      // the native one is usually empty anyway. Capture before anything can steal it — switching
+      // panes clears both.
+      transferSelection = selText || String(window.getSelection() || '').trim();
       const partner = partnerOf(pair, activePane);
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
@@ -1916,22 +3075,16 @@
       input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
       input.selectionStart = input.selectionEnd = at + text.length;
       autoGrow(input);
+      // Close the dock: the text is in the composer now and the user needs to see it.
+      document.getElementById('promptDock').style.display = 'none';
       input.focus();
     }
 
-    // A shortcut is an action, not a state: the select snaps back so it never reads as "this pane
-    // is set to Review". Guarded on the empty placeholder value — Number('') is 0, which would
-    // otherwise insert the first shortcut whenever the picker was dismissed.
-    function pickShortcut(sel) {
-      const raw = sel.value;
-      sel.selectedIndex = 0;
-      if (raw === '') return;
-      insertShortcut(Number(raw));
-    }
-
+    // The ceiling lives in CSS (max-height) and the floor in min-height, so this only has to
+    // report the content height — a px cap here would drift the moment the font size changes.
     function autoGrow(el) {
       el.style.height = 'auto';
-      el.style.height = Math.min(el.scrollHeight, 118) + 'px';
+      el.style.height = el.scrollHeight + 'px';
     }
 
     let toastTimer = null;
@@ -1971,11 +3124,27 @@
     }
 
     function openTerminal(paneId) {
+      // Opening over an already-open pane leaves the old poller running otherwise, and every
+      // switch adds another read_pane every 3s. Cleared here rather than in each caller, because
+      // switchToPartner and the header chips both land straight on this without closing first.
+      clearInterval(refreshInterval);
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       noteRecent(paneId);
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
       document.getElementById('agentListView').style.display = 'none';
+      document.getElementById('settingsView').style.display = 'none';
+      document.getElementById('timelineView').style.display = 'none';
+      document.body.classList.add('terminal-open');
+      // After the class, never before: the strip is display:none outside a pane, and a hidden
+      // element measures zero — the edge fades and the scroll-into-view would both no-op.
+      renderAgentTabs();  // the tab for this pane has to read as active straight away
+      paneStampAt = null;  // the previous pane's timestamp is not this one's
+      paneCols = null;     // and its column count is not this one's either
+      paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
+      clearSel();
+      applyWrapMode();
+      renderStatusBar();
       document.getElementById('terminalView').classList.add('active');
       const qa = document.getElementById('quickActions');
       const ak = document.getElementById('actionKeys');
@@ -1993,20 +3162,69 @@
         ak.innerHTML = '';
       }
       renderPairStrip();
+      disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       refreshPane();
       refreshInterval = setInterval(refreshPane, 3000);
     }
 
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
+      disarmClear();
+      clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
+      renderAgentTabs();
       document.getElementById('terminalView').classList.remove('active');
+      closeTermMenu();
+      document.body.classList.remove('terminal-open');
       document.getElementById('agentListView').style.display = '';
+      paneStampAt = null;
+      renderStatusBar();
     }
 
     let paneLines = 200;
     function refreshPane() { if (ws && activePane) ws.send(JSON.stringify({ type: 'read_pane', pane_id: activePane, lines: paneLines })); }
+
+    // --- Slots ---
+    // A pane is either alone in its tab (~139 cols) or sharing it with one sibling (~69). Which
+    // of the two this screen wants is the only thing the browser gets to decide; the relay owns
+    // how it is reached. 768px is the same breakpoint the rest of the layout uses.
+    function slotFor() { return window.innerWidth < 768 ? 'narrow' : 'wide'; }
+    function adjustPane() {
+      if (!ws || !activePane) return;
+      showToast('Adjusting pane…');
+      ws.send(JSON.stringify({ type: 'set_slot', pane_id: activePane, slot: slotFor() }));
+    }
+    // --- Clear screen ---
+    // Ctrl+L, the terminal's own clear — not the agent's /clear, which throws away its context.
+    // Two taps, because this button lives a thumb away from Refresh and the two are easy to
+    // confuse: one redraws what is there, the other wipes it. The first tap only arms.
+    const CLS_ARM_MS = 3000;
+    let clsArmedAt = 0;
+
+    function armClear() {
+      if (!ws || !activePane) return;
+      const btn = document.getElementById('clsBtn');
+      if (Date.now() - clsArmedAt < CLS_ARM_MS) {
+        disarmClear();
+        sendKey('ctrl+l');  // already re-reads the pane, so the cleared screen is what lands
+        return;
+      }
+      clsArmedAt = Date.now();
+      btn.dataset.armed = '1';
+      btn.textContent = 'CLS?';
+      // Disarms itself rather than waiting to be pressed again: a button left armed across a
+      // pocket is the accidental clear this exists to stop.
+      setTimeout(() => { if (Date.now() - clsArmedAt >= CLS_ARM_MS) disarmClear(); }, CLS_ARM_MS);
+    }
+
+    function disarmClear() {
+      clsArmedAt = 0;
+      const btn = document.getElementById('clsBtn');
+      delete btn.dataset.armed;
+      btn.textContent = 'CLS';
+    }
+
     function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
     function sendText() {
       const i = document.getElementById('termInput');
@@ -2083,23 +3301,47 @@
       keyQueue = []; armedMod = null; renderKeyQueue(); renderMods();
     }
 
-    function toggleKeysDock() {
-      const el = document.getElementById('termKeys');
-      const quick = document.getElementById('quickDock');
+    // The three docks share the space above the composer, so only one is ever open.
+    const DOCKS = ['termKeys', 'quickDock', 'promptDock'];
+
+    function closeDocks() {
+      DOCKS.forEach(d => { document.getElementById(d).style.display = 'none'; });
+    }
+
+    function toggleDock(id) {
+      const el = document.getElementById(id);
       const show = el.style.display === 'none';
+      closeDocks();
       el.style.display = show ? '' : 'none';
-      if (show) quick.style.display = 'none'; // mutual exclusive
       if (window.cue) cue(show ? 'page' : 'tick');
     }
 
-    function toggleQuickDock() {
-      const el = document.getElementById('quickDock');
-      const keys = document.getElementById('termKeys');
-      const show = el.style.display === 'none';
-      el.style.display = show ? '' : 'none';
-      if (show) keys.style.display = 'none'; // mutual exclusive
-      if (window.cue) cue(show ? 'page' : 'tick');
+    // Typing wins over browsing: a dock and the on-screen keyboard together leave almost no pane
+    // visible, and the user who just tapped the composer wants to read what they are answering.
+    document.getElementById('termInput').addEventListener('focus', closeDocks);
+
+    // Clearing is destructive and sits next to two controls that are not, so it takes two taps.
+    // The armed state expires on its own — a stray first tap must not leave a live trigger behind.
+    let clearArmedAt = 0;
+    function clearComposer(btn) {
+      if (Date.now() - clearArmedAt > 600) {
+        clearArmedAt = Date.now();
+        btn.classList.add('armed');
+        setTimeout(() => btn.classList.remove('armed'), 600);
+        return;
+      }
+      clearArmedAt = 0;
+      btn.classList.remove('armed');
+      const input = document.getElementById('termInput');
+      input.value = '';
+      autoGrow(input);
+      input.focus();
+      if (window.cue) cue('tick');
     }
+
+    function toggleKeysDock() { toggleDock('termKeys'); }
+
+    function toggleQuickDock() { toggleDock('quickDock'); }
 
     function quickSend(text) {
       if (!ws || !activePane) return;
@@ -2178,6 +3420,7 @@
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
+      drawSel();  // the band lives outside the scroller, so it has to be re-placed by hand
       if (el.scrollTop === 0 && paneLines < 5000) loadMore();
     });
 
@@ -2314,7 +3557,18 @@
         try {
           const relayUrl = localStorage.getItem('herdr_relay_url') || '';
           const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
-          const resp = await fetch(httpUrl + '/api/vapid-public-key');
+          // The token gates the relay's whole HTTP surface, not only the socket upgrade, so this
+          // has to carry it exactly as the WebSocket URL does. Without it the tunnel listener
+          // answers 401 and push can never be enabled from a hosted copy of this app.
+          const pushToken = localStorage.getItem('herdr_relay_token');
+          const keyUrl = httpUrl + '/api/vapid-public-key' +
+            (pushToken ? '?token=' + encodeURIComponent(pushToken) : '');
+          const resp = await fetch(keyUrl);
+          if (!resp.ok) {
+            document.getElementById('pushStatus').textContent =
+              resp.status === 401 ? 'Relay rejected the token' : `Relay returned ${resp.status}`;
+            return;
+          }
           const { publicKey } = await resp.json();
           if (!publicKey) {
             document.getElementById('pushStatus').textContent = 'VAPID key not configured on relay';
@@ -2347,11 +3601,13 @@
     initPush();
 
     loadPairs();
+    measureCellRatio();  // before applyWrapMode, which divides by it
+    setFont(currentFont());
+    setInputFont(currentInputFont());
+    applyWrapMode();
+    placePairStrip();
     document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
       `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
-    document.getElementById('shortcutPick').innerHTML =
-      `<option value="">Instructions</option>` +   // no ▾: the select draws its own chevron
-      SHORTCUTS.map((s, i) => `<option value="${i}">${escapeHtml(s.label)}</option>`).join('');
   </script>
 </body>
 
