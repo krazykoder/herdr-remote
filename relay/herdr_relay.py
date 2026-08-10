@@ -1007,8 +1007,9 @@ async def main():
         functools.partial(handle_client, listener="lan"), LAN_BIND, WS_PORT,
         process_request=functools.partial(process_request, require_token=LAN_REQUIRES_TOKEN),
     )]
-    log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s",
-             LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none")
+    log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s agent-starts=%s",
+             LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none",
+             "on" if WRITE_EXT else "off (set HERDR_ENABLE_WRITE_EXT=1)")
     if LAN_OPEN:
         log.warning("HERDR_LAN_OPEN=1: %s:%d accepts writes%s from any peer that can reach it",
                     LAN_BIND, WS_PORT, " and agent starts" if WRITE_EXT else "")
@@ -1020,7 +1021,11 @@ async def main():
             functools.partial(handle_client, listener="external"), "127.0.0.1", EXTERNAL_PORT,
             process_request=functools.partial(process_request, require_token=True),
         ))
-        log.info("herdr-remote external listener on 127.0.0.1:%d auth=token", EXTERNAL_PORT)
+        # agent-starts is stated on both listeners. When it is off the browser is simply not sent
+        # start_options and hides the control, so the only symptom is a button that is not there —
+        # which looks like a client bug rather than a relay that was never asked to allow starts.
+        log.info("herdr-remote external listener on 127.0.0.1:%d auth=token agent-starts=%s",
+                 EXTERNAL_PORT, "on" if WRITE_EXT else "off (set HERDR_ENABLE_WRITE_EXT=1)")
         # The relay cannot see the cloudflared config, and pointing the tunnel at the LAN port
         # would publish an unauthenticated relay to the internet. Print the line it should hold,
         # so a wrong one is visible next to the right one at every boot.

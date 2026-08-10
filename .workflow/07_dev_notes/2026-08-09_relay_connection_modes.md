@@ -50,6 +50,7 @@ Setting `none` while relying on `start.sh` for the tunnel leaves the phone with 
 export HERDR_PROJECTS_FILE="$HOME/.config/herdr-remote/projects.json"
 export HERDR_LAN_OPEN=1          # LAN 8375, token-free
 export HERDR_EXTERNAL_PORT=8377  # loopback, token always required
+export HERDR_ENABLE_WRITE_EXT=1  # Start session; global, so the open LAN port gains it too
 export HERDR_TUNNEL_MODE=temp    # start.sh runs the quick tunnel
 
 # ~/.config/herdr-remote/secrets.env   (0600)
@@ -217,6 +218,8 @@ is the auth. Revisit only if the app is ever served from the tunnel itself.
 | `502` through the tunnel | Relay not running, or the hostname points at a port nothing is listening on. |
 | Push/VAPID fails only through the tunnel | The relay's token gate covers the **whole HTTP surface**, not just the upgrade. The app's VAPID fetch now carries the token; it did not before 2026-08-09. |
 | Tunnel URL never printed on macOS | `start.sh` read `/proc/$PID/fd/1`, which does not exist on Darwin. Now polls a temp log. Fixed 2026-08-09. |
+| **Start session control missing in the app** | `HERDR_ENABLE_WRITE_EXT` is not set. It is **global, not per listener** — off means off everywhere, tunnel and LAN alike. `start-local.sh` exports it itself, which is why dev appears to work while `start.sh` does not. `start.sh` takes it from `config.env` like everything else. Both listener log lines now print `agent-starts=on/off`. |
+| Start session shown but every start errors | Projects config missing or the `project_id` is not in it — a start resolves its cwd from the Project, never from the wire. |
 | Config change appears to be ignored | `start.sh` sources `config.env` **after** the environment, so the file wins over an exported variable. Edit the file. |
 
 ## Verifying the chain
