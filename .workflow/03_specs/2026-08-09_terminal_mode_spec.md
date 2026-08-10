@@ -186,6 +186,11 @@ places, not two sets: the dock and the pad render from the same function, and a 
 armed in one is armed in the other. The arm expires on its own, and expiring repaints — an armed
 button left on screen after its trigger has gone is worse than never having armed.
 
+The composer turns off autocorrect, autocapitalisation, and spellcheck over a terminal, and turns
+all three back on over an agent. `git commit` capitalised to `Git commit` is a command not found,
+and a corrected path or flag fails in a way that looks like the shell misbehaved. The agent
+composer keeps them: it carries prose far more often than a command line.
+
 A physical Ctrl+\<letter\> typed into a terminal's composer is sent to the pane, for the same six
 letters the presets offer and no others. Only while the composer is empty: with text in it the
 browser keeps Ctrl+C, Ctrl+X and Ctrl+Z, because copying what you just typed must not stop what is

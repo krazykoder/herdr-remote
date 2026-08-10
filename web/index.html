@@ -1721,7 +1721,9 @@
       <!-- Autocorrect on, at the user's direction. It is the composer for prose sent to an agent
            far more often than it is a command line, and the keyboard's own correction is worth
            more than a literal transcription of every typo. Anything that must survive verbatim
-           still can: the Keys pad and the / palette do not pass through here. -->
+           still can: the Keys pad and the / palette do not pass through here.
+           These are the agent values. syncComposerMode turns all three off over a terminal, where
+           the composer *is* a command line — see it for why. -->
       <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
         autocapitalize="sentences" spellcheck="true"></textarea>
       <div class="term-input-side">
@@ -3783,7 +3785,7 @@
       // The dock holds prompts over an agent and commands over a shell, and a pane can change
       // kind under a live snapshot — so its contents are re-chosen here, not only on open.
       renderShortcutDock();
-      syncComposerHint();
+      syncComposerMode();
       // The mic button is hidden over a terminal, and a live recogniser with no way to stop it
       // would keep writing into the composer.
       if (shell && dictation) dictation.stop();
@@ -3882,15 +3884,24 @@
     function toggleEnterSends() {
       try { localStorage.setItem(ENTER_SEND_KEY, enterSendsOn() ? 'off' : 'on'); }
       catch (e) { /* private mode: session-only */ }
-      syncComposerHint();
+      syncComposerMode();
     }
 
-    // The placeholder is the only place the composer says what Enter does, so it is rewritten
-    // wherever either input to that answer changes: the setting, or the kind of the open pane.
-    function syncComposerHint() {
-      const send = enterSendsOn() && !!activePane && isShell(activePane);
-      document.getElementById('termInput').placeholder =
-        send ? 'Type…  ⏎ sends' : 'Type…  ⌘/Ctrl+Enter sends';
+    // Everything about the composer that depends on the kind of pane it is aimed at, or on the
+    // Enter setting: the placeholder, which is the only place it says what Enter does, and the
+    // keyboard's own corrections.
+    //
+    // A shell wants none of them. `git commit` capitalised to `Git commit` is a command not found,
+    // and autocorrect on a path or a flag is worse — it fails silently and looks like the shell
+    // misbehaved. The agent composer keeps all three: it carries prose far more often than it
+    // carries a command line, and there the keyboard is helping.
+    function syncComposerMode() {
+      const input = document.getElementById('termInput');
+      const shell = !!activePane && isShell(activePane);
+      input.placeholder = enterSendsOn() && shell ? 'Type…  ⏎ sends' : 'Type…  ⌘/Ctrl+Enter sends';
+      input.setAttribute('autocorrect', shell ? 'off' : 'on');
+      input.setAttribute('autocapitalize', shell ? 'none' : 'sentences');
+      input.spellcheck = !shell;
     }
 
     function toggleQuickActions() {
