@@ -111,6 +111,41 @@ instead, which costs that sibling nothing.
 No rollback on a failed step. Each step is a layout change that stands on its own; undoing a
 half-applied plan means guessing which half.
 
+### Reusing a slot that already stands
+
+Every `narrow` above ends in a split, which mints a spacer. Do that twice in a workspace and you
+own two idle shells; the first is stranded for good, because nothing was looking for it. So before
+splitting, `free_slot` looks for a spacer elsewhere in the **same workspace** and moves onto it
+instead:
+
+| Spacer's tab | Steps | Result |
+|---|---|---|
+| holds only the spacer | `pane move --tab T --split right --target-pane S --no-focus` | pane \| spacer |
+| holds one other pane | that move, then `pane close S` | other \| pane, no spacer |
+| holds three or more | skipped — a third of an area is not the narrow slot | |
+
+Same workspace only, and that is not a style preference: **herdr renumbers a pane that crosses
+workspaces.** Measured — `pane move w28:p1 --tab w27:t1` answers with `pane_id: w27:p3` and
+`previous_pane_id: w28:p1`. Pane IDs are what the relay hands to clients, so a cross-workspace
+move would leave every phone holding a dead id. Within one workspace the id survives the move.
+
+`herdr pane move` needs `--tab` *and* `--target-pane`; `--target-pane` alone exits 2 with a usage
+line.
+
+A start does the same thing one step earlier. A spacer is a shell sitting at a prompt, which is
+exactly what `agent start --pane` wants — so `claimable_spacer` lets a `new_tab` start with
+`slot: narrow` claim one instead of opening a tab beside it. Two conditions, both load-bearing:
+
+- **same workspace** — the one the client picked, so the placement still means what it said
+- **same cwd** — herdr starts the agent in the pane's directory, and the Project's cwd is not
+  something a client may talk the relay out of
+
+Nothing rolls back on that path: the spacer stood there before the start, and a failed
+`agent start` leaves it labelled and reusable. On success the pane is renamed to the session
+label, which is what stops it being a spacer.
+
+A wide start never claims one — it would come up half-width and have to move straight back out.
+
 ## Wiring
 
 - `set_slot` — `{pane_id, slot}`, gated on `HERDR_ENABLE_WRITE_EXT`. Unlike `rename_pane`, this one
@@ -159,5 +194,19 @@ Full suite: 173 Python tests, 43 JS tests, both E2Es.
 - The 768px breakpoint is the browser's guess at "phone". A pane adjusted on a phone stays narrow
   when opened from a laptop until someone hits Fit again — deliberate, since the pane is shared
   state and a viewport is not a claim on it.
-- Nothing reaps a spacer whose agent pane went away by some other route. It shows up as a labelled
-  shell in an otherwise empty tab, and the next `narrow` in that tab clears it.
+- Nothing reaps a spacer on a timer. It is reclaimed on use instead: the next `narrow` or narrow
+  start in that workspace takes it. A workspace nobody spawns into again keeps its idle shell.
+- Reuse is scoped to one workspace, so a spacer in workspace A is invisible to a pane in B. That
+  is the pane-ID renumbering above, not a limit worth lifting.
+
+## Also in this pass
+
+- **Clear screen** in the pane menu — `send_keys ['ctrl+l']`, the terminal's own clear, not the
+  agent's `/clear` (which throws away its context). `ctrl+l` and not `C-l`: herdr accepts `C-c` as
+  a legacy spelling and answers `{"code":"invalid_key","message":"unsupported key C-l"}` for the
+  rest of that family. Added to `SAFE_KEYS`; no new message type, `sendKey` already existed.
+- **The start dialog reopens on its last choices** — agent and placement, in `localStorage`,
+  written on send rather than on change so a select the user only scrolled past is not remembered.
+  Placement defaults to New tab, and New tab is now first in the list. A remembered choice that
+  cannot apply here (New tab in a Project with no live workspace) falls back to New workspace
+  rather than opening the dialog disabled.

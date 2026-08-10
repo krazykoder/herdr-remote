@@ -14,6 +14,7 @@ from start_agent import (
     StartAgentConfigError,
     agent_name_from_label,
     agent_start_args,
+    claimable_spacer,
     dig,
     SPACER_LABEL,
     load_start_agents,
@@ -341,13 +342,15 @@ class DigTests(unittest.TestCase):
                              "result", "agent", "pane_id"), "")
 
 
-def pane(pane_id, tab_id="t1", agent="codex", cwd="/work/charts", label=""):
-    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "cwd": cwd, "label": label}
+def pane(pane_id, tab_id="t1", agent="codex", cwd="/work/charts", label="", workspace_id="w1"):
+    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "cwd": cwd, "label": label,
+            "workspace_id": workspace_id}
 
 
-def spacer(pane_id, tab_id="t1"):
+def spacer(pane_id, tab_id="t1", cwd="/work/charts", workspace_id="w1"):
     """A pane this feature created: a shell holding columns, carrying the label that says so."""
-    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL)
+    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL, cwd=cwd,
+                workspace_id=workspace_id)
 
 
 class PlanSlotTests(unittest.TestCase):
@@ -410,16 +413,75 @@ class PlanSlotTests(unittest.TestCase):
         self.assertIn(("pane", "close", "w1:p3"), steps)
 
     def test_other_tabs_are_not_siblings(self):
+        # A spacer in another tab does not make this pane narrow, so `wide` has nothing to do.
         panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t2")]
         self.assertEqual(plan_slot(panes, "w1:p1", "wide"), ([], None))
+
+    def test_narrow_takes_a_stranded_spacer_instead_of_making_another(self):
+        # The spacer is alone in t2 — nothing reclaimed it. Moving in beside it costs one
+        # command and leaves no second spacer behind; splitting t1 would leave two.
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t2")]
         steps, _ = plan_slot(panes, "w1:p1", "narrow")
-        self.assertEqual(steps, [("pane", "split", "w1:p1", "--direction", "right",
-                                  "--cwd", "/work/charts")])
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--tab", "t2", "--split", "right",
+                                  "--target-pane", "w1:p2", "--no-focus")])
+
+    def test_narrow_takes_a_spacers_half_and_closes_it(self):
+        # t2 holds a session and its spacer. This pane takes the spacer's half: two sessions
+        # side by side, both narrow, and one fewer idle shell than before.
+        panes = [pane("w1:p1", tab_id="t1"),
+                 pane("w1:p2", tab_id="t2", agent="claude"), spacer("w1:p3", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--tab", "t2", "--split", "right",
+                                  "--target-pane", "w1:p3", "--no-focus"),
+                                 ("pane", "close", "w1:p3")])
+
+    def test_a_crowded_tab_is_not_a_free_slot(self):
+        # Moving into a tab of three takes a third of the area, which is not the narrow slot.
+        panes = [pane("w1:p1", tab_id="t1"),
+                 pane("w1:p2", tab_id="t2", agent="claude"),
+                 pane("w1:p3", tab_id="t2", agent="pi"), spacer("w1:p4", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+
+    def test_a_spacer_in_another_workspace_is_left_alone(self):
+        # herdr renumbers a pane that crosses workspaces, and pane IDs are what clients hold.
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w2:p1", tab_id="t9", workspace_id="w2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+
+    def test_leaving_a_tab_of_spacers_for_a_free_slot_closes_both(self):
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t1"),
+                 spacer("w1:p3", tab_id="t1"), spacer("w1:p4", tab_id="t2")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0][:2], ("pane", "move"))
+        self.assertIn(("pane", "close", "w1:p2"), steps)
+        self.assertIn(("pane", "close", "w1:p3"), steps)
+        self.assertNotIn(("pane", "close", "w1:p4"), steps)  # that one is the new sibling
 
     def test_missing_cwd_still_yields_a_runnable_split(self):
         steps, _ = plan_slot([{"pane_id": "w1:p1", "tab_id": "t1", "agent": "codex"}],
                              "w1:p1", "narrow")
         self.assertEqual(steps[0][-1], ".")
+
+
+class ClaimableSpacerTests(unittest.TestCase):
+    def test_it_finds_a_spacer_in_this_workspace_at_this_cwd(self):
+        panes = [pane("w1:p1"), spacer("w1:p2")]
+        self.assertEqual(claimable_spacer(panes, "w1", "/work/charts"), "w1:p2")
+
+    def test_the_cwd_has_to_match(self):
+        # herdr starts the agent in the pane's directory, so a spacer sitting somewhere else
+        # would put the session in the wrong Project.
+        panes = [spacer("w1:p2", cwd="/elsewhere")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
+
+    def test_the_workspace_has_to_match(self):
+        panes = [spacer("w2:p1", workspace_id="w2")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
+
+    def test_a_live_pane_is_never_claimed(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="", label="build")]
+        self.assertIsNone(claimable_spacer(panes, "w1", "/work/charts"))
 
 
 class SlotAdviceTests(unittest.TestCase):

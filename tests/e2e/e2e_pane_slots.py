@@ -61,9 +61,12 @@ def check(cond, msg):
         failures.append(msg)
 
 
-def labels():
+def labels(workspace=None):
+    """pane_id -> label. Scoped to a workspace when asked: the host this runs on has the
+    developer's own panes on it, and one of those may well be carrying a spacer label."""
     data = json.loads(run("pane", "list"))
-    return {p["pane_id"]: p.get("label", "") for p in data["result"]["panes"]}
+    return {p["pane_id"]: p.get("label", "") for p in data["result"]["panes"]
+            if workspace is None or p.get("workspace_id") == workspace}
 
 
 try:
@@ -101,6 +104,21 @@ try:
     print("\nwide again — already in the slot")
     check(slot_exec(a, "wide") is None, "no error")
     check(len(show("wide", a)) == 1, "one pane")
+
+    print("\nnarrow takes a standing slot rather than minting a second spacer")
+    # b is alone in its own tab; a already has a spacer beside it. b should end up in a's tab
+    # holding the spacer's half, leaving two panes and no idle shell — not four panes.
+    check(slot_exec(a, "narrow") is None, "a is narrow again")
+    b = json.loads(run("tab", "create", "--workspace", wsid,
+                       "--label", "second"))["result"]["root_pane"]["pane_id"]
+    check(slot_exec(b, "narrow") is None, "no error")
+    panes = show("narrow", b)
+    check(len(panes) == 2, "b landed in a two-pane tab")
+    check(a in panes, "beside a, which was the one holding a spacer")
+    check(SPACER_LABEL not in labels(wsid).values(), "no spacer left in this workspace")
+    check(abs(panes.get(b, 0) - full // 2) <= 2, f"about half of {full}")
+    # Put a back on its own so the crowded case below starts from a known layout.
+    check(slot_exec(b, "wide") is None, "b moves out again")
 
     print("\na crowded tab of shells nobody labelled — move out, close nothing")
     run("pane", "split", a, "--direction", "right")

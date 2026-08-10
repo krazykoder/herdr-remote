@@ -22,6 +22,7 @@ from start_agent import (
     StartAgentConfigError,
     agent_name_from_label,
     agent_start_args,
+    claimable_spacer,
     dig,
     unique_agent_name,
     load_start_agents,
@@ -171,7 +172,10 @@ ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane c
 latest_agents = []  # last full snapshot, replayed to each client on connect
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
-SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "Up", "Down", "Left", "Right", "BSpace"} | {
+# "ctrl+l" and not "C-l": herdr accepts C-c as a legacy spelling but answers
+# {"code":"invalid_key","message":"unsupported key C-l"} for the rest of that family.
+SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "ctrl+l",
+             "Up", "Down", "Left", "Right", "BSpace"} | {
     str(number) for number in range(10)
 }
 
@@ -539,15 +543,33 @@ def start_agent_exec(plan):
             return None, "workspace create returned no workspace_id or root pane"
         rollback = ("workspace", "close", workspace_id)
     elif placement == "new_tab":
-        data, err = _herdr_json(
-            *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
-        if err:
-            return None, err
-        tab_id = dig(data, "result", "tab", "tab_id")
-        target_pane = dig(data, "result", "root_pane", "pane_id")
-        if not tab_id or not target_pane:
-            return None, "tab create returned no tab_id or root pane"
-        rollback = ("tab", "close", tab_id)
+        # A spacer in this workspace is already a shell sitting at the Project's cwd, which is
+        # exactly what `agent start --pane` wants. Claiming it fills a half-width slot that
+        # exists rather than opening a tab beside it and leaving the shell idle. Only when the
+        # client asked for narrow: a wide start landing in a spacer would come up half-width and
+        # have to move straight back out. A `pane list` that fails just falls through to a tab.
+        target_pane = None
+        if plan.get("slot") == "narrow":
+            listing, list_err = _herdr_json("pane", "list", remote=remote)
+            if list_err:
+                log.debug("Could not look for a spacer to reuse: %s", list_err)
+            else:
+                target_pane = claimable_spacer(
+                    dig_panes(listing), plan["workspace_id"], plan["cwd"])
+        if target_pane:
+            # No rollback: the spacer stood here before this start, and a failed agent start
+            # leaves it exactly as it was found — still labelled, still reusable.
+            log.info("Reusing spacer %s for the new session", target_pane)
+        else:
+            data, err = _herdr_json(
+                *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
+            if err:
+                return None, err
+            tab_id = dig(data, "result", "tab", "tab_id")
+            target_pane = dig(data, "result", "root_pane", "pane_id")
+            if not tab_id or not target_pane:
+                return None, "tab create returned no tab_id or root pane"
+            rollback = ("tab", "close", tab_id)
     else:  # split — the source pane's sibling is the user's own, so only the new pane rolls back
         data, err = _herdr_json(*pane_split_args(plan["split_from"], plan["cwd"]), remote=remote)
         if err:

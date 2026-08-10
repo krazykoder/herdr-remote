@@ -653,6 +653,27 @@
       cursor: pointer;
     }
 
+    /* CLS sits in the header next to Refresh, which is the one it is easiest to mean instead.
+       Text and not an icon: it wipes what is on screen, and a glyph nobody recognises is not the
+       thing to put next to a button that is safe to press. Two taps — see armClear. */
+    .term-header .cls-btn {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      /* Fixed, so arming does not shuffle the buttons beside it as the label changes. */
+      min-width: 42px;
+      text-align: center;
+    }
+
+    .term-header .cls-btn[data-armed="1"] {
+      color: var(--bg);
+      background: var(--orange);
+      border-color: transparent;
+    }
+
     /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
        rather than the header, whose other children must stay in normal flow. */
     .term-menu-wrap {
@@ -1412,6 +1433,10 @@
         </svg></button>
       <span class="dot status-dot"></span>
       <span class="title" id="termTitle"></span>
+      <!-- Left of Refresh, and armed by the first tap: the two sit a thumb apart and one of them
+           throws away what is on screen. See armClear. -->
+      <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
+        aria-label="Clear screen">CLS</button>
       <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -2332,6 +2357,21 @@
       return options.length;
     }
 
+    // The dialog reopens on the choices it was last used with. Spawning is repetitive — the same
+    // agent into the same kind of place, several times an hour — and restating it every time is
+    // the tax. Browser-local, like the rest of the per-device preferences.
+    const START_AGENT_KEY = 'herdr_start_agent';
+    const START_PLACE_KEY = 'herdr_start_placement';
+
+    function restoreStartChoice(id, key, fallback) {
+      const el = document.getElementById(id);
+      // Falls back when the remembered value is gone — an agent dropped from the relay's
+      // allowlist leaves a stored name that matches no option, and silently ignoring it beats
+      // opening the dialog on a blank select.
+      const want = localStorage.getItem(key) || fallback;
+      if (want && [...el.options].some(o => o.value === want)) el.value = want;
+    }
+
     function setStartError(text) {
       const el = document.getElementById('startError');
       el.textContent = text || '';
@@ -2346,11 +2386,20 @@
       document.getElementById('startProject').textContent = p ? p.label : '';
       fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
       fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
-      fillSelect('startPlacement', [['new_workspace', 'New workspace'], ['new_tab', 'New tab'], ['split', 'Split']]);
+      fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
+      restoreStartChoice('startAgent', START_AGENT_KEY);
+      restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
       document.getElementById('startName').value = '';  // blank means "let the relay name it"
       setStartError('');
       document.getElementById('startSubmit').disabled = false;
       renderStartTarget();  // may disable submit again when the Project has no live target
+      // New tab and Split both need something of this Project's already running. Falling back
+      // keeps the dialog usable instead of opening it disabled on a choice that cannot apply
+      // here — the first session in a Project has nowhere to go but a new workspace.
+      if (document.getElementById('startSubmit').disabled) {
+        document.getElementById('startPlacement').value = 'new_workspace';
+        renderStartTarget();
+      }
       document.getElementById('startSheet').style.display = 'block';
     }
 
@@ -2408,6 +2457,12 @@
       }
       setStartError('');
       document.getElementById('startSubmit').disabled = true;
+      // Remembered on send rather than on change: what the user actually spawned is the choice
+      // worth reopening on, not one they scrolled past.
+      try {
+        localStorage.setItem(START_AGENT_KEY, msg.name);
+        localStorage.setItem(START_PLACE_KEY, placement);
+      } catch (e) { /* private mode: session-only */ }
       ws.send(JSON.stringify(msg));
     }
 
@@ -3107,12 +3162,14 @@
         ak.innerHTML = '';
       }
       renderPairStrip();
+      disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       refreshPane();
       refreshInterval = setInterval(refreshPane, 3000);
     }
 
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
+      disarmClear();
       clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
@@ -3138,6 +3195,36 @@
       showToast('Adjusting pane…');
       ws.send(JSON.stringify({ type: 'set_slot', pane_id: activePane, slot: slotFor() }));
     }
+    // --- Clear screen ---
+    // Ctrl+L, the terminal's own clear — not the agent's /clear, which throws away its context.
+    // Two taps, because this button lives a thumb away from Refresh and the two are easy to
+    // confuse: one redraws what is there, the other wipes it. The first tap only arms.
+    const CLS_ARM_MS = 3000;
+    let clsArmedAt = 0;
+
+    function armClear() {
+      if (!ws || !activePane) return;
+      const btn = document.getElementById('clsBtn');
+      if (Date.now() - clsArmedAt < CLS_ARM_MS) {
+        disarmClear();
+        sendKey('ctrl+l');  // already re-reads the pane, so the cleared screen is what lands
+        return;
+      }
+      clsArmedAt = Date.now();
+      btn.dataset.armed = '1';
+      btn.textContent = 'CLS?';
+      // Disarms itself rather than waiting to be pressed again: a button left armed across a
+      // pocket is the accidental clear this exists to stop.
+      setTimeout(() => { if (Date.now() - clsArmedAt >= CLS_ARM_MS) disarmClear(); }, CLS_ARM_MS);
+    }
+
+    function disarmClear() {
+      clsArmedAt = 0;
+      const btn = document.getElementById('clsBtn');
+      delete btn.dataset.armed;
+      btn.textContent = 'CLS';
+    }
+
     function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
     function sendText() {
       const i = document.getElementById('termInput');

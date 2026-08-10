@@ -32,12 +32,13 @@ def pane_list(*panes):
     return json.dumps({"result": {"panes": list(panes)}})
 
 
-def pane(pane_id, tab_id="t1", agent="codex", label="", cwd="/work"):
-    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "label": label, "cwd": cwd}
+def pane(pane_id, tab_id="t1", agent="codex", label="", cwd="/work", workspace_id="w1"):
+    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "label": label, "cwd": cwd,
+            "workspace_id": workspace_id}
 
 
-def spacer(pane_id, tab_id="t1"):
-    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL)
+def spacer(pane_id, tab_id="t1", cwd="/work"):
+    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL, cwd=cwd)
 
 
 class SlotExecTests(unittest.TestCase):
@@ -120,6 +121,57 @@ class SlotExecTests(unittest.TestCase):
                                       fail_on=("pane", "list"))
         self.assertIsNotNone(err)
         self.assertEqual(calls, [("pane", "list")])
+
+
+class StartIntoASpacerTests(unittest.TestCase):
+    """A narrow start fills a spacer that is already standing instead of opening a tab.
+
+    The spacer is a shell at a prompt, which is what `agent start --pane` wants — so the check
+    that matters is that no tab was created and the agent went to the spacer's own pane_id.
+    """
+
+    def start(self, panes, slot="narrow", spacer_cwd="/work"):
+        calls = []
+
+        def fake(*args, remote=None, timeout=15):
+            calls.append(args)
+            if args[:2] == ("pane", "list"):
+                return FakeResult(pane_list(*panes))
+            if args[:2] == ("agent", "list"):
+                return FakeResult(json.dumps({"result": {"agents": []}}))
+            if args[:2] == ("tab", "create"):
+                return FakeResult(json.dumps(
+                    {"result": {"tab": {"tab_id": "w1:t9"}, "root_pane": {"pane_id": "w1:pN"}}}))
+            if args[:2] == ("agent", "start"):
+                return FakeResult(json.dumps(
+                    {"result": {"agent": {"pane_id": args[args.index("--pane") + 1]}}}))
+            return FakeResult()
+
+        plan = {"name": "codex", "role": "agent", "project_id": "charts",
+                "project_label": "Charts", "cwd": "/work", "remote": None,
+                "placement": "new_tab", "label": "Agent 1", "slot": slot,
+                "workspace_id": "w1"}
+        with patch.object(herdr_relay, "run_herdr_result", side_effect=fake):
+            pane_id, err = herdr_relay.start_agent_exec(plan)
+        return pane_id, err, calls
+
+    def test_a_narrow_start_claims_the_spacer_and_opens_no_tab(self):
+        pane_id, err, calls = self.start([pane("w1:p1"), spacer("w1:p2")])
+        self.assertIsNone(err)
+        self.assertEqual(pane_id, "w1:p2")
+        self.assertNotIn(("tab", "create"), [c[:2] for c in calls])
+
+    def test_a_wide_start_opens_a_tab_and_leaves_the_spacer_alone(self):
+        # A wide session landing in a spacer would come up half-width and move straight back out.
+        pane_id, err, calls = self.start([pane("w1:p1"), spacer("w1:p2")], slot="wide")
+        self.assertIsNone(err)
+        self.assertEqual(pane_id, "w1:pN")
+        self.assertIn(("tab", "create"), [c[:2] for c in calls])
+
+    def test_a_spacer_in_the_wrong_directory_is_not_claimed(self):
+        _, err, calls = self.start([spacer("w1:p2", cwd="/elsewhere")])
+        self.assertIsNone(err)
+        self.assertIn(("tab", "create"), [c[:2] for c in calls])
 
 
 if __name__ == "__main__":

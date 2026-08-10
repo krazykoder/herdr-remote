@@ -273,6 +273,55 @@ def is_spacer(pane):
     return not pane.get("agent") and pane.get("label") == SPACER_LABEL
 
 
+def _tab_panes(panes, tab_id):
+    return [p for p in panes if p.get("tab_id") == tab_id]
+
+
+def free_slot(panes, workspace_id, exclude_tab=None):
+    """A spacer elsewhere in this workspace whose half can be handed to another pane, or None.
+
+    A spacer is half a slot somebody already paid for. Moving onto it costs one command and
+    leaves nothing behind, where splitting would mint a *second* spacer and strand this one for
+    good — which is how a workspace ends up with more idle shells than sessions.
+
+    Same workspace only. herdr renumbers a pane that crosses workspaces (w28:p1 becomes w27:p3),
+    and pane IDs are what the relay hands to clients — a move that changes one under a phone
+    leaves it holding a dead id. A tab of three or more is skipped: taking a third of an area is
+    not the narrow slot.
+    """
+    for p in panes:
+        if not is_spacer(p) or p.get("workspace_id") != workspace_id:
+            continue
+        if exclude_tab is not None and p.get("tab_id") == exclude_tab:
+            continue
+        if len(_tab_panes(panes, p.get("tab_id"))) <= 2:
+            return p
+    return None
+
+
+def pane_move_beside_args(pane_id, target):
+    """Move a pane into `target`'s tab, splitting off `target`. herdr requires --tab as well.
+
+    `--no-focus` for the same reason the spacer split has no `--focus`: this is a layout change,
+    and a pane that steals focus on its way there is one the user has to click back out of.
+    """
+    return ("pane", "move", pane_id, "--tab", target["tab_id"], "--split", "right",
+            "--target-pane", target["pane_id"], "--no-focus")
+
+
+def claimable_spacer(panes, workspace_id, cwd):
+    """A spacer in this workspace already sitting at `cwd`, ready to be handed an agent.
+
+    A spacer is a shell at a prompt, which is exactly what `agent start --pane` wants — so a
+    start can fill a half-width slot that already exists instead of opening a tab beside it.
+    cwd has to match: herdr starts the agent in the pane's directory, and the Project's cwd is
+    not something a client may talk the relay out of.
+    """
+    return next((p["pane_id"] for p in panes
+                 if is_spacer(p) and p.get("workspace_id") == workspace_id
+                 and p.get("cwd") == cwd), None)
+
+
 def plan_slot(panes, pane_id, slot):
     """Return (steps, error) — the herdr commands that put `pane_id` into the requested slot.
 
@@ -309,13 +358,23 @@ def plan_slot(panes, pane_id, slot):
     if len(siblings) == 1:
         return [], None
     steps = []
-    if siblings:
+    free = free_slot(panes, pane.get("workspace_id"), pane.get("tab_id"))
+    if free:
+        steps.append(pane_move_beside_args(pane_id, free))
+        # A tab of two means the spacer's own half is the one being taken, so it goes. Alone in
+        # its tab it is a spacer nothing reclaimed, and it becomes this pane's sibling instead.
+        if len(_tab_panes(panes, free["tab_id"])) == 2:
+            steps.append(("pane", "close", free["pane_id"]))
+    elif siblings:
         # Three or more panes divide the area into thirds or worse, and splitting again only
         # makes it smaller. Leave for an empty tab first, then take half of that.
         steps.append(("pane", "move", pane_id, "--new-tab"))
-        if only_spacers:
-            steps += [("pane", "close", p["pane_id"]) for p in spacers]
-    steps.append(pane_spacer_args(pane_id, pane.get("cwd") or "."))
+    if only_spacers:
+        # Whichever route was taken, the spacers left behind in the old tab hold columns for
+        # nobody now. Before the split, so the split stays last for its caller to label.
+        steps += [("pane", "close", p["pane_id"]) for p in spacers]
+    if not free:
+        steps.append(pane_spacer_args(pane_id, pane.get("cwd") or "."))
     return steps, None
 
 
