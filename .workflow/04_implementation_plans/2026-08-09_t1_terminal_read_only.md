@@ -246,7 +246,8 @@ it and still reads its own `pane list`.
 
 ### 3.1 Theme variable
 
-One variable per theme block, beside the existing accent colours. Name `--term`. Suggested value:
+One variable per theme block, beside the existing accent colours. Name `--shell`; `--term-bg` and
+`--term-text` already describe terminal content colours. Suggested value:
 the theme's cyan or teal where it has one, else `--blue` shifted. It must not equal `--red`,
 `--green`, or `--muted`, which carry agent status.
 
@@ -302,13 +303,13 @@ Beside `agentCard` (3266):
     function terminalsHtml() {
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
       if (!list.length) return '';
-      return `<div class="section-header"><span class="dot" style="background:var(--term)"></span>Terminals</div>`
+      return `<div class="section-header"><span class="dot" style="background:var(--shell)"></span>Terminals</div>`
         + list.map(terminalCard).join('');
     }
 ```
 
 `.term-glyph` is styled to occupy the same box as `.dot` so the two card kinds align: same width,
-same margin, `color: var(--term)`, monospace, no background, no pulse.
+same margin, `color: var(--shell)`, monospace, no background, no pulse.
 
 ### 3.5 One insertion point for three render paths [MODIFY]
 
@@ -354,7 +355,7 @@ lists, call `closeTerminal()` and show the ended toast instead.
 CSS:
 
 ```css
-    .terminal-view.is-terminal .term-header { border-bottom: 2px solid var(--term); }
+    .terminal-view.is-terminal .term-header { border-bottom: 2px solid var(--shell); }
 ```
 
 And, in the same rule block, hide what a shell must not offer:
@@ -364,7 +365,6 @@ And, in the same rule block, hide what a shell must not offer:
     .terminal-view.is-terminal #selTransfer,
     .terminal-view.is-terminal #promptDock,
     .terminal-view.is-terminal #quickDock,
-    .terminal-view.is-terminal #quickActions,
     .terminal-view.is-terminal #commandBtn,
     .terminal-view.is-terminal #promptsBtn,
     .terminal-view.is-terminal #quickDockBtn,
@@ -378,6 +378,8 @@ And, in the same rule block, hide what a shell must not offer:
 Give the existing composer controls IDs `commandBtn`, `promptsBtn`, `quickDockBtn`, and `keysBtn`.
 Only `keysBtn` remains visible for a terminal. CSS is the mechanism because these elements are
 already written by several functions on the poll path; a branch in each is four places to forget one.
+`#quickActions` stays visible because it also owns back/forward navigation; a shell has no agent, so
+its renderer emits navigation only and never approval actions.
 
 The gear menu is static markup, not a builder. Wrap its Composer text controls in `#menuInputFont`
 and Pair bar controls in `#menuPairPlace`; the rule above hides those plus New session, quick-actions
@@ -410,6 +412,9 @@ Update Recents in the same pass: its stored fingerprint and matcher must disting
 a shell (for example with a boolean `terminal` field), `loadRecents` must accept either kind,
 `noteRecent` and `renderRecents` must search `agents + shells`, and rendering must choose
 `terminalCard` for a shell. A bare `pane_id` must never match a different pane kind or host.
+
+Update `renderAgentTabs` to draw the unique union of `agents + shells`, using the shell colour and
+terminal card title rules for a shell. The strip is live-pane navigation, not an agent-status group.
 
 ---
 

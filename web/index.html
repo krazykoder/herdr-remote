@@ -3233,7 +3233,7 @@
     }
     function isShell(id) { return shells.some(s => s.pane_id === id); }
 
-    function paneLabel(a) { return a.label || a.project || a.agent; }
+    function paneLabel(a) { return a.label || a.project || a.agent || a.pane_id; }
 
     // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.
     function agentOf(paneId) { return (agents.find(a => a.pane_id === paneId) || {}).agent; }

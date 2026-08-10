@@ -137,10 +137,11 @@ Rendered through the existing `section()` helper, after Idle and before Recents.
 
 ### 5.3 Recents and session history
 
-A visited terminal enters Recents and the back/forward history on the same terms as an agent, and is
-rendered there with the terminal card. `navPush` and `navStep` are unchanged — they key on `pane_id`
-and do not care what kind of pane it is. A history entry whose pane has left the snapshot is skipped,
-which is existing behaviour and already covers a terminal that was closed on the host.
+A visited terminal enters Recents, the live header tab strip, and the back/forward history on the
+same terms as an agent, and is rendered there with the terminal card. `navPush` and `navStep` are
+unchanged — they key on `pane_id` and do not care what kind of pane it is. A history entry whose pane
+has left the snapshot is skipped, which is existing behaviour and already covers a terminal that was
+closed on the host.
 
 ## 6. Client — terminal view
 

@@ -177,6 +177,8 @@ the active Project chip like agents do, via the `project_id` that `annotate_agen
 
 **Terminal view.** The same shell: content region, ruler, wrap modes, CLS, slot control, Load more,
 and session back/forward all work unchanged, because `read_pane` does not care what is in the pane.
+The live header tab strip also includes terminals, so an open terminal remains visible as a first-class
+navigation destination rather than disappearing from the current-pane chrome.
 
 Demarcation is a 2px accent rule under the header plus a `$` before the title:
 
