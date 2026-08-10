@@ -117,14 +117,38 @@ if command -v cloudflared >/dev/null 2>&1; then
             echo "Warning: tunnel is up but printed no URL within 20s. Watch: tail -f $TUNNEL_LOG"
         else
             WSS_URL="${TUNNEL_URL/https:\/\//wss://}"
+            ENC_URL="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$WSS_URL")"
+            APP_URL="${HERDR_APP_URL:-https://eagerkoder.github.io/mini/}"
             echo ""
             echo "  Tunnel:  $WSS_URL"
             if [ -n "${HERDR_RELAY_TOKEN:-}" ]; then
                 # A 64-character hex token and a hostname that changes every restart, both needing
                 # to reach a phone. Typing them is the worst step in this setup, so hand over one
                 # link: the app stores both and strips them from the URL.
-                ENC_URL="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$WSS_URL")"
-                echo "  Open:    ${HERDR_APP_URL:-https://eagerkoder.github.io/mini/}?relay=$ENC_URL&token=$HERDR_RELAY_TOKEN"
+                echo "  Open:    $APP_URL?relay=$ENC_URL&token=$HERDR_RELAY_TOKEN"
+            fi
+
+            # Optional: post the new address to a webhook, so a restart does not mean walking to
+            # the laptop to read this. Discord's format; Slack wants "text" instead of "content".
+            # Falls back to a plain WEBHOOK_URL already in the environment, so an existing one
+            # works with no config change; the HERDR_ name wins when both are set.
+            NOTIFY_HOOK="${HERDR_NOTIFY_WEBHOOK:-${WEBHOOK_URL:-}}"
+            if [ -n "$NOTIFY_HOOK" ]; then
+                # No token by default, and that is the point: only the hostname rotates. The token
+                # is already in the phone's localStorage from the first setup, so the routine
+                # message carries no credential and nothing is at risk if the channel leaks.
+                # HERDR_NOTIFY_TOKEN=1 includes it, for a new device or cleared storage.
+                NOTIFY_LINK="$APP_URL?relay=$ENC_URL"
+                [ "${HERDR_NOTIFY_TOKEN:-}" = "1" ] && NOTIFY_LINK="$NOTIFY_LINK&token=$HERDR_RELAY_TOKEN"
+                NOTIFY_BODY="$(python3 -c 'import json,sys;print(json.dumps({"content": sys.argv[1]}))' \
+                    "herdr relay is up — $NOTIFY_LINK")"
+                if curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+                        -d "$NOTIFY_BODY" "$NOTIFY_HOOK" >/dev/null 2>&1; then
+                    echo "  Notified: webhook$([ "${HERDR_NOTIFY_TOKEN:-}" = "1" ] && echo " (with token)")"
+                else
+                    # Never fatal. The relay and tunnel are up; only the convenience failed.
+                    echo "  Warning: webhook post failed — the URL above is still good."
+                fi
             fi
             echo ""
         fi
