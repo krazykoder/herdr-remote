@@ -83,6 +83,48 @@
       overflow: hidden;
     }
 
+    /* Scrollbars, on the desktop where they are drawn at all. Left alone they arrive as a wide
+       light gutter that belongs to the OS rather than to this page, and against a dark terminal
+       it reads as a seam down the side.
+
+       Two mechanisms, because no browser has both: `scrollbar-*` is the standard property and
+       what Firefox honours, `::-webkit-scrollbar` is what Safari and Chrome honour. Touch
+       browsers overlay their own and ignore both, which is why nothing here reserves space.
+
+       Scoped away from the strips that deliberately hide their bar (.agent-tabs, .chip-strip) —
+       those set `scrollbar-width: none` themselves and come later in the cascade. */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      /* Inset via a transparent border so the thumb reads as a slim pill rather than filling the
+         gutter edge to edge. */
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      border-radius: 5px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--muted);
+      background-clip: padding-box;
+    }
+
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
     body {
       font-family: -apple-system, system-ui, -webkit-system-font, sans-serif;
       background: var(--bg);
@@ -956,7 +998,7 @@
     }
 
     .quick-actions {
-      padding: 6px 10px;
+      padding: 6px 12px;  /* the pair strip's box, so the two strips read as one family */
       border-top: 1px solid var(--border);
       display: flex;
       gap: 6px;
@@ -991,16 +1033,22 @@
       gap: 8px;
     }
 
+    /* Sized to the pair strip, which is the other always-there strip in this view and the only
+       height worth matching. Deliberately under the 44px target floor the approval buttons keep:
+       this row is always on screen, and a permanent 52px band cost more than a mis-tap on a
+       control whose worst outcome is opening the wrong session. */
     .quick-actions .qa-nav button.nav {
       flex: 0 1 140px;
       min-width: 96px;
       /* Clear of the hide button at the right edge, so a wide thumb aimed at forward cannot
          land on dismiss instead. */
       max-width: calc(50% - 24px);
+      padding: 2px 10px;
+      line-height: 1.3;
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
-      font-size: 1.1rem;
+      font-size: 0.9rem;
     }
 
     .quick-actions .qa-nav button.nav:disabled {
@@ -1017,10 +1065,10 @@
       transform: translateY(-50%);
       flex: 0 0 auto;
       min-width: 0;
-      width: 26px;
-      height: 26px;
+      width: 22px;
+      height: 22px;
       padding: 0;
-      border-radius: 13px;
+      border-radius: 11px;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
@@ -1585,9 +1633,20 @@
             <rect x="2" y="4" width="20" height="16" rx="2" />
             <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10" />
           </svg></button>
+        <button id="micBtn" onclick="toggleDictation()" aria-label="Dictate" hidden
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="11" rx="3" />
+            <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
+          </svg></button>
       </div>
-      <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
-        autocapitalize="off" spellcheck="false"></textarea>
+      <!-- Autocorrect on, at the user's direction. It is the composer for prose sent to an agent
+           far more often than it is a command line, and the keyboard's own correction is worth
+           more than a literal transcription of every typo. Anything that must survive verbatim
+           still can: the Keys pad and the / palette do not pass through here. -->
+      <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
+        autocapitalize="sentences" spellcheck="true"></textarea>
       <div class="term-input-side">
         <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
             fill="currentColor" stroke="none">
@@ -3456,7 +3515,9 @@
     // Ctrl+L, the terminal's own clear — not the agent's /clear, which throws away its context.
     // Two taps, because this button lives a thumb away from Refresh and the two are easy to
     // confuse: one redraws what is there, the other wipes it. The first tap only arms.
-    const CLS_ARM_MS = 3000;
+    // Long enough to read the armed label and decide, which three seconds was not. Still short
+    // enough that a button left armed in a pocket disarms itself.
+    const CLS_ARM_MS = 8000;
     let clsArmedAt = 0;
 
     function armClear() {
@@ -3592,6 +3653,52 @@
     // Clearing is destructive and sits next to two controls that are not, so it takes two taps.
     // The armed state expires on its own — a stray first tap must not leave a live trigger behind.
     let clearArmedAt = 0;
+    // --- Dictation ---
+    // The Web Speech API, not the keyboard's own dictation button: reaching that one means
+    // raising the keyboard first, which is the half of the screen this is trying not to spend.
+    // Chrome and Safari have it (prefixed on Safari); Firefox does not, and the button stays
+    // hidden there rather than failing on press.
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let dictation = null, dictationBase = '';
+
+    function toggleDictation() {
+      if (dictation) { dictation.stop(); return; }
+      // The microphone is gated on a secure context, and the ordinary way this app is reached at
+      // home is plain http on a LAN address. Say which URL works rather than failing silently.
+      if (!window.isSecureContext) {
+        showToast('Dictation needs https — open the app over the tunnel URL');
+        return;
+      }
+      const input = document.getElementById('termInput');
+      const r = new SpeechRec();
+      r.lang = navigator.language || 'en-US';
+      r.continuous = true;
+      r.interimResults = true;
+      // Whatever is already typed stays: dictation appends to the composer, it does not own it.
+      dictationBase = input.value && !/\s$/.test(input.value) ? input.value + ' ' : input.value;
+      r.onresult = e => {
+        let said = '';
+        for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
+        input.value = dictationBase + said;
+        autoGrow(input);  // never focus() — a focused textarea is the keyboard this avoids
+      };
+      r.onerror = e => {
+        showToast(e.error === 'not-allowed' ? 'Microphone permission denied' : `Dictation: ${e.error}`);
+      };
+      r.onend = () => { dictation = null; renderMicState(); };
+      dictation = r;
+      renderMicState();
+      try { r.start(); } catch (err) { dictation = null; renderMicState(); }
+    }
+
+    function renderMicState() {
+      const btn = document.getElementById('micBtn');
+      btn.hidden = !SpeechRec;
+      btn.style.color = dictation ? 'var(--red)' : 'var(--muted)';
+      btn.style.borderColor = dictation ? 'var(--red)' : 'var(--border)';
+      btn.setAttribute('aria-label', dictation ? 'Stop dictating' : 'Dictate');
+    }
+
     function clearComposer(btn) {
       if (Date.now() - clearArmedAt > 600) {
         clearArmedAt = Date.now();
@@ -3886,6 +3993,7 @@
     setInputFont(currentInputFont());
     applyWrapMode();
     placePairStrip();
+    renderMicState();  // stays hidden where the browser has no speech recognition
     document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
       `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
   </script>
