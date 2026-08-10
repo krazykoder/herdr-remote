@@ -59,9 +59,9 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # contract — run it after a herdr upgrade.
 .venv313/bin/python tests/e2e/e2e_pane_slots.py
 
-# Frontend logic. Both extract a block from web/index.html and run it in a vm context,
+# Frontend logic. Each extracts a block from web/index.html and runs it in a vm context,
 # so the single-file app keeps its no-build-step property.
-node --test tests/test_pairs.js tests/test_ctrl_keys.js
+node --test tests/test_pairs.js tests/test_ctrl_keys.js tests/test_relay_url.js
 ```
 
 Editing `web/` needs only a browser reload — the relay reads `index.html` from disk on every

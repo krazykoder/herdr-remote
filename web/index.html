@@ -1667,7 +1667,14 @@
     <h2>Settings</h2>
     <div class="setting-group">
       <label for="relayUrl">Relay URL</label>
-      <input id="relayUrl" type="url" placeholder="wss://your-tunnel.trycloudflare.com" />
+      <!-- type="text", not "url": a fenced paste is invalid against the URL type, which paints the
+           field as an error for something the cleaner is about to repair. The type bought nothing
+           else here — its sanitiser only drops newlines, and backticks and prose came through it
+           untouched. Cleaned on the way out of the box as well as on Connect, so the tidy-up is
+           visible before anything is stored. -->
+      <input id="relayUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
+        autocomplete="off" onchange="this.value = cleanRelayUrl(this.value)"
+        placeholder="wss://your-tunnel.trycloudflare.com" />
       <label for="relayToken" style="margin-top:8px">Token (optional)</label>
       <input id="relayToken" type="password" placeholder="shared secret" />
       <button onclick="saveAndConnect()">Connect</button>
@@ -2602,9 +2609,39 @@
       }).join('');
     }
 
+    // What lands in this box is almost never a bare URL. start.sh fences the address as a code
+    // block so it is copyable on a phone, chat clients add their own backticks and newlines, and
+    // the line above it in the terminal is "Tunnel:  wss://…". The link start.sh prints for the
+    // phone is worse: it is a github.io address carrying the real one in ?relay=, so pasting it
+    // whole used to store the wrong host entirely.
+    //
+    // So: pull the address out of whatever surrounds it rather than asking anyone to trim by hand.
+    function cleanRelayUrl(raw) {
+      let s = String(raw == null ? '' : raw).trim();
+      if (!s) return '';
+      // ?relay= first — in an app link the real address is in there, and the github.io URL
+      // wrapping it would otherwise win the scheme match below.
+      const rel = s.match(/[?&]relay=([^&\s'"`<>]+)/i);
+      if (rel) { try { s = decodeURIComponent(rel[1]); } catch (e) { s = rel[1]; } }
+      // The first thing that looks like an address, and nothing either side of it.
+      const m = s.match(/(?:wss?|https?):\/\/[^\s'"`<>\\]+/i);
+      if (m) s = m[0];
+      // Trailing prose the regex is right to include mid-URL but wrong to keep at the end:
+      // "…trycloudflare.com." at the end of a sentence, or inside brackets.
+      s = s.replace(/[)>\]},.;:!?'"`]+$/, '');
+      // A page served over https cannot open ws://, and the tunnel is quoted as https:// in
+      // cloudflared's own banner — so the scheme people copy is often the wrong one of the pair.
+      s = s.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
+      return s.replace(/\/+$/, '');
+    }
+
     function saveAndConnect() {
-      const url = document.getElementById('relayUrl').value.trim();
+      const box = document.getElementById('relayUrl');
+      const url = cleanRelayUrl(box.value);
       if (!url) return;
+      // Written back, so what was stored is what is on screen — a box still showing the pasted
+      // mess after a successful connect reads as the paste having been rejected.
+      box.value = url;
       localStorage.setItem('herdr_relay_url', url);
       const token = document.getElementById('relayToken').value.trim();
       if (token) localStorage.setItem('herdr_relay_token', token);
