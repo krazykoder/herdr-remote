@@ -3,6 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$HOME/.config/herdr-remote/config.env"
+SECRETS_FILE="$HOME/.config/herdr-remote/secrets.env"
 WS_PORT="${HERDR_RELAY_PORT:-8375}"
 
 RELAY_PID=""
@@ -23,8 +24,17 @@ trap cleanup INT TERM EXIT
 echo "herdr-remote relay"
 echo ""
 
-# Load config if available
+# Load config if available. secrets.env too: install-service.sh writes HERDR_RELAY_TOKEN there and
+# never into config.env, and the installed service sources both. Sourcing only one here meant the
+# token was invisible to a foreground run — and with HERDR_EXTERNAL_PORT set the relay then
+# refuses to boot, which is the exact combination a tunnel needs.
+# `set -a` because those files are plain KEY=value; only config.env uses `export`.
+set -a
+# shellcheck disable=SC1090
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+# shellcheck disable=SC1090
+[ -f "$SECRETS_FILE" ] && source "$SECRETS_FILE"
+set +a
 
 # 1. Start relay
 for port in "$WS_PORT" ${HERDR_EXTERNAL_PORT:+$HERDR_EXTERNAL_PORT}; do
