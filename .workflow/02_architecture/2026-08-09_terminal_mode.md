@@ -1,267 +1,227 @@
-# Architecture Proposal — Terminal Mode
+# Architecture — Terminal Mode
 
 **Date:** 2026-08-09
-**Scope:** `relay/herdr_relay.py`, a new `relay/commands.py`, `web/index.html`, a new operator-owned
-catalog file.
-**Classification:** **Class B** — architectural extension, backward compatible. New message types and
-a new poll source. Additive on the wire; existing clients are unaffected.
-**Status:** Proposal. §10 lists what must be answered before a spec is written. One of those
-questions is a security decision the architect will not make on the user's behalf.
+**Scope:** `relay/herdr_relay.py`, `web/index.html`.
+**Classification:** **Class B** — architectural extension, backward compatible. One additive key on
+an existing message, one new env gate, one new poll-time set. No message type removed or altered.
+**Status:** Decided. Supersedes the proposal of the same name (`e7e0ffc`); §10 of that draft is
+answered and the answers are folded in below.
+**Decisions:** `decision_log/2026-08-09_terminal_mode_trust_model.md`
+**Spec:** `.workflow/03_specs/2026-08-09_terminal_mode_spec.md`
+**Plans:** T1 — `.workflow/04_implementation_plans/2026-08-09_t1_terminal_read_only.md`
 
 ---
 
 ## 1. Problem
 
-Every pane herdr knows about is reachable, but only panes *running an agent* are visible. The relay's
-snapshot is built from herdr's pane list filtered to `if p.get("agent")` — a plain shell, including
-the ones this codebase creates and labels itself as spacers, is dropped before it reaches a client.
-
-So from a phone there is no way to run `git status`, tail a log, restart a dev server, or check why
-the agent's build failed. The agent is remote-controllable and the machine it runs on is not.
-
-The ask is not "a web terminal". It is: **a small set of known operations, run on the host, chosen
-from a list rather than typed.** That framing is what makes this buildable safely, and §5 is the
-whole proposal.
+Every pane herdr knows about is reachable, but only panes *running an agent* are visible. So from a
+phone there is no way to run `git status`, tail a log, restart a dev server, or look at why the
+agent's build failed. The agent is remote-controllable and the machine it runs on is not.
 
 ## 2. Proof of Discovery
 
 | Finding | Location | Consequence |
 |---|---|---|
-| The agent snapshot filters panes to those with an agent | `herdr_relay.py:303` (`for p in panes if p.get("agent")`) | Shell panes are invisible to every client. Root cause |
-| `known_panes` is populated only from that snapshot | `herdr_relay.py:614–618` | A shell pane ID is not in the set |
-| `pane_guard` refuses any pane not in `known_panes`, and any pane whose ID appears on more than one host | `herdr_relay.py:382–392` | **Every** write path — `respond`, `read_pane`, `send_keys`, `send_text`, `rename_pane`, `set_slot` — already refuses shell panes. Terminal mode is blocked at exactly one function, by design |
-| `herdr pane list` is already parsed for non-agent panes | `start_agent.py:312` `claimable_spacer`, `herdr_relay.py:486` `dig_panes` | The second poll source exists and is already trusted for placement decisions |
-| Pane IDs are per-server counters and collide across hosts; `ambiguous_pane_ids` exists for this | `herdr_relay.py:382–392`, decision D6 | Shell panes collide identically. Any new pane source must feed the same ambiguity set, not a parallel one |
-| `SAFE_RESPONSES` and `SAFE_KEYS` gate `respond` and `send_keys` by allowlist | `herdr_relay.py:872, 915` | The established pattern for "the client may not choose arbitrary content". §5 extends it rather than inventing a scheme |
-| `send_text` is capped at 4000 chars and is **not** behind a gate | `herdr_relay.py:932–951` | Load-bearing for §6. Today `send_text` is safe only because `pane_guard` limits its targets to agent panes |
-| Projects supply the only cwd allowlist in the system, from an operator-owned file at `HERDR_PROJECTS_FILE` | `relay/projects.py`, start-agent spec §3 | The trust boundary and the file-backed-catalog pattern both already exist. Reuse both |
-| `HERDR_ENABLE_WRITE_EXT` gates process creation; `rename_pane` was deliberately left ungated as "strictly weaker" | `herdr_relay.py:952–956, 979–986` | The existing gate reasoning is about *process creation*, and a shell is exactly that. §6 |
-| `SHORTCUTS` is a hardcoded client-side array that inserts text at the cursor | `web/index.html:1750` | The wrong home for terminal commands: the client is not a trust boundary |
-| `--source visible` reads the live frame with no backlog, and ctrl+l genuinely clears a shell | commit `20a1334` | Shell output needs no new read machinery. `read_pane` works as-is once the guard allows the pane |
+| **The poll already reads every pane and discards the shells.** `get_agents_from_host` runs `herdr pane list` and filters `if p.get("agent")` | `herdr_relay.py:284–306`, filter at 303 | Root cause, and the good news: shell discovery costs **zero additional subprocess calls**. Same call, same JSON, one fewer filter. The earlier draft's "second poll source" was wrong |
+| `get_agents_from_host` has exactly two callers, both inside `get_all_agents` | `herdr_relay.py:309–313` | The parse can return both lists with a blast radius of one function |
+| `known_panes` is populated only from that filtered snapshot | `herdr_relay.py:614–618` | A shell pane ID is not in the set |
+| `pane_guard` refuses any pane not in `known_panes`, and any pane ID reported by more than one host | `herdr_relay.py:382–392` | **Every** write path — `respond`, `read_pane`, `send_keys`, `send_text`, `rename_pane`, `set_slot` — already refuses shell panes through one function. That is the design working, and it is also why §5 needs care: admitting a shell pane to `known_panes` opens *all six* at once |
+| `ambiguous_pane_ids(agents)` takes a list and is called on the agent snapshot | `projects.py:137`, `herdr_relay.py:612–613` | Must be called on agents **and** shells. Shell pane IDs are per-server counters and collide identically |
+| `annotate_agents(agents, projects)` matches on `cwd` + `host` and adds `project_id` | `projects.py:117–129` | Works unmodified on shell records. Project filtering comes free |
+| `is_spacer(pane)` is `no agent AND label == "· spacer ·"`, and `plan_slot` may **close** a spacer | `start_agent.py:267–273, 325+` | Spacers are this feature's own layout furniture and are the one kind of pane the app closes on its own. §4.3 |
+| A comment already states the snapshot drops panes with no agent | `herdr_relay.py:458` | Goes stale with this change; update it |
+| `SAFE_RESPONSES` gates `respond`; `SAFE_KEYS` gates `send_keys`; `send_text` is capped at 4000 chars and has **no** gate | `herdr_relay.py:872, 915, 932–951` | `send_text` is safe today only because `pane_guard` limits its targets to agent panes. §5 |
+| `section(title, color, list)` renders a header plus one `agentCard` per entry | `web/index.html:3282–3285` | The Terminals section is one more `section()` call with a different card function |
+| `+ Start session` renders as a `chip-add` inside a `chip-strip` | `web/index.html:2297` | `+ New terminal` mirrors it |
+| `navPush`/`navStep` are in the tested pure block and key on `pane_id` alone | `web/index.html`, `tests/test_pairs.js` | Session history spans agents and terminals with no change |
+| `pairHealth`, `pairFor` and transfer all read the `agents` list | `web/index.html`, pairs spec §3 | Shells are never pair members. No change needed, and none should be made |
 
 **Invariants to preserve**
 
 - `pane_guard` stays the single choke point for pane addressability. Terminal mode extends what it
-  knows, and does not route around it.
-- Ambiguous pane IDs are refused, never guessed.
-- Anything reaching argv is validated against an allowlist, never passed through.
+  knows and does not route around it.
+- Ambiguous pane IDs are refused, never guessed. The ambiguity set covers every pane the relay will
+  address, not just agent panes.
+- Anything reaching argv is validated, never passed through.
 - Every write is audited with the originating ip, device, and listener.
 - Existing clients (iOS, macOS, Telegram, TUI) decode the current messages unchanged.
+- `tests/test_pairs.js` extracts only the marked pure block. Do not move the markers.
 
-## 3. What terminal mode is, and is not
+## 3. Contract
 
-| In | Out |
-|---|---|
-| Discovering shell panes on polled hosts and showing them | Any pane on a host the relay does not already poll |
-| Reading a shell pane's output (`read_pane`, unchanged) | A PTY stream, xterm.js, or anything resembling a live terminal emulator |
-| Running a **catalog** command by id, with validated parameters | Sending client-supplied text to a shell by default |
-| An operator-owned catalog file, versioned and reloadable | A catalog the browser can add to |
-| Creating a shell pane in a Project cwd | A shell in an arbitrary path |
-| Ctrl+C, Ctrl+D, Enter, arrows — the existing `SAFE_KEYS` set | New keys chosen by the client |
-| An explicit, separately-gated raw-input escape hatch (§6.3) | That hatch being on by default, or reachable from an unauthenticated listener |
+> **A shell pane is a first-class pane and a second-class citizen. It is discovered by the same poll,
+> guarded by the same `pane_guard`, and read by the same `read_pane` — and it never carries a status,
+> never joins a pair, and never appears in an agent group.**
 
-## 4. Data flow
+Binding for `relay/herdr_relay.py` and `web/index.html`. Consequences:
+
+- Shell discovery adds no subprocess call. A design that needs a second `pane list` is wrong.
+- Shells enter `known_panes`, `pane_remote_map`, and the ambiguity set together, or not at all. A
+  pane the relay will address but has not checked for collision is the D6 bug.
+- The wire never gives a shell a `status` or an `agent` field. Absence is the demarcation.
+- The UI never renders a shell inside Blocked / Working / Done / Idle. Those four mean agent status;
+  a shell has none, and an idle shell drawn as an idle agent is a lie.
+- `respond` refuses shell panes permanently. `SAFE_RESPONSES` is a list of agent approval strings;
+  sending "yes, single permission" to a shell is meaningless at best.
+- Terminal mode off is not "shells hidden". It is **shells not discovered** — `known_panes` does not
+  grow, and the guard behaves exactly as it does today.
+
+## 4. Model
+
+### 4.1 One parse, two lists
 
 ```mermaid
 flowchart TD
-  A[herdr pane list] -->|panes with an agent| B[agents snapshot]
-  A -->|panes without an agent| C[shells snapshot]
-  B --> D[known_panes + ambiguous_panes]
-  C --> D
-  D --> E[pane_guard]
-  F[client: run_command id + params] --> G[catalog lookup + param validation]
-  G -->|rejected| H[error, audited]
-  G -->|resolved argv| E
-  E -->|allowed| I[herdr pane send-text / send-keys]
-  E -->|refused| H
+  A["herdr pane list (one call per host, already made)"] --> B{p.agent?}
+  B -->|yes| C[agents]
+  B -->|no| D{is_spacer?}
+  D -->|yes| E[dropped: layout furniture]
+  D -->|no| F[shells]
+  C --> G[known_panes + pane_remote_map + ambiguous_panes]
+  F --> G
+  G --> H[pane_guard]
+  C --> I["snapshot: {type: agents, agents: [], shells: []}"]
+  F --> I
 ```
 
-Two things to read off this diagram:
+### 4.2 Wire
 
-- The shell snapshot joins the *same* `known_panes` and ambiguity sets. Not a parallel registry — a
-  second registry would need its own collision guard, and D6 exists because that collision is real.
-- A client never names a command string. It names a catalog id. Resolution happens relay-side, after
-  which the flow rejoins the existing guarded path.
-
-## 5. Managed input — the core of the proposal
-
-### 5.1 The catalog
-
-An operator-owned JSON file at `HERDR_COMMANDS_FILE`, unset meaning terminal mode is off — the same
-shape of switch as `HERDR_PROJECTS_FILE`. It is read by the relay, never written by it, and never
-authored by a client.
+One additive key on the existing snapshot, not a second message. Agents and shells come from one
+`pane list` and must not be able to arrive from different snapshots:
 
 ```json
-{
-  "version": 1,
-  "commands": [
-    { "id": "git_status", "label": "git status", "argv": ["git", "status", "--short"] },
-    { "id": "tail_log",   "label": "Tail a log",
-      "argv": ["tail", "-n", "{lines}", "{file}"],
-      "params": [
-        { "name": "lines", "type": "int", "min": 10, "max": 500, "default": 100 },
-        { "name": "file",  "type": "choice", "choices": ["build.log", "server.log"] }
-      ] },
-    { "id": "restart_dev", "label": "Restart dev server",
-      "argv": ["make", "dev"], "confirm": true }
-  ]
-}
+{"type": "agents",
+ "agents": [ … unchanged … ],
+ "shells": [{"pane_id": "w8:p3", "label": "build watch",
+             "cwd": "/Users/t/code/web", "project": "web", "host": "local",
+             "workspace_id": "w8", "tab_id": "t2", "project_id": "web"}]}
 ```
 
-| Field | Rule |
+No `status`, no `agent`, no `remote` — `remote` is relay-internal and already withheld from clients.
+Swift's `Codable`, the Telegram bot, and the TUI all ignore an unknown key, so this is invisible to
+every client that does not want it. Sent on connect and on every poll, exactly as `agents` is.
+
+### 4.3 Spacers are excluded
+
+A spacer is a shell at a prompt in a Project cwd — genuinely usable, and excluded anyway. `plan_slot`
+may close a spacer to hand its columns back, and it is the only pane this application closes on its
+own. Listing a pane the app may silently delete out from under a reader is worse than not listing it.
+
+This yields a clean invariant that is worth more than the two panes it costs: **every pane in the
+Terminals list is the user's, and nothing in the product will close it.**
+
+### 4.4 Where a terminal comes from (T3)
+
+`start_agent_exec` already creates a workspace, tab, or split at a Project cwd, with rollback, and
+already reclaims a standing spacer. `open_terminal` is that flow minus the `agent start` step. Cwd
+comes from Projects — the only cwd allowlist in the system — so there is no new path validation and
+no second trust boundary to get wrong.
+
+## 5. Security
+
+Written plainly on purpose.
+
+### 5.1 What was decided
+
+The catalog design from the proposal draft is **dropped**. There is no `HERDR_COMMANDS_FILE`, no
+`command_catalog`, no `run_command`, and no relay-side parameter validation. Shortcuts live in the
+browser's `localStorage`, alongside `herdr_pairs`, and `send_text` is permitted to shell panes.
+
+The reasoning, recorded in full in the decision log: a catalog is a security boundary only if raw
+input is impossible. With raw input on — which is what was asked for — the catalog validates nothing
+an attacker could not simply route around, and the whole apparatus becomes an expensive way to store
+a list of strings that the client can already store for free.
+
+**So state what this is without dressing it up:** with terminal mode on, anyone who can reach the
+relay can run anything the herdr user can run. Not "can run approved commands" — anything.
+
+### 5.2 The gate
+
+`HERDR_ENABLE_TERMINAL=1`, **default off**, and off means undiscovered rather than hidden.
+
+Deliberately **not** `HERDR_ENABLE_WRITE_EXT`. That gate's documented reasoning is agent process
+creation; someone who enabled it to start sessions from their phone did not thereby consent to a
+shell, and reusing it would silently widen a permission this repository spends hundreds of words
+scoping narrowly.
+
+**`HERDR_LAN_OPEN=1` does carry terminal mode.** This is the user's explicit decision, made with the
+consequence stated: on an open LAN listener there is no token, so anything that can reach the port
+gets a shell. It is logged in the decision log rather than argued again here. Two things keep it
+from being an accident: terminal mode is opt-in and defaults off, and the relay logs a startup
+warning naming both settings when they are on together.
+
+The external listener is unchanged — it always requires a token, as it does for every other write.
+
+### 5.3 Not proposed
+
+No sudo handling, no credential entry, no per-command accounts, no sandboxing. All of it would be
+theatre over a PTY the relay does not control. The honest boundary is: the operator decides whether
+terminal mode is on and who can reach the port.
+
+## 6. Client surface
+
+**Agent list.** A `Terminals` section rendered by the existing `section()` helper after Idle and
+before Recents, with its own card:
+
+| `agentCard` | `terminalCard` |
 |---|---|
-| `id` | Unique. The only command identifier a client ever sends |
-| `label` | Display only. Never reaches a shell |
-| `argv` | A list, not a string. Placeholders are whole elements or embedded in one element |
-| `params` | Typed. `choice` (closed set), `int` (bounded), `text` (regex, bounded length). No free type |
-| `confirm` | Client shows a confirmation step. A hint, not a security control — the relay does not rely on it |
+| Status dot, coloured by status | `$` glyph, no status |
+| Pair / Paired button | absent — pairs are agent-to-agent |
+| `project · agent · name` title | label, monospace |
+| cwd on line 2 | cwd on line 2, unchanged |
 
-**A list and not a string, deliberately.** A command string invites the client to compose one, and
-invites the relay to split it. The catalog holds argv elements, parameters substitute into single
-elements, and nothing is ever handed to a shell for word-splitting by the relay itself.
+Section colour is its own var — not red/green/muted, which mean agent status. Terminals filter with
+the active Project chip like agents do, via the `project_id` that `annotate_agents` already supplies.
+`+ New terminal` is a `chip-add` mirroring `+ Start session` (T3).
 
-Note the honest limit: the substituted argv is joined and sent to an *interactive shell* via
-`pane send-text`, so the shell does the final word-splitting. That is what makes parameter validation
-load-bearing rather than cosmetic. A `text` parameter with a permissive regex is a shell injection.
-The spec must state that regexes are the security boundary and that the default `text` regex is
-restrictive — and it should say plainly that a catalog author can write an unsafe entry, in the same
-way anyone who can write `HERDR_PROJECTS_FILE` can already point a Project anywhere.
+**Terminal view.** The same shell: content region, ruler, wrap modes, CLS, slot control, Load more,
+and session back/forward all work unchanged, because `read_pane` does not care what is in the pane.
 
-### 5.2 Wire additions
+Demarcation is a 2px accent rule under the header plus a `$` before the title:
 
-| Direction | Message | Payload |
+```
+┌────────────────────────────────┐
+│ ‹  $ herdr-remote     ⌄ ⟳ CLS  │
+├════════════════════════════════┤ ← 2px accent
+│ $ git status --short           │
+│  M web/index.html              │
+│ $                              │
+├────────────────────────────────┤
+│ [git status][make dev][tail…]  │
+│ [^C] [^D] [↑] [↵]              │
+└────────────────────────────────┘
+```
+
+Absent in a terminal: pair strip, transfer, approval quick actions, prompts dock.
+Kept and promoted: the keys pad. **Ctrl+C is the most valuable control here** — it is the only way to
+stop something you started.
+
+No completion signal. herdr exposes no process lifetime, and the view will not pretend to know when
+a command finished; it polls faster for a few seconds after a send and stops there.
+
+## 7. Phasing
+
+| Phase | Delivers | Requires |
 |---|---|---|
-| S→C | `shells` | Shell panes: `pane_id`, `label`, `cwd`, `host`, `workspace_id`, `tab_id`. Sent alongside `agents`, on the same poll |
-| S→C | `command_catalog` | Sent on connect when terminal mode is on, exactly as `start_options` is |
-| C→S | `run_command` | `pane_id`, `command_id`, `params` — validated, audited, then sent as text plus Enter |
-| C→S | `open_terminal` | `project_id`, optional `placement`. Creates or claims a shell pane in the Project's cwd |
+| **T1** | Shell discovery, Terminals section, terminal view, `read_pane`, `send_keys`. **Read-only for text** | `HERDR_ENABLE_TERMINAL` |
+| T2 | `send_text`, the shortcut grid, locally-stored shortcuts | — |
+| T3 | `+ New terminal` in a Project cwd | + `HERDR_ENABLE_WRITE_EXT` |
 
-All four are additive. A client that does not know them is unaffected; a relay that does not know
-them already answers with the "the relay may be older than this client" error added in an earlier
-phase, which is exactly the right message here.
+**T1 is read-only by an explicit refusal, not by omission.** This is the subtle part: the moment a
+shell pane enters `known_panes`, `pane_guard` stops refusing it and *all six* message types accept it
+— including `send_text`. So T1 adds a one-line refusal of `send_text` on shell panes, which T2
+deletes. One line built and one line deleted is cheaper than a tri-state gate, and it makes T1
+genuinely read-only rather than read-only by UI convention.
 
-`read_pane`, `send_keys`, and `set_slot` need no change — they work on any pane the guard allows.
+T1 is independently useful — seeing what is running on the box, and Ctrl+C — and it proves the
+cross-host ambiguity guard holds for shell panes before anything can write to one.
 
-### 5.3 Reusing what exists
-
-- **Pane creation:** `start_agent_exec` already creates a workspace, a tab, or a split, at a Project
-  cwd, with rollback on failure, and already reuses a labelled spacer when one is standing. A shell
-  pane is that flow minus the `agent start` step. `open_terminal` is a subset of code that exists and
-  is tested — not a new path beside it.
-- **Cwd allowlist:** Projects. A terminal opens in a Project's cwd or it does not open. No new
-  path-validation code, and no new trust boundary to get wrong.
-- **Slots:** a terminal pane is a pane. `set_slot` applies unchanged.
-- **Reading:** `read_pane` unchanged, including the `cols` measurement and `--source visible`.
-
-The genuinely new code is: the shell branch of the poll, the catalog loader and validator, and the
-frontend surface. Everything else is reuse.
-
-## 6. Security
-
-This section is written plainly on purpose. It is the part of the proposal that must not be skimmed.
-
-### 6.1 What this feature actually is
-
-Terminal mode makes a remote machine's shell reachable from any browser that can open the relay's
-WebSocket. Even with a strict catalog, it is remote command execution: the operator chooses which
-commands, but the network-reachable surface is a live shell prompt on their machine. Every existing
-gate in this system was designed for something weaker than that — `respond` sends one of a fixed set
-of approval strings, `send_keys` sends one of a fixed set of keys, and `send_text` is safe only
-because `pane_guard` currently limits its targets to panes owned by an agent process.
-
-### 6.2 The recommendation
-
-**A new, separate environment gate: `HERDR_ENABLE_TERMINAL`, defaulting to off.**
-
-Not `HERDR_ENABLE_WRITE_EXT`. That gate's documented reasoning is process creation — starting an
-agent, splitting a pane. A user who turned it on to start sessions from their phone did not thereby
-consent to a shell. Reusing it would silently widen a permission that hundreds of words in this
-repository describe as meaning something narrower.
-
-Three conditions, all required, all enforced at relay startup, and the relay refuses to boot with
-terminal mode on and any of them unmet:
-
-1. `HERDR_ENABLE_TERMINAL=1`.
-2. `HERDR_COMMANDS_FILE` set and parsing cleanly. No file, no terminal mode — the catalog is the
-   feature, not a decoration on it.
-3. `HERDR_RELAY_TOKEN` set. **`HERDR_LAN_OPEN=1` must not exempt terminal mode.** An open LAN
-   listener is a deliberate convenience for approving agent prompts on a trusted network; it should
-   not also hand a shell to anything that can reach that port. If the operator genuinely wants that,
-   it needs its own second explicit opt-in, and the spec should treat that as a separate decision
-   rather than a flag combination that falls out by accident.
-
-Additionally: `send_text` to a shell pane must be refused unless §6.3 is on, every `run_command` is
-audited with the resolved argv alongside the existing ip/device/listener attribution, and a rejected
-parameter is logged with the reason.
-
-### 6.3 The raw-input escape hatch
-
-There will be a moment where the catalog does not have the command someone needs. A third setting,
-`HERDR_TERMINAL_RAW=1`, off by default and requiring terminal mode already on, permits `send_text` to
-shell panes.
-
-State it clearly in the docs: with raw input on, anyone who can reach the relay and hold the token
-can run anything the herdr user can run. That is not a reason to omit the hatch — the operator owns
-their machine — it is a reason for it to be a separate switch, documented in exactly those words.
-
-### 6.4 What is not proposed
-
-No sudo handling, no credential entry, no per-command user accounts, no attempt to sandbox the shell.
-Those would be security theatre over a PTY the relay does not control. The honest boundary is: the
-operator decides what the catalog contains and who holds the token.
-
-## 7. Client surface
-
-- Shell panes appear in the agent list under their own section — "Terminals" — with the shell icon
-  path the agent-icon detection already has a slot for. Never mixed into the agent groups: a shell
-  has no status, and an idle shell rendered as an idle agent is a lie.
-- Opening one uses the existing terminal view. The content region, the ruler, the wrap modes, the
-  scroll, the CLS control, and the slot control are unchanged.
-- The composer is replaced by a **command grid** rendered from `command_catalog`: one button per
-  command, a parameter sheet for commands that take them, a confirmation step where `confirm` is
-  set. The keys pad stays — Ctrl+C on a runaway process is the single most valuable control here.
-- The free-text input is absent unless the relay advertised raw input, following the same
-  presence-is-the-feature-gate pattern that `start_options` established.
-- Pairs, transfer, and the started-session flow do not apply to shells and are not rendered.
-
-## 8. Phasing
-
-| Phase | Delivers | Gate |
-|---|---|---|
-| T1 | Shell panes in the snapshot, in the guard, and in the list. Read-only | `HERDR_ENABLE_TERMINAL` |
-| T2 | Catalog file, `command_catalog`, `run_command`, the command grid | + `HERDR_COMMANDS_FILE` |
-| T3 | `open_terminal` — creating a shell in a Project cwd | + `HERDR_ENABLE_WRITE_EXT` |
-| T4 | Raw input | + `HERDR_TERMINAL_RAW` |
-
-T1 is independently useful — seeing what is running on the box, and Ctrl+C — and it is the phase that
-proves the ambiguity guard holds for shell panes before anything can write to one.
-
-## 9. Risks
+## 8. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Shell pane IDs collide across hosts exactly as agent IDs do | Feed the same `ambiguous_panes` set. Non-negotiable; the guard is one function for this reason |
-| A shell pane's ID is reused after the pane closes | The pair spec's fingerprint problem, one layer down. A terminal pane's identity should carry `cwd` + `host` + `label`, and a mismatch closes the view rather than writing into a stranger |
-| Catalog reload while a client holds an old catalog | Version the catalog; reject a `run_command` whose `command_id` is unknown — which the lookup does anyway |
-| Poll cost of a second `pane list` per host | It is one call per host per poll, and `claimable_spacer` already makes a similar call on the start path. Measure, do not assume |
-| A long-running command with no output | Terminal mode reads a pane; it does not track process lifetime. Say so in the UI rather than inventing a completion signal herdr does not expose |
-| Feature creep into a web terminal | §3's out-column is binding. If a spec proposes a PTY stream, it is a different feature with a different classification |
-
-## 10. Open questions — must be answered before the spec
-
-1. **The `HERDR_LAN_OPEN` interaction (§6.2, condition 3).** The recommendation is that an open LAN
-   listener never carries terminal mode. This is a real ergonomic cost on a home network and it is
-   the user's call, not the architect's. It must be answered explicitly, in writing, before T1.
-2. **Is T4 wanted at all?** If raw input is the actual goal, the catalog is scaffolding around a
-   feature that could be four lines, and the proposal should be re-cut honestly around that.
-   If the catalog is the goal, T4 may never ship.
-3. **Where does the catalog live per host?** One relay-side catalog, or per-Project catalogs keyed by
-   `project_id`? Per-Project is more useful — `make dev` means something different per repo — and it
-   is more file plumbing. Recommend per-Project, with a shared global section.
-4. **Does a command run in the pane, or in a fresh one?** Running in the user's pane inherits their
-   shell state, which is usually what is wanted and is also how a half-typed command line gets
-   mangled. Recommend: refuse to send when the pane's last line is not a clean prompt, which needs a
-   prompt-detection heuristic and therefore needs a decision about how wrong it is allowed to be.
-5. **Should Telegram, iOS, and macOS get this?** They ignore the new messages today, which is correct
-   and requires no work. Extending terminal mode to a Telegram chat is a materially larger
-   authorization question than extending it to a browser holding a token.
+| Shell pane IDs collide across hosts exactly as agent IDs do | Feed the same `ambiguous_panes` set. Non-negotiable; §3 |
+| Admitting shells to `known_panes` opens six message types at once | The T1 `send_text` refusal, and `respond` refusing shells permanently. Tested, not assumed |
+| A shell pane ID is reused after the pane closes | The pairs spec's fingerprint problem one layer down. The open terminal view closes itself when its pane leaves the snapshot, rather than writing into a stranger |
+| A long-running command with no output | The UI says it does not know, rather than inventing a completion signal herdr does not expose |
+| Feature creep into a web terminal | §3's contract. A PTY stream is a different feature with a different classification |
