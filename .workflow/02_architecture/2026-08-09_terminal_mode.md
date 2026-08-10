@@ -93,12 +93,13 @@ One additive key on the existing snapshot, not a second message. Agents and shel
 {"type": "agents",
  "agents": [ … unchanged … ],
  "shells": [{"pane_id": "w8:p3", "label": "build watch",
-             "cwd": "/Users/t/code/web", "project": "web", "host": "local",
+             "cwd": "/Users/t/code/web", "project": "web", "host": "local", "remote": null,
              "workspace_id": "w8", "tab_id": "t2", "project_id": "web"}]}
 ```
 
-No `status`, no `agent`, no `remote` — `remote` is relay-internal and already withheld from clients.
-Swift's `Codable`, the Telegram bot, and the TUI all ignore an unknown key, so this is invisible to
+No `status` and no `agent`. `remote` remains present because the existing agent snapshot already
+sends it; shell records keep the same routing metadata shape. Swift's `Codable`, the Telegram bot,
+and the TUI all ignore the additive `shells` key, so this is invisible to
 every client that does not want it. Sent on connect and on every poll, exactly as `agents` is.
 
 ### 4.3 Spacers are excluded

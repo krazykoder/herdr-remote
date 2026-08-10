@@ -55,7 +55,7 @@ Insert immediately above `get_agents_from_host` (line 284). Pure so it can be te
 subprocess, following `plan_slot`:
 
 ```python
-def split_panes(panes, host_label, remote=None):
+def split_panes(panes, host_label, remote=None, include_shells=False):
     """(agents, shells) from one host's parsed `pane list`. Pure.
 
     Shells were always in this payload — the agent filter is the only reason a client has never
@@ -82,7 +82,7 @@ def split_panes(panes, host_label, remote=None):
                 "workspace_id": p.get("workspace_id", ""),
                 "tab_id": p.get("tab_id", ""),
             })
-        elif TERMINAL and not is_spacer(p):
+        elif include_shells and not is_spacer(p):
             shells.append({
                 "pane_id": p["pane_id"],
                 "label": p.get("label", ""),
@@ -111,7 +111,7 @@ def get_panes_from_host(remote=None):
         panes = json.loads(raw).get("result", {}).get("panes", [])
     except (json.JSONDecodeError, KeyError, AttributeError):
         return [], []
-    return split_panes(panes, remote or "local", remote)
+    return split_panes(panes, remote or "local", remote, include_shells=TERMINAL)
 ```
 
 `AttributeError` is added because `json.loads("null")` returns `None`, which the old `.get` chain
@@ -189,6 +189,10 @@ Line 858:
 ```python
             await ws.send(json.dumps(snapshot_message()))
 ```
+
+Keep the existing Projects conditional for the `projects` and `start_options` messages. Send the
+cached snapshot when `PROJECTS` is enabled, or when `TERMINAL` is enabled; with both disabled, keep
+the legacy no-Projects connect wire unchanged.
 
 ### 2.10 Write refusals [MODIFY]
 
@@ -273,9 +277,10 @@ Beside `paneLabel` (2993):
     function isShell(id) { return shells.some(s => s.pane_id === id); }
 ```
 
-Replace `agents.find(x => x.pane_id === paneId)` with `paneOf(paneId)` in `openTerminal` and in
-`renderStatusBar`. **Do not** replace it in `pairHealth`, `pairFor`, `renderPairStrip`, `openTransfer`,
-`doTransfer`, or `switchToPartner` — pairs are agent-to-agent and must keep looking only at `agents`.
+Replace the live-pane lookup with `paneOf(paneId)` in `openTerminal`, `renderStatusBar`, `renamePane`,
+the `rename_pane` command-result handler, and the terminal-menu state lookup. **Do not** replace it
+in `pairHealth`, `pairFor`, `renderPairStrip`, `openTransfer`, `doTransfer`, or `switchToPartner` —
+pairs are agent-to-agent and must keep looking only at `agents`.
 
 ### 3.4 Terminal card and section [NEW]
 
@@ -349,7 +354,8 @@ And, in the same rule block, hide what a shell must not offer:
 ```css
     .terminal-view.is-terminal #pairStrip,
     .terminal-view.is-terminal #selTransfer,
-    .terminal-view.is-terminal #promptsDock,
+    .terminal-view.is-terminal #promptDock,
+    .terminal-view.is-terminal #quickDock,
     .terminal-view.is-terminal #quickActions { display: none !important; }
 ```
 
@@ -363,8 +369,9 @@ No pair items, no New session in \<project\>.
 
 ### 3.7 Composer, keys, approvals [MODIFY]
 
-- Hide the composer's text input and Send when `is-terminal`, by the same CSS rule block. T2 brings
-  them back.
+- Hide `#termInput`, `.term-input button.send`, `.term-input button.clear`, and `#micBtn` when
+  `is-terminal`, by the same CSS rule block. Keep the keys entry point; T2 brings the text composer
+  back.
 - The keys pad stays. Move `C-c` to the first row **for terminals only** — do not reorder the agent
   keys pad.
 - The blocked-approval branch in `openTerminal` and the quick-actions renderer must not run for a
@@ -374,14 +381,23 @@ No pair items, no New session in \<project\>.
 ### 3.8 Open pane disappears [MODIFY]
 
 In the `agents` message handler, after `shells` is assigned: if `activePane` is set and is in neither
-list, close the terminal view and show a toast naming the pane. Spec §6.5.
+list, close the terminal view and show a toast naming the pane. Spec §6.5. `navTarget` must consider
+both `agents` and `shells`, or terminal history will silently skip every terminal.
+
+`paneTitle` must preserve the existing agent format but return `label || project || pane_id` for a
+shell. Toggle `is-terminal` off in `closeTerminal`, not only when opening an agent.
+
+Update Recents in the same pass: its stored fingerprint and matcher must distinguish an agent from
+a shell (for example with a boolean `terminal` field), `loadRecents` must accept either kind,
+`noteRecent` and `renderRecents` must search `agents + shells`, and rendering must choose
+`terminalCard` for a shell. A bare `pane_id` must never match a different pane kind or host.
 
 ---
 
 ## 4. `tests/test_terminal_panes.py` [NEW]
 
-`split_panes` is pure, which is why §2.4 exists. Test it directly, and set the module-level flag the
-way `tests/test_slot_exec.py` handles relay module state.
+`split_panes` is pure, which is why §2.4 exists. Test it directly with `include_shells=True` and
+`False`; do not mutate relay module state just to test the splitter.
 
 | Case | Assert |
 |---|---|
