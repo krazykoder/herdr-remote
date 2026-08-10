@@ -979,21 +979,53 @@
       gap: 6px;
     }
 
-    /* Back and forward pin to the ends of the bar and never stretch — the approval buttons
-       between them are the ones worth a wide target, and a nav button that grew to half the
-       screen when nothing else was there would be the easiest thing to hit by accident. */
-    .quick-actions button.nav {
-      flex: 0 0 auto;
-      min-width: 44px;
+    /* Back and forward get their own full-width row under any approval buttons, so the two
+       never compete for the same line. The row is a positioning context for the hide button,
+       which sits over its right edge rather than in the flow — otherwise it would count as a
+       third item and pull the pair off centre. */
+    .qa-nav {
+      flex: 1 0 100%;
+      position: relative;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .quick-actions .qa-nav button.nav {
+      flex: 0 1 140px;
+      min-width: 96px;
+      /* Clear of the hide button at the right edge, so a wide thumb aimed at forward cannot
+         land on dismiss instead. */
+      max-width: calc(50% - 24px);
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
-      font-size: 1rem;
+      font-size: 1.1rem;
     }
 
-    .quick-actions button.nav:disabled {
+    .quick-actions .qa-nav button.nav:disabled {
       opacity: 0.35;
       cursor: default;
+    }
+
+    /* Deliberately small and quiet. Hiding the bar is a one-off, and the control for it sits
+       next to two buttons meant to be pressed constantly. */
+    .quick-actions .qa-nav button.qa-hide {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      flex: 0 0 auto;
+      min-width: 0;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border-radius: 13px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
     }
 
     .btn-yes {
@@ -3382,6 +3414,10 @@
       const nav = (step, glyph, label) =>
         `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
         `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      const navRow = `<div class="qa-nav">${nav(-1, '‹', 'Previous session')}` +
+        `${nav(1, '›', 'Next session')}` +
+        `<button class="qa-hide" onclick="toggleQuickActions()" title="Hide this bar — turn it ` +
+        `back on from the pane menu" aria-label="Hide quick actions bar">✕</button></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
@@ -3392,9 +3428,9 @@
           return `<button class="${cls}" onclick="respond('${o.replace(/'/g, "\\'")}')">${icon} ${label}</button>`;
         }).join('');
       }
-      qa.innerHTML = quickActionsOn()
-        ? nav(-1, '‹', 'Previous session') + middle + nav(1, '›', 'Next session')
-        : middle;
+      // Approvals first and on their own line, nav underneath: the row order is what puts the
+      // thing that needs answering closest to the terminal it is about.
+      qa.innerHTML = middle + (quickActionsOn() ? navRow : '');
     }
 
     let paneLines = 200;
