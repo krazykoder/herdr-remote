@@ -55,6 +55,10 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # Not picked up by discover — it binds a port, so run it deliberately.
 .venv313/bin/python tests/e2e/e2e_start_agent.py
 
+# Pane slots against the REAL herdr, in a throwaway workspace. Covers herdr's geometry
+# contract — run it after a herdr upgrade.
+.venv313/bin/python tests/e2e/e2e_pane_slots.py
+
 # Frontend pair/transfer logic. Extracts the pure block from web/index.html
 # between its markers, so the single-file app keeps its no-build-step property.
 node --test tests/test_pairs.js
@@ -152,7 +156,7 @@ Messages are JSON with a `type` field:
 
 **Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols`)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`)
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate)
 
 ## Deployment
 

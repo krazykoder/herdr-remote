@@ -15,9 +15,11 @@ from start_agent import (
     agent_name_from_label,
     agent_start_args,
     dig,
+    SPACER_LABEL,
     load_start_agents,
     next_role_label,
     pane_split_args,
+    plan_slot,
     tab_create_args,
     unique_agent_name,
     validate_pane_label,
@@ -336,6 +338,103 @@ class DigTests(unittest.TestCase):
         self.assertEqual(dig({"result": None}, "result", "agent", "pane_id"), "")
         self.assertEqual(dig({"result": {"agent": {"pane_id": 7}}},
                              "result", "agent", "pane_id"), "")
+
+
+def pane(pane_id, tab_id="t1", agent="codex", cwd="/work/charts", label=""):
+    return {"pane_id": pane_id, "tab_id": tab_id, "agent": agent, "cwd": cwd, "label": label}
+
+
+def spacer(pane_id, tab_id="t1"):
+    """A pane this feature created: a shell holding columns, carrying the label that says so."""
+    return pane(pane_id, tab_id=tab_id, agent="", label=SPACER_LABEL)
+
+
+class PlanSlotTests(unittest.TestCase):
+    def test_rejects_unknown_slot_and_pane(self):
+        panes = [pane("w1:p1")]
+        self.assertEqual(plan_slot(panes, "w1:p1", "half")[0], None)
+        self.assertEqual(plan_slot(panes, "w1:p9", "wide")[0], None)
+
+    def test_already_in_slot_is_no_work(self):
+        self.assertEqual(plan_slot([pane("w1:p1")], "w1:p1", "wide"), ([], None))
+        two = [pane("w1:p1"), pane("w1:p2")]
+        self.assertEqual(plan_slot(two, "w1:p1", "narrow"), ([], None))
+
+    def test_wide_closes_spacers_rather_than_moving(self):
+        # Moving out would widen this pane too, but leave a tab holding an idle shell.
+        panes = [pane("w1:p1"), spacer("w1:p2")]
+        steps, err = plan_slot(panes, "w1:p1", "wide")
+        self.assertIsNone(err)
+        self.assertEqual(steps, [("pane", "close", "w1:p2")])
+
+    def test_wide_never_closes_a_sibling_running_a_session(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude")]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_a_bare_shell_is_not_a_spacer(self):
+        # A pane the user split themselves has no agent either. Closing it to reclaim columns
+        # would kill whatever they were running in it, so this moves out instead.
+        panes = [pane("w1:p1"), pane("w1:p2", agent="", label="build")]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_the_spacer_label_alone_does_not_make_a_pane_closable(self):
+        # Otherwise renaming a live session to the spacer label would make it disposable.
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude", label=SPACER_LABEL)]
+        steps, _ = plan_slot(panes, "w1:p1", "wide")
+        self.assertEqual(steps, [("pane", "move", "w1:p1", "--new-tab")])
+
+    def test_narrow_from_alone_splits_in_place(self):
+        steps, err = plan_slot([pane("w1:p1")], "w1:p1", "narrow")
+        self.assertIsNone(err)
+        self.assertEqual(steps, [("pane", "split", "w1:p1", "--direction", "right",
+                                  "--cwd", "/work/charts")])
+        # Focus stays with the session, not the shell that was just made to sit beside it.
+        self.assertNotIn("--focus", steps[0])
+
+    def test_narrow_from_a_crowded_tab_leaves_first(self):
+        panes = [pane("w1:p1"), pane("w1:p2", agent="claude"), pane("w1:p3", agent="pi")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0], ("pane", "move", "w1:p1", "--new-tab"))
+        self.assertEqual(steps[-1][:2], ("pane", "split"))
+        # The siblings are live sessions; nothing of theirs is touched.
+        self.assertEqual(len(steps), 2)
+
+    def test_narrow_from_a_tab_of_spacers_clears_them(self):
+        panes = [pane("w1:p1"), spacer("w1:p2"), spacer("w1:p3")]
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps[0], ("pane", "move", "w1:p1", "--new-tab"))
+        self.assertIn(("pane", "close", "w1:p2"), steps)
+        self.assertIn(("pane", "close", "w1:p3"), steps)
+
+    def test_other_tabs_are_not_siblings(self):
+        panes = [pane("w1:p1", tab_id="t1"), spacer("w1:p2", tab_id="t2")]
+        self.assertEqual(plan_slot(panes, "w1:p1", "wide"), ([], None))
+        steps, _ = plan_slot(panes, "w1:p1", "narrow")
+        self.assertEqual(steps, [("pane", "split", "w1:p1", "--direction", "right",
+                                  "--cwd", "/work/charts")])
+
+    def test_missing_cwd_still_yields_a_runnable_split(self):
+        steps, _ = plan_slot([{"pane_id": "w1:p1", "tab_id": "t1", "agent": "codex"}],
+                             "w1:p1", "narrow")
+        self.assertEqual(steps[0][-1], ".")
+
+
+class SlotOnStartTests(unittest.TestCase):
+    def test_slot_is_optional_and_absent_reads_as_none(self):
+        plan, err = validate_start_request(start(), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertIsNone(plan["slot"])
+
+    def test_slot_is_carried_into_the_plan(self):
+        plan, err = validate_start_request(start(slot="narrow"), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertEqual(plan["slot"], "narrow")
+
+    def test_unknown_slot_is_refused(self):
+        _, err = validate_start_request(start(slot="tiny"), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "unknown slot")
 
 
 class PaneLabelTests(unittest.TestCase):

@@ -32,7 +32,22 @@ PLACEMENTS = {
     "new_tab": "workspace_id",
     "split": "split_from",
 }
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label"}
+# A slot is a pane count, not a column count. herdr hands a pane the whole tab area when it is
+# alone in it and divides the area evenly otherwise, so the only two widths a client can ask for
+# are "alone" and "sharing with one sibling" — which land on the desktop/phone pair.
+#
+# Counting panes rather than columns is what makes that hold on any terminal. The area is the
+# attached client's window minus herdr's sidebar and is nobody's to set here: the same two slots
+# measured 139/69 and then 144/72 across a window resize, with no code involved either time.
+# Anything finer would be a resize, and herdr's `pane resize` is a ratio of the area that the
+# next split in that tab immediately undoes.
+SLOTS = ("wide", "narrow")
+# herdr has no placeholder pane — a pane is a PTY, so the thing holding the other half of a narrow
+# slot is a live shell. It is labelled at creation and identified by that label alone, never by
+# "has no agent": a shell the user split themselves and left a build running in has no agent
+# either, and closing it to reclaim columns would be destroying their work to widen a window.
+SPACER_LABEL = "· spacer ·"
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
 
 
 class StartAgentConfigError(Exception):
@@ -161,6 +176,13 @@ def validate_start_request(msg, projects, agents, allowed):
     else:
         label = next_role_label(role, project["id"], agents)
 
+    # Optional: absent means "whatever the placement gives you", which is what every client sent
+    # before slots existed. Present, it is applied after the agent is up (spec §3) — the width the
+    # phone wants is not worth failing a start over.
+    slot = msg.get("slot")
+    if slot is not None and slot not in SLOTS:
+        return None, "unknown slot"
+
     remote = _project_remote(project)
     plan = {
         "name": name,
@@ -171,6 +193,7 @@ def validate_start_request(msg, projects, agents, allowed):
         "remote": remote,
         "placement": placement,
         "label": label,
+        "slot": slot,
     }
 
     if placement == "new_tab":
@@ -223,6 +246,70 @@ def pane_split_args(pane_id, cwd):
     itself instead of asking `agent start` to split one.
     """
     return ("pane", "split", pane_id, "--direction", "right", "--cwd", cwd, "--focus")
+
+
+def pane_spacer_args(pane_id, cwd):
+    """Split a pane to give it a sibling, halving its width. The sibling is a bare shell.
+
+    Deliberately not `--focus`: the point of this pane is to occupy columns, and stealing the
+    user's focus into an empty shell is the opposite of what they clicked for.
+    """
+    return ("pane", "split", pane_id, "--direction", "right", "--cwd", cwd)
+
+
+def is_spacer(pane):
+    """True only for a pane this feature created to hold columns and may therefore close.
+
+    Both halves of the test matter. The label alone would let a user relabel any pane into
+    something closable; no-agent alone would close the shell they were building in.
+    """
+    return not pane.get("agent") and pane.get("label") == SPACER_LABEL
+
+
+def plan_slot(panes, pane_id, slot):
+    """Return (steps, error) — the herdr commands that put `pane_id` into the requested slot.
+
+    `panes` is a whole `pane list` for one host, *including panes with no agent* — the poll
+    snapshot drops those, and they are exactly what has to be seen here. Only a pane carrying
+    SPACER_LABEL may be closed. Anything else in the tab, agent or not, is somebody's: the pane
+    moves out to its own tab instead, which costs them nothing.
+
+    Pure: every step is argv, and nothing is read or run. Steps are ordered and must be applied
+    in order; an empty list means the pane is already in the slot asked for. The split step is
+    last so its caller can label the pane it creates.
+    """
+    if slot not in SLOTS:
+        return None, "unknown slot"
+    pane = next((p for p in panes if p.get("pane_id") == pane_id), None)
+    if pane is None:
+        return None, "unknown pane_id"
+
+    siblings = [p for p in panes
+                if p.get("tab_id") == pane.get("tab_id") and p.get("pane_id") != pane_id]
+    spacers = [p for p in siblings if is_spacer(p)]
+    only_spacers = siblings and len(spacers) == len(siblings)
+
+    if slot == "wide":
+        if not siblings:
+            return [], None
+        if only_spacers:
+            # Closing hands the columns straight back and leaves nothing behind. Moving out would
+            # widen this pane just the same, but strand a tab holding a shell nobody asked for.
+            return [("pane", "close", p["pane_id"]) for p in spacers], None
+        return [("pane", "move", pane_id, "--new-tab")], None
+
+    # narrow
+    if len(siblings) == 1:
+        return [], None
+    steps = []
+    if siblings:
+        # Three or more panes divide the area into thirds or worse, and splitting again only
+        # makes it smaller. Leave for an empty tab first, then take half of that.
+        steps.append(("pane", "move", pane_id, "--new-tab"))
+        if only_spacers:
+            steps += [("pane", "close", p["pane_id"]) for p in spacers]
+    steps.append(pane_spacer_args(pane_id, pane.get("cwd") or "."))
+    return steps, None
 
 
 def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):

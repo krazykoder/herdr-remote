@@ -1430,6 +1430,7 @@
           </svg></button>
         <div class="term-menu" id="termMenu" style="display:none" role="menu">
           <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
+          <button class="menu-item" role="menuitem" onclick="closeTermMenu(); adjustPane()">Fit pane to this screen</button>
           <!-- Pair items, present only while this pane belongs to a pair — renderPairStrip owns it. -->
           <div id="termMenuPair"></div>
           <div class="menu-sep"></div>
@@ -2093,6 +2094,15 @@
         }
         else setStartError(msg.error || 'start failed');
       }
+      else if (msg.type === 'command_result' && msg.command === 'set_slot') {
+        if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
+        else if (activePane === msg.pane_id) {
+          // The relay reports a pane's width by measuring its scrollback, so the new number only
+          // appears once the pane has redrawn at it. One delayed read beats guessing the width
+          // here and laying the text out at a column count herdr may not have agreed to.
+          setTimeout(refreshPane, 600);
+        }
+      }
       else if (msg.type === 'command_result' && msg.command === 'rename_pane') {
         // Same rule: apply the label only once the relay confirms herdr took it. Painting it
         // optimistically made a relay that never handled the message look like a working rename
@@ -2382,6 +2392,11 @@
         project_id: startProjectId,
         placement: placement,
       };
+      // Spawn at the width of the screen doing the spawning, so a session started from a phone is
+      // readable on it without a second round trip. Not for a split: "beside that pane" is already
+      // a statement about width, and a desktop asking for "wide" would move the new session
+      // straight back out of the split the user picked.
+      if (placement !== 'split') msg.slot = slotFor();
       // Omitted, not empty: the relay derives "Role N" when the field is absent, and an empty
       // string is a label it would reject.
       const name = document.getElementById('startName').value.trim();
@@ -3112,6 +3127,17 @@
 
     let paneLines = 200;
     function refreshPane() { if (ws && activePane) ws.send(JSON.stringify({ type: 'read_pane', pane_id: activePane, lines: paneLines })); }
+
+    // --- Slots ---
+    // A pane is either alone in its tab (~139 cols) or sharing it with one sibling (~69). Which
+    // of the two this screen wants is the only thing the browser gets to decide; the relay owns
+    // how it is reached. 768px is the same breakpoint the rest of the layout uses.
+    function slotFor() { return window.innerWidth < 768 ? 'narrow' : 'wide'; }
+    function adjustPane() {
+      if (!ws || !activePane) return;
+      showToast('Adjusting pane…');
+      ws.send(JSON.stringify({ type: 'set_slot', pane_id: activePane, slot: slotFor() }));
+    }
     function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
     function sendText() {
       const i = document.getElementById('termInput');

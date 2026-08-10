@@ -18,6 +18,7 @@ from projects import (
 from start_agent import (
     AGENT_START_TIMEOUT_MS,
     ROLES,
+    SPACER_LABEL,
     StartAgentConfigError,
     agent_name_from_label,
     agent_start_args,
@@ -26,6 +27,7 @@ from start_agent import (
     load_start_agents,
     pane_rename_args,
     pane_split_args,
+    plan_slot,
     validate_pane_label,
     tab_create_args,
     validate_start_request,
@@ -444,6 +446,43 @@ def _rollback_layout(rollback, remote):
         log.warning("Could not roll back %s after a failed start: %s", " ".join(rollback), err)
 
 
+def slot_exec(pane_id, slot, remote=None):
+    """Put a pane into a slot. Returns an error string, or None.
+
+    Blocking; call through asyncio.to_thread. The pane list is read here rather than taken from
+    the poll snapshot because that snapshot drops panes with no agent (`get_agents_from_host`
+    filters them out) — and those are exactly the spacers this has to be able to see and close.
+    """
+    data, err = _herdr_json("pane", "list", remote=remote)
+    if err:
+        return err
+    steps, plan_err = plan_slot(dig_panes(data), pane_id, slot)
+    if plan_err:
+        return plan_err
+    for step in steps:
+        result, err = _herdr_json(*step, remote=remote)
+        if err:
+            # No rollback. Every step is a layout change that stands on its own, and undoing a
+            # half-applied one means guessing which half — leaving it and saying so is honest.
+            return err
+        if step[:2] == ("pane", "split"):
+            # Label it immediately. Until this lands the pane is an unmarked shell, and an
+            # unmarked shell is one this code will refuse to clean up later — the failure mode is
+            # a stranded spacer, which is the right way round.
+            spacer = dig(result, "result", "pane", "pane_id")
+            if not spacer:
+                return "pane split returned no pane_id"
+            _, err = _herdr_json(*pane_rename_args(spacer, SPACER_LABEL), remote=remote)
+            if err:
+                return err
+    return None
+
+
+def dig_panes(data):
+    panes = ((data or {}).get("result") or {}).get("panes")
+    return panes if isinstance(panes, list) else []
+
+
 def start_agent_exec(plan):
     """Run a validated start plan. Returns (pane_id, error).
 
@@ -509,6 +548,14 @@ def start_agent_exec(plan):
         return None, f"agent started as {pane_id} but pane rename failed: {e}"
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
+
+    # Width last, and never fatal. The session is up and usable at whatever width the placement
+    # gave it; failing the start here would roll back a working agent over a layout preference.
+    if plan.get("slot"):
+        slot_err = slot_exec(pane_id, plan["slot"], remote)
+        if slot_err:
+            log.warning("Agent started as %s but slot %r was not applied: %s",
+                        pane_id, plan["slot"], slot_err)
     return pane_id, None
 
 
@@ -876,6 +923,30 @@ async def handle_client(ws, listener="lan"):
                     continue
                 await ws.send(json.dumps({"type": "command_result", "command": "rename_pane",
                                           "ok": True, "pane_id": pane_id, "label": label}))
+            elif msg_type == "set_slot":
+                # Behind the same gate as start_agent, unlike rename_pane: a narrow slot is made
+                # by splitting, and a split starts a shell. That is process creation on this
+                # machine, which is precisely what HERDR_ENABLE_WRITE_EXT governs.
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                pane_id = msg.get("pane_id", "")
+                pane_err = pane_guard(pane_id)
+                if pane_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                              "ok": False, "error": pane_err}))
+                    continue
+                slot = msg.get("slot")
+                remote = pane_remote_map.get(pane_id)
+                log.info("Set slot from %s (%s): pane=%s slot=%s", ip, device, pane_id, slot)
+                audit("set_slot", ip, device, pane_id, f"slot={slot}")
+                slot_err = await asyncio.to_thread(slot_exec, pane_id, slot, remote)
+                if slot_err:
+                    log.warning("set_slot failed for pane %s: %s", pane_id, slot_err)
+                await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
+                                          "ok": not slot_err, "pane_id": pane_id, "slot": slot,
+                                          **({"error": slot_err} if slot_err else {})}))
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
                 if not workspace_id:
