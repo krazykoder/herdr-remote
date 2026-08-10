@@ -361,8 +361,12 @@
     }
 
     /* Pinned tabs are the ones held at the front of the strip. A tinted outline and nothing
-       else: at this size a marker glyph would cost more width than the tab has to spare. */
-    .agent-tab.pinned .pill {
+       else: at this size a marker glyph would cost more width than the tab has to spare.
+       :not(.active) is load-bearing — this rule matches at the same specificity as the selected
+       one and sits after it, so without the guard, pinning the open tab repainted its filled pill
+       as an 8% wash while the text kept the fill's colour. That is the "pinned tab loses its
+       colour" bug: selection has to outrank pinning, and source order alone did the opposite. */
+    .agent-tab.pinned:not(.active) .pill {
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 50%, transparent);
       background: color-mix(in srgb, var(--blue) 8%, transparent);
     }
@@ -829,10 +833,27 @@
       text-align: center;
     }
 
+    /* The armed fill drains left to right over the arm window, so the 1.5s the second tap has is
+       something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS. */
     .term-header .cls-btn[data-armed="1"] {
       color: var(--bg);
-      background: var(--orange);
       border-color: transparent;
+      background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
+      animation: arm-drain 1.5s linear forwards;
+    }
+
+    @keyframes arm-drain {
+      from { background-position: left; }
+      to { background-position: right; }
+    }
+
+    /* A bar that empties in 1.5s is motion nobody asked for if motion is what they cannot take.
+       The colour still says armed; only the countdown goes. */
+    @media (prefers-reduced-motion: reduce) {
+      .term-header .cls-btn[data-armed="1"] {
+        background: var(--orange);
+        animation: none;
+      }
     }
 
     /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
@@ -1751,6 +1772,13 @@
             <option value="reflow">Reflow — wrap to the screen</option>
           </select>
           <div id="wrapHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
+          <div class="menu-label" style="margin-top:10px">Tab bar</div>
+          <select id="tabScope" onchange="setTabScope(this.value)" aria-label="Which panes the tab bar lists"
+            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <option value="project">This project only</option>
+            <option value="all">Every live pane</option>
+          </select>
+          <div id="tabScopeHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
           <div id="menuPairPlace">
             <div class="menu-label" style="margin-top:10px">Pair bar</div>
@@ -2328,6 +2356,24 @@
 
     function isPinned(id) { return pinnedTabs.includes(id); }
 
+    // What the bottom strip lists. Scoped to the open pane's Project by default: the strip is for
+    // moving between the panes of the thing being worked on, and a machine hosting four projects
+    // turns it into a row to scroll rather than one to tap. 'all' is the old behaviour, kept.
+    const TAB_SCOPE_KEY = 'herdr_tab_scope';
+    function tabScope() { return localStorage.getItem(TAB_SCOPE_KEY) === 'all' ? 'all' : 'project'; }
+
+    // Two panes are in the same project when the relay resolved them to the same one. project_id
+    // is the relay's answer and the label is only its display form, so the id wins where both
+    // exist; panes the relay matched to nothing group together under ''.
+    function projectKey(a) { return a.project_id || a.project || ''; }
+
+    function setTabScope(v) {
+      try { localStorage.setItem(TAB_SCOPE_KEY, v === 'all' ? 'all' : 'project'); }
+      catch (e) { /* private mode: session-only */ }
+      renderAgentTabs();
+      renderTabScopeHint();
+    }
+
     function savePins() {
       try { localStorage.setItem(PIN_KEY, JSON.stringify(pinnedTabs.slice(0, MAX_PINS))); }
       catch (e) { /* private mode: session-only */ }
@@ -2359,7 +2405,12 @@
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
       const all = agents.concat(shells);
-      const live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
+      let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
+      // Scoped to the open pane's Project, when that is the setting and something is open. The
+      // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
+      // worse than a long one. On the list screen nothing is open, so the strip stays complete.
+      const open = tabScope() === 'project' && activePane ? paneOf(activePane) : null;
+      if (open) live = live.filter(a => projectKey(a) === projectKey(open) || a.pane_id === activePane);
       // Pinned first, in pin order; everything else keeps snapshot order behind them, because
       // Array#sort is stable. That is the whole ordering rule — see togglePin.
       const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
@@ -2567,6 +2618,10 @@
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
         else if (activePane === msg.pane_id) {
+          // Fitting the pane is the request to stop panning, so the layout follows it: a pane
+          // herdr has just narrowed to this screen wants its lines wrapped to the screen too.
+          // True size would leave the sideways scroll the fit was asked to remove.
+          setWrapMode('reflow');
           // The relay reports a pane's width by measuring its scrollback, so the new number only
           // appears once the pane has redrawn at it. One delayed read beats guessing the width
           // here and laying the text out at a column count herdr may not have agreed to.
@@ -3452,6 +3507,8 @@
       const enter = document.getElementById('menuEnterSends');
       enter.hidden = !(activePane && isShell(activePane));
       enter.textContent = enterSendsOn() ? 'Enter inserts a newline' : 'Enter sends the line';
+      document.getElementById('tabScope').value = tabScope();
+      renderTabScopeHint();
       const a = agents.find(x => x.pane_id === activePane);
       const start = document.getElementById('menuStart');
       // Absent, not disabled, when the pane's Project is unknown or Projects are off: a start
@@ -3459,6 +3516,18 @@
       const can = !!(a && a.project_id && startOptions);
       start.hidden = !can;
       if (can) start.textContent = `New session in ${a.project || a.project_id}`;
+    }
+
+    // Says what the strip is currently hiding, because a tab bar that is missing a pane and does
+    // not say why reads as the pane having gone.
+    function renderTabScopeHint() {
+      const el = document.getElementById('tabScopeHint');
+      if (tabScope() === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      const open = activePane ? paneOf(activePane) : null;
+      const name = open ? (open.project || open.project_id) : '';
+      el.textContent = name
+        ? `Only panes in ${name}.`
+        : 'This pane has no Project, so the strip shows the others that have none either.';
     }
 
     function closeTermMenu() {
@@ -3824,13 +3893,13 @@
       if (!s || !ws || !activePane) return;
       // Arm and fire, the same two taps the Clear control takes, rather than a modal — the arm is
       // visible in the button that will run, which a dialog covering the grid would not be.
-      if (s.danger && !(shortcutArmed === i && Date.now() - shortcutArmedAt < CLS_ARM_MS)) {
+      if (s.danger && !(shortcutArmed === i && Date.now() - shortcutArmedAt < SHORTCUT_ARM_MS)) {
         shortcutArmed = i; shortcutArmedAt = Date.now();
         refreshPalette();
         if (window.cue) cue('error');
         setTimeout(() => {
-          if (shortcutArmed === i && Date.now() - shortcutArmedAt >= CLS_ARM_MS) disarmShortcut();
-        }, CLS_ARM_MS);
+          if (shortcutArmed === i && Date.now() - shortcutArmedAt >= SHORTCUT_ARM_MS) disarmShortcut();
+        }, SHORTCUT_ARM_MS);
         return;
       }
       disarmShortcut();
@@ -4040,11 +4109,12 @@
     const QA_KEY = 'herdr_quick_actions';
     function quickActionsOn() { return localStorage.getItem(QA_KEY) !== 'off'; }
 
-    // Off by default: the composer is multi-line for agents, and the terminal user who wants a
-    // line to end at Enter asks for it. One preference, not one per pane — the pane a setting was
-    // made on is rarely the pane the next command is typed into.
+    // On by default, and it only ever applies to a shell — see enterAction. A terminal line ends
+    // at Enter everywhere else in computing, and making that the thing you had to go and switch on
+    // was the setting getting the common case backwards. One preference, not one per pane — the
+    // pane a setting was made on is rarely the pane the next command is typed into.
     const ENTER_SEND_KEY = 'herdr_term_enter';
-    function enterSendsOn() { return localStorage.getItem(ENTER_SEND_KEY) === 'on'; }
+    function enterSendsOn() { return localStorage.getItem(ENTER_SEND_KEY) !== 'off'; }
     function toggleEnterSends() {
       try { localStorage.setItem(ENTER_SEND_KEY, enterSendsOn() ? 'off' : 'on'); }
       catch (e) { /* private mode: session-only */ }
@@ -4142,9 +4212,13 @@
     // a shell clears and exits with `clear` and `exit`, an agent with `/clear` and `/quit`.
     // Neither is undoable — /clear throws away the agent's context — so both take two
     // taps, the same as they always did. The first tap only arms.
-    // Long enough to read the armed label and decide, which three seconds was not. Still short
-    // enough that a button left armed in a pocket disarms itself.
-    const CLS_ARM_MS = 8000;
+    // The second tap has to be quick: 1.5s is short enough that a stray tap in a pocket never
+    // lands the pair, and long enough to be deliberate. The armed button drains its fill over
+    // exactly that window, so the deadline is visible rather than guessed at.
+    const FIRE_ARM_MS = 1500;
+    // The danger shortcuts in the palette keep the longer window — those are picked off a list
+    // that has to be read first, not aimed at a button already under the thumb.
+    const SHORTCUT_ARM_MS = 8000;
     const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT' };
     const armedAt = { clsBtn: 0, quitBtn: 0 };
 
@@ -4153,7 +4227,7 @@
     function armFire(id, fire) {
       if (!ws || !activePane) return;
       const btn = document.getElementById(id);
-      if (Date.now() - armedAt[id] < CLS_ARM_MS) {
+      if (Date.now() - armedAt[id] < FIRE_ARM_MS) {
         disarmFire(id);
         fire();
         return;
@@ -4163,7 +4237,7 @@
       btn.textContent = ARM_LABELS[id] + '?';
       // Disarms itself rather than waiting to be pressed again: a button left armed across a
       // pocket is the accident this exists to stop.
-      setTimeout(() => { if (Date.now() - armedAt[id] >= CLS_ARM_MS) disarmFire(id); }, CLS_ARM_MS);
+      setTimeout(() => { if (Date.now() - armedAt[id] >= FIRE_ARM_MS) disarmFire(id); }, FIRE_ARM_MS);
     }
 
     function disarmFire(id) {
