@@ -707,7 +707,8 @@
     .terminal-view.is-terminal #selTransfer,
     .terminal-view.is-terminal #quickDock,
     .terminal-view.is-terminal #commandBtn,
-    .terminal-view.is-terminal #quickDockBtn,
+    .terminal-view.is-terminal #micBtn,
+    .terminal-view.is-terminal #ctrlPresetsWrap,
     .terminal-view.is-terminal #menuStart,
     .terminal-view.is-terminal #termMenuPair,
     .terminal-view.is-terminal #menuPairPlace {
@@ -716,6 +717,17 @@
 
     .terminal-view.is-terminal #termStopRow {
       display: grid;
+    }
+
+    /* The mic's slot in the rail, over a terminal: the Ctrl keys, out of the keys pad where they
+       sat three taps deep behind a disclosure. ^C is why — it is the only way to stop what you
+       started — and the other five ride along rather than living in two places. */
+    #ctrlKeysBtn {
+      display: none;
+    }
+
+    .terminal-view.is-terminal #ctrlKeysBtn {
+      display: flex;
     }
 
     .term-header .back {
@@ -1616,6 +1628,9 @@
             onclick="closeTermMenu(); startInThisProject()">New session</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
+          <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
+          <button class="menu-item" role="menuitem" id="menuEnterSends" hidden
+            onclick="closeTermMenu(); toggleEnterSends()">Enter sends the line</button>
           <!-- Pair items, present only while this pane belongs to a pair — renderPairStrip owns it. -->
           <div id="termMenuPair"></div>
           <div class="menu-sep"></div>
@@ -1700,6 +1715,8 @@
             <rect x="9" y="2" width="6" height="11" rx="3" />
             <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
           </svg></button>
+        <button id="ctrlKeysBtn" onclick="toggleCtrlDock()" aria-label="Ctrl keys"
+          style="border:1px solid var(--red);background:var(--bg);color:var(--red);font-weight:700;font-size:13px">^C</button>
       </div>
       <!-- Autocorrect on, at the user's direction. It is the composer for prose sent to an agent
            far more often than it is a command line, and the keyboard's own correction is worth
@@ -1756,8 +1773,9 @@
           <button class="nav-key mod-key" id="modShift" onclick="armMod('shift')">⇧ Shift</button>
           <button class="nav-key mod-key" id="modCtrl" onclick="armMod('ctrl')">Ctrl</button>
         </div>
-        <!-- Ctrl presets -->
-        <div>
+        <!-- Ctrl presets. Over a terminal these live in their own dock instead — same buttons,
+             one tap from the composer rather than folded behind this disclosure. -->
+        <div id="ctrlPresetsWrap">
           <button onclick="toggleCtrlPresets()"
             style="background:none;border:none;color:var(--muted);font-size:0.7rem;cursor:pointer;padding:2px 4px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase">Presets
             <span id="ctrlChevron">▸</span></button>
@@ -1768,6 +1786,18 @@
       <div id="digitsPad" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
       <!-- Action keys for blocked state -->
       <div id="actionKeys" style="width:100%;margin-top:4px"></div>
+    </div>
+    <!-- Ctrl keys dock — the "^C" button in the rail, terminals only. Same presets the keys pad
+         folds behind its disclosure, painted into both by paintCtrlPresets. -->
+    <div class="term-keys" id="ctrlDock" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+        <span
+          style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Ctrl
+          keys</span>
+        <button onclick="toggleCtrlDock()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
+      </div>
+      <div id="ctrlDockGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:100%"></div>
     </div>
     <!-- Quick actions dock -->
     <div class="term-keys" id="quickDock" style="display:none">
@@ -2088,6 +2118,26 @@
     function navPush(history, index, paneId, max) {
       if (history[index] === paneId) return history.slice();
       return history.slice(0, index + 1).concat([paneId]).slice(-max);
+    }
+    // What Enter means in the composer. Ctrl/Cmd+Enter always sends; over a terminal the user can
+    // opt into a bare Enter sending too, because a shell line ends at Enter and typing a command
+    // then reaching for a modifier is the wrong shape. Shift+Enter still writes a newline.
+    function enterAction(e, opts) {
+      if (e.key !== 'Enter') return 'none';
+      if (e.metaKey || e.ctrlKey) return 'send';
+      if (!e.shiftKey && opts.enterSends && opts.shell) return 'send';
+      return 'newline';
+    }
+    // A physical Ctrl+<letter> typed in the composer, over a terminal, aimed at the shell rather
+    // than at the text box. The browser owns Ctrl+C, Ctrl+X and Ctrl+Z whenever there is something
+    // to copy, cut or undo, so the pane is only handed the chord while the composer is empty —
+    // which is exactly when the user means the shell. Cmd and Alt are never claimed: ⌘C is copy on
+    // macOS, and Alt belongs to the keyboard. Returns the key to send, or null to leave it alone.
+    function ctrlChord(e, opts) {
+      if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return null;
+      if (!opts.shell || !opts.empty) return null;
+      const k = 'ctrl+' + (e.key || '').toLowerCase();
+      return opts.allowed.includes(k) ? k : null;
     }
     // --- P3 pair logic (pure) --- end
 
@@ -3260,6 +3310,9 @@
       // opens something else entirely.
       document.getElementById('qaToggle').textContent =
         quickActionsOn() ? 'Hide quick actions bar' : 'Show quick actions bar';
+      const enter = document.getElementById('menuEnterSends');
+      enter.hidden = !(activePane && isShell(activePane));
+      enter.textContent = enterSendsOn() ? 'Enter inserts a newline' : 'Enter sends the line';
       const a = agents.find(x => x.pane_id === activePane);
       const start = document.getElementById('menuStart');
       // Absent, not disabled, when the pane's Project is unknown or Projects are off: a start
@@ -3730,6 +3783,10 @@
       // The dock holds prompts over an agent and commands over a shell, and a pane can change
       // kind under a live snapshot — so its contents are re-chosen here, not only on open.
       renderShortcutDock();
+      syncComposerHint();
+      // The mic button is hidden over a terminal, and a live recogniser with no way to stop it
+      // would keep writing into the composer.
+      if (shell && dictation) dictation.stop();
     }
 
     function openTerminal(paneId) {
@@ -3761,6 +3818,7 @@
       renderPairStrip();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmShortcut();
+      disarmCtrl();
       refreshPane();
       refreshInterval = setInterval(refreshPane, 3000);
     }
@@ -3769,6 +3827,7 @@
       activePane = null; clearInterval(refreshInterval);
       disarmClear();
       disarmShortcut();
+      disarmCtrl();
       renderQuickActions();  // reads activePane, so it empties the bar now that there is none
       clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
@@ -3814,6 +3873,25 @@
 
     const QA_KEY = 'herdr_quick_actions';
     function quickActionsOn() { return localStorage.getItem(QA_KEY) !== 'off'; }
+
+    // Off by default: the composer is multi-line for agents, and the terminal user who wants a
+    // line to end at Enter asks for it. One preference, not one per pane — the pane a setting was
+    // made on is rarely the pane the next command is typed into.
+    const ENTER_SEND_KEY = 'herdr_term_enter';
+    function enterSendsOn() { return localStorage.getItem(ENTER_SEND_KEY) === 'on'; }
+    function toggleEnterSends() {
+      try { localStorage.setItem(ENTER_SEND_KEY, enterSendsOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: session-only */ }
+      syncComposerHint();
+    }
+
+    // The placeholder is the only place the composer says what Enter does, so it is rewritten
+    // wherever either input to that answer changes: the setting, or the kind of the open pane.
+    function syncComposerHint() {
+      const send = enterSendsOn() && !!activePane && isShell(activePane);
+      document.getElementById('termInput').placeholder =
+        send ? 'Type…  ⏎ sends' : 'Type…  ⌘/Ctrl+Enter sends';
+    }
 
     function toggleQuickActions() {
       try { localStorage.setItem(QA_KEY, quickActionsOn() ? 'off' : 'on'); }
@@ -3943,6 +4021,9 @@
       { label: 'Ctrl Z', keys: ['ctrl+z'], danger: true },
     ];
     const DANGER_KEYS = new Set(['ctrl+c', 'ctrl+d', 'ctrl+z']);
+    // What a physical Ctrl+<letter> may send, derived from the presets so the two cannot drift
+    // apart — and both are a subset of the relay's SAFE_KEYS, which refuses anything else anyway.
+    const CTRL_CHORDS = CTRL_PRESETS.map(p => p.keys[0]);
 
     function fireKey(k) {
       if (window.cue) cue('tick');
@@ -3997,8 +4078,8 @@
       keyQueue = []; armedMod = null; renderKeyQueue(); renderMods();
     }
 
-    // The three docks share the space above the composer, so only one is ever open.
-    const DOCKS = ['termKeys', 'quickDock', 'promptDock'];
+    // The docks share the space above the composer, so only one is ever open.
+    const DOCKS = ['termKeys', 'quickDock', 'promptDock', 'ctrlDock'];
 
     function closeDocks() {
       DOCKS.forEach(d => { document.getElementById(d).style.display = 'none'; });
@@ -4083,7 +4164,12 @@
 
     function toggleKeysDock() { toggleDock('termKeys'); }
 
-    function toggleQuickDock() { toggleDock('quickDock'); }
+    // The button stays in the rail over a terminal as the place script calls will live. Its dock
+    // is not the thing to open there — yes / no / continue answer an agent, not a shell prompt.
+    function toggleQuickDock() {
+      if (activePane && isShell(activePane)) { showToast('Scripts — coming soon'); return; }
+      toggleDock('quickDock');
+    }
 
     function quickSend(text) {
       if (!ws || !activePane) return;
@@ -4105,18 +4191,31 @@
       }
     }
 
+    // The presets exist in two places \u2014 the keys pad's disclosure and the terminal's own dock \u2014
+    // so the armed state is painted into both from one function rather than into whichever one
+    // the tap came from. Painting both also means the disarm below actually repaints: the old
+    // toggle-twice trick left "Confirm?" on screen, because a toggle only paints an empty grid.
+    function paintCtrlPresets() {
+      const html = CTRL_PRESETS.map(p => {
+        const armed = p.label === ctrlConfirm;
+        const cls = p.danger ? (armed ? 'ctrl-key confirm' : 'ctrl-key danger') : 'ctrl-key';
+        return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${armed ? 'Confirm?' : p.label}</button>`;
+      }).join('');
+      ['ctrlPresets', 'ctrlDockGrid'].forEach(id => { document.getElementById(id).innerHTML = html; });
+    }
+
     function toggleCtrlPresets() {
       const el = document.getElementById('ctrlPresets');
       const chevron = document.getElementById('ctrlChevron');
       const show = el.style.display === 'none';
       el.style.display = show ? 'grid' : 'none';
       chevron.textContent = show ? '\u25be' : '\u25b8';
-      if (show && !el.innerHTML) {
-        el.innerHTML = CTRL_PRESETS.map(p => {
-          const cls = p.danger ? 'ctrl-key danger' : 'ctrl-key';
-          return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${p.label}</button>`;
-        }).join('');
-      }
+      if (show) paintCtrlPresets();
+    }
+
+    function toggleCtrlDock() {
+      paintCtrlPresets();
+      toggleDock('ctrlDock');
     }
 
     function pressCtrl(label) {
@@ -4128,17 +4227,18 @@
       if (preset.danger && ctrlConfirm !== label) {
         ctrlConfirm = label;
         if (window.cue) cue('error');
-        const el = document.getElementById('ctrlPresets');
-        el.innerHTML = CTRL_PRESETS.map(p => {
-          const cls = p.danger ? (p.label === label ? 'ctrl-key confirm' : 'ctrl-key danger') : 'ctrl-key';
-          const txt = p.label === label ? 'Confirm?' : p.label;
-          return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${txt}</button>`;
-        }).join('');
-        setTimeout(() => { ctrlConfirm = null; toggleCtrlPresets(); toggleCtrlPresets(); }, 3000);
+        paintCtrlPresets();
+        setTimeout(() => { if (ctrlConfirm === label) disarmCtrl(); }, 3000);
         return;
       }
-      ctrlConfirm = null;
+      disarmCtrl();
       sendKeys(preset.keys);
+    }
+
+    function disarmCtrl() {
+      if (ctrlConfirm === null) return;
+      ctrlConfirm = null;
+      paintCtrlPresets();
     }
 
     function toggleArrows() { }
@@ -4157,8 +4257,18 @@
     }
     // Enter inserts a newline; Ctrl/Cmd+Enter sends. Reversed from P2 deliberately: a transferred
     // payload is multi-line, and submitting it on the first Enter defeats the review checkpoint.
+    // Over a terminal that reversal is opt-out — see enterAction.
     document.getElementById('termInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendText(); }
+      const shell = !!activePane && isShell(activePane);
+      const chord = ctrlChord(e, { shell, empty: !e.target.value, allowed: CTRL_CHORDS });
+      if (chord) {
+        e.preventDefault();
+        sendKeys([chord]);
+        showToast(`Sent ${chord}`);  // the pane may show nothing for it, and silence reads as broken
+        return;
+      }
+      const act = enterAction(e, { enterSends: enterSendsOn(), shell: shell });
+      if (act === 'send') { e.preventDefault(); sendText(); }
     });
     document.getElementById('termInput').addEventListener('input', e => autoGrow(e.target));
     // Ctrl/Cmd+Shift+P switches to the paired pane. On document, not the composer, so it works

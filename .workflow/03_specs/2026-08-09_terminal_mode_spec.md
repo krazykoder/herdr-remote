@@ -160,9 +160,14 @@ in the pane, and none of this needs to.
 
 ### 6.3 Absent in a terminal
 
-Pair strip, Pair with… / Edit pair / Unpair menu items, Transfer, approval quick actions, the prompts
-dock, and New session in \<project\>. Each is hidden by the pane being a shell, not by an incidental
-absence of data — a shell must never show an empty pair strip or a disabled transfer button.
+Pair strip, Pair with… / Edit pair / Unpair menu items, Transfer, the approval quick-actions dock,
+the prompts dock, dictation, and New session in \<project\>. Each is hidden by the pane being a
+shell, not by an incidental absence of data — a shell must never show an empty pair strip or a
+disabled transfer button. Dictation that is running when a terminal opens is stopped, because the
+button that stops it is the one being hidden.
+
+The quick-actions **button** stays in the rail as the future home of script calls, and says so when
+tapped. Its dock does not open — `yes` / `no` / `continue` answer an agent, not a shell prompt.
 
 ### 6.4 Input
 
@@ -173,6 +178,25 @@ absence of data — a shell must never show an empty pair strip or a disabled tr
 
 The keys pad in a terminal offers the same `SAFE_KEYS` set the agent view offers. Ctrl+C is promoted
 to the first row because it is the only way to stop something that was started.
+
+The Ctrl presets come out of the keys pad entirely. In a terminal the pad's Presets disclosure is
+absent and the rail carries a `^C` button, in the mic's slot, opening a dock of the same presets —
+one tap from the composer rather than three into a disclosure. It is one set of buttons in two
+places, not two sets: the dock and the pad render from the same function, and a dangerous preset
+armed in one is armed in the other. The arm expires on its own, and expiring repaints — an armed
+button left on screen after its trigger has gone is worse than never having armed.
+
+A physical Ctrl+\<letter\> typed into a terminal's composer is sent to the pane, for the same six
+letters the presets offer and no others. Only while the composer is empty: with text in it the
+browser keeps Ctrl+C, Ctrl+X and Ctrl+Z, because copying what you just typed must not stop what is
+running. Cmd and Alt chords are never claimed — ⌘C is copy on macOS. The chord is confirmed by a
+toast, since the pane may show nothing for it and silence reads as a dropped keystroke.
+
+Enter inserts a newline and Ctrl/Cmd+Enter sends, as in the agent view. A terminal may reverse the
+first half: one preference, in the pane menu, that makes a bare Enter send. Shift+Enter still writes
+a newline, Ctrl/Cmd+Enter still sends, and the setting has no effect over an agent — a multi-line
+payload under review must not submit on the first Enter. Off by default. The composer's placeholder
+states which of the two is live.
 
 ### 6.5 The open pane disappears
 

@@ -23,7 +23,8 @@ const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFo
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
                'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX',
-               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml'];
+               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
+               'enterAction', 'ctrlChord'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
@@ -32,7 +33,8 @@ vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx)
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
        navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
-       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml} = ctx.__out;
+       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
+       enterAction, ctrlChord} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -511,4 +513,62 @@ test('a terminal is offered as a split source, and named rather than "undefined"
   const els = runRenderStartTarget([], 'split', 'terminal', [shell]);
   assert.equal(els.startSubmit.disabled, false);
   assert.deepEqual(els.startTargetOptions, [['w1:p1', 'w1:p1 · w1:p1']]);
+});
+
+// --- Enter in the composer ---
+
+const key = (over) => Object.assign({key: 'Enter', metaKey: false, ctrlKey: false, shiftKey: false}, over);
+
+test('Ctrl/Cmd+Enter sends whatever the pane is and whatever the setting is', () => {
+  for (const shell of [true, false]) for (const enterSends of [true, false]) {
+    assert.equal(enterAction(key({metaKey: true}), {shell, enterSends}), 'send');
+    assert.equal(enterAction(key({ctrlKey: true}), {shell, enterSends}), 'send');
+  }
+});
+
+test('a bare Enter sends only over a terminal with the setting on', () => {
+  assert.equal(enterAction(key(), {shell: true, enterSends: true}), 'send');
+  assert.equal(enterAction(key(), {shell: true, enterSends: false}), 'newline');
+  assert.equal(enterAction(key(), {shell: false, enterSends: true}), 'newline');
+  assert.equal(enterAction(key(), {shell: false, enterSends: false}), 'newline');
+});
+
+test('Shift+Enter always writes a newline', () => {
+  assert.equal(enterAction(key({shiftKey: true}), {shell: true, enterSends: true}), 'newline');
+});
+
+test('other keys are not the composer key handler business', () => {
+  assert.equal(enterAction(key({key: 'a'}), {shell: true, enterSends: true}), 'none');
+});
+
+// --- Ctrl chords in the composer ---
+
+const ALLOWED = ['ctrl+c', 'ctrl+d', 'ctrl+u', 'ctrl+r', 'ctrl+l', 'ctrl+z'];
+const chord = (over) => Object.assign(
+  {key: 'c', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false}, over);
+const at = (over) => Object.assign({shell: true, empty: true, allowed: ALLOWED}, over);
+
+test('an allowed Ctrl chord in an empty terminal composer goes to the pane', () => {
+  assert.equal(ctrlChord(chord(), at()), 'ctrl+c');
+  assert.equal(ctrlChord(chord({key: 'Z'}), at()), 'ctrl+z', 'case does not matter');
+});
+
+test('the browser keeps the chord when there is text to copy, cut, or undo', () => {
+  assert.equal(ctrlChord(chord(), at({empty: false})), null);
+});
+
+test('an agent composer never sends a chord', () => {
+  assert.equal(ctrlChord(chord(), at({shell: false})), null);
+});
+
+test('Cmd, Alt, and Shift are left to the platform', () => {
+  for (const mod of ['metaKey', 'altKey', 'shiftKey']) {
+    assert.equal(ctrlChord(chord({[mod]: true}), at()), null, `${mod} must not send`);
+  }
+  assert.equal(ctrlChord(chord({ctrlKey: false}), at()), null, 'a bare letter is typing');
+});
+
+test('a letter outside the allowlist is typed, not sent', () => {
+  assert.equal(ctrlChord(chord({key: 'a'}), at()), null);
+  assert.equal(ctrlChord(chord({key: 'v'}), at()), null, 'paste survives');
 });
