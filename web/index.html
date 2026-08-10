@@ -937,6 +937,16 @@
       color: var(--red);
     }
 
+    /* The selects in this menu are menu items too, and at the global 16px field size they read as
+       controls from a different sheet than the 0.8rem items above them.
+       Deliberately under the 16px floor, and the only place that is allowed: the floor exists
+       because iOS zooms the layout viewport for a focused field that summons the keyboard, and a
+       select summons a picker instead. */
+    .term-menu select {
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
     .term-menu .menu-sep {
       height: 1px;
       background: var(--border);
@@ -2078,6 +2088,43 @@
     // off, which sends no `shells` key at all — its presence is the feature gate.
     let shells = [];
     let timeline = [], prevStatuses = {};
+
+    // When each pane last did anything. herdr reports no timestamps, so this is kept here and
+    // persisted — without that, a reload would make every pane look untouched, which is the one
+    // reading the dot must never give. Keyed by pane_id, and a pane_id herdr later reuses costs
+    // nothing worse than one dot warm for an hour.
+    const SEEN_KEY = 'herdr_last_seen';
+    const RECENT_MS = 60 * 60 * 1000;
+    let lastSeen = {};
+
+    function loadSeen() {
+      try {
+        const v = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}');
+        const cutoff = Date.now() - RECENT_MS;
+        // Anything already past the hour is dropped on the way in rather than carried forever:
+        // the only question ever asked of this is "within the last hour", so older is not data.
+        for (const [id, t] of Object.entries(v)) if (typeof t === 'number' && t > cutoff) lastSeen[id] = t;
+      } catch (e) { lastSeen = {}; }
+    }
+
+    function noteActivity(paneId) {
+      if (!paneId) return;
+      lastSeen[paneId] = Date.now();
+      try { localStorage.setItem(SEEN_KEY, JSON.stringify(lastSeen)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    function activeWithinHour(paneId) { return Date.now() - (lastSeen[paneId] || 0) < RECENT_MS; }
+
+    // One rule for every agent status dot, list and tab strip alike. Green is live and nothing
+    // else — a dot that is green an hour after the agent stopped is the reading this replaces.
+    // Amber is "you were in here recently", muted is cold, and blocked outranks both.
+    function statusColor(a) {
+      if (a.status === 'blocked') return 'var(--red)';
+      if (a.status === 'working') return 'var(--green)';
+      if (activeWithinHour(a.pane_id)) return 'var(--orange)';
+      return 'var(--muted)';
+    }
     let activeWorkspace = null;
     let activeTab = null;
     let projects = [], activeProject = null;
@@ -2430,14 +2477,18 @@
       // Array#sort is stable. That is the whole ordering rule — see togglePin.
       const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
       live.sort((x, y) => rank(x) - rank(y));
-      const sig = live.map(a => `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'}`).join(' /// ');
+      // Recency is in the signature too, or a tab whose amber has aged out keeps the colour it
+      // was built with until something else happens to rebuild the strip.
+      const sig = live.map(a =>
+        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activeWithinHour(a.pane_id)}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
           // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
           // bar that is always on screen is motion the user cannot turn off or look away from.
-          const color = !a.agent ? 'var(--shell)' :
-            a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          // A shell has no status of its own, so it keeps its own colour rather than borrowing
+          // one that means something about an agent.
+          const color = !a.agent ? 'var(--shell)' : statusColor(a);
           return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
@@ -2670,6 +2721,7 @@
           if (prev && prev !== a.status) {
             timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
             if (timeline.length > 100) timeline.pop();
+            noteActivity(a.pane_id);
           }
           prevStatuses[a.pane_id] = a.status;
         }
@@ -2706,6 +2758,7 @@
         if (previousStatus && previousStatus !== update.status) {
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();
+          noteActivity(update.pane_id);
         }
         prevStatuses[update.pane_id] = update.status;
         render();
@@ -2716,6 +2769,7 @@
         if (a) { a.status = 'blocked'; a.prompt = msg.prompt; a.options = msg.options; }
         else agents.push({ ...msg, status: 'blocked' });
         if (window.cue) cue('chime');
+        noteActivity(msg.pane_id);
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
@@ -2730,7 +2784,9 @@
         const cols = Number.isInteger(msg.cols) && msg.cols > 0 ? msg.cols : null;
         if (cols !== paneCols) { paneCols = cols; applyWrapMode(); }
         // Only a real change is activity. The pane is re-read every 3s regardless.
-        if (next !== el.textContent) { paneStampAt = new Date(); renderStatusBar(); }
+        // The pane's text changing is the finest-grained activity there is — it catches an agent
+        // that answered without ever leaving 'working', which no status transition reports.
+        if (next !== el.textContent) { paneStampAt = new Date(); noteActivity(activePane); renderStatusBar(); }
         el.textContent = next;
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
@@ -2807,8 +2863,12 @@
             ? `<button class="chip chip-add" onclick="openStartDialog('${activeProject}', event, 'terminal')">+ New terminal</button>` : '';
           html += `<div class="chip-strip"><button class="chip chip-add" onclick="openStartDialog('${activeProject}')">+ Start session</button>${term}</div>`;
         }
+        // layoutHtml carries its own Working / Done / Idle separators, so the only Project tab
+        // that ever lost one was the empty one — it dropped to a bare line of body text while
+        // Terminals below it kept a heading. It gets a separator of its own, saying why it is
+        // empty in the header rather than under it.
         const mine = agents.filter(a => a.project_id === activeProject);
-        html += mine.length ? layoutHtml(mine) : '<div class="empty">No sessions</div>';
+        html += mine.length ? layoutHtml(mine) : section('Agents', 'var(--muted)', [], 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
     }
@@ -3985,7 +4045,7 @@
     }
 
     function agentCard(a) {
-      const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+      const color = statusColor(a);
       const pulseClass = a.status === 'working' ? ' pulse' : '';
       const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
       const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
@@ -4002,8 +4062,11 @@
   </div>`;
     }
 
-    function section(title, color, list) {
-      return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}</div>` +
+    // `note` rides in the header at reduced weight, the same way the blocked count does. A section
+    // kept on screen with nothing under it has to say why in the only row it has.
+    function section(title, color, list, note) {
+      return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}` +
+        (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
         list.map(a => agentCard(a)).join('');
     }
 
@@ -4845,6 +4908,7 @@
 
     loadPairs();
     loadPins();
+    loadSeen();
     measureCellRatio();  // before applyWrapMode, which divides by it
     setFont(currentFont());
     setInputFont(currentInputFont());
