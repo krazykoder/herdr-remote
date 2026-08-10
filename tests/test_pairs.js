@@ -373,7 +373,7 @@ test('navPush appends to an empty history', () => {
 // workspace after "No live workspaces in this project" left the button dead and no session
 // could be started at all.
 
-function startDialogCtx(agents, placement) {
+function startDialogCtx(agents, placement, mode = 'agent', shells = []) {
   const els = {
     startPlacement: {value: placement},
     startTargetRow: {innerHTML: 'stale'},
@@ -385,9 +385,11 @@ function startDialogCtx(agents, placement) {
     els,
     ctx: vm.createContext({
       agents,
+      shells,
+      startMode: mode,
       startProjectId: 'charts',
       document: {getElementById: id => els[id] || (els[id] = {innerHTML: '', style: {}})},
-      fillSelect: (id, options) => options.length,
+      fillSelect: (id, options) => { els[id + 'Options'] = options; return options.length; },
       setStartError: text => {
         els.startError.textContent = text || '';
         els.startError.style.display = text ? 'block' : 'none';
@@ -396,11 +398,11 @@ function startDialogCtx(agents, placement) {
   };
 }
 
-function runRenderStartTarget(agents, placement) {
+function runRenderStartTarget(agents, placement, mode = 'agent', shells = []) {
   const start = HTML.indexOf('function renderStartTarget');
   const end = HTML.indexOf('function submitStart', start);
   assert.ok(start !== -1 && end > start, 'renderStartTarget block not found');
-  const {els, ctx} = startDialogCtx(agents, placement);
+  const {els, ctx} = startDialogCtx(agents, placement, mode, shells);
   vm.runInContext(HTML.slice(start, end) + '\n;renderStartTarget();', ctx);
   return els;
 }
@@ -483,4 +485,30 @@ test('every shipped default is a read-only command and survives its own parser',
     assert.equal(s.danger, undefined, `${s.label} ships marked destructive`);
     assert.doesNotMatch(s.text, /\b(rm|sudo|kill|reset|clean|mv|dd)\b/, `${s.label} writes`);
   }
+});
+
+// --- New terminal placement (T3) ---
+// The same dialog, one list wider: a terminal may be opened beside a terminal, and in a
+// workspace that holds nothing else. Reading only `agents` here refused both.
+
+test('a workspace holding only terminals is a target for a new terminal', () => {
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: 'build'};
+  const els = runRenderStartTarget([], 'new_tab', 'terminal', [shell]);
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+});
+
+test('but not for a new session, which needs a pane of its own', () => {
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: 'build'};
+  const els = runRenderStartTarget([], 'new_tab', 'agent', [shell]);
+  assert.equal(els.startSubmit.disabled, true);
+  assert.match(els.startError.textContent, /No live workspaces/);
+});
+
+test('a terminal is offered as a split source, and named rather than "undefined"', () => {
+  // A shell has no `agent`, and the option label used to fall through to it.
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: ''};
+  const els = runRenderStartTarget([], 'split', 'terminal', [shell]);
+  assert.equal(els.startSubmit.disabled, false);
+  assert.deepEqual(els.startTargetOptions, [['w1:p1', 'w1:p1 · w1:p1']]);
 });

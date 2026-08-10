@@ -203,10 +203,29 @@ short window after a send and then returns to the normal interval.
 
 ## 8. Creating a terminal (T3)
 
-`open_terminal` takes a `project_id` and an optional placement, and creates a shell pane at that
-Project's cwd. cwd comes from the Projects config and from nowhere else — a client may not supply a
-path. Gated on `HERDR_ENABLE_WRITE_EXT` in addition to terminal mode, because it creates a process.
-The new pane is labelled at creation, and never with the spacer label.
+`open_terminal` takes a `project_id`, a placement, and optionally a `label` and a `slot`. It creates
+a shell pane at that Project's cwd. cwd comes from the Projects config and from nowhere else — a
+client may not supply a path, and one that tries is refused as an unexpected field. Gated on
+`HERDR_ENABLE_WRITE_EXT` in addition to terminal mode, because it creates a process; either gate
+closed is a refusal that creates nothing, and the two refusals name which gate.
+
+It is `start_agent` with the `agent start` step removed, and the two share their validation and
+their pane creation rather than reimplementing them. What differs:
+
+| | `start_agent` | `open_terminal` |
+|---|---|---|
+| Agent fields | `name` and `role` required | Refused as unexpected fields |
+| Default label | `Role N` | `Terminal N`, in the same sequence |
+| Spacer label | Not a case that arises | **Refused** — `plan_slot` closes a pane wearing it |
+| Placement targets | live agents in the Project | live agents **and** terminals in it |
+| Rename failure | Reported; the working agent is kept | Rolled back; the pane *is* the result |
+
+`start_options` carries `terminal: true` when both gates are open. Presence of `start_options`
+already gates Start in the client; this gates New terminal beside it, so the client never reasons
+about the two relay flags separately.
+
+The client offers it through the Start session dialog in a second mode — same placement, same
+target resolution, same label field, same slot rule — with the agent and role rows hidden.
 
 ## 9. Failure modes
 

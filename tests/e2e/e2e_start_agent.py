@@ -43,6 +43,7 @@ def relay_env(**extra):
         "HERDR_LOG_DIR": f"{HERE}/logs",
     })
     env.pop("HERDR_ENABLE_WRITE_EXT", None)
+    env.pop("HERDR_ENABLE_TERMINAL", None)
     env.pop("HERDR_RELAY_TOKEN", None)
     env.pop("HERDR_START_AGENTS", None)
     env.pop("HERDR_LAN_OPEN", None)
@@ -661,6 +662,80 @@ async def terminal_run():
         stop_relay(proc)
 
 
+async def open_terminal_run():
+    """T3 — creating a shell pane, behind both gates.
+
+    open_terminal is start_agent with the `agent start` step removed, and the two share their
+    validation and their pane creation. What is checked here is the part that is *not* shared:
+    both gates, the absence of an agent start in the log, and the label rule a start does not have.
+    """
+    # --- one gate open is not enough, either way round ---
+    for env, want in [({"HERDR_ENABLE_WRITE_EXT": "1"}, "terminal mode disabled"),
+                      ({"HERDR_ENABLE_TERMINAL": "1"}, "write extensions disabled")]:
+        proc = start_relay(HERDR_RELAY_TOKEN=TOKEN, **env)
+        try:
+            async with connect(url()) as ws:
+                await drain_to_agents(ws)
+                open(LOG, "w").close()
+                r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                                   "placement": "new_workspace"})
+                check(f"T3 refused when only one gate is open ({want})",
+                      r.get("ok") is False and r.get("error") == want, r)
+                await asyncio.sleep(0.2)
+                check("T3 and the refusal created nothing",
+                      not log_lines("workspace create"), log_lines("create"))
+        finally:
+            stop_relay(proc)
+
+    # --- both gates ---
+    proc = start_relay(HERDR_RELAY_TOKEN=TOKEN, HERDR_ENABLE_TERMINAL="1",
+                       HERDR_ENABLE_WRITE_EXT="1")
+    try:
+        async with connect(url()) as ws:
+            seen, _ = await drain_to_agents(ws)
+            opts = next(m for m in seen if m["type"] == "start_options")
+            check("T3 start_options advertises terminal mode", opts.get("terminal") is True, opts)
+
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                               "placement": "new_workspace", "label": "build watch"})
+            check("T3 a terminal is created", r.get("ok") is True and r.get("pane_id"), r)
+            check("T3 at the Project's cwd, which the client never sent",
+                  log_lines("workspace create --cwd /work/charts"), log_lines("workspace create"))
+            check("T3 and it is labelled", log_lines("pane rename", "build watch"),
+                  log_lines("pane rename"))
+            check("T3 no agent is started in it", not log_lines("agent start"), log_lines("agent"))
+
+            # The rule a start does not need: plan_slot closes a pane wearing this label.
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                               "placement": "new_workspace", "label": "· spacer ·"})
+            check("T3 the spacer label is refused",
+                  r.get("ok") is False and r.get("error") == "label is reserved", r)
+            r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                               "placement": "new_workspace", "cwd": "/etc"})
+            check("T3 a client-supplied cwd is refused",
+                  r.get("error") == "unexpected field(s) for new_workspace: cwd", r)
+            r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                               "placement": "new_workspace", "name": "claude", "role": "architect"})
+            check("T3 agent fields are refused",
+                  r.get("error") == "unexpected field(s) for new_workspace: name, role", r)
+            await asyncio.sleep(0.2)
+            check("T3 none of those refusals reached herdr",
+                  not log_lines("workspace create"), log_lines("create"))
+
+            # A terminal beside a terminal: the split source is a shell, which is only a legal
+            # target because the relay validates open_terminal against agents *and* shells.
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "open_terminal", "project_id": "charts",
+                               "placement": "split", "split_from": "w9:p3"})
+            check("T3 a terminal splits off another terminal", r.get("ok") is True, r)
+            check("T3 and the split carries the Project's cwd",
+                  log_lines("pane split w9:p3", "--cwd /work/charts"), log_lines("pane split"))
+    finally:
+        stop_relay(proc)
+
+
 async def main():
     preflight()
     boot_gate_run()
@@ -673,6 +748,7 @@ async def main():
     await dual_listener_run()
     await lan_bind_run()
     await terminal_run()
+    await open_terminal_run()
     print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
     sys.exit(1 if fails else 0)
 

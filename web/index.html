@@ -1829,19 +1829,25 @@
     </div>
   </div>
 
-  <!-- Start session — rendered only when the relay advertises start_options -->
+  <!-- Start session, and New terminal — one sheet, because the questions are the same ones
+     minus the agent. Rendered only when the relay advertises start_options. -->
   <div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Start session · <span id="startProject"></span></span>
+        <span style="font-size:0.8rem;font-weight:600;flex:1"><span id="startTitle">Start session</span> · <span
+            id="startProject"></span></span>
         <button onclick="closeStart()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
-        <label class="start-field">Role<select id="startRole"></select></label>
-        <label class="start-field">Agent<select id="startAgent"></select></label>
+        <!-- Hidden whole for a terminal: there is no agent to choose and no role for it to play.
+             Everything below this — where it goes, what it is called — is the same question. -->
+        <div id="startAgentRows" style="display:flex;flex-direction:column;gap:12px">
+          <label class="start-field">Role<select id="startRole"></select></label>
+          <label class="start-field">Agent<select id="startAgent"></select></label>
+        </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
         <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>
@@ -1918,7 +1924,8 @@
     let activeTab = null;
     let projects = [], activeProject = null;
     // Absence of start_options is the feature gate: no message, no Start session control.
-    let startOptions = null, startProjectId = null;
+    // startMode is which of the two things the shared dialog is currently asking about.
+    let startOptions = null, startProjectId = null, startMode = 'agent';
     // Pairs live only in this browser. The relay has no pair message and stores no pair data.
     let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
 
@@ -2355,7 +2362,8 @@
         startOptions = msg;
         render();
       }
-      else if (msg.type === 'command_result' && msg.command === 'start_agent') {
+      else if (msg.type === 'command_result' &&
+               (msg.command === 'start_agent' || msg.command === 'open_terminal')) {
         document.getElementById('startSubmit').disabled = false;
         // The session appears on the next poll snapshot; the browser invents nothing.
         if (msg.ok) {
@@ -2370,7 +2378,8 @@
           // wanted.
           pendingStart = msg.pane_id || null;
         }
-        else setStartError(msg.error || 'start failed');
+        else setStartError(msg.error ||
+          (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
       }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
@@ -2527,7 +2536,11 @@
         if (other.length) html += section('Other sessions', 'var(--muted)', other);
       } else {
         if (startOptions) {
-          html += `<div class="chip-strip"><button class="chip chip-add" onclick="openStartDialog('${activeProject}')">+ Start session</button></div>`;
+          // + New terminal only when the relay says both of open_terminal's gates are open —
+          // a chip that always errors is worse than a chip that is not there.
+          const term = startOptions.terminal
+            ? `<button class="chip chip-add" onclick="openStartDialog('${activeProject}', event, 'terminal')">+ New terminal</button>` : '';
+          html += `<div class="chip-strip"><button class="chip chip-add" onclick="openStartDialog('${activeProject}')">+ Start session</button>${term}</div>`;
         }
         const mine = agents.filter(a => a.project_id === activeProject);
         html += mine.length ? layoutHtml(mine) : '<div class="empty">No sessions</div>';
@@ -2657,7 +2670,9 @@
 
     function openPendingStart() {
       if (!pendingStart) return;
-      const a = agents.find(x => x.pane_id === pendingStart);
+      // Both lists: an opened terminal arrives in `shells`, and looking only at `agents` would
+      // leave the pending id set for good, reopening nothing on every poll from then on.
+      const a = paneOf(pendingStart);
       if (!a) return;
       // Cleared before opening, not after: openTerminal can throw on a half-rendered snapshot,
       // and a pending id that survives that would reopen the pane on every poll from then on.
@@ -2690,12 +2705,19 @@
       el.style.display = text ? 'block' : 'none';
     }
 
-    function openStartDialog(projectId, ev) {
+    function openStartDialog(projectId, ev, mode) {
       if (ev) ev.stopPropagation();
       if (!startOptions) return;
+      startMode = mode === 'terminal' ? 'terminal' : 'agent';
+      const terminal = startMode === 'terminal';
+      if (terminal && !startOptions.terminal) return;
       startProjectId = projectId;
       const p = projects.find(x => x.id === projectId);
       document.getElementById('startProject').textContent = p ? p.label : '';
+      document.getElementById('startTitle').textContent = terminal ? 'New terminal' : 'Start session';
+      document.getElementById('startAgentRows').style.display = terminal ? 'none' : '';
+      document.getElementById('startSubmit').textContent = terminal ? 'Open terminal' : 'Start session';
+      document.getElementById('startName').placeholder = terminal ? 'Auto — Terminal N' : 'Auto — Role N';
       fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
       fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
@@ -2725,7 +2747,10 @@
     function renderStartTarget() {
       const placement = document.getElementById('startPlacement').value;
       const row = document.getElementById('startTargetRow');
-      const mine = agents.filter(a => a.project_id === startProjectId);
+      // A terminal may land beside a terminal, and in a workspace holding nothing else. An agent
+      // may not: `agent start` wants a pane of its own, and the relay validates against agents.
+      const live = startMode === 'terminal' ? agents.concat(shells) : agents;
+      const mine = live.filter(a => a.project_id === startProjectId);
       if (placement === 'new_workspace') {
         // Clears both, and not only the row. New workspace needs no target, so whatever the
         // previous placement left behind — the "no live workspaces" error, and the disabled
@@ -2746,7 +2771,8 @@
         options = mine.filter(a => a.workspace_id && !seen.has(a.workspace_id) && seen.add(a.workspace_id))
           .map(a => [a.workspace_id, a.project || a.workspace_id]);
       } else {
-        options = mine.map(a => [a.pane_id, `${a.label || a.agent} · ${a.pane_id}`]);
+        // Not `a.agent` as the fallback — a terminal has none, and the option read "undefined".
+        options = mine.map(a => [a.pane_id, `${a.label || a.agent || a.project || a.pane_id} · ${a.pane_id}`]);
       }
       const any = fillSelect('startTarget', options);
       setStartError(any ? '' : (isTab ? 'No live workspaces in this project' : 'No live panes in this project'));
@@ -2755,14 +2781,19 @@
 
     function submitStart() {
       if (!ws || !startProjectId) return;
+      const terminal = startMode === 'terminal';
       const placement = document.getElementById('startPlacement').value;
-      const msg = {
-        type: 'start_agent',
-        name: document.getElementById('startAgent').value,
-        role: document.getElementById('startRole').value,
-        project_id: startProjectId,
-        placement: placement,
-      };
+      // Agent fields are omitted rather than blanked: the relay refuses an open_terminal carrying
+      // a name or a role as an unexpected field, which is what keeps the two messages distinct.
+      const msg = terminal
+        ? { type: 'open_terminal', project_id: startProjectId, placement: placement }
+        : {
+          type: 'start_agent',
+          name: document.getElementById('startAgent').value,
+          role: document.getElementById('startRole').value,
+          project_id: startProjectId,
+          placement: placement,
+        };
       // Spawn at the width of the screen doing the spawning, so a session started from a phone is
       // readable on it without a second round trip. Not for a split: "beside that pane" is already
       // a statement about width, and a desktop asking for "wide" would move the new session
@@ -2782,7 +2813,7 @@
       // Remembered on send rather than on change: what the user actually spawned is the choice
       // worth reopening on, not one they scrolled past.
       try {
-        localStorage.setItem(START_AGENT_KEY, msg.name);
+        if (msg.name) localStorage.setItem(START_AGENT_KEY, msg.name);
         localStorage.setItem(START_PLACE_KEY, placement);
       } catch (e) { /* private mode: session-only */ }
       ws.send(JSON.stringify(msg));

@@ -33,6 +33,7 @@ from start_agent import (
     slot_advice,
     validate_pane_label,
     tab_create_args,
+    validate_open_terminal,
     validate_start_request,
     workspace_create_args,
 )
@@ -572,35 +573,25 @@ def log_tab_geometry():
         log.warning(advice)
 
 
-def start_agent_exec(plan):
-    """Run a validated start plan. Returns (pane_id, error).
+def _create_target_pane(plan, remote):
+    """Create the pane a validated plan asks for. Returns (pane_id, rollback, error).
 
-    Blocking; call through asyncio.to_thread. Never claims success after a partial
-    operation — a created workspace, tab, or pane may remain as empty native layout, but no
-    session is reported unless the agent actually started (spec §3).
+    herdr attaches an agent to a pane already sitting at its shell prompt, so the relay creates
+    that pane itself — which is also, with nothing attached afterwards, the whole of opening a
+    terminal. A new workspace or tab is born holding exactly one pane, so there is no idle shell
+    left over to close. `rollback` is what to undo if the caller's next step fails.
     """
-    remote = plan["remote"]
     placement = plan["placement"]
-    # Settle the herdr agent name before anything is created: a collision fails the start after
-    # a container already exists. It is derived from the label rather than being the label —
-    # herdr's agent names are lowercase and space-free, pane labels are not.
-    plan["agent_name"] = unique_agent_name(
-        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
-
-    # herdr attaches an agent to a pane already sitting at its shell prompt, so the relay
-    # creates that pane. A new workspace or tab is born holding exactly one — that one becomes
-    # the agent's pane, so there is no idle shell left over to close. Remember what was created
-    # to roll it back if the agent never starts.
     rollback = None
 
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
         if err:
-            return None, err
+            return None, None, err
         workspace_id = dig(data, "result", "workspace", "workspace_id")
         target_pane = dig(data, "result", "root_pane", "pane_id")
         if not workspace_id or not target_pane:
-            return None, "workspace create returned no workspace_id or root pane"
+            return None, None, "workspace create returned no workspace_id or root pane"
         rollback = ("workspace", "close", workspace_id)
     elif placement == "new_tab":
         # A spacer in this workspace is already a shell sitting at the Project's cwd, which is
@@ -617,27 +608,48 @@ def start_agent_exec(plan):
                 target_pane = claimable_spacer(
                     dig_panes(listing), plan["workspace_id"], plan["cwd"])
         if target_pane:
-            # No rollback: the spacer stood here before this start, and a failed agent start
+            # No rollback: the spacer stood here before this call, and a failure downstream
             # leaves it exactly as it was found — still labelled, still reusable.
-            log.info("Reusing spacer %s for the new session", target_pane)
+            log.info("Reusing spacer %s for the new pane", target_pane)
         else:
             data, err = _herdr_json(
                 *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
             if err:
-                return None, err
+                return None, None, err
             tab_id = dig(data, "result", "tab", "tab_id")
             target_pane = dig(data, "result", "root_pane", "pane_id")
             if not tab_id or not target_pane:
-                return None, "tab create returned no tab_id or root pane"
+                return None, None, "tab create returned no tab_id or root pane"
             rollback = ("tab", "close", tab_id)
     else:  # split — the source pane's sibling is the user's own, so only the new pane rolls back
         data, err = _herdr_json(*pane_split_args(plan["split_from"], plan["cwd"]), remote=remote)
         if err:
-            return None, err
+            return None, None, err
         target_pane = dig(data, "result", "pane", "pane_id")
         if not target_pane:
-            return None, "pane split returned no pane_id"
+            return None, None, "pane split returned no pane_id"
         rollback = ("pane", "close", target_pane)
+
+    return target_pane, rollback, None
+
+
+def start_agent_exec(plan):
+    """Run a validated start plan. Returns (pane_id, error).
+
+    Blocking; call through asyncio.to_thread. Never claims success after a partial
+    operation — a created workspace, tab, or pane may remain as empty native layout, but no
+    session is reported unless the agent actually started (spec §3).
+    """
+    remote = plan["remote"]
+    # Settle the herdr agent name before anything is created: a collision fails the start after
+    # a container already exists. It is derived from the label rather than being the label —
+    # herdr's agent names are lowercase and space-free, pane labels are not.
+    plan["agent_name"] = unique_agent_name(
+        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
+
+    target_pane, rollback, err = _create_target_pane(plan, remote)
+    if err:
+        return None, err
 
     data, err = _herdr_json(*agent_start_args(plan["name"], plan["agent_name"], target_pane),
                             remote=remote, timeout=START_EXEC_TIMEOUT)
@@ -664,6 +676,38 @@ def start_agent_exec(plan):
             log.warning("Agent started as %s but slot %r was not applied: %s",
                         pane_id, plan["slot"], slot_err)
     return pane_id, None
+
+
+def open_terminal_exec(plan):
+    """Run a validated open_terminal plan. Returns (pane_id, error). Blocking.
+
+    start_agent_exec without the agent — the pane herdr would have handed to `agent start` is
+    the deliverable, so the work stops once it has been created and named.
+    """
+    remote = plan["remote"]
+    target_pane, rollback, err = _create_target_pane(plan, remote)
+    if err:
+        return None, err
+
+    # Fatal here, unlike a start, and it takes the pane with it. There, a rename failure leaves a
+    # working agent worth more than its label; here the pane *is* the result, and a claimed spacer
+    # still carries the spacer label until this lands — which plan_slot may close on sight.
+    try:
+        rename = run_herdr_result(*pane_rename_args(target_pane, plan["label"]), remote=remote)
+    except Exception as e:
+        _rollback_layout(rollback, remote)
+        return None, f"terminal opened as {target_pane} but pane rename failed: {e}"
+    if rename.returncode != 0:
+        _rollback_layout(rollback, remote)
+        return None, f"terminal opened as {target_pane} but pane rename exited {rename.returncode}"
+
+    # Never fatal, same as a start: the terminal is up and usable at whatever width it landed on.
+    if plan.get("slot"):
+        slot_err = slot_exec(target_pane, plan["slot"], remote)
+        if slot_err:
+            log.warning("Terminal opened as %s but slot %r was not applied: %s",
+                        target_pane, plan["slot"], slot_err)
+    return target_pane, None
 
 
 async def _poll_once():
@@ -919,8 +963,12 @@ async def handle_client(ws, listener="lan"):
             # Presence of start_options is the browser's feature gate. Without Projects a
             # start can never resolve a cwd, so the control would only ever error (spec §3).
             if WRITE_EXT:
+                # `terminal` gates + New terminal the same way this message gates Start. It is
+                # only ever sent under WRITE_EXT, so a true here means both of open_terminal's
+                # gates are open — the client never has to reason about them separately.
                 await ws.send(json.dumps({
                     "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+                    "terminal": TERMINAL,
                 }))
         # The cached snapshot is what carries `shells`, and its presence is the client's terminal
         # feature gate — so a terminal-mode relay sends it even without Projects, or a client
@@ -1123,6 +1171,37 @@ async def handle_client(ws, listener="lan"):
                 log.info("Start agent ok: pane=%s label=%r name=%r",
                          pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                          "ok": True, "pane_id": pane_id, "label": plan["label"]}))
+            elif msg_type == "open_terminal":
+                # Both gates. Terminal mode alone lists and drives shells that already exist;
+                # creating one spawns a process on this machine, which is the line
+                # HERDR_ENABLE_WRITE_EXT draws and the one a start crosses too.
+                if not TERMINAL:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": "terminal mode disabled"}))
+                    continue
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                plan, open_err = validate_open_terminal(
+                    msg, PROJECTS, latest_agents + latest_shells)
+                if open_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": open_err}))
+                    continue
+                detail = (f"project={plan['project_id']} placement={plan['placement']} "
+                          f"host={plan['remote'] or 'local'} label={plan['label']!r}")
+                log.info("Open terminal from %s (%s): %s", ip, device, detail)
+                audit("open_terminal", ip, device, "", detail)
+                pane_id, exec_err = await asyncio.to_thread(open_terminal_exec, plan)
+                if exec_err:
+                    log.warning("Open terminal failed (%s): %s", detail, exec_err)
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": exec_err}))
+                    continue
+                log.info("Open terminal ok: pane=%s label=%r", pane_id, plan["label"])
+                await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
