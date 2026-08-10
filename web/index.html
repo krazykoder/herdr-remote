@@ -35,6 +35,10 @@
       --red: #f7768e;
       --blue: #7aa2f7;
       --orange: #e0af68;
+      /* Terminal panes. Deliberately not red/green/muted: those three mean agent status, and a
+         shell has none. Named --shell rather than --term because --term-bg/--term-text already
+         mean the pane's *content* and a third --term would read as their base. */
+      --shell: #7dcfff;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
     }
@@ -49,6 +53,7 @@
       --red: #f52a65;
       --blue: #2e7de9;
       --orange: #8c6c3e;
+      --shell: #007197;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
     }
@@ -519,6 +524,18 @@
       background: color-mix(in srgb, var(--red) 5%, var(--surface));
     }
 
+    /* Occupies the same box as .agent .dot so a terminal card and an agent card align down the
+       left edge. A glyph and not a coloured dot, because a dot in this position means status. */
+    .term-glyph {
+      width: 10px;
+      flex-shrink: 0;
+      color: var(--shell);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 700;
+      line-height: 1;
+      text-align: center;
+    }
+
     .workspace-card {
       border-color: color-mix(in srgb, var(--text) 10%, transparent);
     }
@@ -670,6 +687,47 @@
       align-items: center;
       gap: 8px;
       flex-shrink: 0;
+    }
+
+    /* Terminal panes. A shell has no status dot to colour, so the demarcation has to be
+       structural: the accent rule and the $ in the title say what the missing dot cannot. */
+    .terminal-view.is-terminal .term-header {
+      border-bottom: 2px solid var(--shell);
+    }
+
+    .terminal-view.is-terminal .term-header .status-dot {
+      display: none;
+    }
+
+    /* Everything a shell must not offer, hidden in one place. These elements are written by
+       several functions on the poll path, and a branch in each is several places to forget one.
+       #quickActions is deliberately absent from this list: it also carries session back/forward,
+       and renderQuickActions already emits no approval buttons for a pane with no agent. */
+    .terminal-view.is-terminal #pairStrip,
+    .terminal-view.is-terminal #selTransfer,
+    .terminal-view.is-terminal #promptDock,
+    .terminal-view.is-terminal #quickDock,
+    .terminal-view.is-terminal #commandBtn,
+    .terminal-view.is-terminal #promptsBtn,
+    .terminal-view.is-terminal #quickDockBtn,
+    .terminal-view.is-terminal #micBtn,
+    .terminal-view.is-terminal #termInput,
+    .terminal-view.is-terminal .term-input .send,
+    .terminal-view.is-terminal .term-input .clear,
+    .terminal-view.is-terminal #menuStart,
+    .terminal-view.is-terminal #termMenuPair,
+    .terminal-view.is-terminal #menuInputFont,
+    .terminal-view.is-terminal #menuPairPlace {
+      display: none !important;
+    }
+
+    /* With the textarea gone the row would collapse to the height of one button. */
+    .terminal-view.is-terminal .term-input {
+      justify-content: flex-start;
+    }
+
+    .terminal-view.is-terminal #termStopRow {
+      display: grid;
     }
 
     .term-header .back {
@@ -1571,11 +1629,14 @@
             <span id="fontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
             <button id="fontInc" onclick="bumpFont(1)" aria-label="Larger terminal text">A+</button>
           </div>
-          <div class="menu-label" style="margin-top:10px">Composer text</div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
-            <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
-            <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
+          <!-- Wrapped so a terminal, which has no composer, does not offer to resize its text. -->
+          <div id="menuInputFont">
+            <div class="menu-label" style="margin-top:10px">Composer text</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
+              <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+              <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
+            </div>
           </div>
           <div class="menu-label" style="margin-top:10px">Line width</div>
           <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out"
@@ -1585,13 +1646,16 @@
             <option value="reflow">Reflow — wrap to the screen</option>
           </select>
           <div id="wrapHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
-          <div class="menu-label" style="margin-top:10px">Pair bar</div>
-          <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
-            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-            <option value="top">Top of the pane</option>
-            <option value="above">Above the composer</option>
-            <option value="bottom">Bottom</option>
-          </select>
+          <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
+          <div id="menuPairPlace">
+            <div class="menu-label" style="margin-top:10px">Pair bar</div>
+            <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
+              style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+              <option value="top">Top of the pane</option>
+              <option value="above">Above the composer</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
@@ -1616,17 +1680,17 @@
     <div class="quick-actions" id="quickActions"></div>
     <div class="term-input">
       <div class="term-input-side">
-        <button onclick="openCommandPalette()" aria-label="Commands"
+        <button id="commandBtn" onclick="openCommandPalette()" aria-label="Commands"
           style="border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px">/</button>
-        <button onclick="toggleDock('promptDock')" aria-label="Prompts"
+        <button id="promptsBtn" onclick="toggleDock('promptDock')" aria-label="Prompts"
           style="border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">P</button>
-        <button onclick="toggleQuickDock()" aria-label="Quick actions"
+        <button id="quickDockBtn" onclick="toggleQuickDock()" aria-label="Quick actions"
           style="border:1px solid var(--border);background:var(--bg);color:var(--orange)"><svg width="18" height="18"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
           </svg></button>
-        <button onclick="toggleKeysDock()" aria-label="Keys"
+        <button id="keysBtn" onclick="toggleKeysDock()" aria-label="Keys"
           style="border:1px solid var(--border);background:var(--bg);color:var(--muted)"><svg width="18" height="18"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
@@ -1673,6 +1737,13 @@
       </div>
       <!-- Keys pad -->
       <div id="keysPad" style="width:100%">
+        <!-- Terminals only. Ctrl+C is the one control that stops what you started, and behind the
+             Ctrl modifier and a Presets disclosure it is three taps deep. -->
+        <div id="termStopRow" style="display:none;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:4px">
+          <button class="nav-key" onclick="sendKeys(['ctrl+c'])">^C Stop</button>
+          <button class="nav-key" onclick="fireKey('Up')">↑ Last</button>
+          <button class="nav-key" onclick="fireKey('Enter')">⏎ Enter</button>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
           <button class="nav-key" onclick="fireKey('Escape')">Esc</button>
           <button class="nav-key" style="grid-column:span 2" onclick="fireKey('Space')">Space</button>
@@ -1842,6 +1913,9 @@
   <script>
 
     let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
+    // Shell panes, from the same snapshot as `agents`. Empty against a relay with terminal mode
+    // off, which sends no `shells` key at all — its presence is the feature gate.
+    let shells = [];
     let timeline = [], prevStatuses = {};
     let activeWorkspace = null;
     let activeTab = null;
@@ -2067,14 +2141,18 @@
 
     function renderAgentTabs() {
       const el = document.getElementById('agentTabs');
-      const live = agents.filter(a => agents.filter(x => x.pane_id === a.pane_id).length === 1);
-      const sig = live.map(a => `${a.pane_id} | ${paneLabel(a)} | ${a.status}`).join(' /// ');
+      // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
+      // of its own reads as the strip having lost it.
+      const all = agents.concat(shells);
+      const live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
+      const sig = live.map(a => `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
           // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
           // bar that is always on screen is motion the user cannot turn off or look away from.
-          const color = a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          const color = !a.agent ? 'var(--shell)' :
+            a.status === 'blocked' ? 'var(--red)' : a.status === 'working' ? 'var(--green)' : 'var(--muted)';
           return `<button class="agent-tab" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" title="${escapeHtml(paneTitle(a))}">` +
             `<span class="pill">` +
@@ -2108,12 +2186,15 @@
     }
 
     function renderStatusBar() {
-      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
-      const on = !!a && a.status === 'working';
+      const pane = activePane ? paneOf(activePane) : null;
+      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const on = !!agent && agent.status === 'working';
       document.getElementById('statusBarLeft').textContent =
-        a && paneStampAt ? fmtStamp(paneStampAt) : '';
+        pane && paneStampAt ? fmtStamp(paneStampAt) : '';
       const right = document.getElementById('statusBarRight');
-      right.textContent = a ? (on ? 'active' : 'idle') : '';
+      // Deliberately `agent` and not `pane`: "idle" here means the agent is not working, and a
+      // shell has no agent. Blank rather than a status it cannot have.
+      right.textContent = agent ? (on ? 'active' : 'idle') : '';
       right.classList.toggle('on', on);
     }
 
@@ -2273,10 +2354,10 @@
         // Same rule: apply the label only once the relay confirms herdr took it. Painting it
         // optimistically made a relay that never handled the message look like a working rename
         // until the next poll silently undid it.
-        const a = agents.find(x => x.pane_id === msg.pane_id);
+        const a = paneOf(msg.pane_id);
         if (a && msg.ok) {
           a.label = msg.label;
-          if (activePane === msg.pane_id) document.getElementById('termTitle').textContent = paneTitle(a);
+          if (activePane === msg.pane_id) syncOpenPaneChrome();
           render();
           renderPairStrip();
         }
@@ -2291,10 +2372,27 @@
           }
           prevStatuses[a.pane_id] = a.status;
         }
-        agents = msg.agents; render();
+        agents = msg.agents;
+        // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
+        // has to read as "no terminals" rather than crash the next .filter.
+        shells = Array.isArray(msg.shells) ? msg.shells : [];
+        render();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
+        if (activePane) {
+          // herdr reuses a pane_id once its pane closes, so an open pane that has left both lists
+          // is not retargeted or polled on — it is let go.
+          if (!paneOf(activePane)) {
+            const gone = activePane;
+            closeTerminal();
+            showToast(`${gone} ended.`);
+          } else {
+            // A shell herdr just handed an agent loses its $ and its hidden controls here,
+            // without the pane having to be reopened.
+            syncOpenPaneChrome();
+          }
+        }
         openPendingStart();
       }
       else if (msg.type === 'agent_update') {
@@ -2353,7 +2451,20 @@
       renderAgentTabs();
     }
 
+    // One insertion point for all three paths below: each writes #agents itself, and a Terminals
+    // section appended in each is three places to forget one.
     function renderBody() {
+      renderBodyMain();
+      const html = terminalsHtml();
+      if (!html) return;
+      const el = document.getElementById('agents');
+      // "Waiting for agents…" is true of the agents and false of the box: a machine with
+      // terminals and no agents is not waiting for anything.
+      if (!agents.length) el.innerHTML = '';
+      el.insertAdjacentHTML('beforeend', html);
+    }
+
+    function renderBodyMain() {
       if (projects.length) { renderProjects(); return; }
       const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
       if (workspaces.length <= 1) {
@@ -2584,7 +2695,17 @@
       const placement = document.getElementById('startPlacement').value;
       const row = document.getElementById('startTargetRow');
       const mine = agents.filter(a => a.project_id === startProjectId);
-      if (placement === 'new_workspace') { row.innerHTML = ''; return; }
+      if (placement === 'new_workspace') {
+        // Clears both, and not only the row. New workspace needs no target, so whatever the
+        // previous placement left behind — the "no live workspaces" error, and the disabled
+        // submit that came with it — belongs to a question this placement does not ask. Leaving
+        // them was what made the dialog impossible to submit from: pick New workspace after
+        // seeing that error and the button stayed dead.
+        row.innerHTML = '';
+        setStartError('');
+        document.getElementById('startSubmit').disabled = false;
+        return;
+      }
       const isTab = placement === 'new_tab';
       const label = isTab ? 'Workspace' : 'Beside pane';
       row.innerHTML = `<label class="start-field">${label}<select id="startTarget"></select></label>`;
@@ -2648,14 +2769,30 @@
         const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
         // Version-one recents stored bare pane IDs. Drop them: herdr can reuse an ID for a
         // different session, and this is a convenience list, not data worth migrating unsafely.
-        return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id && x.agent) : [];
+        return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id
+          && (x.agent || x.terminal)) : [];
       } catch (e) { return []; }
     }
 
+    // A terminal has no `agent` to fingerprint on, so it is matched on cwd and host instead and
+    // flagged. The flag is what stops a bare pane_id matching across kinds — herdr reuses IDs, and
+    // a recent terminal landing on the agent that inherited its ID is exactly the failure the
+    // fingerprint exists to prevent. Agents keep memberMatches, which the pair tests own.
+    function recentMatchesPane(r, p, shell) {
+      if (!!r.terminal !== shell) return false;
+      if (!shell) return memberMatches(r, p);
+      return r.pane_id === p.pane_id && (r.host || 'local') === (p.host || 'local')
+        && (r.cwd || '') === (p.cwd || '');
+    }
+
     function noteRecent(paneId) {
-      const live = agents.filter(a => a.pane_id === paneId);
+      const shell = isShell(paneId);
+      const pool = shell ? shells : agents;
+      const live = pool.filter(p => p.pane_id === paneId);
       if (live.length !== 1) return;
-      const current = recentFingerprint(live[0]);
+      const current = shell
+        ? { pane_id: paneId, host: live[0].host || 'local', cwd: live[0].cwd || '', terminal: true }
+        : recentFingerprint(live[0]);
       const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, MAX_RECENTS);
       localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
     }
@@ -2667,13 +2804,20 @@
       // Sliced here too, not only on write: a list stored under an older, larger cap must not
       // render six entries just because it predates the current one.
       const live = loadRecents()
-        .map(r => agents.find(a => memberMatches(r, a)))
-        .filter(a => a && agents.filter(x => x.pane_id === a.pane_id).length === 1)
+        .map(r => {
+          const pool = r.terminal ? shells : agents;
+          return pool.find(p => recentMatchesPane(r, p, !!r.terminal)) || null;
+        })
+        // Still one, and still counted across both lists: an ID that is now an agent here and a
+        // shell there is ambiguous, and the relay will refuse it.
+        .filter(p => p && agents.filter(x => x.pane_id === p.pane_id).length
+          + shells.filter(x => x.pane_id === p.pane_id).length === 1)
         .slice(0, MAX_RECENTS);
       if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
       // Same section header and same cards as the list above, so a recent reads as the session it
       // is rather than as a second kind of thing.
-      el.innerHTML = section('Recents', 'var(--blue)', live);
+      el.innerHTML = `<div class="section-header"><span class="dot" style="background:var(--blue)"></span>Recents</div>`
+        + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('');
       el.style.display = '';
     }
 
@@ -3081,6 +3225,14 @@
       };
     }
 
+    // Every existing lookup is agents.find(...), which returns undefined for a terminal and takes
+    // the whole terminal view down to a bare pane_id title. One helper, used by everything that
+    // opens or titles a pane. Pairs deliberately keep looking only at `agents`.
+    function paneOf(id) {
+      return agents.find(a => a.pane_id === id) || shells.find(s => s.pane_id === id) || null;
+    }
+    function isShell(id) { return shells.some(s => s.pane_id === id); }
+
     function paneLabel(a) { return a.label || a.project || a.agent; }
 
     // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.
@@ -3090,6 +3242,10 @@
     // Each part is dropped when absent, so an unnamed pane degrades to "charts.TS · claude" rather
     // than showing an empty segment or repeating the project as its own name.
     function paneTitle(a) {
+      // A shell has no agent to name, and its label is its whole identity — the cwd is already on
+      // the card's second line. Titled the same way here as on the card, so the header a terminal
+      // opens into reads as the row that was tapped.
+      if (!a.agent) return a.label || a.project || a.pane_id;
       const parts = [];
       if (a.project) parts.push(a.project);
       if (a.agent) parts.push(a.agent);
@@ -3237,9 +3393,9 @@
     // disagree with the herdr pane list and with the Architect N labels a started session gets,
     // leaving one pane with three names.
     function renamePane() {
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activePane ? paneOf(activePane) : null;
       if (!a || !ws) return;
-      const next = prompt('Name for this pane', a.label || a.project || a.agent);
+      const next = prompt('Name for this pane', a.label || a.project || a.agent || '');
       if (next === null) return;
       const label = next.trim();
       // Cleared or unchanged means keep what it had — the relay refuses an empty label, and
@@ -3375,6 +3531,39 @@
         list.map(a => agentCard(a)).join('');
     }
 
+    function terminalCard(s) {
+      const host = s.host && s.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${s.host}</span>` : '';
+      const cwd = s.cwd ? `<span style="font-family:monospace;opacity:0.7">${s.cwd.split('/').slice(-2).join('/')}</span>` : '';
+      const title = s.label || s.project || s.pane_id;
+      // No status dot and no Pair button, and both absences are the point: a shell has no status,
+      // and a pair is agent-to-agent.
+      return `<div class="agent" role="button" tabindex="0" aria-label="Terminal ${escapeHtml(title)}" onclick="openTerminal('${s.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${s.pane_id}')}">
+    <span class="term-glyph" aria-hidden="true">$</span>
+    <div class="info"><div class="project" style="font-family:monospace">${escapeHtml(title)}${host}</div><div class="meta">${cwd}</div></div>
+    <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
+  </div>`;
+    }
+
+    // Not section(): that maps agentCard over its list. Same header markup, different card, and a
+    // colour that is none of the three carrying agent status.
+    function terminalsHtml() {
+      const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
+      if (!list.length) return '';
+      return `<div class="section-header"><span class="dot" style="background:var(--shell)"></span>Terminals</div>`
+        + list.map(terminalCard).join('');
+    }
+
+    // Title and terminal-only chrome for whatever is open. Called on open and again after every
+    // full snapshot, so a shell that herdr hands an agent sheds its $ and its hidden controls
+    // without needing the pane reopened.
+    function syncOpenPaneChrome() {
+      const pane = activePane ? paneOf(activePane) : null;
+      const shell = !!activePane && isShell(activePane);
+      document.getElementById('terminalView').classList.toggle('is-terminal', shell);
+      document.getElementById('termTitle').textContent =
+        pane ? (shell ? '$ ' : '') + paneTitle(pane) : (activePane || '');
+    }
+
     function openTerminal(paneId) {
       // Opening over an already-open pane leaves the old poller running otherwise, and every
       // switch adds another read_pane every 3s. Cleared here rather than in each caller, because
@@ -3384,8 +3573,7 @@
       paneSource = 'recent-unwrapped';  // a clear belongs to the pane it was made on
       noteRecent(paneId);
       noteVisit(paneId);
-      const a = agents.find(x => x.pane_id === paneId);
-      document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
+      syncOpenPaneChrome();
       document.getElementById('agentListView').style.display = 'none';
       document.getElementById('settingsView').style.display = 'none';
       document.getElementById('timelineView').style.display = 'none';
@@ -3417,6 +3605,9 @@
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
       renderAgentTabs();
       document.getElementById('terminalView').classList.remove('active');
+      // Cleared on the way out, not only on the way into an agent: the next thing opened may be
+      // the Settings view, and a stale is-terminal would leave its hiding rules armed.
+      document.getElementById('terminalView').classList.remove('is-terminal');
       closeTermMenu();
       document.body.classList.remove('terminal-open');
       document.getElementById('agentListView').style.display = '';
@@ -3438,8 +3629,8 @@
     }
 
     function navTarget(step) {
-      return navStep(navHistory, navIndex, step,
-                     id => agents.some(a => a.pane_id === id), activePane);
+      // Both lists, or the history silently steps over every terminal ever visited.
+      return navStep(navHistory, navIndex, step, id => !!paneOf(id), activePane);
     }
 
     function navGo(step) {

@@ -24,6 +24,7 @@ from start_agent import (
     agent_start_args,
     claimable_spacer,
     dig,
+    is_spacer,
     unique_agent_name,
     load_start_agents,
     pane_rename_args,
@@ -112,6 +113,11 @@ except ProjectConfigError as e:
 # network. Still fail-closed, but the rule is now per listener rather than global.
 WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
 
+# Not folded into HERDR_ENABLE_WRITE_EXT: that gate exists for starting agents, and someone who
+# enabled it to spawn a session from a phone did not thereby consent to a shell. Off means the
+# shells are never parsed, so known_panes does not grow and pane_guard behaves exactly as before.
+TERMINAL = os.environ.get("HERDR_ENABLE_TERMINAL", "") == "1"
+
 # An externally reachable listener is never token-free. This is the one rule with no opt-out:
 # the external port exists to be published through a tunnel.
 if EXTERNAL_PORT and not AUTH_TOKEN:
@@ -170,12 +176,25 @@ known_panes = set()
 agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
 latest_agents = []  # last full snapshot, replayed to each client on connect
+latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
+shell_panes = set()  # pane IDs in latest_shells, for the write refusals in handle_client
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
-# "ctrl+l" and not "C-l": herdr accepts C-c as a legacy spelling but answers
+# "ctrl+<key>" and not "C-<key>": herdr accepts C-c as a legacy spelling but answers
 # {"code":"invalid_key","message":"unsupported key C-l"} for the rest of that family.
-SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "ctrl+l",
-             "Up", "Down", "Left", "Right", "BSpace"} | {
+#
+# The rest of this set is what the shipped web keys pad actually sends, which until now it mostly
+# could not: only ctrl+l of the six Ctrl presets was listed here, so Ctrl C, D, R, U and Z each
+# came back "keys contain disallowed values" — as did Space, and Tab under an armed Shift. All of
+# them were probed against herdr 0.8.0 and accepted. "BSpace" went the other way: herdr refuses it
+# and no client ever sent it, so it leaves.
+#
+# Note the gap this does not close. `fireKey` composes an armed modifier with *any* pad key, so
+# shift+Escape and ctrl+Up are reachable and are still refused. Enumerating that cross-product
+# here is the wrong fix — it wants a modifier grammar in the guard — and it is out of T1's scope.
+SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "Space", "shift+Tab", "C-c",
+             "ctrl+c", "ctrl+d", "ctrl+l", "ctrl+r", "ctrl+u", "ctrl+z",
+             "Up", "Down", "Left", "Right"} | {
     str(number) for number in range(10)
 }
 
@@ -281,14 +300,25 @@ def run_herdr(*args, remote=None):
         return ""
 
 
-def get_agents_from_host(remote=None):
-    raw = run_herdr("pane", "list", remote=remote)
-    host_label = remote or "local"
-    try:
-        data = json.loads(raw)
-        panes = data.get("result", {}).get("panes", [])
-        return [
-            {
+def split_panes(panes, host_label, remote=None, include_shells=False):
+    """(agents, shells) from one host's parsed `pane list`. Pure.
+
+    Shells were always in this payload — the agent filter is the only reason a client has never
+    seen one, and reading them costs no extra call. Returned as a second list rather than tagged
+    into the first: a shell has no status, and a snapshot that *can* carry one into an agent group
+    is a snapshot that eventually will.
+
+    Spacers are dropped. A spacer is a usable shell, and it is also the only pane this application
+    closes on its own (`plan_slot`), so listing one offers the reader a pane the product may delete
+    out from under them.
+    """
+    agents, shells = [], []
+    for p in panes:
+        if p.get("agent"):
+            # Copied verbatim, key order included: with terminal mode off the wire has to stay
+            # byte-identical, and json.dumps preserves insertion order. Do not fold the two
+            # literals below into a shared base — that reorders these keys.
+            agents.append({
                 "pane_id": p["pane_id"],
                 "agent": p.get("agent", ""),
                 "label": p.get("label", ""),
@@ -299,18 +329,47 @@ def get_agents_from_host(remote=None):
                 "remote": remote,
                 "workspace_id": p.get("workspace_id", ""),
                 "tab_id": p.get("tab_id", ""),
-            }
-            for p in panes if p.get("agent")
-        ]
-    except (json.JSONDecodeError, KeyError):
-        return []
+            })
+        elif include_shells and not is_spacer(p):
+            shells.append({
+                "pane_id": p["pane_id"],
+                "label": p.get("label", ""),
+                "cwd": p.get("cwd", ""),
+                "project": os.path.basename(p.get("cwd", "")),
+                "host": host_label,
+                "remote": remote,
+                "workspace_id": p.get("workspace_id", ""),
+                "tab_id": p.get("tab_id", ""),
+            })
+    return agents, shells
 
 
-def get_all_agents():
-    agents = get_agents_from_host(remote=None)
+def get_panes_from_host(remote=None):
+    raw = run_herdr("pane", "list", remote=remote)
+    try:
+        panes = json.loads(raw).get("result", {}).get("panes", [])
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        # AttributeError because json.loads("null") is None, which the .get chain would raise on.
+        return [], []
+    return split_panes(panes, remote or "local", remote, include_shells=TERMINAL)
+
+
+def get_all_panes():
+    agents, shells = get_panes_from_host(remote=None)
     for remote in REMOTES:
-        agents.extend(get_agents_from_host(remote=remote))
-    return annotate_agents(agents, PROJECTS)
+        more_agents, more_shells = get_panes_from_host(remote=remote)
+        agents.extend(more_agents)
+        shells.extend(more_shells)
+    return annotate_agents(agents, PROJECTS), annotate_agents(shells, PROJECTS)
+
+
+def snapshot_message():
+    """The full-state broadcast. `shells` is present whenever terminal mode is on, including as an
+    empty list — its presence is the client's feature gate, as start_options is for Start."""
+    msg = {"type": "agents", "agents": latest_agents}
+    if TERMINAL:
+        msg["shells"] = latest_shells
+    return msg
 
 
 def pane_cols(pane_id, lines, remote=None):
@@ -455,8 +514,9 @@ def slot_exec(pane_id, slot, remote=None):
     """Put a pane into a slot. Returns an error string, or None.
 
     Blocking; call through asyncio.to_thread. The pane list is read here rather than taken from
-    the poll snapshot because that snapshot drops panes with no agent (`get_agents_from_host`
-    filters them out) — and those are exactly the spacers this has to be able to see and close.
+    the poll snapshot because that snapshot always drops spacers, and drops every shell as well
+    unless terminal mode is on (`split_panes`) — and the spacers are exactly what this has to be
+    able to see and close.
     """
     data, err = _herdr_json("pane", "list", remote=remote)
     if err:
@@ -607,17 +667,24 @@ def start_agent_exec(plan):
 
 
 async def _poll_once():
-        global latest_agents
-        agents = get_all_agents()
+        global latest_agents, latest_shells
+        agents, shells = get_all_panes()
         latest_agents = agents
+        latest_shells = shells
         ambiguous_panes.clear()
-        ambiguous_panes.update(ambiguous_pane_ids(agents))
+        # Over both lists: a shell pane ID is a per-server counter and collides across hosts
+        # exactly as an agent's does (D6). A pane the relay will address but has not been
+        # collision-checked is the bug this set exists to prevent.
+        ambiguous_panes.update(ambiguous_pane_ids(agents + shells))
+        shell_panes.clear()
+        shell_panes.update(s["pane_id"] for s in shells)
         # Always broadcast (even empty list) so clients stay in sync
+        for p in agents + shells:
+            pane_remote_map[p["pane_id"]] = p.get("remote")
+            known_panes.add(p["pane_id"])
         for a in agents:
-            pane_remote_map[a["pane_id"]] = a.get("remote")
-            known_panes.add(a["pane_id"])
             agent_cache[a["pane_id"]] = a
-        await broadcast({"type": "agents", "agents": agents})
+        await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
             if status == "blocked" and last_statuses.get(pid) != "blocked":
@@ -641,7 +708,7 @@ async def _poll_once():
                 await send_web_push("", "", clear=True)
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
-        current_pane_ids = {a["pane_id"] for a in agents}
+        current_pane_ids = {p["pane_id"] for p in agents + shells}
         stale = known_panes - current_pane_ids
         if stale:
             known_panes.difference_update(stale)
@@ -855,7 +922,12 @@ async def handle_client(ws, listener="lan"):
                 await ws.send(json.dumps({
                     "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
                 }))
-            await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
+        # The cached snapshot is what carries `shells`, and its presence is the client's terminal
+        # feature gate — so a terminal-mode relay sends it even without Projects, or a client
+        # connecting between polls would see no terminals and no gate. With both off this is the
+        # legacy wire unchanged: nothing until the first poll broadcast.
+        if PROJECTS or TERMINAL:
+            await ws.send(json.dumps(snapshot_message()))
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -867,6 +939,12 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
+                    continue
+                # Permanent, not a phase gate: SAFE_RESPONSES is a list of agent approval strings,
+                # and sending "yes, single permission" to a shell is meaningless at best.
+                if pane_id in shell_panes:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "respond is not available on a terminal pane"}))
                     continue
                 text = msg.get("text", "")
                 if text.strip().lower() not in SAFE_RESPONSES:
@@ -934,6 +1012,13 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
+                    continue
+                # T1 only — deleted in T2, which is what makes terminals writable. Admitting a
+                # shell pane to known_panes makes pane_guard accept it for every message type at
+                # once, so read-only has to be stated here rather than assumed from the UI.
+                if pane_id in shell_panes:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "terminal panes are read-only in this relay"}))
                     continue
                 text = msg.get("text", "")
                 # 4000, not 1000: a transferred selection is usually code or a diff (P3 spec §6).
@@ -1137,6 +1222,15 @@ async def main():
     if LAN_OPEN:
         log.warning("HERDR_LAN_OPEN=1: %s:%d accepts writes%s from any peer that can reach it",
                     LAN_BIND, WS_PORT, " and agent starts" if WRITE_EXT else "")
+
+    if TERMINAL:
+        log.info("HERDR_ENABLE_TERMINAL=1: shell panes are listed and readable")
+    if TERMINAL and LAN_OPEN:
+        # Said out loud because the combination was chosen deliberately, and the next person to
+        # read this log is the one who has to know it was.
+        log.warning(
+            "HERDR_ENABLE_TERMINAL=1 with HERDR_LAN_OPEN=1: any device that can reach the LAN "
+            "listener can send keys to a shell on this machine, with no token")
 
     if EXTERNAL_PORT:
         # Loopback only, always token: this is the port a tunnel is pointed at, and it must not

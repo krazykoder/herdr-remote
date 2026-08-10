@@ -575,6 +575,87 @@ def preflight():
         sys.exit(f"port {port} is in use — set HERDR_E2E_PORT to a free port (it also uses +1)")
 
 
+async def terminal_run():
+    """T1 — shell panes are listed and readable, and nothing more than that.
+
+    The pure splitter is tested next door. What is exercised here is the part it cannot reach:
+    the WebSocket handler and the shared pane_guard, which is where admitting a shell pane to
+    known_panes opens six message types at once and where T1 has to close two of them again.
+    """
+    # --- flag off: the wire must not mention shells at all ---
+    proc = start_relay(HERDR_RELAY_TOKEN=TOKEN)
+    try:
+        async with connect(url()) as ws:
+            _, snap = await drain_to_agents(ws)
+            check("T1 terminal mode off sends no shells key", "shells" not in snap, snap.keys())
+            check("T1 terminal mode off leaves the agent list untouched",
+                  len(snap["agents"]) == 4, [a["pane_id"] for a in snap["agents"]])
+            r = await rpc(ws, {"type": "read_pane", "pane_id": "w9:p3", "lines": 5})
+            check("T1 a shell is not addressable with the flag off",
+                  r.get("message") == "unknown pane_id", r)
+    finally:
+        stop_relay(proc)
+
+    # --- flag on ---
+    proc = start_relay(HERDR_RELAY_TOKEN=TOKEN, HERDR_ENABLE_TERMINAL="1")
+    try:
+        async with connect(url()) as ws:
+            _, snap = await drain_to_agents(ws)
+            shells = {s["pane_id"]: s for s in snap.get("shells", [])}
+            check("T1 shells arrive on the same snapshot as agents", "shells" in snap, snap.keys())
+            check("T1 an ordinary shell is listed", "w9:p3" in shells, list(shells))
+            check("T1 the spacer is in neither list", "w9:p2" not in shells, list(shells))
+            check("T1 a shell carries no status and no agent",
+                  "status" not in shells.get("w9:p3", {}) and "agent" not in shells.get("w9:p3", {}),
+                  shells.get("w9:p3"))
+            check("T1 an unlabelled shell is still a shell",
+                  shells.get("w9:p3", {}).get("label") == "", shells.get("w9:p3"))
+            check("T1 the agent list is unchanged by terminal mode",
+                  len(snap["agents"]) == 4, [a["pane_id"] for a in snap["agents"]])
+
+            # Reading is the whole of T1's value, and it goes through the same path agents use.
+            open(LOG, "w").close()
+            await ws.send(json.dumps({"type": "read_pane", "pane_id": "w9:p3", "lines": 5}))
+            while True:
+                m = json.loads(await ws.recv())
+                if m["type"] == "pane_content":
+                    break
+            check("T1 a shell answers read_pane", m["pane_id"] == "w9:p3" and m.get("cols") == 87, m)
+
+            r = await rpc(ws, {"type": "send_keys", "pane_id": "w9:p3", "keys": ["ctrl+c"]})
+            check("T1 ctrl+c reaches a shell", r.get("ok") is True, r)
+            check("T1 and reaches it as herdr spells it",
+                  log_lines("pane send-keys w9:p3 ctrl+c"), log_lines("send-keys"))
+
+            # The two the guard has to keep shut once the pane is known.
+            r = await rpc(ws, {"type": "send_text", "pane_id": "w9:p3", "text": "rm -rf /"})
+            check("T1 send_text to a shell is refused",
+                  r.get("message") == "terminal panes are read-only in this relay", r)
+            r = await rpc(ws, {"type": "respond", "pane_id": "w9:p3", "text": "yes"})
+            check("T1 respond to a shell is refused",
+                  r.get("message") == "respond is not available on a terminal pane", r)
+            open(LOG, "w").close()
+            await asyncio.sleep(0.2)
+            check("T1 neither refusal reached herdr",
+                  not log_lines("send-text") and not log_lines("send-keys"), log_lines(""))
+
+            # The collision. A shell ID on two hosts routes to whichever was polled last unless
+            # the ambiguity set covers shells too, which is the D6 bug with a shell on one end.
+            check("T1 the colliding shell is still listed", "w9:p1" in shells, list(shells))
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "read_pane", "pane_id": "w9:p1", "lines": 5})
+            check("T1 a cross-host shell ID is refused",
+                  r.get("message") == "ambiguous pane_id (same id on multiple hosts)", r)
+            r = await rpc(ws, {"type": "send_keys", "pane_id": "w9:p1", "keys": ["ctrl+c"]})
+            check("T1 and refused for keys as well",
+                  r.get("message") == "ambiguous pane_id (same id on multiple hosts)", r)
+            await asyncio.sleep(0.2)
+            check("T1 no herdr call was made for the ambiguous shell",
+                  not log_lines("w9:p1"), log_lines("w9:p1"))
+    finally:
+        stop_relay(proc)
+
+
 async def main():
     preflight()
     boot_gate_run()
@@ -586,6 +667,7 @@ async def main():
     await lan_open_run()
     await dual_listener_run()
     await lan_bind_run()
+    await terminal_run()
     print("\n" + ("ALL PASS" if not fails else f"{len(fails)} FAILED: {fails}"))
     sys.exit(1 if fails else 0)
 

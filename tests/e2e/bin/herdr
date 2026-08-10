@@ -12,12 +12,25 @@ PANES = {
          "cwd": "/work/charts/relay", "workspace_id": "w1", "tab_id": "w1:t1"},
         {"pane_id": "w8:p1", "agent": "codex", "label": "scratch", "agent_status": "working",
          "cwd": "/tmp", "workspace_id": "w8", "tab_id": "w8:t1"},
+        # Panes with no agent. They have always been in this payload and were dropped before any
+        # client saw them; terminal mode is the filter changing, not the data. w9 on purpose —
+        # no start test names that workspace, so no spacer here can be reclaimed by one.
+        {"pane_id": "w9:p1", "label": "build watch",
+         "cwd": "/work/charts/relay", "workspace_id": "w9", "tab_id": "w9:t1"},
+        {"pane_id": "w9:p2", "label": "· spacer ·",
+         "cwd": "/work/charts/relay", "workspace_id": "w9", "tab_id": "w9:t1"},
+        {"pane_id": "w9:p3", "label": "",
+         "cwd": "/work/charts", "workspace_id": "w9", "tab_id": "w9:t2"},
     ],
     "box": [
         {"pane_id": "w8:p1", "agent": "claude", "label": "Reviewer 1", "agent_status": "idle",
          "cwd": "/srv/relay", "workspace_id": "w8", "tab_id": "w8:t1"},
         {"pane_id": "w2:p1", "agent": "pi", "label": "pi", "agent_status": "working",
          "cwd": "/srv/relay/web", "workspace_id": "w2", "tab_id": "w2:t1"},
+        # Same pane ID as the local shell above. Shell IDs are per-server counters exactly as
+        # agent IDs are, and this is the collision the ambiguity guard has to catch on both.
+        {"pane_id": "w9:p1", "label": "notes",
+         "cwd": "/srv", "workspace_id": "w9", "tab_id": "w9:t1"},
     ],
 }
 

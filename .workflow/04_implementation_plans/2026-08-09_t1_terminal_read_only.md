@@ -330,15 +330,23 @@ function to `renderBodyMain` — body unchanged — and add:
 
 ### 3.6 Terminal view demarcation [MODIFY]
 
-In `openTerminal`, after `document.getElementById('terminalView').classList.add('active')`:
+Add one two-call helper beside `openTerminal`; it is called on open and after every full snapshot,
+so a shell that herdr turns into an agent loses its terminal-only chrome without requiring a reopen:
 
 ```js
-      const shell = isShell(paneId);
+    function syncOpenPaneChrome() {
+      const pane = paneOf(activePane);
+      if (!pane) return;
+      const shell = isShell(activePane);
       document.getElementById('terminalView').classList.toggle('is-terminal', shell);
-      const a = paneOf(paneId);
       document.getElementById('termTitle').textContent =
-        (shell ? '$ ' : '') + (a ? paneTitle(a) : paneId);
+        (shell ? '$ ' : '') + paneTitle(pane);
+    }
 ```
+
+Call `syncOpenPaneChrome()` in `openTerminal` after it adds `active`, and in the full `agents`
+snapshot handler after replacing both `agents` and `shells`. If `activePane` is absent from both
+lists, call `closeTerminal()` and show the ended toast instead.
 
 `paneTitle` is called with a shell record; confirm it degrades to the label when `agent` and
 `status` are absent, and fix it there if it does not — not with a branch at the call site.
@@ -356,22 +364,32 @@ And, in the same rule block, hide what a shell must not offer:
     .terminal-view.is-terminal #selTransfer,
     .terminal-view.is-terminal #promptDock,
     .terminal-view.is-terminal #quickDock,
-    .terminal-view.is-terminal #quickActions { display: none !important; }
+    .terminal-view.is-terminal #quickActions,
+    .terminal-view.is-terminal #commandBtn,
+    .terminal-view.is-terminal #promptsBtn,
+    .terminal-view.is-terminal #quickDockBtn,
+    .terminal-view.is-terminal #menuStart,
+    .terminal-view.is-terminal #qaToggle,
+    .terminal-view.is-terminal #termMenuPair,
+    .terminal-view.is-terminal #menuInputFont,
+    .terminal-view.is-terminal #menuPairPlace { display: none !important; }
 ```
 
-CSS is the mechanism because these elements are already written by several functions on the poll
-path; a branch in each is four places to forget one. Verify the four IDs against the live markup
-before writing the rule — correct any that differ, do not add a fifth guess.
+Give the existing composer controls IDs `commandBtn`, `promptsBtn`, `quickDockBtn`, and `keysBtn`.
+Only `keysBtn` remains visible for a terminal. CSS is the mechanism because these elements are
+already written by several functions on the poll path; a branch in each is four places to forget one.
 
-In the gear menu builder (~3043), return early with only the terminal-appropriate items when
-`isShell(activePane)`: Rename, Hide quick actions bar, and the wrap-mode and text-size controls.
-No pair items, no New session in \<project\>.
+The gear menu is static markup, not a builder. Wrap its Composer text controls in `#menuInputFont`
+and Pair bar controls in `#menuPairPlace`; the rule above hides those plus New session, quick-actions
+toggle, and pair items for a shell. Keep Rename, Fit pane to this screen, Terminal text, and Line
+width — slot control remains part of the terminal view. No pair items, New session, or composer-only
+controls remain.
 
 ### 3.7 Composer, keys, approvals [MODIFY]
 
 - Hide `#termInput`, `.term-input button.send`, `.term-input button.clear`, and `#micBtn` when
-  `is-terminal`, by the same CSS rule block. Keep the keys entry point; T2 brings the text composer
-  back.
+  `is-terminal`, by the same CSS rule block. Keep only the keys entry point; T2 brings the text
+  composer and its terminal-specific shortcuts back.
 - The keys pad stays. Move `C-c` to the first row **for terminals only** — do not reorder the agent
   keys pad.
 - The blocked-approval branch in `openTerminal` and the quick-actions renderer must not run for a
@@ -381,8 +399,9 @@ No pair items, no New session in \<project\>.
 ### 3.8 Open pane disappears [MODIFY]
 
 In the `agents` message handler, after `shells` is assigned: if `activePane` is set and is in neither
-list, close the terminal view and show a toast naming the pane. Spec §6.5. `navTarget` must consider
-both `agents` and `shells`, or terminal history will silently skip every terminal.
+list, close the terminal view and show a toast naming the pane; otherwise call
+`syncOpenPaneChrome()`. Spec §6.5. `navTarget` must consider both `agents` and `shells`, or terminal
+history will silently skip every terminal.
 
 `paneTitle` must preserve the existing agent format but return `label || project || pane_id` for a
 shell. Toggle `is-terminal` off in `closeTerminal`, not only when opening an agent.
@@ -405,10 +424,19 @@ a shell (for example with a boolean `terminal` field), `loadRecents` must accept
 | Pane with no agent, label `"· spacer ·"` | In neither list |
 | Pane with no agent, label `"build"` | In shells, with no `status` and no `agent` key |
 | Pane with no agent, empty label | In shells, `label == ""` |
-| `TERMINAL` false | Shells empty; agents identical to the flag-on agents |
+| `include_shells=False` | Shells empty; agents identical to the `True` result |
 | `ambiguous_pane_ids(agents + shells)` with `w8:p1` as an agent on host A and a shell on host B | `w8:p1` is ambiguous |
 | `snapshot_message()` with `TERMINAL` false | No `shells` key at all |
 | `snapshot_message()` with `TERMINAL` true, no shells | `shells` present and `[]` |
+
+## 4.1 `tests/e2e/e2e_start_agent.py`, `tests/e2e/bin/herdr` [MODIFY]
+
+Add one ordinary unlabelled shell and one cross-host shell-ID collision to the fake pane lists. In a
+terminal-enabled relay run, assert the ordinary shell appears in `shells`, `read_pane` and
+`send_keys` succeed, and `respond` and `send_text` return their distinct terminal refusal messages.
+Assert the colliding shell pane ID is refused before any fake-herdr write occurs. Run the same connect
+check with terminal mode off and assert `shells` is absent. This exercises the actual WebSocket
+handler and the shared `pane_guard`; the pure splitter test cannot.
 
 ---
 
@@ -462,6 +490,11 @@ HERDR_ENABLE_TERMINAL=1 HERDR_LAN_OPEN=1 uv run relay/herdr_relay.py   # expect 
    pane ID.
 10. `HERDR_ENABLE_TERMINAL=1` with `HERDR_LAN_OPEN=1` logs the warning naming both.
 11. Existing test suites pass unchanged.
+12. A terminal shows only the Keys entry point; prompts, command palette, quick actions, pair
+    controls, New session, and composer-only menu controls are absent.
+13. If an open shell becomes an agent in a full snapshot, its `$` prefix and terminal-only hiding
+    clear without reopening the pane. The WebSocket E2E covers shell reads, permitted keys, both
+    refusals, flag-off absence, and a cross-host collision.
 
 ---
 
