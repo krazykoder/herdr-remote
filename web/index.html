@@ -705,25 +705,13 @@
        and renderQuickActions already emits no approval buttons for a pane with no agent. */
     .terminal-view.is-terminal #pairStrip,
     .terminal-view.is-terminal #selTransfer,
-    .terminal-view.is-terminal #promptDock,
     .terminal-view.is-terminal #quickDock,
     .terminal-view.is-terminal #commandBtn,
-    .terminal-view.is-terminal #promptsBtn,
     .terminal-view.is-terminal #quickDockBtn,
-    .terminal-view.is-terminal #micBtn,
-    .terminal-view.is-terminal #termInput,
-    .terminal-view.is-terminal .term-input .send,
-    .terminal-view.is-terminal .term-input .clear,
     .terminal-view.is-terminal #menuStart,
     .terminal-view.is-terminal #termMenuPair,
-    .terminal-view.is-terminal #menuInputFont,
     .terminal-view.is-terminal #menuPairPlace {
       display: none !important;
-    }
-
-    /* With the textarea gone the row would collapse to the height of one button. */
-    .terminal-view.is-terminal .term-input {
-      justify-content: flex-start;
     }
 
     .terminal-view.is-terminal #termStopRow {
@@ -1337,6 +1325,14 @@
       transform: scale(0.97);
     }
 
+    /* A destructive shortcut waiting for its second tap. Red, because the entry it is asking
+       about is the one the user marked as worth asking about. */
+    .nav-key.armed {
+      background: var(--red);
+      border-color: var(--red);
+      color: #fff;
+    }
+
     .mod-key {
       font-size: 12px;
     }
@@ -1800,12 +1796,13 @@
         </div>
       </div>
     </div>
-    <!-- Prompts dock — the "P" button beside the composer. These insert at the cursor and
-       never send, unlike Confirm and Common in the quick dock. -->
+    <!-- Prompts dock — the "P" button beside the composer. Over an agent these insert at the
+       cursor and never send, unlike Confirm and Common in the quick dock. Over a terminal the
+       same dock holds saved commands, and those do send: renderShortcutDock owns the switch. -->
     <div class="term-keys" id="promptDock" style="display:none">
       <div style="width:100%">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <span
+          <span id="promptDockTitle"
             style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Prompts</span>
           <button onclick="toggleDock('promptDock')" aria-label="Close"
             style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
@@ -1938,6 +1935,35 @@
       { label: 'Implement', text: 'Proceed to implement.' },
       { label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
     ];
+
+    // The terminal half of the same idea, and the opposite verb: an agent prompt is inserted into
+    // the composer to be read before it is sent, a terminal command is the thing being sent.
+    const TERM_KEY = 'herdr_term_shortcuts';
+    const TERM_VERSION = 1;
+    const MAX_TERM_SHORTCUTS = 24;
+
+    // Read-only, every one of them. Nothing that writes ships as a default — a destructive
+    // command in a grid the user did not choose is one mis-tap from a bad afternoon.
+    const DEFAULT_TERM_SHORTCUTS = [
+      { label: 'ls', text: 'ls -la' },
+      { label: 'git status', text: 'git status' },
+      { label: 'git log', text: 'git log --oneline -10' },
+      { label: 'pwd', text: 'pwd' },
+    ];
+
+    // Same contract as parsePairs, with one distinction the caller makes rather than this
+    // function: a *corrupt* blob loads as nothing, because replacing what someone wrote is worse
+    // than showing them an empty grid, while an *absent* key seeds the defaults.
+    function parseTermShortcuts(raw) {
+      let data;
+      try { data = JSON.parse(raw); } catch (e) { return []; }
+      if (!data || data.version !== TERM_VERSION || !Array.isArray(data.items)) return [];
+      return data.items
+        .filter(s => s && typeof s.label === 'string' && s.label &&
+          typeof s.text === 'string' && s.text && s.text.length <= SEND_TEXT_MAX)
+        .slice(0, MAX_TERM_SHORTCUTS)
+        .map(s => ({ label: s.label, text: s.text, danger: !!s.danger }));
+    }
 
     // codex invokes its prompts with $; every other agent uses /. Only a line-leading slash is
     // rewritten, so a path or URL inside the shortcut text is left alone. Keyed off the pane the
@@ -3488,6 +3514,110 @@
       input.focus();
     }
 
+    // --- Terminal shortcuts (T2) ---
+    // The same dock as the agent prompts, because they occupy the same place, the same toggle,
+    // and the same "only one dock is open" rule. What differs is the verb: a prompt is inserted
+    // for the user to read before sending, a command is sent.
+    let termShortcuts = [];
+
+    function loadTermShortcuts() {
+      const raw = localStorage.getItem(TERM_KEY);
+      // No key at all is a first run, not a corrupt one — seed the defaults. A key that parses to
+      // nothing is either corrupt or a user who deleted every entry, and both mean an empty grid.
+      termShortcuts = raw === null ? DEFAULT_TERM_SHORTCUTS.slice() : parseTermShortcuts(raw);
+    }
+
+    function saveTermShortcuts() {
+      try { localStorage.setItem(TERM_KEY, JSON.stringify({ version: TERM_VERSION, items: termShortcuts })); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    function renderShortcutDock() {
+      const shell = !!activePane && isShell(activePane);
+      document.getElementById('promptDockTitle').textContent = shell ? 'Commands' : 'Prompts';
+      // The button that opens it says what it opens: P for prompts, $ for a command line.
+      const btn = document.getElementById('promptsBtn');
+      btn.textContent = shell ? '$' : 'P';
+      btn.setAttribute('aria-label', shell ? 'Commands' : 'Prompts');
+      const box = document.getElementById('shortcutRow');
+      if (!shell) {
+        box.innerHTML = SHORTCUTS.map((s, i) =>
+          `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
+        return;
+      }
+      box.innerHTML = termShortcuts.map((s, i) => {
+        const armed = shortcutArmed === i;
+        const label = armed ? `Run ${s.label}?` : escapeHtml(s.label);
+        const colour = s.danger ? 'color:var(--red);border-color:var(--red)' : '';
+        return `<div style="display:flex;gap:4px">
+      <button class="nav-key${armed ? ' armed' : ''}" style="flex:1;justify-content:flex-start;font-family:monospace;${colour}"
+        title="${escapeHtml(s.text)}" onclick="runShortcut(${i})">${label}</button>
+      <button class="nav-key" style="width:40px;color:var(--muted)" aria-label="Delete ${escapeHtml(s.label)}"
+        onclick="deleteShortcut(${i})">✕</button>
+    </div>`;
+      }).join('') +
+        `<button class="nav-key" style="justify-content:flex-start;color:var(--muted)" onclick="addShortcut()">+ Add command</button>`;
+    }
+
+    // herdr reports no process lifetime, so "has it finished" can only be answered by looking.
+    // Three reads across the first few seconds cover a command that prints and exits, without
+    // raising the 3s interval every open pane pays for.
+    function burstPoll() { [400, 1200, 2500].forEach(ms => setTimeout(refreshPane, ms)); }
+
+    let shortcutArmed = -1, shortcutArmedAt = 0;
+
+    function runShortcut(i) {
+      const s = termShortcuts[i];
+      if (!s || !ws || !activePane) return;
+      // Arm and fire, the same two taps the Clear control takes, rather than a modal — the arm is
+      // visible in the button that will run, which a dialog covering the grid would not be.
+      if (s.danger && !(shortcutArmed === i && Date.now() - shortcutArmedAt < CLS_ARM_MS)) {
+        shortcutArmed = i; shortcutArmedAt = Date.now();
+        renderShortcutDock();
+        if (window.cue) cue('error');
+        setTimeout(() => {
+          if (shortcutArmed === i && Date.now() - shortcutArmedAt >= CLS_ARM_MS) disarmShortcut();
+        }, CLS_ARM_MS);
+        return;
+      }
+      disarmShortcut();
+      if (window.cue) cue('success');
+      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: s.text }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      document.getElementById('promptDock').style.display = 'none';
+      burstPoll();
+    }
+
+    function disarmShortcut() {
+      if (shortcutArmed === -1) return;
+      shortcutArmed = -1; shortcutArmedAt = 0;
+      renderShortcutDock();
+    }
+
+    function addShortcut() {
+      if (termShortcuts.length >= MAX_TERM_SHORTCUTS) {
+        showToast(`Keep it to ${MAX_TERM_SHORTCUTS} commands.`); return;
+      }
+      const text = (prompt('Command to run in this terminal') || '').trim();
+      if (!text) return;
+      // Checked at save, not at send: the relay refuses over 4000, and a shortcut that can never
+      // run should never make it into the grid.
+      if (text.length > SEND_TEXT_MAX) { showToast(`Command must be ${SEND_TEXT_MAX} characters or fewer.`); return; }
+      const label = (prompt('Button label', text.slice(0, 24)) || '').trim();
+      if (!label) return;
+      termShortcuts.push({ label: label.slice(0, 24), text: text, danger: confirm('Ask twice before running this one?') });
+      saveTermShortcuts();
+      renderShortcutDock();
+    }
+
+    function deleteShortcut(i) {
+      const s = termShortcuts[i];
+      if (!s || !confirm(`Delete "${s.label}"?`)) return;
+      termShortcuts.splice(i, 1);
+      saveTermShortcuts();
+      renderShortcutDock();
+    }
+
     // The ceiling lives in CSS (max-height) and the floor in min-height, so this only has to
     // report the content height — a px cap here would drift the moment the font size changes.
     function autoGrow(el) {
@@ -3562,6 +3692,9 @@
       document.getElementById('terminalView').classList.toggle('is-terminal', shell);
       document.getElementById('termTitle').textContent =
         pane ? (shell ? '$ ' : '') + paneTitle(pane) : (activePane || '');
+      // The dock holds prompts over an agent and commands over a shell, and a pane can change
+      // kind under a live snapshot — so its contents are re-chosen here, not only on open.
+      renderShortcutDock();
     }
 
     function openTerminal(paneId) {
@@ -3592,6 +3725,7 @@
       renderQuickActions();
       renderPairStrip();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
+      disarmShortcut();
       refreshPane();
       refreshInterval = setInterval(refreshPane, 3000);
     }
@@ -3599,6 +3733,7 @@
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
       disarmClear();
+      disarmShortcut();
       renderQuickActions();  // reads activePane, so it empties the bar now that there is none
       clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
@@ -4185,8 +4320,8 @@
     applyWrapMode();
     placePairStrip();
     renderMicState();  // stays hidden where the browser has no speech recognition
-    document.getElementById('shortcutRow').innerHTML = SHORTCUTS.map((s, i) =>
-      `<button class="nav-key" style="justify-content:flex-start" onclick="insertShortcut(${i})">${escapeHtml(s.label)}</button>`).join('');
+    loadTermShortcuts();
+    renderShortcutDock();  // no pane is open yet, so this draws the agent prompts
   </script>
 </body>
 

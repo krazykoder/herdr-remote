@@ -177,7 +177,7 @@ agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
 latest_agents = []  # last full snapshot, replayed to each client on connect
 latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
-shell_panes = set()  # pane IDs in latest_shells, for the write refusals in handle_client
+shell_panes = set()  # pane IDs in latest_shells, for the respond refusal in handle_client
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
 # "ctrl+<key>" and not "C-<key>": herdr accepts C-c as a legacy spelling but answers
@@ -1012,13 +1012,6 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
-                # T1 only — deleted in T2, which is what makes terminals writable. Admitting a
-                # shell pane to known_panes makes pane_guard accept it for every message type at
-                # once, so read-only has to be stated here rather than assumed from the UI.
-                if pane_id in shell_panes:
-                    await ws.send(json.dumps({
-                        "type": "error", "message": "terminal panes are read-only in this relay"}))
                     continue
                 text = msg.get("text", "")
                 # 4000, not 1000: a transferred selection is usually code or a diff (P3 spec §6).

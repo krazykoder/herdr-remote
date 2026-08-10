@@ -22,7 +22,8 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
+               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX',
+               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
@@ -30,7 +31,8 @@ const ctx = vm.createContext({});
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
+       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -362,4 +364,118 @@ test('navPush keeps the newest entries when it hits the cap', () => {
 
 test('navPush appends to an empty history', () => {
   assert.deepEqual(navPush([], -1, 'a', 20), ['a']);
+});
+
+// --- Start dialog placement ----------------------------------------------------------------
+// renderStartTarget runs against the DOM, so it is sliced out and evaluated over a stub. What
+// is being pinned is one rule: New workspace asks for no target, so it must clear the error and
+// the disabled submit that a previous placement left behind. Without that, choosing New
+// workspace after "No live workspaces in this project" left the button dead and no session
+// could be started at all.
+
+function startDialogCtx(agents, placement) {
+  const els = {
+    startPlacement: {value: placement},
+    startTargetRow: {innerHTML: 'stale'},
+    startError: {textContent: 'No live workspaces in this project',
+                 style: {display: 'block'}},
+    startSubmit: {disabled: true},
+  };
+  return {
+    els,
+    ctx: vm.createContext({
+      agents,
+      startProjectId: 'charts',
+      document: {getElementById: id => els[id] || (els[id] = {innerHTML: '', style: {}})},
+      fillSelect: (id, options) => options.length,
+      setStartError: text => {
+        els.startError.textContent = text || '';
+        els.startError.style.display = text ? 'block' : 'none';
+      },
+    }),
+  };
+}
+
+function runRenderStartTarget(agents, placement) {
+  const start = HTML.indexOf('function renderStartTarget');
+  const end = HTML.indexOf('function submitStart', start);
+  assert.ok(start !== -1 && end > start, 'renderStartTarget block not found');
+  const {els, ctx} = startDialogCtx(agents, placement);
+  vm.runInContext(HTML.slice(start, end) + '\n;renderStartTarget();', ctx);
+  return els;
+}
+
+test('New workspace clears an error left by a placement that needed a target', () => {
+  // The reported bug: a Project with nothing running shows "No live workspaces in this project"
+  // on New tab, and switching to New workspace has to make the dialog usable again.
+  const els = runRenderStartTarget([], 'new_workspace');
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+  assert.equal(els.startTargetRow.innerHTML, '');
+});
+
+test('New tab with no live workspace still refuses, and says why', () => {
+  const els = runRenderStartTarget([], 'new_tab');
+  assert.equal(els.startSubmit.disabled, true);
+  assert.match(els.startError.textContent, /No live workspaces/);
+});
+
+test('New tab with a live workspace in this project is offered', () => {
+  const els = runRenderStartTarget(
+    [{pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', project: 'Charts'}], 'new_tab');
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+});
+
+// --- terminal shortcuts (T2) ---
+// The grid sends into a shell, so a blob that survives parsing is a blob whose entries will be
+// run. Everything below is about what must not survive it.
+
+const shortcut = (o = {}) => ({label: 'ls', text: 'ls -la', ...o});
+const blob = items => JSON.stringify({version: 1, items});
+
+test('parseTermShortcuts reads a well-formed blob', () => {
+  assert.deepEqual(parseTermShortcuts(blob([shortcut()])),
+                   [{label: 'ls', text: 'ls -la', danger: false}]);
+});
+
+test('parseTermShortcuts discards corrupt, wrong-version, and malformed values', () => {
+  for (const raw of ['', 'not json', '{', 'null', '[]',
+                     JSON.stringify({version: 2, items: [shortcut()]}),
+                     JSON.stringify({version: 1, items: 'nope'}),
+                     JSON.stringify({version: 1, pairs: [shortcut()]})]) {
+    assert.deepEqual(parseTermShortcuts(raw), [], `should be empty for ${JSON.stringify(raw)}`);
+  }
+});
+
+test('parseTermShortcuts drops entries with no label, no text, or the wrong types', () => {
+  const items = [shortcut({label: ''}), shortcut({text: ''}), shortcut({label: 7}),
+                 shortcut({text: ['ls']}), {}, null, shortcut()];
+  assert.deepEqual(parseTermShortcuts(blob(items)).map(s => s.label), ['ls']);
+});
+
+test('parseTermShortcuts drops a command the relay would refuse anyway', () => {
+  const items = [shortcut({label: 'huge', text: 'x'.repeat(SEND_TEXT_MAX + 1)}), shortcut()];
+  assert.deepEqual(parseTermShortcuts(blob(items)).map(s => s.label), ['ls']);
+});
+
+test('parseTermShortcuts caps the grid and coerces danger to a boolean', () => {
+  const items = Array.from({length: MAX_TERM_SHORTCUTS + 5}, () => shortcut({danger: 'yes'}));
+  const out = parseTermShortcuts(blob(items));
+  assert.equal(out.length, MAX_TERM_SHORTCUTS);
+  assert.equal(out[0].danger, true);
+});
+
+test('parseTermShortcuts keeps only the three fields the grid renders', () => {
+  const [only] = parseTermShortcuts(blob([shortcut({onclick: 'alert(1)', danger: true})]));
+  assert.deepEqual(Object.keys(only).sort(), ['danger', 'label', 'text']);
+});
+
+test('every shipped default is a read-only command and survives its own parser', () => {
+  assert.deepEqual(parseTermShortcuts(blob(DEFAULT_TERM_SHORTCUTS)).map(s => s.label),
+                   DEFAULT_TERM_SHORTCUTS.map(s => s.label));
+  for (const s of DEFAULT_TERM_SHORTCUTS) {
+    assert.equal(s.danger, undefined, `${s.label} ships marked destructive`);
+    assert.doesNotMatch(s.text, /\b(rm|sudo|kill|reset|clean|mv|dd)\b/, `${s.label} writes`);
+  }
 });

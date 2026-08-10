@@ -576,11 +576,11 @@ def preflight():
 
 
 async def terminal_run():
-    """T1 — shell panes are listed and readable, and nothing more than that.
+    """T1/T2 — shell panes are listed, readable, and (since T2) writable through send_text.
 
     The pure splitter is tested next door. What is exercised here is the part it cannot reach:
     the WebSocket handler and the shared pane_guard, which is where admitting a shell pane to
-    known_panes opens six message types at once and where T1 has to close two of them again.
+    known_panes opens six message types at once and where `respond` has to stay closed.
     """
     # --- flag off: the wire must not mention shells at all ---
     proc = start_relay(HERDR_RELAY_TOKEN=TOKEN)
@@ -627,16 +627,21 @@ async def terminal_run():
             check("T1 and reaches it as herdr spells it",
                   log_lines("pane send-keys w9:p3 ctrl+c"), log_lines("send-keys"))
 
-            # The two the guard has to keep shut once the pane is known.
-            r = await rpc(ws, {"type": "send_text", "pane_id": "w9:p3", "text": "rm -rf /"})
-            check("T1 send_text to a shell is refused",
-                  r.get("message") == "terminal panes are read-only in this relay", r)
+            # T2 opened this one. send_text answers with no command_result, so the fake herdr log
+            # is the evidence that it went through rather than being swallowed.
+            open(LOG, "w").close()
+            await ws.send(json.dumps({"type": "send_text", "pane_id": "w9:p3", "text": "git status"}))
+            await asyncio.sleep(0.6)  # SEND_SETTLE holds the handler before it answers
+            check("T2 send_text reaches a shell", log_lines("pane send-text w9:p3 git status"),
+                  log_lines("send-text"))
+
+            # The one the guard keeps shut for good: SAFE_RESPONSES is agent approval words.
             r = await rpc(ws, {"type": "respond", "pane_id": "w9:p3", "text": "yes"})
             check("T1 respond to a shell is refused",
                   r.get("message") == "respond is not available on a terminal pane", r)
             open(LOG, "w").close()
             await asyncio.sleep(0.2)
-            check("T1 neither refusal reached herdr",
+            check("T1 the respond refusal reached no herdr write",
                   not log_lines("send-text") and not log_lines("send-keys"), log_lines(""))
 
             # The collision. A shell ID on two hosts routes to whichever was polled last unless

@@ -185,9 +185,18 @@ inherited one is the worst failure available here.
 
 Stored under a versioned `localStorage` key following the `herdr_pairs` convention: an unreadable or
 wrong-version blob is discarded and replaced with an empty set, and must not brick the terminal view.
+**No stored value at all is a first run, not a corrupt one**, and seeds a small set of read-only
+defaults — an empty grid is a dead end, and replacing something the user wrote is worse than showing
+them nothing. Nothing that writes ships as a default.
+
 Each entry is a label and a text. Sending is `send_text` followed by `send_keys ["Enter"]`, the same
 two-step every composer already uses. An entry marked destructive arms on first tap and fires on the
 second, reusing the Clear control's existing arm-and-fire behaviour rather than adding a modal.
+
+The grid occupies the prompts dock rather than a fourth one: same place, same toggle, same "only one
+dock is open" rule, and the pane's kind chooses the contents. The two are not interchangeable —
+a prompt is inserted into the composer to be read before it is sent, a command is the thing sent —
+so the dock's title and its opening button say which one is on screen.
 
 No completion signal is displayed. herdr exposes no process lifetime; the view polls faster for a
 short window after a send and then returns to the normal interval.
