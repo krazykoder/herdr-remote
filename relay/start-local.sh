@@ -37,6 +37,11 @@ CONFIGURED_EXTERNAL_PORT="${HERDR_EXTERNAL_PORT:-}"
 
 export HERDR_LAN_OPEN=1
 export HERDR_ENABLE_WRITE_EXT=1
+# Terminal mode is off everywhere else and on here, because "here" is the machine you are sitting
+# at. Overridable rather than hardcoded like the line above it: this one hands a shell to whoever
+# reaches the port, so turning it off must not mean editing a launcher.
+#   HERDR_ENABLE_TERMINAL=0 relay/start-local.sh
+export HERDR_ENABLE_TERMINAL="${HERDR_ENABLE_TERMINAL:-1}"
 unset HERDR_RELAY_TOKEN
 unset HERDR_EXTERNAL_PORT
 
@@ -57,6 +62,10 @@ echo "WARNING: $LAN_BIND:$WS_PORT has no token."
 echo "         Any peer that can reach this machine can read panes, type into agents,"
 echo "         and start sessions. That includes café and hotel Wi-Fi, guest VLANs,"
 echo "         container bridges, and VPN peers when bound to 0.0.0.0."
+if [ "$HERDR_ENABLE_TERMINAL" = "1" ]; then
+echo "         Terminal mode is on, so that also means running shell commands as you."
+echo "         HERDR_ENABLE_TERMINAL=0 turns it off."
+fi
 echo "         Set HERDR_LAN_BIND to one interface address to narrow it."
 echo ""
 

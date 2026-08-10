@@ -55,6 +55,8 @@ NARROW_SLOT_COLS = (69, 70)
 # only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
 SIDEBAR_BOUNDS = (18, 36)
 BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
+# open_terminal carries neither: there is no agent to name and no role for it to play.
+OPEN_TERMINAL_FIELDS = {"type", "project_id", "placement", "label", "slot"}
 
 
 class StartAgentConfigError(Exception):
@@ -157,6 +159,36 @@ def validate_start_request(msg, projects, agents, allowed):
     if role not in ROLES:
         return None, "unknown role"
 
+    plan, err = _placement_plan(msg, projects, agents, BASE_FIELDS,
+                                lambda project: next_role_label(role, project["id"], agents))
+    if err:
+        return None, err
+    plan["name"] = name
+    plan["role"] = role
+    return plan, None
+
+
+def validate_open_terminal(msg, projects, panes):
+    """Validate an open_terminal message. Returns (plan, error); exactly one is not None.
+
+    start_agent without the agent: same Projects-only cwd, same placements, same host rules —
+    which is why the half that decides whether a spawn is allowed is shared rather than
+    reimplemented. `panes` is agents *and* shells: a workspace holding only terminals is a
+    legitimate place to open a tab, and a terminal is a legitimate pane to split off.
+    """
+    plan, err = _placement_plan(msg, projects, panes, OPEN_TERMINAL_FIELDS,
+                                lambda project: next_role_label("terminal", project["id"], panes))
+    if err:
+        return None, err
+    # The one rule a start does not need. plan_slot closes a pane carrying this label, so a
+    # client able to set it could ask the relay to create a pane the relay will later delete.
+    if plan["label"] == SPACER_LABEL:
+        return None, "label is reserved"
+    return plan, None
+
+
+def _placement_plan(msg, projects, panes, base_fields, default_label):
+    """The half of a spawn request that is the same whether or not an agent lands in it."""
     project_id = msg.get("project_id")
     project = next((p for p in projects if p["id"] == project_id), None)
     if project is None:
@@ -167,33 +199,31 @@ def validate_start_request(msg, projects, agents, allowed):
         return None, "unknown placement"
 
     required = PLACEMENTS[placement]
-    extra = set(msg) - BASE_FIELDS - ({required} if required else set())
+    extra = set(msg) - base_fields - ({required} if required else set())
     if extra:
         return None, f"unexpected field(s) for {placement}: {', '.join(sorted(extra))}"
     if required and not msg.get(required):
         return None, f"{required} required for {placement}"
 
-    # The one free-text field a start may carry. Absent means "name it for me"; present it
-    # becomes both the pane label and the herdr agent name, so it is bounded like any other
-    # client-supplied argv element rather than trusted.
+    # The one free-text field a spawn may carry. Absent means "name it for me"; present it
+    # becomes the pane label — and, for a start, the herdr agent name too — so it is bounded
+    # like any other client-supplied argv element rather than trusted.
     if "label" in msg:
         label, label_err = validate_pane_label(msg["label"])
         if label_err:
             return None, label_err
     else:
-        label = next_role_label(role, project["id"], agents)
+        label = default_label(project)
 
     # Optional: absent means "whatever the placement gives you", which is what every client sent
-    # before slots existed. Present, it is applied after the agent is up (spec §3) — the width the
-    # phone wants is not worth failing a start over.
+    # before slots existed. Present, it is applied after the pane is up (spec §3) — the width the
+    # phone wants is not worth failing a spawn over.
     slot = msg.get("slot")
     if slot is not None and slot not in SLOTS:
         return None, "unknown slot"
 
     remote = _project_remote(project)
     plan = {
-        "name": name,
-        "role": role,
         "project_id": project["id"],
         "project_label": project["label"],
         "cwd": project["cwd"],
@@ -206,13 +236,13 @@ def validate_start_request(msg, projects, agents, allowed):
     if placement == "new_tab":
         workspace_id = msg["workspace_id"]
         # workspace_id is its own ID space: one distinct *host*, not one matching agent (D6).
-        ws_remote, err = resolve_workspace_remote(agents, workspace_id)
+        ws_remote, err = resolve_workspace_remote(panes, workspace_id)
         if err:
             return None, err
         if ws_remote != remote:
             return None, "workspace is not on this project's host"
         in_project = [
-            a for a in agents
+            a for a in panes
             if a.get("workspace_id") == workspace_id and a.get("project_id") == project["id"]
         ]
         if not in_project:
@@ -222,10 +252,10 @@ def validate_start_request(msg, projects, agents, allowed):
     elif placement == "split":
         split_from = msg["split_from"]
         # pane_id collides independently of workspace_id, so this is the *pane* guard.
-        matches = [a for a in agents if a.get("pane_id") == split_from]
+        matches = [p for p in panes if p.get("pane_id") == split_from]
         if not matches:
             return None, "unknown pane_id"
-        if split_from in ambiguous_pane_ids(agents):
+        if split_from in ambiguous_pane_ids(panes):
             return None, "ambiguous pane_id (same id on multiple hosts)"
         source = matches[0]
         if source.get("remote") != remote:

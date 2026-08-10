@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,9 @@ from projects import (
     resolve_project_id,
     resolve_workspace_remote,
 )
+
+
+import herdr_relay  # noqa: E402
 
 
 def write_config(payload):
@@ -186,6 +190,23 @@ class AnnotateTests(unittest.TestCase):
         self.assertNotIn("project_id", self.agents[1])
         self.assertNotIn("project_id", self.agents[2])
 
+    def test_matched_panes_inherit_the_project_label(self):
+        # The subdirectory case: cwd basename is "src", the Project is "Charts".
+        panes = [{"pane_id": "w1:p1", "cwd": "/work/charts/src", "host": "local", "project": "src"}]
+        annotate_agents(panes, self.projects)
+        self.assertEqual(panes[0]["project"], "Charts")
+
+    def test_unmatched_panes_keep_their_own_project(self):
+        panes = [{"pane_id": "w2:p1", "cwd": "/tmp/scratch", "host": "local", "project": "scratch"}]
+        annotate_agents(panes, self.projects)
+        self.assertEqual(panes[0]["project"], "scratch")
+
+    def test_the_label_never_adds_a_key_that_was_absent(self):
+        # split_panes always emits "project"; nothing else should grow one, because a key added
+        # here lands at the end of the dict and the wire's key order is a contract.
+        annotate_agents(self.agents, self.projects)
+        self.assertNotIn("project", self.agents[0])
+
     def test_never_emits_null(self):
         annotate_agents(self.agents, self.projects)
         self.assertNotIn('"project_id": null', json.dumps(self.agents))
@@ -193,6 +214,26 @@ class AnnotateTests(unittest.TestCase):
     def test_no_projects_is_a_no_op(self):
         annotate_agents(self.agents, [])
         self.assertTrue(all("project_id" not in a for a in self.agents))
+
+    def test_a_pushed_event_gets_the_same_label_as_a_snapshot(self):
+        # The event hook names the project after the pane's own cwd, so without this the label
+        # resolved by the last poll was overwritten every time an event arrived.
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects):
+            pushed = herdr_relay.annotate_pane(
+                {"pane_id": "w1:p1", "agent": "claude", "status": "working",
+                 "cwd": "/work/charts/src", "project": "src", "host": "local"}
+            )
+        self.assertEqual(pushed["project"], "Charts")
+        self.assertEqual(pushed["project_id"], "charts")
+
+    def test_a_pushed_event_outside_every_root_keeps_its_own_name(self):
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects):
+            pushed = herdr_relay.annotate_pane(
+                {"pane_id": "w2:p1", "agent": "claude", "status": "working",
+                 "cwd": "/tmp/scratch", "project": "scratch", "host": "local"}
+            )
+        self.assertEqual(pushed["project"], "scratch")
+        self.assertNotIn("project_id", pushed)
 
     def test_public_projects_omit_cwd(self):
         pub = public_projects(self.projects)

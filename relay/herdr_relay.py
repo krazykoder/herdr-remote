@@ -24,6 +24,7 @@ from start_agent import (
     agent_start_args,
     claimable_spacer,
     dig,
+    is_spacer,
     unique_agent_name,
     load_start_agents,
     pane_rename_args,
@@ -32,6 +33,7 @@ from start_agent import (
     slot_advice,
     validate_pane_label,
     tab_create_args,
+    validate_open_terminal,
     validate_start_request,
     workspace_create_args,
 )
@@ -112,6 +114,11 @@ except ProjectConfigError as e:
 # network. Still fail-closed, but the rule is now per listener rather than global.
 WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
 
+# Not folded into HERDR_ENABLE_WRITE_EXT: that gate exists for starting agents, and someone who
+# enabled it to spawn a session from a phone did not thereby consent to a shell. Off means the
+# shells are never parsed, so known_panes does not grow and pane_guard behaves exactly as before.
+TERMINAL = os.environ.get("HERDR_ENABLE_TERMINAL", "") == "1"
+
 # An externally reachable listener is never token-free. This is the one rule with no opt-out:
 # the external port exists to be published through a tunnel.
 if EXTERNAL_PORT and not AUTH_TOKEN:
@@ -170,12 +177,25 @@ known_panes = set()
 agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
 latest_agents = []  # last full snapshot, replayed to each client on connect
+latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
+shell_panes = set()  # pane IDs in latest_shells, for the respond refusal in handle_client
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
-# "ctrl+l" and not "C-l": herdr accepts C-c as a legacy spelling but answers
+# "ctrl+<key>" and not "C-<key>": herdr accepts C-c as a legacy spelling but answers
 # {"code":"invalid_key","message":"unsupported key C-l"} for the rest of that family.
-SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "C-c", "ctrl+l",
-             "Up", "Down", "Left", "Right", "BSpace"} | {
+#
+# The rest of this set is what the shipped web keys pad actually sends, which until now it mostly
+# could not: only ctrl+l of the six Ctrl presets was listed here, so Ctrl C, D, R, U and Z each
+# came back "keys contain disallowed values" — as did Space, and Tab under an armed Shift. All of
+# them were probed against herdr 0.8.0 and accepted. "BSpace" went the other way: herdr refuses it
+# and no client ever sent it, so it leaves.
+#
+# Note the gap this does not close. `fireKey` composes an armed modifier with *any* pad key, so
+# shift+Escape and ctrl+Up are reachable and are still refused. Enumerating that cross-product
+# here is the wrong fix — it wants a modifier grammar in the guard — and it is out of T1's scope.
+SAFE_KEYS = {"y", "n", "a", "Enter", "Tab", "Escape", "Space", "shift+Tab", "C-c",
+             "ctrl+c", "ctrl+d", "ctrl+l", "ctrl+r", "ctrl+u", "ctrl+z",
+             "Up", "Down", "Left", "Right"} | {
     str(number) for number in range(10)
 }
 
@@ -281,14 +301,25 @@ def run_herdr(*args, remote=None):
         return ""
 
 
-def get_agents_from_host(remote=None):
-    raw = run_herdr("pane", "list", remote=remote)
-    host_label = remote or "local"
-    try:
-        data = json.loads(raw)
-        panes = data.get("result", {}).get("panes", [])
-        return [
-            {
+def split_panes(panes, host_label, remote=None, include_shells=False):
+    """(agents, shells) from one host's parsed `pane list`. Pure.
+
+    Shells were always in this payload — the agent filter is the only reason a client has never
+    seen one, and reading them costs no extra call. Returned as a second list rather than tagged
+    into the first: a shell has no status, and a snapshot that *can* carry one into an agent group
+    is a snapshot that eventually will.
+
+    Spacers are dropped. A spacer is a usable shell, and it is also the only pane this application
+    closes on its own (`plan_slot`), so listing one offers the reader a pane the product may delete
+    out from under them.
+    """
+    agents, shells = [], []
+    for p in panes:
+        if p.get("agent"):
+            # Copied verbatim, key order included: with terminal mode off the wire has to stay
+            # byte-identical, and json.dumps preserves insertion order. Do not fold the two
+            # literals below into a shared base — that reorders these keys.
+            agents.append({
                 "pane_id": p["pane_id"],
                 "agent": p.get("agent", ""),
                 "label": p.get("label", ""),
@@ -299,18 +330,47 @@ def get_agents_from_host(remote=None):
                 "remote": remote,
                 "workspace_id": p.get("workspace_id", ""),
                 "tab_id": p.get("tab_id", ""),
-            }
-            for p in panes if p.get("agent")
-        ]
-    except (json.JSONDecodeError, KeyError):
-        return []
+            })
+        elif include_shells and not is_spacer(p):
+            shells.append({
+                "pane_id": p["pane_id"],
+                "label": p.get("label", ""),
+                "cwd": p.get("cwd", ""),
+                "project": os.path.basename(p.get("cwd", "")),
+                "host": host_label,
+                "remote": remote,
+                "workspace_id": p.get("workspace_id", ""),
+                "tab_id": p.get("tab_id", ""),
+            })
+    return agents, shells
 
 
-def get_all_agents():
-    agents = get_agents_from_host(remote=None)
+def get_panes_from_host(remote=None):
+    raw = run_herdr("pane", "list", remote=remote)
+    try:
+        panes = json.loads(raw).get("result", {}).get("panes", [])
+    except (json.JSONDecodeError, KeyError, AttributeError):
+        # AttributeError because json.loads("null") is None, which the .get chain would raise on.
+        return [], []
+    return split_panes(panes, remote or "local", remote, include_shells=TERMINAL)
+
+
+def get_all_panes():
+    agents, shells = get_panes_from_host(remote=None)
     for remote in REMOTES:
-        agents.extend(get_agents_from_host(remote=remote))
-    return annotate_agents(agents, PROJECTS)
+        more_agents, more_shells = get_panes_from_host(remote=remote)
+        agents.extend(more_agents)
+        shells.extend(more_shells)
+    return annotate_agents(agents, PROJECTS), annotate_agents(shells, PROJECTS)
+
+
+def snapshot_message():
+    """The full-state broadcast. `shells` is present whenever terminal mode is on, including as an
+    empty list — its presence is the client's feature gate, as start_options is for Start."""
+    msg = {"type": "agents", "agents": latest_agents}
+    if TERMINAL:
+        msg["shells"] = latest_shells
+    return msg
 
 
 def pane_cols(pane_id, lines, remote=None):
@@ -455,8 +515,9 @@ def slot_exec(pane_id, slot, remote=None):
     """Put a pane into a slot. Returns an error string, or None.
 
     Blocking; call through asyncio.to_thread. The pane list is read here rather than taken from
-    the poll snapshot because that snapshot drops panes with no agent (`get_agents_from_host`
-    filters them out) — and those are exactly the spacers this has to be able to see and close.
+    the poll snapshot because that snapshot always drops spacers, and drops every shell as well
+    unless terminal mode is on (`split_panes`) — and the spacers are exactly what this has to be
+    able to see and close.
     """
     data, err = _herdr_json("pane", "list", remote=remote)
     if err:
@@ -512,35 +573,25 @@ def log_tab_geometry():
         log.warning(advice)
 
 
-def start_agent_exec(plan):
-    """Run a validated start plan. Returns (pane_id, error).
+def _create_target_pane(plan, remote):
+    """Create the pane a validated plan asks for. Returns (pane_id, rollback, error).
 
-    Blocking; call through asyncio.to_thread. Never claims success after a partial
-    operation — a created workspace, tab, or pane may remain as empty native layout, but no
-    session is reported unless the agent actually started (spec §3).
+    herdr attaches an agent to a pane already sitting at its shell prompt, so the relay creates
+    that pane itself — which is also, with nothing attached afterwards, the whole of opening a
+    terminal. A new workspace or tab is born holding exactly one pane, so there is no idle shell
+    left over to close. `rollback` is what to undo if the caller's next step fails.
     """
-    remote = plan["remote"]
     placement = plan["placement"]
-    # Settle the herdr agent name before anything is created: a collision fails the start after
-    # a container already exists. It is derived from the label rather than being the label —
-    # herdr's agent names are lowercase and space-free, pane labels are not.
-    plan["agent_name"] = unique_agent_name(
-        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
-
-    # herdr attaches an agent to a pane already sitting at its shell prompt, so the relay
-    # creates that pane. A new workspace or tab is born holding exactly one — that one becomes
-    # the agent's pane, so there is no idle shell left over to close. Remember what was created
-    # to roll it back if the agent never starts.
     rollback = None
 
     if placement == "new_workspace":
         data, err = _herdr_json(*workspace_create_args(plan["cwd"], plan["project_label"]), remote=remote)
         if err:
-            return None, err
+            return None, None, err
         workspace_id = dig(data, "result", "workspace", "workspace_id")
         target_pane = dig(data, "result", "root_pane", "pane_id")
         if not workspace_id or not target_pane:
-            return None, "workspace create returned no workspace_id or root pane"
+            return None, None, "workspace create returned no workspace_id or root pane"
         rollback = ("workspace", "close", workspace_id)
     elif placement == "new_tab":
         # A spacer in this workspace is already a shell sitting at the Project's cwd, which is
@@ -557,27 +608,48 @@ def start_agent_exec(plan):
                 target_pane = claimable_spacer(
                     dig_panes(listing), plan["workspace_id"], plan["cwd"])
         if target_pane:
-            # No rollback: the spacer stood here before this start, and a failed agent start
+            # No rollback: the spacer stood here before this call, and a failure downstream
             # leaves it exactly as it was found — still labelled, still reusable.
-            log.info("Reusing spacer %s for the new session", target_pane)
+            log.info("Reusing spacer %s for the new pane", target_pane)
         else:
             data, err = _herdr_json(
                 *tab_create_args(plan["workspace_id"], plan["cwd"], plan["label"]), remote=remote)
             if err:
-                return None, err
+                return None, None, err
             tab_id = dig(data, "result", "tab", "tab_id")
             target_pane = dig(data, "result", "root_pane", "pane_id")
             if not tab_id or not target_pane:
-                return None, "tab create returned no tab_id or root pane"
+                return None, None, "tab create returned no tab_id or root pane"
             rollback = ("tab", "close", tab_id)
     else:  # split — the source pane's sibling is the user's own, so only the new pane rolls back
         data, err = _herdr_json(*pane_split_args(plan["split_from"], plan["cwd"]), remote=remote)
         if err:
-            return None, err
+            return None, None, err
         target_pane = dig(data, "result", "pane", "pane_id")
         if not target_pane:
-            return None, "pane split returned no pane_id"
+            return None, None, "pane split returned no pane_id"
         rollback = ("pane", "close", target_pane)
+
+    return target_pane, rollback, None
+
+
+def start_agent_exec(plan):
+    """Run a validated start plan. Returns (pane_id, error).
+
+    Blocking; call through asyncio.to_thread. Never claims success after a partial
+    operation — a created workspace, tab, or pane may remain as empty native layout, but no
+    session is reported unless the agent actually started (spec §3).
+    """
+    remote = plan["remote"]
+    # Settle the herdr agent name before anything is created: a collision fails the start after
+    # a container already exists. It is derived from the label rather than being the label —
+    # herdr's agent names are lowercase and space-free, pane labels are not.
+    plan["agent_name"] = unique_agent_name(
+        agent_name_from_label(plan["label"], plan["name"]), live_agent_names(remote))
+
+    target_pane, rollback, err = _create_target_pane(plan, remote)
+    if err:
+        return None, err
 
     data, err = _herdr_json(*agent_start_args(plan["name"], plan["agent_name"], target_pane),
                             remote=remote, timeout=START_EXEC_TIMEOUT)
@@ -606,18 +678,57 @@ def start_agent_exec(plan):
     return pane_id, None
 
 
+def open_terminal_exec(plan):
+    """Run a validated open_terminal plan. Returns (pane_id, error). Blocking.
+
+    start_agent_exec without the agent — the pane herdr would have handed to `agent start` is
+    the deliverable, so the work stops once it has been created and named.
+    """
+    remote = plan["remote"]
+    target_pane, rollback, err = _create_target_pane(plan, remote)
+    if err:
+        return None, err
+
+    # Fatal here, unlike a start, and it takes the pane with it. There, a rename failure leaves a
+    # working agent worth more than its label; here the pane *is* the result, and a claimed spacer
+    # still carries the spacer label until this lands — which plan_slot may close on sight.
+    try:
+        rename = run_herdr_result(*pane_rename_args(target_pane, plan["label"]), remote=remote)
+    except Exception as e:
+        _rollback_layout(rollback, remote)
+        return None, f"terminal opened as {target_pane} but pane rename failed: {e}"
+    if rename.returncode != 0:
+        _rollback_layout(rollback, remote)
+        return None, f"terminal opened as {target_pane} but pane rename exited {rename.returncode}"
+
+    # Never fatal, same as a start: the terminal is up and usable at whatever width it landed on.
+    if plan.get("slot"):
+        slot_err = slot_exec(target_pane, plan["slot"], remote)
+        if slot_err:
+            log.warning("Terminal opened as %s but slot %r was not applied: %s",
+                        target_pane, plan["slot"], slot_err)
+    return target_pane, None
+
+
 async def _poll_once():
-        global latest_agents
-        agents = get_all_agents()
+        global latest_agents, latest_shells
+        agents, shells = get_all_panes()
         latest_agents = agents
+        latest_shells = shells
         ambiguous_panes.clear()
-        ambiguous_panes.update(ambiguous_pane_ids(agents))
+        # Over both lists: a shell pane ID is a per-server counter and collides across hosts
+        # exactly as an agent's does (D6). A pane the relay will address but has not been
+        # collision-checked is the bug this set exists to prevent.
+        ambiguous_panes.update(ambiguous_pane_ids(agents + shells))
+        shell_panes.clear()
+        shell_panes.update(s["pane_id"] for s in shells)
         # Always broadcast (even empty list) so clients stay in sync
+        for p in agents + shells:
+            pane_remote_map[p["pane_id"]] = p.get("remote")
+            known_panes.add(p["pane_id"])
         for a in agents:
-            pane_remote_map[a["pane_id"]] = a.get("remote")
-            known_panes.add(a["pane_id"])
             agent_cache[a["pane_id"]] = a
-        await broadcast({"type": "agents", "agents": agents})
+        await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
             if status == "blocked" and last_statuses.get(pid) != "blocked":
@@ -641,7 +752,7 @@ async def _poll_once():
                 await send_web_push("", "", clear=True)
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
-        current_pane_ids = {a["pane_id"] for a in agents}
+        current_pane_ids = {p["pane_id"] for p in agents + shells}
         stale = known_panes - current_pane_ids
         if stale:
             known_panes.difference_update(stale)
@@ -649,6 +760,18 @@ async def _poll_once():
                 pane_remote_map.pop(pid, None)
                 last_statuses.pop(pid, None)
                 agent_cache.pop(pid, None)
+
+
+def annotate_pane(pane):
+    """One pane through the Project rules, in place.
+
+    The poll path annotates a whole snapshot; a pushed event arrives one pane at a time and had
+    been skipping this entirely. The hook can only name a project after the pane's own cwd, so an
+    agent working in a subdirectory pushed itself as "web" and the update overwrote the label the
+    last snapshot had just resolved — the name flipped back and forth as events arrived.
+    """
+    annotate_agents([pane], PROJECTS)
+    return pane
 
 
 async def event_push():
@@ -664,7 +787,7 @@ async def event_push():
             )
             if update is None:
                 continue
-        agent_data = update["agent"] if update else event
+        agent_data = annotate_pane(update["agent"] if update else event)
         status = agent_data.get("status", "")
         host = agent_data.get("host", "local")
 
@@ -852,10 +975,19 @@ async def handle_client(ws, listener="lan"):
             # Presence of start_options is the browser's feature gate. Without Projects a
             # start can never resolve a cwd, so the control would only ever error (spec §3).
             if WRITE_EXT:
+                # `terminal` gates + New terminal the same way this message gates Start. It is
+                # only ever sent under WRITE_EXT, so a true here means both of open_terminal's
+                # gates are open — the client never has to reason about them separately.
                 await ws.send(json.dumps({
                     "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+                    "terminal": TERMINAL,
                 }))
-            await ws.send(json.dumps({"type": "agents", "agents": latest_agents}))
+        # The cached snapshot is what carries `shells`, and its presence is the client's terminal
+        # feature gate — so a terminal-mode relay sends it even without Projects, or a client
+        # connecting between polls would see no terminals and no gate. With both off this is the
+        # legacy wire unchanged: nothing until the first poll broadcast.
+        if PROJECTS or TERMINAL:
+            await ws.send(json.dumps(snapshot_message()))
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -867,6 +999,12 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
+                    continue
+                # Permanent, not a phase gate: SAFE_RESPONSES is a list of agent approval strings,
+                # and sending "yes, single permission" to a shell is meaningless at best.
+                if pane_id in shell_panes:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "respond is not available on a terminal pane"}))
                     continue
                 text = msg.get("text", "")
                 if text.strip().lower() not in SAFE_RESPONSES:
@@ -894,11 +1032,17 @@ async def handle_client(ws, listener="lan"):
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
                 # inserted, leaving only the ones the agent wrote. cols lets the client lay the
                 # result out at the pane's true width instead of guessing.
+                #
+                # "visible" is the only alternative offered, and it is what Clear screen asks for:
+                # a full-screen TUI repaints over a ctrl+l, so the only way to show a phone the
+                # live frame and nothing else is to read the frame rather than the backlog. An
+                # allowlist and not a pass-through — this string is an argv element.
+                source = "visible" if msg.get("source") == "visible" else "recent-unwrapped"
                 content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
-                                    "--source", "recent-unwrapped", remote=remote)
+                                    "--source", source, remote=remote)
                 await ws.send(json.dumps({
                     "type": "pane_content", "pane_id": pane_id, "content": content,
-                    "cols": pane_cols(pane_id, lines, remote=remote)}))
+                    "source": source, "cols": pane_cols(pane_id, lines, remote=remote)}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -1040,6 +1184,37 @@ async def handle_client(ws, listener="lan"):
                          pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
+            elif msg_type == "open_terminal":
+                # Both gates. Terminal mode alone lists and drives shells that already exist;
+                # creating one spawns a process on this machine, which is the line
+                # HERDR_ENABLE_WRITE_EXT draws and the one a start crosses too.
+                if not TERMINAL:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": "terminal mode disabled"}))
+                    continue
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    continue
+                plan, open_err = validate_open_terminal(
+                    msg, PROJECTS, latest_agents + latest_shells)
+                if open_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": open_err}))
+                    continue
+                detail = (f"project={plan['project_id']} placement={plan['placement']} "
+                          f"host={plan['remote'] or 'local'} label={plan['label']!r}")
+                log.info("Open terminal from %s (%s): %s", ip, device, detail)
+                audit("open_terminal", ip, device, "", detail)
+                pane_id, exec_err = await asyncio.to_thread(open_terminal_exec, plan)
+                if exec_err:
+                    log.warning("Open terminal failed (%s): %s", detail, exec_err)
+                    await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                              "ok": False, "error": exec_err}))
+                    continue
+                log.info("Open terminal ok: pane=%s label=%r", pane_id, plan["label"])
+                await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
+                                          "ok": True, "pane_id": pane_id, "label": plan["label"]}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
                 if sub and sub not in push_subscriptions:
@@ -1131,6 +1306,15 @@ async def main():
     if LAN_OPEN:
         log.warning("HERDR_LAN_OPEN=1: %s:%d accepts writes%s from any peer that can reach it",
                     LAN_BIND, WS_PORT, " and agent starts" if WRITE_EXT else "")
+
+    if TERMINAL:
+        log.info("HERDR_ENABLE_TERMINAL=1: shell panes are listed and readable")
+    if TERMINAL and LAN_OPEN:
+        # Said out loud because the combination was chosen deliberately, and the next person to
+        # read this log is the one who has to know it was.
+        log.warning(
+            "HERDR_ENABLE_TERMINAL=1 with HERDR_LAN_OPEN=1: any device that can reach the LAN "
+            "listener can send keys to a shell on this machine, with no token")
 
     if EXTERNAL_PORT:
         # Loopback only, always token: this is the port a tunnel is pointed at, and it must not

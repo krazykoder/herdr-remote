@@ -21,8 +21,10 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'recentFingerprint', 'agentSlash', 'reanchorSel',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
+               'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
+               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX',
+               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
+               'enterAction', 'ctrlChord'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
@@ -30,7 +32,9 @@ const ctx = vm.createContext({});
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
+       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
+       enterAction, ctrlChord} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -311,4 +315,260 @@ test('reanchorSel treats an empty selection as no selection', () => {
 test('reanchorSel preserves a blank line inside the block', () => {
   const t = doc('h', 'a', '', 'b', 'z');
   assert.deepEqual(reanchorSel(t, 'a\n\nb', 0, 2), [1, 3]);
+});
+
+// --- Session back/forward ------------------------------------------------------------------
+// The list is a browser history, not a most-recently-used order: the cursor moves over it and
+// only a new visit rewrites it.
+
+const allLive = () => true;
+
+test('navStep walks back and forward over live panes', () => {
+  const h = ['a', 'b', 'c'];
+  assert.equal(navStep(h, 2, -1, allLive, 'c'), 1);
+  assert.equal(navStep(h, 1, 1, allLive, 'b'), 2);
+});
+
+test('navStep reports no target at either end', () => {
+  const h = ['a', 'b'];
+  assert.equal(navStep(h, 0, -1, allLive, 'a'), -1);
+  assert.equal(navStep(h, 1, 1, allLive, 'b'), -1);
+  assert.equal(navStep([], -1, -1, allLive, null), -1);
+});
+
+test('navStep skips panes that are no longer live', () => {
+  // herdr reuses a pane_id once its session ends, so a dead entry must never be offered.
+  const live = id => id !== 'b';
+  assert.equal(navStep(['a', 'b', 'c'], 2, -1, live, 'c'), 0);
+});
+
+test('navStep reports nothing when everything that way is dead', () => {
+  assert.equal(navStep(['a', 'b'], 1, -1, id => id === 'b', 'b'), -1);
+});
+
+test('navStep never offers the pane already open', () => {
+  // Reachable when the same pane was visited twice in a row through another route.
+  assert.equal(navStep(['a', 'a'], 1, -1, allLive, 'a'), -1);
+});
+
+test('navPush drops the forward branch', () => {
+  // Went back to 'a', then opened 'd': 'b' and 'c' are no longer reachable forwards.
+  assert.deepEqual(navPush(['a', 'b', 'c'], 0, 'd', 20), ['a', 'd']);
+});
+
+test('navPush ignores reopening the pane already at the cursor', () => {
+  assert.deepEqual(navPush(['a', 'b'], 1, 'b', 20), ['a', 'b']);
+});
+
+test('navPush keeps the newest entries when it hits the cap', () => {
+  assert.deepEqual(navPush(['a', 'b', 'c'], 2, 'd', 3), ['b', 'c', 'd']);
+});
+
+test('navPush appends to an empty history', () => {
+  assert.deepEqual(navPush([], -1, 'a', 20), ['a']);
+});
+
+// --- Start dialog placement ----------------------------------------------------------------
+// renderStartTarget runs against the DOM, so it is sliced out and evaluated over a stub. What
+// is being pinned is one rule: New workspace asks for no target, so it must clear the error and
+// the disabled submit that a previous placement left behind. Without that, choosing New
+// workspace after "No live workspaces in this project" left the button dead and no session
+// could be started at all.
+
+function startDialogCtx(agents, placement, mode = 'agent', shells = []) {
+  const els = {
+    startPlacement: {value: placement},
+    startTargetRow: {innerHTML: 'stale'},
+    startError: {textContent: 'No live workspaces in this project',
+                 style: {display: 'block'}},
+    startSubmit: {disabled: true},
+  };
+  return {
+    els,
+    ctx: vm.createContext({
+      agents,
+      shells,
+      startMode: mode,
+      startProjectId: 'charts',
+      document: {getElementById: id => els[id] || (els[id] = {innerHTML: '', style: {}})},
+      fillSelect: (id, options) => { els[id + 'Options'] = options; return options.length; },
+      setStartError: text => {
+        els.startError.textContent = text || '';
+        els.startError.style.display = text ? 'block' : 'none';
+      },
+    }),
+  };
+}
+
+function runRenderStartTarget(agents, placement, mode = 'agent', shells = []) {
+  const start = HTML.indexOf('function renderStartTarget');
+  const end = HTML.indexOf('function submitStart', start);
+  assert.ok(start !== -1 && end > start, 'renderStartTarget block not found');
+  const {els, ctx} = startDialogCtx(agents, placement, mode, shells);
+  vm.runInContext(HTML.slice(start, end) + '\n;renderStartTarget();', ctx);
+  return els;
+}
+
+test('New workspace clears an error left by a placement that needed a target', () => {
+  // The reported bug: a Project with nothing running shows "No live workspaces in this project"
+  // on New tab, and switching to New workspace has to make the dialog usable again.
+  const els = runRenderStartTarget([], 'new_workspace');
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+  assert.equal(els.startTargetRow.innerHTML, '');
+});
+
+test('New tab with no live workspace still refuses, and says why', () => {
+  const els = runRenderStartTarget([], 'new_tab');
+  assert.equal(els.startSubmit.disabled, true);
+  assert.match(els.startError.textContent, /No live workspaces/);
+});
+
+test('New tab with a live workspace in this project is offered', () => {
+  const els = runRenderStartTarget(
+    [{pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', project: 'Charts'}], 'new_tab');
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+});
+
+// --- terminal shortcuts (T2) ---
+// The grid sends into a shell, so a blob that survives parsing is a blob whose entries will be
+// run. Everything below is about what must not survive it.
+
+const shortcut = (o = {}) => ({label: 'ls', text: 'ls -la', ...o});
+const blob = items => JSON.stringify({version: 1, items});
+
+test('parseTermShortcuts reads a well-formed blob', () => {
+  assert.deepEqual(parseTermShortcuts(blob([shortcut()])),
+                   [{label: 'ls', text: 'ls -la', danger: false}]);
+});
+
+test('parseTermShortcuts discards corrupt, wrong-version, and malformed values', () => {
+  for (const raw of ['', 'not json', '{', 'null', '[]',
+                     JSON.stringify({version: 2, items: [shortcut()]}),
+                     JSON.stringify({version: 1, items: 'nope'}),
+                     JSON.stringify({version: 1, pairs: [shortcut()]})]) {
+    assert.deepEqual(parseTermShortcuts(raw), [], `should be empty for ${JSON.stringify(raw)}`);
+  }
+});
+
+test('parseTermShortcuts drops entries with no label, no text, or the wrong types', () => {
+  const items = [shortcut({label: ''}), shortcut({text: ''}), shortcut({label: 7}),
+                 shortcut({text: ['ls']}), {}, null, shortcut()];
+  assert.deepEqual(parseTermShortcuts(blob(items)).map(s => s.label), ['ls']);
+});
+
+test('parseTermShortcuts drops a command the relay would refuse anyway', () => {
+  const items = [shortcut({label: 'huge', text: 'x'.repeat(SEND_TEXT_MAX + 1)}), shortcut()];
+  assert.deepEqual(parseTermShortcuts(blob(items)).map(s => s.label), ['ls']);
+});
+
+test('parseTermShortcuts caps the grid and coerces danger to a boolean', () => {
+  const items = Array.from({length: MAX_TERM_SHORTCUTS + 5}, () => shortcut({danger: 'yes'}));
+  const out = parseTermShortcuts(blob(items));
+  assert.equal(out.length, MAX_TERM_SHORTCUTS);
+  assert.equal(out[0].danger, true);
+});
+
+test('parseTermShortcuts keeps only the three fields the grid renders', () => {
+  const [only] = parseTermShortcuts(blob([shortcut({onclick: 'alert(1)', danger: true})]));
+  assert.deepEqual(Object.keys(only).sort(), ['danger', 'label', 'text']);
+});
+
+test('escapeHtml keeps an armed shortcut label as text', () => {
+  assert.equal(escapeHtml('Run <img src=x onerror=alert(1)>?'),
+               'Run &lt;img src=x onerror=alert(1)&gt;?');
+});
+
+test('every shipped default is a read-only command and survives its own parser', () => {
+  assert.deepEqual(parseTermShortcuts(blob(DEFAULT_TERM_SHORTCUTS)).map(s => s.label),
+                   DEFAULT_TERM_SHORTCUTS.map(s => s.label));
+  for (const s of DEFAULT_TERM_SHORTCUTS) {
+    assert.equal(s.danger, undefined, `${s.label} ships marked destructive`);
+    assert.doesNotMatch(s.text, /\b(rm|sudo|kill|reset|clean|mv|dd)\b/, `${s.label} writes`);
+  }
+});
+
+// --- New terminal placement (T3) ---
+// The same dialog, one list wider: a terminal may be opened beside a terminal, and in a
+// workspace that holds nothing else. Reading only `agents` here refused both.
+
+test('a workspace holding only terminals is a target for a new terminal', () => {
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: 'build'};
+  const els = runRenderStartTarget([], 'new_tab', 'terminal', [shell]);
+  assert.equal(els.startSubmit.disabled, false);
+  assert.equal(els.startError.textContent, '');
+});
+
+test('but not for a new session, which needs a pane of its own', () => {
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: 'build'};
+  const els = runRenderStartTarget([], 'new_tab', 'agent', [shell]);
+  assert.equal(els.startSubmit.disabled, true);
+  assert.match(els.startError.textContent, /No live workspaces/);
+});
+
+test('a terminal is offered as a split source, and named rather than "undefined"', () => {
+  // A shell has no `agent`, and the option label used to fall through to it.
+  const shell = {pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', label: ''};
+  const els = runRenderStartTarget([], 'split', 'terminal', [shell]);
+  assert.equal(els.startSubmit.disabled, false);
+  assert.deepEqual(els.startTargetOptions, [['w1:p1', 'w1:p1 · w1:p1']]);
+});
+
+// --- Enter in the composer ---
+
+const key = (over) => Object.assign({key: 'Enter', metaKey: false, ctrlKey: false, shiftKey: false}, over);
+
+test('Ctrl/Cmd+Enter sends whatever the pane is and whatever the setting is', () => {
+  for (const shell of [true, false]) for (const enterSends of [true, false]) {
+    assert.equal(enterAction(key({metaKey: true}), {shell, enterSends}), 'send');
+    assert.equal(enterAction(key({ctrlKey: true}), {shell, enterSends}), 'send');
+  }
+});
+
+test('a bare Enter sends only over a terminal with the setting on', () => {
+  assert.equal(enterAction(key(), {shell: true, enterSends: true}), 'send');
+  assert.equal(enterAction(key(), {shell: true, enterSends: false}), 'newline');
+  assert.equal(enterAction(key(), {shell: false, enterSends: true}), 'newline');
+  assert.equal(enterAction(key(), {shell: false, enterSends: false}), 'newline');
+});
+
+test('Shift+Enter always writes a newline', () => {
+  assert.equal(enterAction(key({shiftKey: true}), {shell: true, enterSends: true}), 'newline');
+});
+
+test('other keys are not the composer key handler business', () => {
+  assert.equal(enterAction(key({key: 'a'}), {shell: true, enterSends: true}), 'none');
+});
+
+// --- Ctrl chords in the composer ---
+
+const ALLOWED = ['ctrl+c', 'ctrl+d', 'ctrl+u', 'ctrl+r', 'ctrl+l', 'ctrl+z'];
+const chord = (over) => Object.assign(
+  {key: 'c', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false}, over);
+const at = (over) => Object.assign({shell: true, empty: true, allowed: ALLOWED}, over);
+
+test('an allowed Ctrl chord in an empty terminal composer goes to the pane', () => {
+  assert.equal(ctrlChord(chord(), at()), 'ctrl+c');
+  assert.equal(ctrlChord(chord({key: 'Z'}), at()), 'ctrl+z', 'case does not matter');
+});
+
+test('the browser keeps the chord when there is text to copy, cut, or undo', () => {
+  assert.equal(ctrlChord(chord(), at({empty: false})), null);
+});
+
+test('an agent composer never sends a chord', () => {
+  assert.equal(ctrlChord(chord(), at({shell: false})), null);
+});
+
+test('Cmd, Alt, and Shift are left to the platform', () => {
+  for (const mod of ['metaKey', 'altKey', 'shiftKey']) {
+    assert.equal(ctrlChord(chord({[mod]: true}), at()), null, `${mod} must not send`);
+  }
+  assert.equal(ctrlChord(chord({ctrlKey: false}), at()), null, 'a bare letter is typing');
+});
+
+test('a letter outside the allowlist is typed, not sent', () => {
+  assert.equal(ctrlChord(chord({key: 'a'}), at()), null);
+  assert.equal(ctrlChord(chord({key: 'v'}), at()), null, 'paste survives');
 });

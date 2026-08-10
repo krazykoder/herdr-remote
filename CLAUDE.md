@@ -59,9 +59,9 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # contract — run it after a herdr upgrade.
 .venv313/bin/python tests/e2e/e2e_pane_slots.py
 
-# Frontend pair/transfer logic. Extracts the pure block from web/index.html
-# between its markers, so the single-file app keeps its no-build-step property.
-node --test tests/test_pairs.js
+# Frontend logic. Each extracts a block from web/index.html and runs it in a vm context,
+# so the single-file app keeps its no-build-step property.
+node --test tests/test_pairs.js tests/test_ctrl_keys.js tests/test_relay_url.js
 ```
 
 Editing `web/` needs only a browser reload — the relay reads `index.html` from disk on every
@@ -139,6 +139,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
 | `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
 | `HERDR_START_AGENTS` | Comma-separated allowlist of herdr agent *kinds* for Start session (default: `codex,claude,pi`) |
+| `HERDR_ENABLE_TERMINAL` | `1` lists shell panes (panes with no agent) as Terminals and makes them readable and writable. Off means they are never parsed, so the wire is unchanged. Creating one also needs `HERDR_ENABLE_WRITE_EXT` |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 | `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |
@@ -154,9 +155,9 @@ line ruler for picking a range of pane lines with a finger.
 
 Messages are JSON with a `type` field:
 
-**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols`)
+**Server → Client:** `agents` (complete state snapshot; carries `shells` when terminal mode is on), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols` and the `source` it was read from)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate)
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content; optional `source` — `recent-unwrapped` by default, or `visible` for the live frame with no backlog), `send_keys` (send key sequences), `send_text` (raw text without newline), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate), `open_terminal` (create a shell pane at a Project's cwd; needs `HERDR_ENABLE_TERMINAL` **and** `HERDR_ENABLE_WRITE_EXT`)
 
 ## Deployment
 
