@@ -762,6 +762,18 @@ async def _poll_once():
                 agent_cache.pop(pid, None)
 
 
+def annotate_pane(pane):
+    """One pane through the Project rules, in place.
+
+    The poll path annotates a whole snapshot; a pushed event arrives one pane at a time and had
+    been skipping this entirely. The hook can only name a project after the pane's own cwd, so an
+    agent working in a subdirectory pushed itself as "web" and the update overwrote the label the
+    last snapshot had just resolved — the name flipped back and forth as events arrived.
+    """
+    annotate_agents([pane], PROJECTS)
+    return pane
+
+
 async def event_push():
     while True:
         event = await event_queue.get()
@@ -775,7 +787,7 @@ async def event_push():
             )
             if update is None:
                 continue
-        agent_data = update["agent"] if update else event
+        agent_data = annotate_pane(update["agent"] if update else event)
         status = agent_data.get("status", "")
         host = agent_data.get("host", "local")
 

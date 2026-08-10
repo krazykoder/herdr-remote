@@ -119,13 +119,22 @@ def annotate_agents(agents, projects):
 
     Never writes null or "" — grouping travels on full snapshots only (D10), and a full
     snapshot replaces the client's list, so an absent key already clears stale grouping.
+
+    A matched pane also inherits the Project's label as its `project`. split_panes can only
+    guess that name from the pane's own cwd, so an agent or terminal started in a subdirectory
+    called itself "relay" or "web" — two projects, one repo, as far as every client could tell.
+    The configured root is the better answer for everything beneath it. Only overwritten, never
+    added: the key is already in both pane shapes, so the wire's key order is untouched.
     """
     if not projects:
         return agents
+    labels = {p["id"]: p["label"] for p in projects}
     for a in agents:
         pid = resolve_project_id(a.get("cwd", ""), a.get("host", "local"), projects)
         if pid:
             a["project_id"] = pid
+            if "project" in a:
+                a["project"] = labels[pid]
     return agents
 
 
