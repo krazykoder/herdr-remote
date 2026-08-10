@@ -771,20 +771,20 @@
       overscroll-behavior-y: contain;
     }
 
-    /* Reflow — the viewport decides where lines break. The hanging indent is the honesty: a
-       continuation row is visibly indented, so a wrap the phone inserted never reads as a line
-       the agent wrote. */
+    /* Reflow — the viewport decides where lines break.
+
+       Same 10px box as every other mode. It used to hang the first row 2ch left of its
+       continuations so a viewport wrap never read as a break the agent wrote — but at phone
+       widths that indent is itself a break in the text, and it cost 2ch of every line to say
+       something the reader can infer. Full width, no indent, at the user's direction.
+
+       Nothing is reserved for the ruler either. Its strip is transparent, the text under it stays
+       legible, and the other two modes have always run beneath it. */
     .term-content.wrap-reflow {
       overflow-x: hidden;
       white-space: pre-wrap;
       word-wrap: break-word;
       word-break: break-all;
-      text-indent: -2ch;
-      padding-left: calc(10px + 2ch);
-      /* Clear of the ruler. The other two modes pan under it and the text stays reachable by
-         scrolling; a reflowed line cannot be panned, so a wrap point beneath the strip would put
-         those characters permanently under a finger target. */
-      padding-right: 36px;
     }
 
     /* True size and Fit width both keep the agent's breaks and only its breaks. `pre` is what
@@ -977,6 +977,23 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
+    }
+
+    /* Back and forward pin to the ends of the bar and never stretch — the approval buttons
+       between them are the ones worth a wide target, and a nav button that grew to half the
+       screen when nothing else was there would be the easiest thing to hit by accident. */
+    .quick-actions button.nav {
+      flex: 0 0 auto;
+      min-width: 44px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-size: 1rem;
+    }
+
+    .quick-actions button.nav:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
 
     .btn-yes {
@@ -1461,6 +1478,10 @@
         <div class="term-menu" id="termMenu" style="display:none" role="menu">
           <button class="menu-item" role="menuitem" onclick="closeTermMenu(); renamePane()">Rename pane</button>
           <button class="menu-item" role="menuitem" onclick="closeTermMenu(); adjustPane()">Fit pane to this screen</button>
+          <button class="menu-item" role="menuitem" id="menuStart" hidden
+            onclick="closeTermMenu(); startInThisProject()">New session</button>
+          <button class="menu-item" role="menuitem" id="qaToggle"
+            onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Pair items, present only while this pane belongs to a pair — renderPairStrip owns it. -->
           <div id="termMenuPair"></div>
           <div class="menu-sep"></div>
@@ -1846,6 +1867,25 @@
       const start = text.slice(0, at).split('\n').length - 1;
       return [start, start + selText.split('\n').length - 1];
     }
+
+    // Back/forward over the visited-pane list. Split out here because the branch that matters is
+    // the skipping: a session ends, and herdr can hand its pane_id to something else, so every
+    // candidate has to be checked against the live snapshot before it is offered.
+    //
+    // Returns the index to move to, or -1 when there is nothing that way.
+    function navStep(history, index, step, isLive, current) {
+      for (let i = index + step; i >= 0 && i < history.length; i += step) {
+        if (history[i] !== current && isLive(history[i])) return i;
+      }
+      return -1;
+    }
+
+    // Visiting a pane truncates anything ahead of the cursor, so going back and then opening
+    // something else never leaves a forward branch nobody can reach. Returns the new list.
+    function navPush(history, index, paneId, max) {
+      if (history[index] === paneId) return history.slice();
+      return history.slice(0, index + 1).concat([paneId]).slice(-max);
+    }
     // --- P3 pair logic (pure) --- end
 
     // Settings — auto-detect relay when served from same origin
@@ -2161,6 +2201,9 @@
           prevStatuses[a.pane_id] = a.status;
         }
         agents = msg.agents; render();
+        // Approvals and the back/forward targets both follow the snapshot: a session that just
+        // blocked, or one that just ended, changes what the bar should offer.
+        renderQuickActions();
         openPendingStart();
       }
       else if (msg.type === 'agent_update') {
@@ -2176,6 +2219,7 @@
         }
         prevStatuses[update.pane_id] = update.status;
         render();
+        renderQuickActions();
       }
       else if (msg.type === 'blocked') {
         const a = agents.find(x => x.pane_id === msg.pane_id);
@@ -2185,6 +2229,7 @@
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
+        renderQuickActions();  // the approval buttons belong on screen the moment it blocks
       } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
@@ -2387,6 +2432,14 @@
       // Never over a pane the user has since opened themselves — the start was a while ago in
       // phone terms, and yanking them out of what they are reading is worse than not landing.
       if (!activePane) openTerminal(a.pane_id);
+    }
+
+    // Spawn into the Project the open pane belongs to, without going back to the list to find
+    // the card for it. Same dialog, same validation — only the Project is answered in advance.
+    function startInThisProject() {
+      const a = agents.find(x => x.pane_id === activePane);
+      if (!a || !a.project_id) return;
+      openStartDialog(a.project_id);
     }
 
     function restoreStartChoice(id, key, fallback) {
@@ -2898,8 +2951,25 @@
     function toggleTermMenu() {
       const el = document.getElementById('termMenu');
       const show = el.style.display === 'none';
+      if (show) renderTermMenuState();
       el.style.display = show ? '' : 'none';
       document.getElementById('termMenuBtn').setAttribute('aria-expanded', String(show));
+    }
+
+    // The two items whose text depends on live state, refreshed when the menu opens rather than
+    // kept in sync from everywhere that could change it.
+    function renderTermMenuState() {
+      // "bar", because the composer already has a button whose label is Quick actions and which
+      // opens something else entirely.
+      document.getElementById('qaToggle').textContent =
+        quickActionsOn() ? 'Hide quick actions bar' : 'Show quick actions bar';
+      const a = agents.find(x => x.pane_id === activePane);
+      const start = document.getElementById('menuStart');
+      // Absent, not disabled, when the pane's Project is unknown or Projects are off: a start
+      // needs a project_id, and there is nothing useful to open the dialog on without one.
+      const can = !!(a && a.project_id && startOptions);
+      start.hidden = !can;
+      if (can) start.textContent = `New session in ${a.project || a.project_id}`;
     }
 
     function closeTermMenu() {
@@ -3222,6 +3292,7 @@
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       paneSource = 'recent-unwrapped';  // a clear belongs to the pane it was made on
       noteRecent(paneId);
+      noteVisit(paneId);
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
       document.getElementById('agentListView').style.display = 'none';
@@ -3238,21 +3309,8 @@
       applyWrapMode();
       renderStatusBar();
       document.getElementById('terminalView').classList.add('active');
-      const qa = document.getElementById('quickActions');
-      const ak = document.getElementById('actionKeys');
-      if (a && a.status === 'blocked') {
-        const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
-        qa.innerHTML = opts.map(o => {
-          const cls = o.includes('yes') || o.includes('approve') ? 'btn-yes' : o.includes('trust') ? 'btn-trust' : 'btn-no';
-          const icon = o.includes('yes') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : o.includes('trust') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-          const label = o.includes('yes') ? 'Yes' : o.includes('trust') ? 'Yes All' : 'No';
-          return `<button class="${cls}" onclick="respond('${o.replace(/'/g, "\\'")}')">${icon} ${label}</button>`;
-        }).join('');
-        ak.innerHTML = '';
-      } else {
-        qa.innerHTML = '';
-        ak.innerHTML = '';
-      }
+      document.getElementById('actionKeys').innerHTML = '';
+      renderQuickActions();
       renderPairStrip();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       refreshPane();
@@ -3262,6 +3320,7 @@
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
       disarmClear();
+      renderQuickActions();  // reads activePane, so it empties the bar now that there is none
       clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
@@ -3272,6 +3331,70 @@
       document.getElementById('agentListView').style.display = '';
       paneStampAt = null;
       renderStatusBar();
+    }
+
+    // --- Session history ---
+    // Back and forward across the panes this device has opened, the way a browser does it: a
+    // list plus a cursor, not a most-recently-used order. The Recents list already holds MRU,
+    // and stepping through something that reorders itself as you step is not navigation.
+    const NAV_MAX = 20;
+    let navHistory = [], navIndex = -1, navigating = false;
+
+    function noteVisit(paneId) {
+      if (navigating || navHistory[navIndex] === paneId) return;
+      navHistory = navPush(navHistory, navIndex, paneId, NAV_MAX);
+      navIndex = navHistory.length - 1;
+    }
+
+    function navTarget(step) {
+      return navStep(navHistory, navIndex, step,
+                     id => agents.some(a => a.pane_id === id), activePane);
+    }
+
+    function navGo(step) {
+      const i = navTarget(step);
+      if (i < 0) return;
+      navIndex = i;
+      navigating = true;
+      try { openTerminal(navHistory[i]); } finally { navigating = false; }
+      if (window.cue) cue('page');
+    }
+
+    const QA_KEY = 'herdr_quick_actions';
+    function quickActionsOn() { return localStorage.getItem(QA_KEY) !== 'off'; }
+
+    function toggleQuickActions() {
+      try { localStorage.setItem(QA_KEY, quickActionsOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: session-only */ }
+      renderQuickActions();
+      renderTermMenuState();
+    }
+
+    function renderQuickActions() {
+      const qa = document.getElementById('quickActions');
+      if (!activePane) { qa.innerHTML = ''; return; }
+      const a = agents.find(x => x.pane_id === activePane);
+      const blocked = a && a.status === 'blocked';
+      // An approval prompt is not a quick action the user chose to hide. Turning the bar off
+      // leaves the phone able to approve — otherwise the setting would quietly cost it the one
+      // thing this app exists to do.
+      if (!blocked && !quickActionsOn()) { qa.innerHTML = ''; return; }
+      const nav = (step, glyph, label) =>
+        `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
+        `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      let middle = '';
+      if (blocked) {
+        const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
+        middle = opts.map(o => {
+          const cls = o.includes('yes') || o.includes('approve') ? 'btn-yes' : o.includes('trust') ? 'btn-trust' : 'btn-no';
+          const icon = o.includes('yes') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : o.includes('trust') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+          const label = o.includes('yes') ? 'Yes' : o.includes('trust') ? 'Yes All' : 'No';
+          return `<button class="${cls}" onclick="respond('${o.replace(/'/g, "\\'")}')">${icon} ${label}</button>`;
+        }).join('');
+      }
+      qa.innerHTML = quickActionsOn()
+        ? nav(-1, '‹', 'Previous session') + middle + nav(1, '›', 'Next session')
+        : middle;
     }
 
     let paneLines = 200;
@@ -3511,7 +3634,18 @@
 
     function toggleArrows() { }
     function hideArrows() { }
-    function respond(t) { if (!ws || !activePane) return; if (window.cue) cue('success'); ws.send(JSON.stringify({ type: 'respond', pane_id: activePane, text: t })); document.getElementById('quickActions').innerHTML = ''; setTimeout(refreshPane, 500); }
+    function respond(t) {
+      if (!ws || !activePane) return;
+      if (window.cue) cue('success');
+      ws.send(JSON.stringify({ type: 'respond', pane_id: activePane, text: t }));
+      // Optimistic, and corrected by the next poll: the prompt has been answered, so the approval
+      // buttons go now rather than lingering for up to three seconds over an agent that is
+      // already working. Re-rendered rather than emptied, so back and forward survive it.
+      const a = agents.find(x => x.pane_id === activePane);
+      if (a) a.status = 'busy';
+      renderQuickActions();
+      setTimeout(refreshPane, 500);
+    }
     // Enter inserts a newline; Ctrl/Cmd+Enter sends. Reversed from P2 deliberately: a transferred
     // payload is multi-line, and submitting it on the first Enter defeats the review checkpoint.
     document.getElementById('termInput').addEventListener('keydown', e => {

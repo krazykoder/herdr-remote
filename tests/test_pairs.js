@@ -21,7 +21,7 @@ assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/inde
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
-               'recentFingerprint', 'agentSlash', 'reanchorSel',
+               'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
                'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX'];
 
 const ctx = vm.createContext({});
@@ -30,7 +30,7 @@ const ctx = vm.createContext({});
 vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
+       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -311,4 +311,55 @@ test('reanchorSel treats an empty selection as no selection', () => {
 test('reanchorSel preserves a blank line inside the block', () => {
   const t = doc('h', 'a', '', 'b', 'z');
   assert.deepEqual(reanchorSel(t, 'a\n\nb', 0, 2), [1, 3]);
+});
+
+// --- Session back/forward ------------------------------------------------------------------
+// The list is a browser history, not a most-recently-used order: the cursor moves over it and
+// only a new visit rewrites it.
+
+const allLive = () => true;
+
+test('navStep walks back and forward over live panes', () => {
+  const h = ['a', 'b', 'c'];
+  assert.equal(navStep(h, 2, -1, allLive, 'c'), 1);
+  assert.equal(navStep(h, 1, 1, allLive, 'b'), 2);
+});
+
+test('navStep reports no target at either end', () => {
+  const h = ['a', 'b'];
+  assert.equal(navStep(h, 0, -1, allLive, 'a'), -1);
+  assert.equal(navStep(h, 1, 1, allLive, 'b'), -1);
+  assert.equal(navStep([], -1, -1, allLive, null), -1);
+});
+
+test('navStep skips panes that are no longer live', () => {
+  // herdr reuses a pane_id once its session ends, so a dead entry must never be offered.
+  const live = id => id !== 'b';
+  assert.equal(navStep(['a', 'b', 'c'], 2, -1, live, 'c'), 0);
+});
+
+test('navStep reports nothing when everything that way is dead', () => {
+  assert.equal(navStep(['a', 'b'], 1, -1, id => id === 'b', 'b'), -1);
+});
+
+test('navStep never offers the pane already open', () => {
+  // Reachable when the same pane was visited twice in a row through another route.
+  assert.equal(navStep(['a', 'a'], 1, -1, allLive, 'a'), -1);
+});
+
+test('navPush drops the forward branch', () => {
+  // Went back to 'a', then opened 'd': 'b' and 'c' are no longer reachable forwards.
+  assert.deepEqual(navPush(['a', 'b', 'c'], 0, 'd', 20), ['a', 'd']);
+});
+
+test('navPush ignores reopening the pane already at the cursor', () => {
+  assert.deepEqual(navPush(['a', 'b'], 1, 'b', 20), ['a', 'b']);
+});
+
+test('navPush keeps the newest entries when it hits the cap', () => {
+  assert.deepEqual(navPush(['a', 'b', 'c'], 2, 'd', 3), ['b', 'c', 'd']);
+});
+
+test('navPush appends to an empty history', () => {
+  assert.deepEqual(navPush([], -1, 'a', 20), ['a']);
 });
