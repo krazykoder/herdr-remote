@@ -781,6 +781,10 @@
       word-break: break-all;
       text-indent: -2ch;
       padding-left: calc(10px + 2ch);
+      /* Clear of the ruler. The other two modes pan under it and the text stays reachable by
+         scrolling; a reflowed line cannot be panned, so a wrap point beneath the strip would put
+         those characters permanently under a finger target. */
+      padding-right: 36px;
     }
 
     /* True size and Fit width both keep the agent's breaks and only its breaks. `pre` is what
@@ -798,8 +802,9 @@
 
        Selection is a range of line indices, never a character range — which is also what makes
        it cheap: with `white-space: pre` one logical line is one visual row of known height, so
-       index <-> y is arithmetic and the whole feature costs one band element. Reflow breaks
-       that (a line spans an unknown number of rows), so the ruler is not offered there. */
+       index <-> y is arithmetic and the whole feature costs one band element. In Reflow a line
+       spans however many rows the width gives it, so those two numbers are measured instead —
+       see rowGeom. Same band, same handles, same selection model. */
     .term-wrap {
       position: relative;
       flex: 1;
@@ -2116,6 +2121,11 @@
           const asked = document.getElementById('startName').value.trim();
           if (asked && msg.label && msg.label !== asked) showToast(`Name taken — started as "${msg.label}"`);
           closeStart();
+          // Open it once the poll has seen it. Not here: the session is not in `agents` yet, and
+          // openTerminal reads the snapshot for the pane's title and its pair. Starting a session
+          // is asking to work in it, so landing on the list and hunting for it is a step nobody
+          // wanted.
+          pendingStart = msg.pane_id || null;
         }
         else setStartError(msg.error || 'start failed');
       }
@@ -2151,6 +2161,7 @@
           prevStatuses[a.pane_id] = a.status;
         }
         agents = msg.agents; render();
+        openPendingStart();
       }
       else if (msg.type === 'agent_update') {
         const update = msg.agent;
@@ -2363,6 +2374,21 @@
     const START_AGENT_KEY = 'herdr_start_agent';
     const START_PLACE_KEY = 'herdr_start_placement';
 
+    // A session the relay just started, waiting for the poll to catch up so it can be opened.
+    let pendingStart = null;
+
+    function openPendingStart() {
+      if (!pendingStart) return;
+      const a = agents.find(x => x.pane_id === pendingStart);
+      if (!a) return;
+      // Cleared before opening, not after: openTerminal can throw on a half-rendered snapshot,
+      // and a pending id that survives that would reopen the pane on every poll from then on.
+      pendingStart = null;
+      // Never over a pane the user has since opened themselves — the start was a while ago in
+      // phone terms, and yanking them out of what they are reading is worse than not landing.
+      if (!activePane) openTerminal(a.pane_id);
+    }
+
     function restoreStartChoice(id, key, fallback) {
       const el = document.getElementById(id);
       // Falls back when the remembered value is gone — an agent dropped from the relay's
@@ -2567,7 +2593,8 @@
       }
       renderWrapHint();
       syncFontButtons();
-      // Reflow makes line index <-> y unknowable, so the ruler goes away with it.
+      // Width and wrapping both just moved, so every measured row is stale.
+      invalidateRows();
       drawSel();
     }
 
@@ -2588,11 +2615,11 @@
     }
 
     // --- Line ruler ---
-    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — that
-    // is what the non-wrapping modes bought, and it is why the ruler is hidden in Reflow.
-    let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
+    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — which
+    // is what keeps it cheap in every wrap mode, including the one that has to measure.
+    let selA = null, selB = null, selText = '', paneText = '', paneRows = [], lineStarts = [];
 
-    function rulerOn() { return currentWrapMode() !== 'reflow' && !!activePane; }
+    function rulerOn() { return !!activePane; }
 
     function clearSel() { selA = selB = null; selText = ''; drawSel(); }
 
@@ -2601,10 +2628,55 @@
       return { el, lh: parseFloat(cs.lineHeight) || 16, pad: parseFloat(cs.paddingTop) || 0 };
     }
 
+    // Where each line sits, in content coordinates — measured from the top of the text and
+    // independent of scrollTop, so the cache below survives scrolling.
+    //
+    // In the non-wrapping modes one logical line is one visual row of known height, so this is
+    // arithmetic. Reflow breaks that: a line spans however many rows the screen width and the
+    // break rules give it, and `word-break: break-all` plus a hanging indent plus double-width
+    // glyphs put that beyond any formula worth trusting. So it is measured with a Range over the
+    // text node, which is exact under every one of those.
+    let rowCache = null;
+
+    function invalidateRows() { rowCache = null; }
+
+    function rowGeom(i) {
+      const { el, lh, pad } = lineGeom();
+      if (currentWrapMode() !== 'reflow') return { top: pad + i * lh, height: lh };
+      const node = el.firstChild;
+      // Only ever a single text node in practice; anything else means the pane is not rendered
+      // yet, and the arithmetic is a better answer than a thrown range.
+      if (!node || node.nodeType !== 3) return { top: pad + i * lh, height: lh };
+      if (!rowCache) rowCache = new Map();
+      const hit = rowCache.get(i);
+      if (hit) return hit;
+      const start = lineStarts[i];
+      if (start === undefined) return { top: pad + i * lh, height: lh };
+      const r = document.createRange();
+      // Through the newline, not just the text: a blank line is a zero-length range, and a
+      // zero-length range has no rect to read a height off.
+      r.setStart(node, start);
+      r.setEnd(node, Math.min(node.length, start + (paneRows[i] || '').length + 1));
+      const box = r.getBoundingClientRect();
+      const base = el.getBoundingClientRect().top - el.scrollTop;
+      const geom = { top: box.top - base, height: box.height || lh };
+      rowCache.set(i, geom);
+      return geom;
+    }
+
     function lineAt(clientY) {
       const { el, lh, pad } = lineGeom();
       const y = clientY - el.getBoundingClientRect().top + el.scrollTop - pad;
-      return Math.min(paneRows.length - 1, Math.max(0, Math.floor(y / lh)));
+      const last = paneRows.length - 1;
+      if (currentWrapMode() !== 'reflow') return Math.min(last, Math.max(0, Math.floor(y / lh)));
+      // Rows are ordered top to bottom, so the line under a point is a binary search — about
+      // eleven measurements on a 2000-line pane, rather than one per line.
+      let lo = 0, hi = last;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (rowGeom(mid).top - pad <= y) lo = mid; else hi = mid - 1;
+      }
+      return Math.min(last, Math.max(0, lo));
     }
 
     function drawSel() {
@@ -2616,10 +2688,11 @@
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;
-      const { el, lh, pad } = lineGeom();
+      const { el } = lineGeom();
       const a = Math.min(selA, selB), b = Math.max(selA, selB);
       selText = paneRows.slice(a, b + 1).join('\n');
-      const y0 = pad + a * lh - el.scrollTop, y1 = y0 + (b - a + 1) * lh;
+      const first = rowGeom(a), last = rowGeom(b);
+      const y0 = first.top - el.scrollTop, y1 = last.top + last.height - el.scrollTop;
       band.style.top = y0 + 'px';
       band.style.height = (y1 - y0) + 'px';
       const h = document.getElementById('termWrap').clientHeight;
@@ -2643,6 +2716,14 @@
     function setPaneText(next) {
       paneText = next;
       paneRows = next.split('\n');
+      // Character offset of each line, which is what a Range needs. Built here because this is
+      // the one place the text changes.
+      lineStarts = [];
+      for (let i = 0, at = 0; i < paneRows.length; i++) {
+        lineStarts.push(at);
+        at += paneRows[i].length + 1;
+      }
+      invalidateRows();
       if (selA !== null) {
         const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
         if (!at) { clearSel(); return; }
@@ -2748,6 +2829,7 @@
       try { localStorage.setItem(FONT_KEY, v); } catch (e) { /* private mode: session-only */ }
       document.getElementById('fontValue').textContent = v + 'px';
       syncFontButtons();
+      invalidateRows();
       drawSel();  // the line height just changed, so the band no longer covers those lines
     }
 
@@ -2953,7 +3035,16 @@
       const strip = document.getElementById('pairStrip');
       const menu = document.getElementById('termMenuPair');
       const pair = activePane ? pairFor(pairs, activePane) : null;
-      if (!pair) { strip.style.display = 'none'; strip.innerHTML = ''; menu.innerHTML = ''; return; }
+      if (!pair) {
+        strip.style.display = 'none';
+        strip.innerHTML = '';
+        // No strip without a pair — but the menu still has to offer making one, or an unpaired
+        // pane has no route to pairing from inside the pane at all.
+        menu.innerHTML = activePane
+          ? `<button class="menu-item" role="menuitem" onclick="closeTermMenu(); openPairDialog(activePane)">Pair with…</button>`
+          : '';
+        return;
+      }
       const health = pairHealth(pair, agents);
       const partner = partnerOf(pair, activePane);
       const mine = memberOf(pair, activePane);
@@ -3129,6 +3220,7 @@
       // switchToPartner and the header chips both land straight on this without closing first.
       clearInterval(refreshInterval);
       activePane = paneId; paneLines = 200; userScrolledUp = false;
+      paneSource = 'recent-unwrapped';  // a clear belongs to the pane it was made on
       noteRecent(paneId);
       const a = agents.find(x => x.pane_id === paneId);
       document.getElementById('termTitle').textContent = a ? paneTitle(a) : paneId;
@@ -3183,7 +3275,13 @@
     }
 
     let paneLines = 200;
-    function refreshPane() { if (ws && activePane) ws.send(JSON.stringify({ type: 'read_pane', pane_id: activePane, lines: paneLines })); }
+    // Which end of the pane is being read. 'visible' is the live frame and nothing behind it,
+    // which is what Clear screen leaves behind; anything that asks for more history puts it back.
+    let paneSource = 'recent-unwrapped';
+    function refreshPane() {
+      if (ws && activePane) ws.send(JSON.stringify(
+        { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+    }
 
     // --- Slots ---
     // A pane is either alone in its tab (~139 cols) or sharing it with one sibling (~69). Which
@@ -3207,7 +3305,14 @@
       const btn = document.getElementById('clsBtn');
       if (Date.now() - clsArmedAt < CLS_ARM_MS) {
         disarmClear();
-        sendKey('ctrl+l');  // already re-reads the pane, so the cleared screen is what lands
+        // Two halves, because no single one covers both kinds of pane. ctrl+l is the terminal's
+        // own clear and works in a shell; a full-screen TUI repaints straight over it, so the
+        // backlog is dropped as well and the view falls back to the live frame. Undone by Load
+        // more, or by scrolling up.
+        sendKey('ctrl+l');
+        paneSource = 'visible';
+        refreshPane();
+        showToast('Cleared — scroll up or Load more for history');
         return;
       }
       clsArmedAt = Date.now();
@@ -3225,7 +3330,12 @@
       btn.textContent = 'CLS';
     }
 
-    function loadMore() { paneLines = Math.min(paneLines + 500, 5000); refreshPane(); }
+    // Asking for history is what takes the pane back off the live frame Clear screen left it on.
+    function loadMore() {
+      paneSource = 'recent-unwrapped';
+      paneLines = Math.min(paneLines + 500, 5000);
+      refreshPane();
+    }
     function sendText() {
       const i = document.getElementById('termInput');
       if (!i.value || !ws || !activePane) return;

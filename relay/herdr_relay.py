@@ -894,11 +894,17 @@ async def handle_client(ws, listener="lan"):
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
                 # inserted, leaving only the ones the agent wrote. cols lets the client lay the
                 # result out at the pane's true width instead of guessing.
+                #
+                # "visible" is the only alternative offered, and it is what Clear screen asks for:
+                # a full-screen TUI repaints over a ctrl+l, so the only way to show a phone the
+                # live frame and nothing else is to read the frame rather than the backlog. An
+                # allowlist and not a pass-through — this string is an argv element.
+                source = "visible" if msg.get("source") == "visible" else "recent-unwrapped"
                 content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
-                                    "--source", "recent-unwrapped", remote=remote)
+                                    "--source", source, remote=remote)
                 await ws.send(json.dumps({
                     "type": "pane_content", "pane_id": pane_id, "content": content,
-                    "cols": pane_cols(pane_id, lines, remote=remote)}))
+                    "source": source, "cols": pane_cols(pane_id, lines, remote=remote)}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
