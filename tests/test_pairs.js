@@ -23,7 +23,7 @@ const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFo
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
                'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX',
-               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS'];
+               'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml'];
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
@@ -32,7 +32,7 @@ vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx)
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
        navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
-       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS} = ctx.__out;
+       parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml} = ctx.__out;
 
 const agent = (o = {}) => ({pane_id: 'w1:p1', host: 'local', agent: 'claude',
                             cwd: '/work', label: 'one', ...o});
@@ -469,6 +469,11 @@ test('parseTermShortcuts caps the grid and coerces danger to a boolean', () => {
 test('parseTermShortcuts keeps only the three fields the grid renders', () => {
   const [only] = parseTermShortcuts(blob([shortcut({onclick: 'alert(1)', danger: true})]));
   assert.deepEqual(Object.keys(only).sort(), ['danger', 'label', 'text']);
+});
+
+test('escapeHtml keeps an armed shortcut label as text', () => {
+  assert.equal(escapeHtml('Run <img src=x onerror=alert(1)>?'),
+               'Run &lt;img src=x onerror=alert(1)&gt;?');
 });
 
 test('every shipped default is a read-only command and survives its own parser', () => {

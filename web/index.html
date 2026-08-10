@@ -1705,7 +1705,7 @@
            far more often than it is a command line, and the keyboard's own correction is worth
            more than a literal transcription of every typo. Anything that must survive verbatim
            still can: the Keys pad and the / palette do not pass through here. -->
-      <textarea id="termInput" rows="2" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
+      <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
         autocapitalize="sentences" spellcheck="true"></textarea>
       <div class="term-input-side">
         <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
@@ -1963,6 +1963,11 @@
           typeof s.text === 'string' && s.text && s.text.length <= SEND_TEXT_MAX)
         .slice(0, MAX_TERM_SHORTCUTS)
         .map(s => ({ label: s.label, text: s.text, danger: !!s.danger }));
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     // codex invokes its prompts with $; every other agent uses /. Only a line-leading slash is
@@ -3547,7 +3552,7 @@
       }
       box.innerHTML = termShortcuts.map((s, i) => {
         const armed = shortcutArmed === i;
-        const label = armed ? `Run ${s.label}?` : escapeHtml(s.label);
+        const label = escapeHtml(armed ? `Run ${s.label}?` : s.label);
         const colour = s.danger ? 'color:var(--red);border-color:var(--red)' : '';
         return `<div style="display:flex;gap:4px">
       <button class="nav-key${armed ? ' armed' : ''}" style="flex:1;justify-content:flex-start;font-family:monospace;${colour}"
@@ -3562,7 +3567,11 @@
     // herdr reports no process lifetime, so "has it finished" can only be answered by looking.
     // Three reads across the first few seconds cover a command that prints and exits, without
     // raising the 3s interval every open pane pays for.
-    function burstPoll() { [400, 1200, 2500].forEach(ms => setTimeout(refreshPane, ms)); }
+    function burstPoll(paneId = activePane) {
+      [400, 1200, 2500].forEach(ms => setTimeout(() => {
+        if (activePane === paneId) refreshPane();
+      }, ms));
+    }
 
     let shortcutArmed = -1, shortcutArmedAt = 0;
 
@@ -3633,11 +3642,6 @@
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
       if (window.cue) cue('error');
-    }
-
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     function agentCard(a) {
@@ -3885,9 +3889,14 @@
     function sendText() {
       const i = document.getElementById('termInput');
       if (!i.value || !ws || !activePane) return;
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: i.value }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
-      i.value = ''; autoGrow(i); setTimeout(refreshPane, 500);
+      if (i.value.length > SEND_TEXT_MAX) {
+        showToast(`Text must be ${SEND_TEXT_MAX} characters or fewer.`); return;
+      }
+      const paneId = activePane;
+      ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: i.value }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
+      i.value = ''; autoGrow(i);
+      if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);
     }
     function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
     function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }
