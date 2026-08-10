@@ -47,6 +47,13 @@ SLOTS = ("wide", "narrow")
 # "has no agent": a shell the user split themselves and left a build running in has no agent
 # either, and closing it to reclaim columns would be destroying their work to widen a window.
 SPACER_LABEL = "· spacer ·"
+# The narrow slot exists to be read on a phone: 370px ÷ (0.6 × 9px) ≈ 68.5 columns. A band and
+# not a point, because both 69 and 70 read fine there — and insisting on one of them would throw
+# away a column of tab area to hit it.
+NARROW_SLOT_COLS = (69, 70)
+# herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
+# only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
+SIDEBAR_BOUNDS = (18, 36)
 BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
 
 
@@ -310,6 +317,39 @@ def plan_slot(panes, pane_id, slot):
             steps += [("pane", "close", p["pane_id"]) for p in spacers]
     steps.append(pane_spacer_args(pane_id, pane.get("cwd") or "."))
     return steps, None
+
+
+def slot_advice(area, sidebar, band=NARROW_SLOT_COLS):
+    """Return a one-line fix when a narrow slot falls outside `band`, or None when it fits.
+
+    Advisory, and deliberately never an action. The tab area is the user's terminal minus herdr's
+    sidebar; both are theirs, and a relay that quietly resized either would be moving furniture in
+    someone else's room. Said once at boot, because a narrow slot five columns wrong looks like a
+    client bug rather than a herdr setting.
+
+    An even area splits exactly (144 gives 72|72); an odd one hands the spare column to the left
+    pane (139 gives 70|69). Either pane can end up holding the agent, so *both* have to sit in the
+    band — which makes the widest usable area `hi * 2`, and that is what gets suggested. Aiming at
+    `lo * 2` instead would hit the band by throwing away two columns of desktop.
+    """
+    lo_cols, hi_cols = band
+    if not area or area < 4 or not sidebar:
+        return None
+    narrower, wider = area // 2, -(-area // 2)
+    if lo_cols <= narrower and wider <= hi_cols:
+        return None
+    want_area = hi_cols * 2
+    want_sidebar = sidebar + area - want_area
+    lo, hi = SIDEBAR_BOUNDS
+    # Config first, dragging second, because config.toml calls sidebar_width a *default* and a
+    # width the user has dragged is remembered in herdr's session.json — where it appears to win.
+    fix = (f"set ui.sidebar_width = {want_sidebar}, or drag the sidebar there"
+           if lo <= want_sidebar <= hi
+           else f"resize the herdr terminal to {want_area + sidebar} cols")
+    return (f"herdr tab area is {area} cols, so a narrow slot lands at {wider}|{narrower}, "
+            f"outside {lo_cols}-{hi_cols}. To fix: {fix} — area {want_area} gives "
+            f"{want_area // 2}|{want_area // 2} on a phone and {want_area} on a desktop. "
+            f"(terminal {area + sidebar} cols, sidebar {sidebar})")
 
 
 def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):

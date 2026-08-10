@@ -28,6 +28,7 @@ from start_agent import (
     pane_rename_args,
     pane_split_args,
     plan_slot,
+    slot_advice,
     validate_pane_label,
     tab_create_args,
     validate_start_request,
@@ -481,6 +482,30 @@ def slot_exec(pane_id, slot, remote=None):
 def dig_panes(data):
     panes = ((data or {}).get("result") or {}).get("panes")
     return panes if isinstance(panes, list) else []
+
+
+def log_tab_geometry():
+    """Report at boot how wide the two slots land, and what to change if narrow is off target.
+
+    The area's `x` is the sidebar width: herdr lays the tab area out to the right of it, and the
+    two have summed to the terminal width in every reading (22+148, 26+139, 26+144). Inferred
+    rather than read, because the API reports the area and not the chrome beside it — so this
+    only ever produces advice, never an action.
+    """
+    data, err = _herdr_json("api", "snapshot")
+    if err:
+        log.debug("Could not read herdr geometry: %s", err)
+        return
+    layouts = (((data or {}).get("result") or {}).get("snapshot") or {}).get("layouts") or []
+    area = (layouts[0].get("area") or {}) if layouts else {}
+    width, sidebar = area.get("width"), area.get("x")
+    if not width:
+        return
+    log.info("herdr tab area %d cols: slots are %d (wide) and %d (narrow)",
+             width, width, width // 2)
+    advice = slot_advice(width, sidebar)
+    if advice:
+        log.warning(advice)
 
 
 def start_agent_exec(plan):
@@ -1104,6 +1129,9 @@ async def main():
 
     hosts = ["local"] + REMOTES
     log.info("Polling: %s", ", ".join(hosts))
+    # After the listeners, so a herdr that is slow to answer delays only this line. Local herdr
+    # only: a remote host's terminal is not one this operator is sitting at.
+    await asyncio.to_thread(log_tab_geometry)
     stop = loop.create_future()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set_result, None)

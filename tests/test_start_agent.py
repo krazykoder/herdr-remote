@@ -20,6 +20,7 @@ from start_agent import (
     next_role_label,
     pane_split_args,
     plan_slot,
+    slot_advice,
     tab_create_args,
     unique_agent_name,
     validate_pane_label,
@@ -419,6 +420,42 @@ class PlanSlotTests(unittest.TestCase):
         steps, _ = plan_slot([{"pane_id": "w1:p1", "tab_id": "t1", "agent": "codex"}],
                              "w1:p1", "narrow")
         self.assertEqual(steps[0][-1], ".")
+
+
+class SlotAdviceTests(unittest.TestCase):
+    def test_the_whole_band_is_accepted(self):
+        # 69 and 70 both read fine on the phone, so three areas are on target and none of them
+        # is worth spending a column to reach.
+        self.assertIsNone(slot_advice(138, 32))  # 69|69
+        self.assertIsNone(slot_advice(139, 31))  # 70|69 — the odd column goes left
+        self.assertIsNone(slot_advice(140, 30))  # 70|70
+
+    def test_both_panes_have_to_fit_not_just_the_narrower_one(self):
+        # Either pane can end up holding the agent, so the wider one is the binding constraint.
+        self.assertIsNotNone(slot_advice(141, 29))  # 71|70 — 71 is too wide
+        self.assertIsNotNone(slot_advice(137, 33))  # 69|68 — 68 is too narrow
+
+    def test_it_suggests_the_widest_area_that_fits(self):
+        # Measured on this machine: terminal 170, sidebar 22, area 148 -> 74|74. Aiming at 138
+        # would also land in the band, and would throw away two columns of desktop to do it.
+        msg = slot_advice(148, 22)
+        self.assertIn("74|74", msg)
+        self.assertIn("ui.sidebar_width = 30", msg)  # 22 + 148 - 140
+        self.assertIn("area 140 gives 70|70", msg)
+        self.assertIn("terminal 170", msg)
+
+    def test_falls_back_to_the_terminal_when_the_sidebar_cannot_reach(self):
+        # A terminal so narrow that even the minimum sidebar leaves too little.
+        msg = slot_advice(100, 20)
+        self.assertNotIn("sidebar_width", msg)
+        self.assertIn("resize the herdr terminal to 160 cols", msg)
+
+    def test_says_nothing_when_the_geometry_is_unreadable(self):
+        for area, sidebar in ((None, 22), (0, 22), (148, None), (148, 0), (2, 22)):
+            self.assertIsNone(slot_advice(area, sidebar), (area, sidebar))
+
+    def test_the_band_is_adjustable(self):
+        self.assertIsNone(slot_advice(160, 22, band=(80, 80)))
 
 
 class SlotOnStartTests(unittest.TestCase):
