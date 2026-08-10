@@ -153,5 +153,14 @@ Messages are JSON with a `type` field:
 
 ## Deployment
 
-- Web app: Cloudflare Pages (push to main deploys `web/`)
+- Web app → GitHub Pages: `make deploy-web` (or `./web/deploy.sh`) publishes `web/` to
+  `https://eagerkoder.github.io/mini/`. Manual, using your own git credentials — no token lives in
+  this repo. The script owns `mini/` and only `mini/`; the target repo's root is never touched.
+  Override with `HERDR_PAGES_REPO`, `HERDR_PAGES_BRANCH`, `HERDR_PAGES_SUBDIR`.
+- Web app → Cloudflare Pages: push to main deploys `web/`. Still wired up; the two are independent.
 - macOS app: `herdi-mac/build.sh` produces `dist/Herdi.app`
+
+**A page served over HTTPS cannot open a `ws://` socket.** From `eagerkoder.github.io` the relay
+must be reached over `wss://` — the Cloudflare tunnel. A LAN relay at `ws://192.168.x.x:8375` is
+blocked as mixed content by every browser. That is also why the app does not auto-connect on
+`github.io`: `isSelfRelay` excludes it, so the setup screen asks for the URL.

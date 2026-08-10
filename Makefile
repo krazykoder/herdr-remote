@@ -1,4 +1,4 @@
-.PHONY: relay-install relay-run relay-plugin ios-build
+.PHONY: relay-install relay-run relay-plugin ios-build deploy-web
 
 relay-install:
 	pip install -r relay/requirements.txt
@@ -11,3 +11,7 @@ relay-plugin:
 
 ios-build:
 	cd herdi-ios && swift build
+
+# Publishes web/ to https://eagerkoder.github.io/mini/ using your own git credentials.
+deploy-web:
+	./web/deploy.sh
