@@ -195,6 +195,21 @@
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       overflow: hidden;
+      /* Stated, not inherited, so the reserved height below is derived from the same number the
+         text is laid out with. */
+      line-height: 1.2;
+    }
+
+    /* Both spans hold a line's worth of height whether or not they have text in them.
+       Without it the bar collapsed by 12px the moment both went empty — and both go empty on
+       every pane switch, because opening a pane clears the change stamp and the status is not
+       known again until the first read comes back. That was a 12px shrink and re-expand about
+       25ms apart, and since .terminal-view is the flex column's only flexible child, the whole
+       pane and its text took the 12px both ways. That was the bounce.
+       They are flex items, so min-height applies to them even while they are empty. */
+    .status-bar .left,
+    .status-bar .right {
+      min-height: 1.2em;
     }
 
     .status-bar .left {
