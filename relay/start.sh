@@ -37,12 +37,12 @@ set -a
 set +a
 
 # 1. Start relay
+# Reclaim the ports from a previous run of this script. A holder that is not our relay is still a
+# hard error — see relay/lib-ports.sh for why that distinction is the whole point.
+# shellcheck source=lib-ports.sh
+. "$SCRIPT_DIR/lib-ports.sh"
 for port in "$WS_PORT" ${HERDR_EXTERNAL_PORT:+$HERDR_EXTERNAL_PORT}; do
-    if lsof -iTCP:"$port" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
-        echo "Error: port $port is already in use:"
-        lsof -iTCP:"$port" -sTCP:LISTEN -n -P
-        exit 1
-    fi
+    reclaim_relay_port "$port"
 done
 
 echo "Starting relay on :$WS_PORT..."
@@ -65,6 +65,26 @@ echo "Relay running (pid $RELAY_PID)"
 if command -v cloudflared >/dev/null 2>&1; then
     TUNNEL_MODE="${HERDR_TUNNEL_MODE:-temp}"
 
+    # A tunnel must terminate on the token-required listener. Pointing it at the LAN port
+    # publishes whatever that port's policy is — and with HERDR_LAN_OPEN=1 that is no policy
+    # at all, i.e. an unauthenticated relay on the public internet.
+    #
+    # Checked before any tunnel starts. It used to sit below the named branch, so in named mode
+    # cloudflared was already up and connected by the time the refusal ran — the guard exited, but
+    # only after publishing the thing it exists to prevent.
+    TUNNEL_TARGET_PORT="${HERDR_EXTERNAL_PORT:-$WS_PORT}"
+    if [ -z "$HERDR_EXTERNAL_PORT" ] && [ "$HERDR_LAN_OPEN" = "1" ]; then
+        echo "Error: HERDR_LAN_OPEN=1 with no HERDR_EXTERNAL_PORT — refusing to tunnel to a"
+        echo "       token-free listener. Set HERDR_EXTERNAL_PORT (and HERDR_RELAY_TOKEN),"
+        echo "       or use start-local.sh for LAN-only."
+        exit 1
+    fi
+
+    # A tunnel from a previous run outlives its relay and keeps publishing a hostname that now
+    # answers 502. Matched on argv, so a dashboard connector or another project's tunnel is
+    # untouched.
+    stop_stale_tunnel "$TUNNEL_TARGET_PORT" "${HERDR_TUNNEL_NAME:-}"
+
     if [ "$TUNNEL_MODE" = "named" ] && [ -n "$HERDR_TUNNEL_NAME" ]; then
         echo "Starting named tunnel ($HERDR_TUNNEL_NAME)..."
         CF_CONFIG="$HOME/.cloudflared/config-herdr.yml"
@@ -77,17 +97,6 @@ if command -v cloudflared >/dev/null 2>&1; then
             echo "Falling back to temp tunnel..."
             TUNNEL_MODE="temp"
         fi
-    fi
-
-    # A tunnel must terminate on the token-required listener. Pointing it at the LAN port
-    # publishes whatever that port's policy is — and with HERDR_LAN_OPEN=1 that is no policy
-    # at all, i.e. an unauthenticated relay on the public internet.
-    TUNNEL_TARGET_PORT="${HERDR_EXTERNAL_PORT:-$WS_PORT}"
-    if [ -z "$HERDR_EXTERNAL_PORT" ] && [ "$HERDR_LAN_OPEN" = "1" ]; then
-        echo "Error: HERDR_LAN_OPEN=1 with no HERDR_EXTERNAL_PORT — refusing to tunnel to a"
-        echo "       token-free listener. Set HERDR_EXTERNAL_PORT (and HERDR_RELAY_TOKEN),"
-        echo "       or use start-local.sh for LAN-only."
-        exit 1
     fi
 
     if [ "$TUNNEL_MODE" = "temp" ]; then
@@ -134,17 +143,17 @@ if command -v cloudflared >/dev/null 2>&1; then
             # works with no config change; the HERDR_ name wins when both are set.
             NOTIFY_HOOK="${HERDR_NOTIFY_WEBHOOK:-${WEBHOOK_URL:-}}"
             if [ -n "$NOTIFY_HOOK" ]; then
-                # No token by default, and that is the point: only the hostname rotates. The token
-                # is already in the phone's localStorage from the first setup, so the routine
-                # message carries no credential and nothing is at risk if the channel leaks.
-                # HERDR_NOTIFY_TOKEN=1 includes it, for a new device or cleared storage.
-                NOTIFY_LINK="$APP_URL?relay=$ENC_URL"
-                [ "${HERDR_NOTIFY_TOKEN:-}" = "1" ] && NOTIFY_LINK="$NOTIFY_LINK&token=$HERDR_RELAY_TOKEN"
+                # The wss:// address alone, and nothing else. Only the hostname rotates — the token
+                # is stable and already in the phone's localStorage — so the message carries no
+                # credential and nothing is at risk if the channel leaks or its history is read.
+                #
+                # Fenced as a code block: that is what makes it copyable on a phone rather than a
+                # line of chat text to select by hand, and it stops the client mangling it.
                 NOTIFY_BODY="$(python3 -c 'import json,sys;print(json.dumps({"content": sys.argv[1]}))' \
-                    "herdr relay is up — $NOTIFY_LINK")"
+                    "$(printf '```\n%s\n```' "$WSS_URL")")"
                 if curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
                         -d "$NOTIFY_BODY" "$NOTIFY_HOOK" >/dev/null 2>&1; then
-                    echo "  Notified: webhook$([ "${HERDR_NOTIFY_TOKEN:-}" = "1" ] && echo " (with token)")"
+                    echo "  Notified: webhook"
                 else
                     # Never fatal. The relay and tunnel are up; only the convenience failed.
                     echo "  Warning: webhook post failed — the URL above is still good."

@@ -138,8 +138,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 | `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |
-| `WEBHOOK_URL` | Optional. `start.sh` posts the new tunnel URL here on startup — no token in the message, since only the hostname rotates. `HERDR_NOTIFY_WEBHOOK` overrides |
-| `HERDR_NOTIFY_TOKEN` | `1` includes the token in that webhook message — for a new device only |
+| `WEBHOOK_URL` | Optional. `start.sh` posts the new `wss://` URL here on startup, fenced as a code block and nothing else. Never carries the token. `HERDR_NOTIFY_WEBHOOK` overrides |
 | `HERDR_APP_URL` | App URL used in the printed/posted link (default: the GitHub Pages deploy) |
 
 ## Web App

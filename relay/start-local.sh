@@ -31,6 +31,10 @@ echo ""
 # Config first, then override. Anything the config sets for tunnel use is dropped below.
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 
+# Remembered before the unset below, and used for nothing except finding a tunnel start.sh may
+# have left running against it. This script must not open that port; it only cleans up after it.
+CONFIGURED_EXTERNAL_PORT="${HERDR_EXTERNAL_PORT:-}"
+
 export HERDR_LAN_OPEN=1
 export HERDR_ENABLE_WRITE_EXT=1
 unset HERDR_RELAY_TOKEN
@@ -38,11 +42,16 @@ unset HERDR_EXTERNAL_PORT
 
 LAN_BIND="${HERDR_LAN_BIND:-0.0.0.0}"
 
-if lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1; then
-    echo "Error: port $WS_PORT is already in use:"
-    lsof -iTCP:"$WS_PORT" -sTCP:LISTEN -n -P
-    exit 1
-fi
+# Reclaim the port from a previous run of a launcher in this repo. A holder that is not our relay
+# is still a hard error — see relay/lib-ports.sh.
+# shellcheck source=lib-ports.sh
+. "$SCRIPT_DIR/lib-ports.sh"
+reclaim_relay_port "$WS_PORT"
+
+# No tunnel here by design, but start.sh may have left one running. Leaving it up would keep a
+# public hostname alive while this script deliberately drops the token — the tunnel would answer
+# 502 at best, and at worst outlive the assumption that local mode is local.
+[ -n "$CONFIGURED_EXTERNAL_PORT" ] && stop_stale_tunnel "$CONFIGURED_EXTERNAL_PORT" "${HERDR_TUNNEL_NAME:-}"
 
 echo "WARNING: $LAN_BIND:$WS_PORT has no token."
 echo "         Any peer that can reach this machine can read panes, type into agents,"

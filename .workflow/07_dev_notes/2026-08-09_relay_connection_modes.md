@@ -129,6 +129,27 @@ persist in the address bar, in history, and in any screenshot.
 `?relay=` is scheme-checked against `ws://` or `wss://`, since its value becomes the address the app
 connects to.
 
+### Restarting over a running instance
+
+Both launchers reclaim their ports first, so `relay/start.sh` can be run again without stopping
+anything by hand. `relay/lib-ports.sh` holds the logic for both.
+
+What it will and will not do is the whole point:
+
+- A listener held by **our own relay** is stopped — SIGTERM, then SIGKILL only if it has not gone
+  in 5s, because SIGKILL leaves the port in `TIME_WAIT` and the next bind fails for reasons that
+  look nothing like the actual cause.
+- A listener held by **anything else** is a hard error naming the pid and command. "Restarting my
+  relay" must never mean "terminate whatever is on 8375".
+- A stale **tunnel** is matched on argv — `--url http://127.0.0.1:<external port>`, or `run <name>`
+  for a named one. A dashboard-managed connector runs with `--token-file` and another project's
+  tunnel has a different target, so neither matches and neither is touched.
+- `start-local.sh` also stops a tunnel `start.sh` may have left running, since that would keep a
+  public hostname alive while local mode deliberately drops the token.
+
+`uv run` means two processes match `herdr_relay.py` — the wrapper and the Python child. Only the
+child holds the listener; stopping it takes the wrapper with it.
+
 ### The URL rotates, the token does not
 
 **Only the hostname changes on restart.** The token is stable and already in the phone's
@@ -144,15 +165,19 @@ WEBHOOK_URL=https://discord.com/api/webhooks/...
 `start.sh` posts the new address on startup. Discord's JSON shape (`{"content": …}`); Slack wants
 `text` instead. `HERDR_NOTIFY_WEBHOOK` takes precedence if both are set.
 
-**The message carries no token by default**, for the reason above — so nothing is at risk if the
-channel leaks or the history is read later:
+**The message is the `wss://` URL and nothing else**, fenced as a code block so it is one tap to copy
+on a phone rather than a line of chat text to select by hand:
 
 ```json
-{"content": "herdr relay is up — https://eagerkoder.github.io/mini/?relay=wss%3A%2F%2F…"}
+{"content": "```\nwss://upc-retrieve-unnecessary-liberal.trycloudflare.com\n```"}
 ```
 
-Set `HERDR_NOTIFY_TOKEN=1` for the one-off case of a new device or cleared browser storage. A
-failed post is never fatal — the relay and tunnel are already up; only the convenience failed.
+**It never carries the token.** Only the hostname rotates — the token is stable and already in the
+phone's `localStorage` — so nothing is at risk if the channel leaks or its history is read later. For
+a new device, read the token once out of `secrets.env`.
+
+A failed post is never fatal: the relay and tunnel are already up, only the convenience failed. The
+terminal still prints the full `Open:` link with both values for the first-time case.
 
 ---
 
