@@ -1820,9 +1820,23 @@
     // Settings — auto-detect relay when served from same origin
     const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
     const isSelfRelay = !location.hostname.includes('pages.dev') && !location.hostname.includes('github.io');
-    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
-    const urlToken = new URLSearchParams(location.search).get('token');
+    // A temp tunnel mints a new hostname on every restart, so the relay address is handed over as
+    // a link rather than retyped on a phone. Scheme-checked: this writes the address the app will
+    // connect to, so anything that is not a WebSocket URL is ignored.
+    const q = new URLSearchParams(location.search);
+    const urlRelay = q.get('relay');
+    if (urlRelay && /^wss?:\/\/[^\s]+$/i.test(urlRelay)) localStorage.setItem('herdr_relay_url', urlRelay);
+    const urlToken = q.get('token');
     if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
+    // Both are credentials in a URL: they persist in the address bar, in history, and in any
+    // screenshot of the phone. Stored, then stripped — everything downstream reads localStorage.
+    if (urlRelay || urlToken) {
+      q.delete('relay');
+      q.delete('token');
+      const rest = q.toString();
+      history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+    }
+    const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : '');
     const savedToken = localStorage.getItem('herdr_relay_token') || '';
     document.getElementById('relayUrl').value = savedUrl;
     document.getElementById('relayToken').value = savedToken;

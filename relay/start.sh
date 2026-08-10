@@ -92,23 +92,41 @@ if command -v cloudflared >/dev/null 2>&1; then
 
     if [ "$TUNNEL_MODE" = "temp" ]; then
         echo "Starting temp tunnel to 127.0.0.1:$TUNNEL_TARGET_PORT..."
-        cloudflared tunnel --url "http://127.0.0.1:$TUNNEL_TARGET_PORT" 2>&1 &
+        # To a file, not the terminal. The URL has to be read back out of it, and a temp tunnel
+        # mints a new one on every start — so printing it plainly is the difference between a
+        # 20-second restart and hunting through cloudflared's banner each time.
+        TUNNEL_LOG="$(mktemp -t herdr-tunnel)"
+        cloudflared tunnel --url "http://127.0.0.1:$TUNNEL_TARGET_PORT" > "$TUNNEL_LOG" 2>&1 &
         TUNNEL_PID=$!
-        sleep 4
+
+        # Poll the log. The old code read /proc/$PID/fd/1, which does not exist on macOS, so the
+        # URL was never found there and the fallback message was all anyone ever saw.
+        TUNNEL_URL=""
+        for _ in $(seq 1 40); do
+            TUNNEL_URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)"
+            [ -n "$TUNNEL_URL" ] && break
+            kill -0 "$TUNNEL_PID" 2>/dev/null || break
+            sleep 0.5
+        done
 
         if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-            echo "Warning: Tunnel failed to start. Relay still running locally."
+            echo "Error: tunnel exited. Last lines of $TUNNEL_LOG:"
+            tail -5 "$TUNNEL_LOG"
             TUNNEL_PID=""
+        elif [ -z "$TUNNEL_URL" ]; then
+            echo "Warning: tunnel is up but printed no URL within 20s. Watch: tail -f $TUNNEL_LOG"
         else
-            # Extract URL from cloudflared output
-            TUNNEL_URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' /proc/$TUNNEL_PID/fd/1 2>/dev/null || true)
-            # Fallback: check recent log output
-            if [ -z "$TUNNEL_URL" ]; then
-                sleep 2
-                echo ""
-                echo "Tunnel starting... URL will appear below:"
-                echo "(If not visible, check: ps aux | grep cloudflared)"
+            WSS_URL="${TUNNEL_URL/https:\/\//wss://}"
+            echo ""
+            echo "  Tunnel:  $WSS_URL"
+            if [ -n "${HERDR_RELAY_TOKEN:-}" ]; then
+                # A 64-character hex token and a hostname that changes every restart, both needing
+                # to reach a phone. Typing them is the worst step in this setup, so hand over one
+                # link: the app stores both and strips them from the URL.
+                ENC_URL="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$WSS_URL")"
+                echo "  Open:    ${HERDR_APP_URL:-https://eagerkoder.github.io/mini/}?relay=$ENC_URL&token=$HERDR_RELAY_TOKEN"
             fi
+            echo ""
         fi
     fi
 
