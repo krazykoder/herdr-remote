@@ -227,6 +227,12 @@
       color: var(--green);
     }
 
+    /* Blocked is the one state the whole app exists to surface, so it is not left muted here
+       either — the header, the card and the dot all say it in red already. */
+    .status-bar .right.alert {
+      color: var(--red);
+    }
+
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
     body.terminal-open>.status-bar {
       order: 10;
@@ -2556,22 +2562,44 @@
       return fmtStamp(d);
     }
 
+    // Below 5 minutes a pane counts as still going. Only shells use it — an agent has herdr's own
+    // word for this and does not need a second, coarser one.
+    const LIVE_MS = 5 * 60 * 1000;
+    // The words herdr itself reports, which the landing page already groups by. Anything outside
+    // this set — 'unknown', or no status at all — falls through to recency rather than inventing a
+    // label for it. The old code collapsed all five into active/idle, which is why a finished agent
+    // read the same as one that had never started.
+    const AGENT_WORDS = ['blocked', 'working', 'done', 'idle'];
+
+    // What the bottom right says about the open pane, and whether that reads as good news.
+    // Returns [word, tone] where tone is '' | 'on' | 'alert'.
+    function paneStatusWord() {
+      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      if (agent && AGENT_WORDS.includes(agent.status)) {
+        return [agent.status, agent.status === 'blocked' ? 'alert'
+          : agent.status === 'working' ? 'on' : ''];
+      }
+      // A shell has no status to report, so the only evidence is whether its text has moved
+      // lately. Blank when there is none: this device has never seen the pane change, which is
+      // not the same as knowing it is quiet.
+      if (!paneStampAt) return ['', ''];
+      return Date.now() - paneStampAt.getTime() < LIVE_MS ? ['live', 'on'] : ['idle', ''];
+    }
+
     function renderStatusBar() {
       const pane = activePane ? paneOf(activePane) : null;
-      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
-      const on = !!agent && agent.status === 'working';
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
-      // Deliberately `agent` and not `pane`: "idle" here means the agent is not working, and a
-      // shell has no agent. Blank rather than a status it cannot have.
-      right.textContent = agent ? (on ? 'active' : 'idle') : '';
-      right.classList.toggle('on', on);
+      const [word, tone] = pane ? paneStatusWord() : ['', ''];
+      right.textContent = word;  // uppercased by .status-bar .right, not here
+      right.classList.toggle('on', tone === 'on');
+      right.classList.toggle('alert', tone === 'alert');
     }
 
-    // A relative label goes stale on its own, so it is repainted on a timer rather than from every
-    // path that could have carried the clock past a boundary. 15s is finer than the smallest step
-    // the label can take once it is past a minute, and free at this size.
+    // Both halves go stale on their own — the left label by the minute, a shell's live/idle at the
+    // 5-minute mark — so they are repainted on a timer rather than from every path that could have
+    // carried the clock past a boundary. 15s is finer than the smallest step either can take.
     setInterval(() => { if (activePane && paneStampAt) renderStatusBar(); }, 15000);
 
     // With the scrollbar hidden, nothing else says there are more tabs off-screen.
