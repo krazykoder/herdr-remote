@@ -47,28 +47,43 @@
       --shell: #7dcfff;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
+      /* Status dots (statusColor/shellColor and the two inline copies of their logic) are pure
+         fills with no text riding on them, so they carry none of the contrast obligations above
+         and can stay the saturated dark-theme hue in both themes — see the light override. */
+      --dot-green: var(--green);
+      --dot-red: var(--red);
+      --dot-orange: var(--orange);
+      --dot-shell: var(--shell);
     }
 
     :root[data-theme="light"] {
+      /* Tokyo Night Day — folke/tokyonight.nvim's own light counterpart to the dark theme
+         above, not an invented palette. --bg is its bg verbatim (#e1e2e7, same value the old
+         light theme happened to land on independently); --surface/--border/--text are its
+         bg_dark/border/fg. Every accent below is that same theme's hue, lightness lowered
+         until it clears 4.5:1 as 10px text on --bg, --surface, and --term-bg — the raw editor
+         values (tuned for large syntax-highlighted text) fall short at UI-text sizes. */
       --bg: #e1e2e7;
-      --surface: #d8d9e0;
-      --border: #b6bbd1;
-      --text: #1f2f66;
-      /* Every one of these is the dark value's hue held and its lightness lowered until it
-         clears 4.5:1 as 10px text on all four things it can land on: --bg, --surface, --term-bg,
-         and the badge fill. The dark palette needs no such treatment — a bright accent on a dark
-         ground is already there. */
-      --muted: #4d5373;
-      --green: #455c2d;
-      --red: #ab0837;
-      --blue: #1252a9;
-      --orange: #744d0d;
-      --agent-claude: #8a4014;
-      --shell: #005c7a;
+      --surface: #d0d5e3;
+      --border: #b4b5b9;
+      --text: #3358b0;
+      --muted: #515a8a;
+      --green: #4b642f;
+      --red: #ba0439;
+      --blue: #0f58bc;
+      --orange: #8f4b00;
+      --agent-claude: #735831;
+      --shell: #006486;
       /* A shade off --bg rather than pure white: the pane is the surface being read, and it
          should sit forward of the shell around it without glaring. */
       --term-bg: #f2f3f7;
-      --term-text: #1f2f66;
+      --term-text: #3358b0;
+      /* Kept at the dark theme's exact hue: a pure-fill dot has no text riding on it, so it has
+         none of the contrast floor the accents above are darkened for. */
+      --dot-green: #9ece6a;
+      --dot-red: #f7768e;
+      --dot-orange: #e0af68;
+      --dot-shell: #7dcfff;
     }
 
     * {
@@ -2243,11 +2258,11 @@
     // attention. Amber is now what it says: idle, somewhere between five minutes and an hour.
     // Muted is cold, and blocked outranks all of it.
     function statusColor(a) {
-      if (a.status === 'blocked') return 'var(--red)';
-      if (a.status === 'working') return 'var(--green)';
+      if (a.status === 'blocked') return 'var(--dot-red)';
+      if (a.status === 'working') return 'var(--dot-green)';
       const bucket = activityBucket(a.pane_id);
-      if (bucket === 'live') return 'var(--green)';
-      if (bucket === 'idle') return 'var(--orange)';
+      if (bucket === 'live') return 'var(--dot-green)';
+      if (bucket === 'idle') return 'var(--dot-orange)';
       return 'var(--muted)';
     }
 
@@ -2257,9 +2272,9 @@
     // the time: a strip of grey dots would have thrown the identity away to say nothing.
     function shellColor(paneId) {
       const bucket = activityBucket(paneId);
-      if (bucket === 'live') return 'var(--green)';
-      if (bucket === 'idle') return 'var(--orange)';
-      return 'var(--shell)';
+      if (bucket === 'live') return 'var(--dot-green)';
+      if (bucket === 'idle') return 'var(--dot-orange)';
+      return 'var(--dot-shell)';
     }
     let activeWorkspace = null;
     let activeTab = null;
@@ -2863,7 +2878,7 @@
     // connection stays visible on mobile where the app header is hidden. The dot carries the
     // whole signal — the text beside it said the same thing twice and cost tab room.
     function setStatus(s) {
-      const color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+      const color = s === 'connected' ? 'var(--dot-green)' : s === 'connecting' ? 'var(--dot-orange)' : 'var(--dot-red)';
       const label = s === 'connected' ? 'Connected' : s === 'connecting' ? 'Connecting…' : 'Offline';
       document.querySelectorAll('.status-dot').forEach(d => {
         d.style.background = color;
@@ -3112,7 +3127,7 @@
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
       const blocked = list.filter(a => a.status === 'blocked').length;
-      const color = blocked ? 'var(--red)' : list.length ? 'var(--green)' : 'var(--muted)';
+      const color = blocked ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
       const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
       const meta = list.length
         ? `${list.length} session${list.length > 1 ? 's' : ''}${blocked ? ` · ${blocked} blocked` : ''}`

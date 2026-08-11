@@ -124,14 +124,14 @@ function dot(status, agoMs) {
 test('a pane that finished seconds ago is as green as one still running', () => {
   // The bug this replaces: leaving 'working' flipped the dot straight to amber, so an agent
   // read as going cold at the exact moment it had something to show.
-  assert.strictEqual(dot('working', SEC), 'var(--green)');
-  assert.strictEqual(dot('done', SEC), 'var(--green)');
-  assert.strictEqual(dot('idle', 4 * MIN), 'var(--green)');
+  assert.strictEqual(dot('working', SEC), 'var(--dot-green)');
+  assert.strictEqual(dot('done', SEC), 'var(--dot-green)');
+  assert.strictEqual(dot('idle', 4 * MIN), 'var(--dot-green)');
 });
 
 test('amber means idle, not "recently touched at some point in the last hour"', () => {
-  assert.strictEqual(dot('done', 6 * MIN), 'var(--orange)');
-  assert.strictEqual(dot('idle', 59 * MIN), 'var(--orange)');
+  assert.strictEqual(dot('done', 6 * MIN), 'var(--dot-orange)');
+  assert.strictEqual(dot('idle', 59 * MIN), 'var(--dot-orange)');
 });
 
 test('past an hour the dot goes cold', () => {
@@ -140,9 +140,9 @@ test('past an hour the dot goes cold', () => {
 });
 
 test('working outranks recency, blocked outranks everything', () => {
-  assert.strictEqual(dot('working', 5 * HOUR), 'var(--green)');
-  assert.strictEqual(dot('blocked', 5 * HOUR), 'var(--red)');
-  assert.strictEqual(dot('blocked', SEC), 'var(--red)');
+  assert.strictEqual(dot('working', 5 * HOUR), 'var(--dot-green)');
+  assert.strictEqual(dot('blocked', 5 * HOUR), 'var(--dot-red)');
+  assert.strictEqual(dot('blocked', SEC), 'var(--dot-red)');
 });
 
 test('a shell keeps its own blue when cold, rather than going grey like an agent', () => {
@@ -152,10 +152,10 @@ test('a shell keeps its own blue when cold, rather than going grey like an agent
     dotCtx.lastSeen = agoMs === null ? {} : {'w1:p0': Date.now() - agoMs};
     return vm.runInContext(`shellColor('w1:p0')`, dotCtx);
   };
-  assert.strictEqual(shell(30 * SEC), 'var(--green)');
-  assert.strictEqual(shell(20 * MIN), 'var(--orange)');
-  assert.strictEqual(shell(3 * HOUR), 'var(--shell)');
-  assert.strictEqual(shell(null), 'var(--shell)', 'never seen is the same as cold here');
+  assert.strictEqual(shell(30 * SEC), 'var(--dot-green)');
+  assert.strictEqual(shell(20 * MIN), 'var(--dot-orange)');
+  assert.strictEqual(shell(3 * HOUR), 'var(--dot-shell)');
+  assert.strictEqual(shell(null), 'var(--dot-shell)', 'never seen is the same as cold here');
 });
 
 test('the bands line up end to end, with no gap and no overlap', () => {
