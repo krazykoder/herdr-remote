@@ -20,7 +20,7 @@ const from = HTML.indexOf('    // --- Attention ---');
 const to = HTML.indexOf('    // How recently a pane moved', from);
 assert.ok(from !== -1 && to > from, 'attention block not found in web/index.html');
 
-function attentionCtx({agents = [], stored = null} = {}) {
+function attentionCtx({agents = [], stored = null, activePane = null, hidden = false} = {}) {
   const store = stored === null ? {} : {herdr_acked: JSON.stringify(stored)};
   const ctx = vm.createContext({
     localStorage: {
@@ -29,6 +29,8 @@ function attentionCtx({agents = [], stored = null} = {}) {
     },
     console,
     agents,
+    activePane,
+    document: {hidden},
   });
   vm.runInContext(HTML.slice(from, to), ctx);
   return {store, agents, run: src => vm.runInContext(src, ctx)};
@@ -124,6 +126,27 @@ test('a sync that drops nothing does not rewrite storage', () => {
   store.herdr_acked = 'sentinel';
   run("syncAcked([{pane_id: 'a', status: 'done'}])");
   assert.equal(store.herdr_acked, 'sentinel');
+});
+
+test('only a pane that needs you makes a sound', () => {
+  const {run} = attentionCtx();
+  assert.equal(run("shouldSound('a', 'done')"), true);
+  assert.equal(run("shouldSound('a', 'blocked')"), true);
+  for (const quiet of ['working', 'idle', 'unknown', undefined]) {
+    assert.equal(run(`shouldSound('a', ${JSON.stringify(quiet)})`), false, `status ${quiet}`);
+  }
+});
+
+test('the pane you are watching does not chime at you', () => {
+  const {run} = attentionCtx({activePane: 'a', hidden: false});
+  assert.equal(run("shouldSound('a', 'done')"), false, 'it finished in front of you');
+  assert.equal(run("shouldSound('b', 'done')"), true, 'a different pane still does');
+});
+
+test('a backgrounded tab chimes even for the pane it is sitting on', () => {
+  // The whole point of the sound. A phone with the app behind something else is not watching.
+  const {run} = attentionCtx({activePane: 'a', hidden: true});
+  assert.equal(run("shouldSound('a', 'done')"), true);
 });
 
 test('private mode is session-only rather than an error', () => {

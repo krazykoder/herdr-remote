@@ -106,6 +106,29 @@ test('opening the pane clears it everywhere at once', async ({page}) => {
   await expect(page.locator('#agents .section-header', {hasText: 'Needs you'})).toHaveCount(0);
 });
 
+test('sound is synthesised in the page, not fetched', async ({page, context}) => {
+  // The file's whole property is being self-contained. This used to be an ES module import from a
+  // CDN, so a LAN relay with no route out, a strict CSP, or an offline PWA launch left the app
+  // silent — and silently, since every call site is guarded with `if (window.cue)`.
+  const external = [];
+  context.on('request', r => { if (new URL(r.url()).host !== new URL(page.url()).host) external.push(r.url()); });
+  await page.reload();
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  expect(external, 'the page reached off-host').toEqual([]);
+
+  // Defined synchronously, which the module version was not — its first cues never played.
+  expect(await page.evaluate(() => typeof window.cue)).toBe('function');
+  // Every name any call site uses, played for real. Chromium runs headless with no output device,
+  // so what is under test is that the graph builds and nothing throws.
+  const threw = await page.evaluate(() => {
+    for (const n of ['tick', 'toggle', 'page', 'droplet', 'success', 'ready', 'sparkle', 'error', 'chime']) {
+      try { cue(n); } catch (e) { return `${n}: ${e}`; }
+    }
+    return null;
+  });
+  expect(threw).toBeNull();
+});
+
 test('the ack survives a reload, and the pane is listed normally again', async ({page}) => {
   await freezeWith(page, 'done');
   await page.locator('#agents .agent', {hasText: AGENT}).click();

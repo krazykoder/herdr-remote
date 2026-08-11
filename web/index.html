@@ -21,10 +21,59 @@
       if (localStorage.getItem('herdr_theme') === 'light') document.documentElement.dataset.theme = 'light';
     } catch (e) { /* storage blocked: stay on the default */ }
   </script>
-  <script type="module">
-    import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
-    window.cue = play;
-    document.addEventListener('DOMContentLoaded', () => bind());
+  <!-- Sound, synthesised here rather than fetched. This was an ES module import from a CDN, which
+       cost the file the one property it is built around — a relay on a LAN with no route to the
+       internet, a strict CSP, or a plain offline PWA launch all left the app silent, and silently,
+       because every call site is guarded with `if (window.cue)`. A handful of oscillators is
+       smaller than the import line was.
+
+       Synchronous, not a module: a module is deferred, so window.cue was undefined for the first
+       cues of the page's life and those simply never played.
+
+       An AudioContext is built on the first cue and reused. Before any user gesture the browser
+       hands back a suspended one and nothing sounds — which is the autoplay policy working, not a
+       bug to route around. Almost every cue below is already inside a click. -->
+  <script>
+    window.cue = (() => {
+      // name: [wave, notes in Hz played in order, seconds per note, peak gain]
+      const VOICES = {
+        tick: ['square', [1200], 0.03, 0.05],
+        toggle: ['square', [800, 1200], 0.05, 0.05],
+        page: ['sine', [520, 780], 0.06, 0.05],
+        droplet: ['sine', [1480, 990], 0.07, 0.05],
+        success: ['sine', [880, 1320], 0.09, 0.06],
+        ready: ['sine', [660, 880, 1320], 0.09, 0.06],
+        sparkle: ['triangle', [1320, 1760, 2640], 0.05, 0.04],
+        error: ['sawtooth', [220, 165], 0.10, 0.05],
+        // The one that means "a pane is waiting on you", and the only one that has to carry across
+        // a room — so it is the longest and the loudest of them.
+        chime: ['sine', [880, 1174, 1568], 0.13, 0.08],
+      };
+      let ctx;
+      return name => {
+        const voice = VOICES[name];
+        if (!voice) return;
+        try {
+          ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+          if (ctx.state === 'suspended') ctx.resume();
+          const [wave, notes, dur, peak] = voice;
+          notes.forEach((hz, i) => {
+            const at = ctx.currentTime + i * dur;
+            const osc = ctx.createOscillator(), gain = ctx.createGain();
+            osc.type = wave;
+            osc.frequency.value = hz;
+            // Exponential and never to zero: a linear fade clicks at the end, and an exponential
+            // ramp to an actual 0 is undefined. 0.0001 is inaudible and legal.
+            gain.gain.setValueAtTime(0.0001, at);
+            gain.gain.exponentialRampToValueAtTime(peak, at + 0.008);
+            gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(at);
+            osc.stop(at + dur + 0.02);
+          });
+        } catch (e) { /* no audio on this device: not a reason to break the caller */ }
+      };
+    })();
   </script>
   <style>
     /* Dark is the product default, not the OS's. Light is opt-in from Settings and goes all the
@@ -2305,6 +2354,13 @@
     function needsAttention(a) {
       return !!a && ATTENTION.includes(a.status) && acked[a.pane_id] !== a.status;
     }
+    // Whether a pane arriving at `status` should be heard as well as seen. Not the pane you are
+    // watching with the tab in front of you — you can see it finish, and a sound for it is noise.
+    // Hidden is the distinction and not merely "is it open": a phone with the app backgrounded on
+    // that very pane is the case the sound exists for.
+    function shouldSound(paneId, status) {
+      return ATTENTION.includes(status) && !(paneId === activePane && !document.hidden);
+    }
     function attentionCount() { return agents.filter(needsAttention).length; }
 
     function saveAcked() {
@@ -3056,15 +3112,20 @@
       }
       else if (msg.type === 'agents') {
         // Track timeline on status changes
+        let ring = false;
         for (const a of msg.agents) {
           const prev = prevStatuses[a.pane_id];
           if (prev && prev !== a.status) {
             timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
             if (timeline.length > 100) timeline.pop();
             noteActivity(a.pane_id);
+            if (shouldSound(a.pane_id, a.status)) ring = true;
           }
           prevStatuses[a.pane_id] = a.status;
         }
+        // Once per snapshot, however many panes moved: a herd that all stop on the same poll is
+        // one event to the person hearing it, not a chord.
+        if (ring && window.cue) cue('chime');
         agents = msg.agents;
         // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
         // has to read as "no terminals" rather than crash the next .filter.
@@ -3099,6 +3160,7 @@
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();
           noteActivity(update.pane_id);
+          if (shouldSound(update.pane_id, update.status) && window.cue) cue('chime');
           // A status change is the one thing that says the pane's text is about to be worth
           // re-reading, and it arrives here rather than being asked for — the relay polls herdr on
           // its own and pushes this. Reading now instead of waiting for the next tick is what
@@ -3115,7 +3177,8 @@
         const a = agents.find(x => x.pane_id === msg.pane_id);
         if (a) { a.status = 'blocked'; a.prompt = msg.prompt; a.options = msg.options; }
         else agents.push({ ...msg, status: 'blocked' });
-        if (window.cue) cue('chime');
+        // No chime here. The relay broadcasts the snapshot before this message, so the transition
+        // into blocked has already been heard — sounding it again was two chimes for one event.
         noteActivity(msg.pane_id);
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
@@ -3160,6 +3223,11 @@
 
     function render() {
       syncAcked(agents.concat(shells));   // before anything reads needsAttention
+      // The pane on screen, in front of you, is by definition one you have looked at — including
+      // after it changes status while open. Gated on visibility rather than on activePane alone:
+      // a backgrounded tab sitting on the pane that just finished is exactly the case the badge
+      // and the chime exist for, and acking it there would swallow both.
+      if (activePane && !document.hidden) ackPane(activePane);
       renderStatusBar();
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
@@ -3167,6 +3235,10 @@
       renderAgentTabs();
       syncBrowserTab();
     }
+
+    // Coming back to the tab is looking at it: a pane that finished while you were away has been
+    // seen the moment you return to it, and the title has to drop the count with it.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
     // The browser tab, which is the only surface that reaches you when the app is not on screen —
     // another tab, another window, a phone with the PWA in the background. Everything else in this
