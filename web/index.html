@@ -227,6 +227,12 @@
       color: var(--green);
     }
 
+    /* Blocked is the one state the whole app exists to surface, so it is not left muted here
+       either — the header, the card and the dot all say it in red already. */
+    .status-bar .right.alert {
+      color: var(--red);
+    }
+
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
     body.terminal-open>.status-bar {
       order: 10;
@@ -386,9 +392,15 @@
       background: color-mix(in srgb, var(--blue) 8%, transparent);
     }
 
-    /* The dot sits on a saturated fill once selected; the ring is what keeps it readable there. */
+    /* The dot sits on a saturated fill once selected, and at 8px a green disc on --blue is two
+       mid-tones touching. A translucent white ring used to separate them, but white sits between
+       the two hues and washed the dot out rather than isolating it. --bg is the furthest thing
+       from the fill in either theme — near-black on dark, near-white on light — so the dot ends
+       up in a well instead of on a wash. A pixel wider too, since it is the one being looked at. */
     .agent-tab.active .dot {
-      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+      width: 9px;
+      height: 9px;
+      box-shadow: 0 0 0 2px var(--bg);
     }
 
     .header h1 {
@@ -429,6 +441,15 @@
 
     .dot.pulse {
       animation: pulse 2s infinite;
+    }
+
+
+    /* The colour already says "working"; the motion is emphasis on top of it, so it is the part
+       that goes. Same bargain the armed Clear button's drain makes. */
+    @media (prefers-reduced-motion: reduce) {
+      .dot.pulse {
+        animation: none;
+      }
     }
 
     @keyframes pulse {
@@ -773,10 +794,6 @@
       border-bottom: 2px solid var(--shell);
     }
 
-    .terminal-view.is-terminal .term-header .status-dot {
-      display: none;
-    }
-
     /* Everything a shell must not offer, hidden in one place. These elements are written by
        several functions on the poll path, and a branch in each is several places to forget one.
        #quickActions is deliberately absent from this list: it also carries session back/forward,
@@ -786,7 +803,6 @@
     .terminal-view.is-terminal #quickDock,
     .terminal-view.is-terminal #commandBtn,
     .terminal-view.is-terminal #micBtn,
-    .terminal-view.is-terminal #ctrlPresetsWrap,
     .terminal-view.is-terminal #menuStart,
     .terminal-view.is-terminal #termMenuPair,
     .terminal-view.is-terminal #menuPairPlace {
@@ -797,9 +813,9 @@
       display: grid;
     }
 
-    /* The mic's slot in the rail, over a terminal: the Ctrl keys, out of the keys pad where they
-       sat three taps deep behind a disclosure. ^C is why — it is the only way to stop what you
-       started — and the other five ride along rather than living in two places. */
+    /* The mic's slot in the rail, over a terminal: the Ctrl keys, reachable without opening the
+       keys pad at all. ^C is why — it is the only way to stop what you started. The pad's own ^C
+       tab shows the same six; paintCtrlPresets fills both, so they cannot disagree. */
     #ctrlKeysBtn {
       display: none;
     }
@@ -1741,7 +1757,10 @@
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
         </svg></button>
-      <span class="dot status-dot"></span>
+      <!-- The open pane's state, not the socket's. The connection dot lives in the app header,
+           which moves to the bottom of the screen while a pane is open rather than hiding, so it
+           is still on screen and this one is free to say something else. -->
+      <span class="dot" id="paneDot"></span>
       <span class="title" id="termTitle"></span>
       <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
            them are not undoable. See armFire. -->
@@ -1902,10 +1921,12 @@
       <div id="keyQueueStrip"
         style="display:none;width:100%;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center">
       </div>
-      <!-- Tab toggle -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-bottom:6px">
-        <button class="tab-btn active" id="tabKeys" onclick="switchKeyTab('keys')">Keys</button>
-        <button class="tab-btn" id="tabDigits" onclick="switchKeyTab('digits')">123</button>
+      <!-- Tab toggle. flex, not a fixed grid: the ^C tab is one of three here and the row has to
+           close up cleanly if one is ever hidden. -->
+      <div style="display:flex;gap:4px;width:100%;margin-bottom:6px">
+        <button class="tab-btn active" id="tabKeys" style="flex:1" onclick="switchKeyTab('keys')">Keys</button>
+        <button class="tab-btn" id="tabDigits" style="flex:1" onclick="switchKeyTab('digits')">123</button>
+        <button class="tab-btn" id="tabCtrl" style="flex:1;color:var(--red)" onclick="switchKeyTab('ctrl')">^C</button>
       </div>
       <!-- Keys pad -->
       <div id="keysPad" style="width:100%">
@@ -1932,17 +1953,14 @@
           <button class="nav-key mod-key" id="modShift" onclick="armMod('shift')">⇧ Shift</button>
           <button class="nav-key mod-key" id="modCtrl" onclick="armMod('ctrl')">Ctrl</button>
         </div>
-        <!-- Ctrl presets. Over a terminal these live in their own dock instead — same buttons,
-             one tap from the composer rather than folded behind this disclosure. -->
-        <div id="ctrlPresetsWrap">
-          <button onclick="toggleCtrlPresets()"
-            style="background:none;border:none;color:var(--muted);font-size:0.7rem;cursor:pointer;padding:2px 4px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase">Presets
-            <span id="ctrlChevron">▸</span></button>
-          <div id="ctrlPresets" style="display:none;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px"></div>
-        </div>
       </div>
       <!-- Digits pad -->
       <div id="digitsPad" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
+      <!-- Ctrl presets pad. Was a disclosure at the foot of the keys pad, which put ^C three taps
+           deep and left it below the fold on a phone. Now a peer of the other two pads, reached by
+           the ^C tab. Over a terminal the rail's own ^C dock shows the same buttons — one function
+           paints both, so the armed "Confirm?" state cannot disagree between them. -->
+      <div id="ctrlPresets" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
       <!-- Action keys for blocked state -->
       <div id="actionKeys" style="width:100%;margin-top:4px"></div>
     </div>
@@ -2101,6 +2119,10 @@
     // reading the dot must never give. Keyed by pane_id, and a pane_id herdr later reuses costs
     // nothing worse than one dot warm for an hour.
     const SEEN_KEY = 'herdr_last_seen';
+    // Two thresholds, used by both the dots and the status bar's word: under five minutes a pane
+    // is still live, under an hour it is idle, past that it is cold. Declared together because
+    // they are one scale — moving one without the other leaves a gap or an overlap.
+    const LIVE_MS = 5 * 60 * 1000;
     const RECENT_MS = 60 * 60 * 1000;
     let lastSeen = {};
 
@@ -2121,16 +2143,40 @@
       catch (e) { /* private mode: session-only */ }
     }
 
-    function activeWithinHour(paneId) { return Date.now() - (lastSeen[paneId] || 0) < RECENT_MS; }
+    // How recently a pane moved, in the three bands the colours are drawn from. One function so
+    // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
+    function activityBucket(paneId) {
+      const since = Date.now() - (lastSeen[paneId] || 0);
+      if (since < LIVE_MS) return 'live';
+      if (since < RECENT_MS) return 'idle';
+      return 'cold';
+    }
 
-    // One rule for every agent status dot, list and tab strip alike. Green is live and nothing
-    // else — a dot that is green an hour after the agent stopped is the reading this replaces.
-    // Amber is "you were in here recently", muted is cold, and blocked outranks both.
+    // One rule for every agent status dot, list and tab strip alike.
+    //
+    // Green is live: working, or moved within the last five minutes. An agent that finished
+    // seconds ago is as live as one still running, and the previous rule painted it amber the
+    // instant it left 'working' — which read as "going cold" at the exact moment it wanted
+    // attention. Amber is now what it says: idle, somewhere between five minutes and an hour.
+    // Muted is cold, and blocked outranks all of it.
     function statusColor(a) {
       if (a.status === 'blocked') return 'var(--red)';
       if (a.status === 'working') return 'var(--green)';
-      if (activeWithinHour(a.pane_id)) return 'var(--orange)';
+      const bucket = activityBucket(a.pane_id);
+      if (bucket === 'live') return 'var(--green)';
+      if (bucket === 'idle') return 'var(--orange)';
       return 'var(--muted)';
+    }
+
+    // A shell has no status, so recency is the whole signal — and the cold end is its own blue
+    // rather than the muted grey a cold agent gets. That blue is what says "terminal" at a
+    // glance, and a shell only ever stamps while it is open, so most of them sit cold most of
+    // the time: a strip of grey dots would have thrown the identity away to say nothing.
+    function shellColor(paneId) {
+      const bucket = activityBucket(paneId);
+      if (bucket === 'live') return 'var(--green)';
+      if (bucket === 'idle') return 'var(--orange)';
+      return 'var(--shell)';
     }
     let activeWorkspace = null;
     let activeTab = null;
@@ -2484,23 +2530,25 @@
       // Array#sort is stable. That is the whole ordering rule — see togglePin.
       const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
       live.sort((x, y) => rank(x) - rank(y));
-      // Recency is in the signature too, or a tab whose amber has aged out keeps the colour it
-      // was built with until something else happens to rebuild the strip.
+      // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
+      // built with until something else happens to rebuild the strip. The band and not a boolean:
+      // there are two thresholds now, and a boolean would sit still across the first of them.
       const sig = live.map(a =>
-        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activeWithinHour(a.pane_id)}`).join(' /// ');
+        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
-          // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
-          // bar that is always on screen is motion the user cannot turn off or look away from.
-          // A shell has no status of its own, so it keeps its own colour rather than borrowing
-          // one that means something about an agent.
-          const color = !a.agent ? 'var(--shell)' : statusColor(a);
+          // The strip pulses a working agent the same as the cards do. It was held solid on the
+          // grounds that a bar which is always on screen should not carry motion — but the strip
+          // is also the only place a backgrounded agent is visible at all, and a dot that is
+          // merely green there says "recent" just as loudly as it says "running now".
+          const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
+          const pulse = a.status === 'working' ? ' pulse' : '';
           return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
-            `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
+            `<span class="dot${pulse}" style="background:${color}" aria-hidden="true"></span>` +
             `<span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>` +
             `<span class="label">${escapeHtml(paneLabel(a))}</span></span></button>`;
         }).join('');
@@ -2529,27 +2577,84 @@
     }
 
     // --- Bottom status bar ---
-    // Left: when the open pane's content last actually changed. Stamping every poll would read
-    // "now" forever and mean nothing, so the stamp is taken only when the text differs.
+    // Left: how long ago the open pane last changed. Stamping every poll would read "now" forever
+    // and mean nothing, so the stamp is taken only when the text differs — and, for the same
+    // reason, the first paint after opening a pane does not count. That paint always "differs"
+    // (the element was empty), which is what used to make this field read the current time on
+    // every switch and say nothing at all.
+    //
+    // Relative, not a clock time: the question this answers is "is what I am looking at stale",
+    // and "4m ago" answers it without the reader doing arithmetic. Past a day it falls back to
+    // the date, where the arithmetic stops being worth it.
     let paneStampAt = null;
+    // False until the pane's first content arrives. Per-pane, reset by openPane.
+    let paneTextPrimed = false;
 
     function fmtStamp(d) {
       const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       return `${t} · ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
     }
 
+    function fmtAgo(d) {
+      const s = Math.round((Date.now() - d.getTime()) / 1000);
+      if (s < 10) return 'just now';
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      return fmtStamp(d);
+    }
+
+    // The words herdr itself reports, which the landing page already groups by. Anything outside
+    // this set — 'unknown', or no status at all — falls through to recency rather than inventing a
+    // label for it. The old code collapsed all five into active/idle, which is why a finished agent
+    // read the same as one that had never started.
+    const AGENT_WORDS = ['blocked', 'working', 'done', 'idle'];
+
+    // What the bottom right says about the open pane, and whether that reads as good news.
+    // Returns [word, tone] where tone is '' | 'on' | 'alert'.
+    function paneStatusWord() {
+      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      if (agent && AGENT_WORDS.includes(agent.status)) {
+        return [agent.status, agent.status === 'blocked' ? 'alert'
+          : agent.status === 'working' ? 'on' : ''];
+      }
+      // A shell has no status to report, so the only evidence is whether its text has moved
+      // lately. Blank when there is none: this device has never seen the pane change, which is
+      // not the same as knowing it is quiet.
+      if (!paneStampAt) return ['', ''];
+      return Date.now() - paneStampAt.getTime() < LIVE_MS ? ['live', 'on'] : ['idle', ''];
+    }
+
+    // The dot beside the open pane's name in the terminal header. Same rules as the tab strip's,
+    // because it is the same pane — a header saying one thing while its own tab says another is
+    // worse than either alone.
+    function paintPaneDot() {
+      const el = document.getElementById('paneDot');
+      const pane = activePane ? paneOf(activePane) : null;
+      el.style.background = !pane ? 'var(--muted)'
+        : isShell(activePane) ? shellColor(activePane) : statusColor(pane);
+      el.classList.toggle('pulse', !!pane && pane.status === 'working');
+      el.title = pane ? paneStatusWord()[0] : '';
+    }
+
     function renderStatusBar() {
       const pane = activePane ? paneOf(activePane) : null;
-      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
-      const on = !!agent && agent.status === 'working';
+      paintPaneDot();
       document.getElementById('statusBarLeft').textContent =
-        pane && paneStampAt ? fmtStamp(paneStampAt) : '';
+        pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
-      // Deliberately `agent` and not `pane`: "idle" here means the agent is not working, and a
-      // shell has no agent. Blank rather than a status it cannot have.
-      right.textContent = agent ? (on ? 'active' : 'idle') : '';
-      right.classList.toggle('on', on);
+      const [word, tone] = pane ? paneStatusWord() : ['', ''];
+      right.textContent = word;  // uppercased by .status-bar .right, not here
+      right.classList.toggle('on', tone === 'on');
+      right.classList.toggle('alert', tone === 'alert');
     }
+
+    // Both halves go stale on their own — the left label by the minute, a shell's live/idle at the
+    // 5-minute mark — so they are repainted on a timer rather than from every path that could have
+    // carried the clock past a boundary. 15s is finer than the smallest step either can take.
+    setInterval(() => { if (activePane && paneStampAt) renderStatusBar(); }, 15000);
 
     // With the scrollbar hidden, nothing else says there are more tabs off-screen.
     function syncTabFades() {
@@ -2823,7 +2928,17 @@
         // Only a real change is activity. The pane is re-read every 3s regardless.
         // The pane's text changing is the finest-grained activity there is — it catches an agent
         // that answered without ever leaving 'working', which no status transition reports.
-        if (next !== el.textContent) { paneStampAt = new Date(); noteActivity(activePane); renderStatusBar(); }
+        //
+        // The first content after opening is skipped: the element was empty, so it always differs,
+        // and counting it stamped every pane the moment you looked at it. That one line was the
+        // whole reason this field read the current time no matter which pane you switched to.
+        if (!paneTextPrimed) {
+          paneTextPrimed = true;
+        } else if (next !== el.textContent) {
+          paneStampAt = new Date();
+          noteActivity(activePane);
+          renderStatusBar();
+        }
         el.textContent = next;
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
@@ -4140,6 +4255,9 @@
       const title = document.getElementById('termTitle');
       if (!pane) title.textContent = activePane || '';
       else title.innerHTML = paneChrome(pane);
+      // Here as well as in renderStatusBar: a snapshot that only changes status arrives through
+      // this path, and the recency bands cross on the timer that drives the other one.
+      paintPaneDot();
       // The palette holds prompts over an agent and commands over a shell, and a pane can change
       // kind under a live snapshot — so the button is relabelled here, not only on open.
       syncPromptsBtn();
@@ -4166,7 +4284,12 @@
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
       renderAgentTabs();  // the tab for this pane has to read as active straight away
-      paneStampAt = null;  // the previous pane's timestamp is not this one's
+      // Seeded from lastSeen rather than blanked: that map is stamped for *every* pane on a status
+      // transition, not only the open one, so a pane that blocked twenty minutes ago while you were
+      // elsewhere can say so the moment it opens. Blank only for a pane this device has never seen
+      // move. The first content read must not overwrite it — see paneTextPrimed.
+      paneStampAt = lastSeen[paneId] ? new Date(lastSeen[paneId]) : null;
+      paneTextPrimed = false;
       paneCols = null;     // and its column count is not this one's either
       paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
       clearSel();
@@ -4611,15 +4734,20 @@
     function switchKeyTab(tab) {
       document.getElementById('tabKeys').classList.toggle('active', tab === 'keys');
       document.getElementById('tabDigits').classList.toggle('active', tab === 'digits');
+      document.getElementById('tabCtrl').classList.toggle('active', tab === 'ctrl');
       document.getElementById('keysPad').style.display = tab === 'keys' ? '' : 'none';
       const dp = document.getElementById('digitsPad');
       dp.style.display = tab === 'digits' ? 'grid' : 'none';
       if (tab === 'digits' && !dp.innerHTML) {
         dp.innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => `<button class="digit-key" onclick="fireKey('${d}')">${d}</button>`).join('');
       }
+      document.getElementById('ctrlPresets').style.display = tab === 'ctrl' ? 'grid' : 'none';
+      // Repainted on every entry, not filled once like the digits: a preset can be sitting armed
+      // as "Confirm?" from a previous visit, and the pad has to show that rather than a stale label.
+      if (tab === 'ctrl') paintCtrlPresets();
     }
 
-    // The presets exist in two places \u2014 the keys pad's disclosure and the terminal's own dock \u2014
+    // The presets exist in two places \u2014 the keys pad's ^C tab and the terminal's own dock \u2014
     // so the armed state is painted into both from one function rather than into whichever one
     // the tap came from. Painting both also means the disarm below actually repaints: the old
     // toggle-twice trick left "Confirm?" on screen, because a toggle only paints an empty grid.
@@ -4630,15 +4758,6 @@
         return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${armed ? 'Confirm?' : p.label}</button>`;
       }).join('');
       ['ctrlPresets', 'ctrlDockGrid'].forEach(id => { document.getElementById(id).innerHTML = html; });
-    }
-
-    function toggleCtrlPresets() {
-      const el = document.getElementById('ctrlPresets');
-      const chevron = document.getElementById('ctrlChevron');
-      const show = el.style.display === 'none';
-      el.style.display = show ? 'grid' : 'none';
-      chevron.textContent = show ? '\u25be' : '\u25b8';
-      if (show) paintCtrlPresets();
     }
 
     function toggleCtrlDock() {
