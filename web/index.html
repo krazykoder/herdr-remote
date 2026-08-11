@@ -1779,6 +1779,19 @@
     </div>
 
     <div class="setting-group">
+      <label for="historyPick">Pane history</label>
+      <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
+        <option value="2000">2,000 lines</option>
+        <option value="5000">5,000 lines</option>
+        <option value="20000">20,000 lines</option>
+        <option value="50000">50,000 lines</option>
+      </select>
+      <div class="hint">How far back Load more will go. A pane opens on its last 200 lines whatever
+        this says, and only what you scroll up for is fetched. Past 1,000 lines the 3-second
+        refresh pauses while you read — scrolling back to the newest line makes it live again.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -4459,7 +4472,7 @@
       disarmShortcut();
       disarmCtrl();
       refreshPane();
-      refreshInterval = setInterval(refreshPane, 3000);
+      refreshInterval = setInterval(() => refreshPane(true), 3000);
     }
 
     function closeTerminal() {
@@ -4638,7 +4651,40 @@
     // Which end of the pane is being read. 'visible' is the live frame and nothing behind it,
     // which is what Clear screen leaves behind; anything that asks for more history puts it back.
     let paneSource = 'recent-unwrapped';
-    function refreshPane() {
+
+    // How deep Load more is allowed to go. Not how much a pane opens on — that stays 200, because
+    // it is paid on every pane switch. Only the ceiling moves, because the depth reached is then
+    // re-read every 3 seconds for as long as the pane is open: this is a standing cost, not a
+    // one-off fetch, and the browser keeps no history of its own to fall back on. The relay
+    // clamps it again at READ_LINES_MAX regardless of what is stored here.
+    const HISTORY_KEY = 'herdr_pane_history';
+    const HISTORY_MAX = [2000, 5000, 20000, 50000], HISTORY_DEFAULT = 5000;
+    function paneHistoryMax() {
+      const v = parseInt(localStorage.getItem(HISTORY_KEY), 10);
+      return HISTORY_MAX.includes(v) ? v : HISTORY_DEFAULT;
+    }
+    // A tenth of the ceiling, so reaching a deep one does not take fifty taps. 500 at the default,
+    // which is the step this had before the ceiling was adjustable.
+    function historyStep() { return Math.max(500, Math.round(paneHistoryMax() / 10)); }
+
+    function setPaneHistoryMax(v) {
+      const n = parseInt(v, 10);
+      try { localStorage.setItem(HISTORY_KEY, HISTORY_MAX.includes(n) ? n : HISTORY_DEFAULT); }
+      catch (e) { /* private mode: session-only */ }
+      document.getElementById('historyPick').value = String(paneHistoryMax());
+      // Lowering it while a deeper read is on screen: the next poll comes back at the new ceiling
+      // rather than holding the old depth until the pane is closed.
+      if (paneLines > paneHistoryMax()) { paneLines = paneHistoryMax(); refreshPane(); }
+    }
+    // Above this depth the 3s poll stops, and only reads the user asks for are sent. Scrollback
+    // does not change — a deep read is a picture of the past, and re-fetching tens of thousands
+    // of lines every three seconds to redraw the same text is a standing cost on the relay, on
+    // any SSH hop, and on a phone's radio. Coming back to the tail turns it live again.
+    const POLL_MAX_LINES = 1000;
+    // auto=true is the interval. Every other caller — the refresh button, Load more, a key that
+    // was just sent — is a read someone asked for and is never skipped.
+    function refreshPane(auto) {
+      if (auto && paneLines > POLL_MAX_LINES) return;
       if (ws && activePane) ws.send(JSON.stringify(
         { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
     }
@@ -4727,7 +4773,7 @@
     // Asking for history is what takes the pane back off the live frame Clear screen left it on.
     function loadMore() {
       paneSource = 'recent-unwrapped';
-      paneLines = Math.min(paneLines + 500, 5000);
+      paneLines = Math.min(paneLines + historyStep(), paneHistoryMax());
       refreshPane();
     }
     function sendText() {
@@ -5027,7 +5073,11 @@
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
       drawSel();  // the band lives outside the scroller, so it has to be re-placed by hand
-      if (el.scrollTop === 0 && paneLines < 5000) loadMore();
+      if (el.scrollTop === 0 && paneLines < paneHistoryMax()) loadMore();
+      // Back at the tail after reading history: the pane goes live again, at the depth it opens
+      // on. A frozen tail is worse than fetching the history a second time, and the history is
+      // one scroll up either way.
+      if (!userScrolledUp && paneLines > POLL_MAX_LINES) { paneLines = 200; refreshPane(); }
     });
 
     if (savedUrl) setTimeout(connect, 100); else showSetup();
@@ -5269,6 +5319,7 @@
     syncQaBtn();
     syncBottomDock();
     setDictationEnabled(dictationOn());  // hidden unless asked for, and where there is no speech recognition
+    document.getElementById('historyPick').value = String(paneHistoryMax());
     loadTermShortcuts();
     syncPromptsBtn();  // no pane is open yet, so this labels the button for an agent
   </script>
