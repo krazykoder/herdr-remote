@@ -61,8 +61,17 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 
 # Frontend logic. Each extracts a block from web/index.html and runs it in a vm context,
 # so the single-file app keeps its no-build-step property.
-node --test tests/test_pairs.js tests/test_ctrl_keys.js tests/test_relay_url.js tests/test_stamp.js
+node --test tests/*.js
+
+# The app in a real browser, against a relay backed by the fake herdr in tests/e2e/bin. Covers
+# what a vm slice cannot see: the page booting at all, state clearing between panes, layout.
+npm ci && npx playwright install chromium        # first run only
+npx playwright test
 ```
+
+`package.json` is test-only — the web app still ships as one file, no build step, no runtime
+dependencies. Use the vm-slice suites for pure logic; reach for Playwright when the failure you
+care about is "the page is broken".
 
 Editing `web/` needs only a browser reload — the relay reads `index.html` from disk on every
 GET and serves it `no-cache`. Editing `relay/` needs a relay restart.

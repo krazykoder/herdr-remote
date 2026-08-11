@@ -1,0 +1,88 @@
+// The app, in a real browser, against a real relay backed by the fake herdr in tests/e2e/bin.
+//
+// This is the floor the harness exists to hold: the page boots, the socket connects, a pane opens
+// and reads, and going back leaves nothing behind. The node --test suites slice pure blocks out of
+// index.html and cannot see any of it — every one of them passes against a page that throws on
+// load.
+//
+//   npx playwright test
+const {test, expect} = require('@playwright/test');
+
+// Elements are addressed by the ids the single-file app gives them.
+const R = name => `#${name}`;
+const AGENT = 'Architect 1';
+const TERMINAL = 'build watch';
+
+test.beforeEach(async ({page}) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.__errors = errors;
+  await page.goto('/');
+});
+
+test.afterEach(async ({page}) => {
+  expect(page.__errors, 'the page logged errors').toEqual([]);
+});
+
+// The app is one file with no build step, so "it loaded" is not a given the way it is behind a
+// bundler that would have failed the build instead.
+test('the page boots and connects to its own relay', async ({page}) => {
+  await expect(page.locator('#agents')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+});
+
+test('the agent list shows what the relay is polling', async ({page}) => {
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  // Terminals are agents' equals in this list when the relay has terminal mode on, which the
+  // harness turns on — a shell missing here is the wire, not the CSS.
+  await expect(page.locator('#agents .agent', {hasText: TERMINAL})).toBeVisible();
+});
+
+test('opening a pane reads it, and going back leaves the list', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#terminalView')).toHaveClass(/active/);
+  await expect(page.locator(R('termContent'))).toContainText('done.');
+  await expect(page.locator(R('termTitle'))).toContainText(AGENT);
+
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#terminalView')).not.toHaveClass(/active/);
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+});
+
+test('switching panes does not leave the first pane’s text behind', async ({page}) => {
+  // The fake herdr writes each pane's own id into its output, so a stale paint is visible rather
+  // than indistinguishable. This is the failure that made the harness worth having.
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator(R('termContent'))).toContainText('pane w1:p1');
+
+  await page.locator('.term-header .back').click();
+  await page.locator('#agents .agent', {hasText: TERMINAL}).click();
+  await expect(page.locator(R('termContent'))).toContainText('pane w9:p1');
+  await expect(page.locator(R('termContent'))).not.toContainText('pane w1:p1');
+});
+
+test('the composer sends to the pane that is open', async ({page}) => {
+  // The agent, not the terminal: this is the ordinary "type something and send it" path.
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator(R('termContent'))).toContainText('done.');
+
+  const sent = [];
+  await page.exposeFunction('__note', d => sent.push(JSON.parse(d)));
+  await page.evaluate(() => {
+    const send = ws.send.bind(ws);
+    ws.send = d => { window.__note(d); return send(d); };
+  });
+  await page.locator(R('termInput')).fill('echo hi');
+  await page.locator(R('termInput')).press('Control+Enter');
+
+  // Text and the Enter that submits it are two messages: the text goes as a bracketed paste so a
+  // multi-line prompt cannot be executed a line at a time.
+  await expect.poll(() => sent.filter(m => m.type === 'send_text').length).toBe(1);
+  const text = sent.find(m => m.type === 'send_text');
+  expect(text.pane_id).toBe('w1:p1');
+  expect(text.text).toBe('echo hi');
+  expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(true);
+  // And the composer is cleared, which is the only sign the user gets that it left.
+  await expect(page.locator(R('termInput'))).toHaveValue('');
+});
