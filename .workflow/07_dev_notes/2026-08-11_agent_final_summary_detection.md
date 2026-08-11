@@ -73,7 +73,8 @@ Everything else is indented continuation text.
 
 **Both harnesses already mark the distinction we need, in the gutter column, with one
 character.** Prose and tool calls share the speaker glyph; what separates them is that a tool call
-is followed by result-gutter lines and prose is not.
+is followed by result-gutter lines and prose is not. Test fixtures retain only sanitized excerpts
+that preserve this shape; full live-pane history does not belong in the repository.
 
 ## Mechanism — gutter parsing, not text matching
 
@@ -170,10 +171,11 @@ drags the handle.
 - `[NEW] tests/e2e/browser/summary_detect.spec.js` — the wiring the slice cannot see: that a read
   is what runs the parse, that only a finished pane is suggested for, that the band and footer
   paint, and that a held or deliberately cleared range is never overwritten by the poll.
-- `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt` — the real pane reads above,
-  verbatim. The fixtures are the spec; a glyph change breaks a test rather than a user.
+- `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt` — minimal sanitized excerpts
+  preserving the real gutter shape. The fixtures are the spec; a glyph change breaks a test rather
+  than a user.
 
-Test cases: Claude fixture selects the `⏺ Sound half committed` block and excludes every `⎿`
+Test cases: Claude fixture selects the `⏺ Ready. Name the change.` block and excludes every `⎿`
 line; Codex fixture selects `• S2b review clean` through `Next: S3 …` across two blank lines and
 stops before `─ Worked for`; a pane ending in a tool execution selects nothing; an unknown
 harness selects nothing.

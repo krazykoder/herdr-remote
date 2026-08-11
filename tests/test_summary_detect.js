@@ -1,10 +1,9 @@
 // Which lines of a finished pane are the agent's closing message.
 //
-// The interesting cases are not synthetic — they are two panes read off a live herdr on
-// 2026-08-11 and checked in under tests/fixtures/. A pane is mostly tool output, so what the
-// parse has to get right is the boundary between the last command the agent ran and the last
-// thing it said. Asserting against the real reads is what makes a harness changing its gutter
-// glyphs break here rather than in front of a user.
+// The fixtures are minimal, sanitized excerpts from panes read off a live herdr on 2026-08-11.
+// A pane is mostly tool output, so what the parse has to get right is the boundary between the
+// last command the agent ran and the last thing it said. Keeping only that shape avoids checking
+// unrelated terminal history into the repository.
 //
 // Runs the block straight out of web/index.html so the single-file app keeps its no-build-step
 // property, the same trick tests/test_attention.js uses.
