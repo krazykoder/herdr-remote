@@ -794,10 +794,6 @@
       border-bottom: 2px solid var(--shell);
     }
 
-    .terminal-view.is-terminal .term-header .status-dot {
-      display: none;
-    }
-
     /* Everything a shell must not offer, hidden in one place. These elements are written by
        several functions on the poll path, and a branch in each is several places to forget one.
        #quickActions is deliberately absent from this list: it also carries session back/forward,
@@ -1761,7 +1757,10 @@
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
         </svg></button>
-      <span class="dot status-dot"></span>
+      <!-- The open pane's state, not the socket's. The connection dot lives in the app header,
+           which moves to the bottom of the screen while a pane is open rather than hiding, so it
+           is still on screen and this one is free to say something else. -->
+      <span class="dot" id="paneDot"></span>
       <span class="title" id="termTitle"></span>
       <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
            them are not undoable. See armFire. -->
@@ -2628,8 +2627,21 @@
       return Date.now() - paneStampAt.getTime() < LIVE_MS ? ['live', 'on'] : ['idle', ''];
     }
 
+    // The dot beside the open pane's name in the terminal header. Same rules as the tab strip's,
+    // because it is the same pane — a header saying one thing while its own tab says another is
+    // worse than either alone.
+    function paintPaneDot() {
+      const el = document.getElementById('paneDot');
+      const pane = activePane ? paneOf(activePane) : null;
+      el.style.background = !pane ? 'var(--muted)'
+        : isShell(activePane) ? shellColor(activePane) : statusColor(pane);
+      el.classList.toggle('pulse', !!pane && pane.status === 'working');
+      el.title = pane ? paneStatusWord()[0] : '';
+    }
+
     function renderStatusBar() {
       const pane = activePane ? paneOf(activePane) : null;
+      paintPaneDot();
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
@@ -4243,6 +4255,9 @@
       const title = document.getElementById('termTitle');
       if (!pane) title.textContent = activePane || '';
       else title.innerHTML = paneChrome(pane);
+      // Here as well as in renderStatusBar: a snapshot that only changes status arrives through
+      // this path, and the recency bands cross on the timer that drives the other one.
+      paintPaneDot();
       // The palette holds prompts over an agent and commands over a shell, and a pane can change
       // kind under a live snapshot — so the button is relabelled here, not only on open.
       syncPromptsBtn();
