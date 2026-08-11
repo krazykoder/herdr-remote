@@ -138,6 +138,26 @@ test('the Claude user turn is coloured and ruled, and nothing is filled', async 
   expect(seen.x).toBeLessThan(seen.textX);
 });
 
+test('highlight settings repaint the current pane and persist', async ({page}) => {
+  await feed(page, '⏺ Complete summary.\n  Ready to transfer.\n❯ next request\n  with context\n', 'working');
+  await expect(page.locator('#termContent .user-prompt')).toHaveCount(2);
+  await expect(page.locator('#termContent .summary-highlight')).toHaveCount(2);
+
+  await page.evaluate(() => {
+    document.getElementById('userHighlight').click();
+    document.getElementById('summaryHighlight').click();
+  });
+  await expect(page.locator('#termContent .user-prompt')).toHaveCount(0);
+  await expect(page.locator('#termContent .summary-highlight')).toHaveCount(0);
+
+  expect(await page.evaluate(() => localStorage.getItem('herdr_highlight_user'))).toBe('off');
+  expect(await page.evaluate(() => localStorage.getItem('herdr_highlight_summary'))).toBe('off');
+
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#userHighlight')).not.toBeChecked();
+  await expect(page.locator('#summaryHighlight')).not.toBeChecked();
+});
+
 // Walking back through the conversation. Three blocks with a tool execution between them, which is
 // the thing ↓↑ has to step over — the user is reading what the agent said, not what it ran.
 const CHAT = [

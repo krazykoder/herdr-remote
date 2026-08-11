@@ -29,7 +29,7 @@ let answer = true;                 // what the confirm dialog comes back with
 const ctx = vm.createContext({
   console,
   activePane: null, paneOf: () => null, drawSel: () => {}, renderQuickActions: () => {},
-  showToast: t => toasts.push(t), confirm: () => answer, scrollPaneToLine: () => {},
+  showToast: t => toasts.push(t), confirm: () => answer, scrollPaneToLine: () => {}, repaintHighlights: () => {},
   paneRows: [], selA: null, selB: null,
   localStorage: {
     getItem: k => (store.has(k) ? store.get(k) : null),
@@ -87,6 +87,18 @@ test('Codex: three paragraphs, blank lines kept, footer left out', () => {
   const picked = rows.slice(a, b + 1);
   assert.ok(picked.some(l => l === ''), 'the blank lines between paragraphs were dropped');
   assert.ok(!picked.some(l => l.startsWith('─')), 'turn footer leaked into the range');
+});
+
+// Both fixtures end in a prompt line, which is what a live pane always looks like: the composer
+// is the last thing in it. The glyphs are the ones read off real panes on 2026-08-11 — `❯` for
+// Claude, `›` for Codex — so a harness that changes either breaks a test rather than a user.
+test('the composer at the foot of a real pane is a prompt line', () => {
+  const claude = fixture('pane_claude_done.txt'), codex = fixture('pane_codex_done.txt');
+  assert.equal(ctx.isUserInput(claude[11], 'claude'), true, claude[11]);
+  assert.equal(ctx.isUserInput(codex[13], 'codex'), true, codex[13]);
+  // And no line of tool output in either one is mistaken for one.
+  assert.equal(claude.filter(r => ctx.isUserInput(r, 'claude')).length, 1);
+  assert.equal(codex.filter(r => ctx.isUserInput(r, 'codex')).length, 1);
 });
 
 test('a pane whose last block ran a tool has nothing to offer', () => {

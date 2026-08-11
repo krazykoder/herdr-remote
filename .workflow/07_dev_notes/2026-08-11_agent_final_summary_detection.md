@@ -94,12 +94,19 @@ Nothing above reads a word of the content. It reads column 0 and one character.
 
 ### Harness profiles — seeded gutter characters
 
-| harness | speaker | result gutter | turn footer |
-|---------|---------|---------------|-------------|
-| `claude` | `⏺` | `⎿` | `✻ Worked for` / `✻ Baked for` |
-| `codex` | `•` | `└` `│` | `─ Worked for` |
+| harness | speaker | result gutter | user prompt | turn footer |
+|---------|---------|---------------|-------------|-------------|
+| `claude` | `⏺` | `⎿` | `❯` `>` | `✻ Worked for` / `✻ Baked for` |
+| `codex` | `•` | `└` `│` | `›` | `─ Worked for` |
 
 Keyed on `a.agent`, which the relay already sends.
+
+The prompt column was read off live panes on `2026-08-11` rather than guessed: `herdr pane read`
+on a running Claude pane shows `❯ /update-config` and `❯ allow the test commands without
+prompting` at column 0, and on a running Codex pane `› Summarize recent commits`, both in
+scrollback and as the composer at the foot of the pane. Neither pane had a single line of tool
+output starting with those characters, which is what the test *the composer at the foot of a real
+pane is a prompt line* now pins: one prompt line in each fixture, no false positives.
 
 ## Unknown harnesses
 
@@ -113,10 +120,15 @@ Keyed on `a.agent`, which the relay already sends.
 **What is built on top of that ceiling.** The half a selection *can* teach is worth having, so
 **Learn** stores the speaker glyph alone, under `herdr_gutters`
 (`{version: 1, byAgent: {pi: "◆"}}`), and `profileFor()` returns it with an empty result list.
-That is enough to recognize a hand-selected block for trim learning. It is not enough to offer
-**Summary**, navigation, or an automatic suggestion: with no result glyph, `blockSpan` cannot tell
-a command from a sentence. Those shortcuts gate on `GUTTERS[a.agent]`, the complete shipped table,
-not on `profileFor`. The vm test *a learned harness never suggests on its own* is that rule.
+That is enough to cut the pane into blocks: trim learning, the ↓↑ pill, and **Summary** on demand
+all work from it. It is not enough to *volunteer* a range. With no result glyph `blockSpan` cannot
+tell a command from a sentence, so the automatic suggestion alone gates on `GUTTERS[a.agent]` —
+the complete shipped table — rather than on `profileFor`. The vm test *a learned harness never
+suggests on its own* is that rule.
+
+Stepping on a learned profile can therefore land on a tool block, and pressing again passes it.
+That was weighed against hiding the pill entirely and lost: a marker the user was asked to teach,
+which then drives nothing they can see, is worse than a step that occasionally overshoots.
 
 **Confirmed by showing, not by counting.** Pressing a button twice conveys no new information;
 showing the character it read does. So teaching a glyph asks `Learn "◆" as pi's message marker?`
@@ -174,33 +186,57 @@ No content is stored: two integers and a count, per harness.
 (`.auto`) to say the range was found rather than dragged. Touching a handle drops both — it is the
 user's range from then on. A **Summary** button in the quick-actions nav row selects it on demand;
 it appears only on a pane that has one, and unlike the automatic suggestion it has no `done` gate,
-because pressing it is the user asking. It preserves the complete parsed agent block; learned trims
-apply only when walking individual messages. Otherwise a suggested range is an ordinary ruler range
-— drag it, tap the text to clear it (`:3937`), transfer it.
+because pressing it is the user asking. The range it selects is trimmed — that is the point of
+learning a trim, and only ranges the user shaped by hand are in the tally. Otherwise a suggested
+range is an ordinary ruler range — drag it, tap the text to clear it (`:3937`), transfer it.
 
 **Learn**, left of Copy in the selection bar. On a harness with a profile it records the trim and
 says what it recorded — `Learned 1/0 ✓`, head and tail — so the user finds out what was inferred
 after the fact rather than having to predict it. On one without, it reads the glyph off the line
-the selection starts on and asks before storing it. A learned glyph does not unlock Summary or
-navigation until a complete profile supplies its result gutter. It hides itself on a selection that
-is not inside a block, because there is nothing there to learn.
+the selection starts on and asks before storing it, and that harness gains the pill and Summary.
+Pressing it on an untouched suggestion says `Trim it first`: confirming the parser's own output
+teaches nothing, and letting it vote is what made the tally useless. It hides itself on a selection
+that is not inside a block, because there is nothing there to learn.
 
 **↓ ↑**, a floating pill at the pane's top-right (`.block-nav`, out of flow so the pane keeps its
-height). Steps to the next and previous agent message, scrolls it into view, and selects it as a
-found range. Beside the ruler rather than on it: the ruler's handles travel that same track, and a
-tap target sitting on a drag target turns a drag into a jump. Stepping *passes over* tool blocks —
-`blockBefore`/`blockAfter` skip them, while `findFinalMessage` stops on one, and the difference is
-intent: the user walking the conversation is reading what the agent said, not what it ran. At the
-top of what is loaded, ↑ calls `loadMore()` rather than reporting nothing there. Hidden unless the
-harness has a complete shipped profile; Learn alone cannot establish that safety boundary.
+height). Beside the ruler rather than on it: the ruler's handles travel that same track, and a tap
+target sitting on a drag target turns a drag into a jump. It scrolls the range it finds into view
+and selects it as a found range; at the top of what is loaded, ↑ calls `loadMore()` rather than
+reporting nothing there. Hidden when the harness has no profile at all — that absence is the
+invitation to press Learn.
 
-**User prompts** are harness-specific column-zero gutters (`❯` / `>` for Claude and `›` for Codex).
-Their highlight starts there and continues through every user continuation line, stopping at the
-next agent speaker glyph. The quiet one-line halo is placed only at the start and end of that range,
-so adjacent continuation rows do not compound their background. They are real terminal rows, not a
-scrolling overlay, so they move with text in every wrap mode and keep the ruler geometry exact.
-Summary uses `lastUserInput()` as the same boundary, selecting the closest preceding complete agent
-block. Turn-aware ↑/↓ remains a separate follow-up.
+**One stop per turn, not per block.** `turnSummaries()` is the list it walks: for every prompt
+line, the last agent block above it, tool blocks skipped and duplicates collapsed where two
+prompts share one. Between two prompts an agent says a dozen things and only the last of them
+answers the question, so stepping message-by-message meant several presses of ↑ to cross a single
+turn and no way to tell which stop was the answer. On a harness with no prompt gutter — a learned
+one — the list is empty and stepping falls back to `blockBefore`/`blockAfter`, which walk messages
+and skip tool blocks.
+
+**User prompts** are harness-specific column-zero gutters (`❯` / `>` for Claude, `›` for Codex).
+The treatment starts there and runs through the turn's continuation lines, stopping at the last
+line with text on it — trailing blanks are the gap before the agent answers, and a rule running
+down empty rows reads as a turn that never ended.
+
+**Colour and a rule, no fill.** The first version tinted the whole row and put a fainter halo above
+and below it. A filled block behind monospace reads as damage rather than as structure, so what is
+left is blue text and a 3px rule pulled into the pane's own left padding (`margin-left: -7px;
+padding-left: 4px`) — outside the first character cell, so the `❯` it belongs to is never sitting
+underneath it. The detected summary gets the same treatment in orange, the colour the ruler already
+paints a found range in.
+
+**Rows are real DOM.** `renderPaneRows()` writes one `<span class="term-line">` per line instead of
+one text node, which is what lets the rule stay attached to its text in every wrap mode. Two things
+fall out of it: `rowGeom` reads reflow geometry off a box rather than measuring a `Range`, and the
+rebuild is skipped when a read delivers text identical to the last one — the pane is re-read every
+3s and rebuilding thousands of spans for an unchanged read is the one cost per-line DOM could
+plausibly carry.
+
+**Highlight preferences** sit below Appearance in Settings, both default on, both persisted
+(`herdr_highlight_user`, `herdr_highlight_summary`). Only the row classes are affected — the parse
+runs either way, because the ruler, Summary and stepping all depend on it. Toggling repaints the
+open pane, and so does teaching a trim: the trim moves the summary, and the orange rows are drawn
+from it.
 
 ## Rejected options, and why
 
@@ -231,6 +267,10 @@ drags the handle.
    line is off-screen, no selection.
 3. **A `done` pane whose last block is a tool execution** (agent stopped after a command) gets no
    selection. Correct — there is no closing message to select.
+4. **A prompt gutter appearing in tool output.** `>` at column 0 is the one plausible collision;
+   both sampled panes had none, because tool output sits indented under a result gutter. A false
+   prompt line splits a turn — one extra stop for ↑ — rather than corrupting a range, so it
+   degrades to the message-by-message behaviour this replaced.
 
 ## Files
 
@@ -245,13 +285,13 @@ drags the handle.
   is what runs the parse, that only a finished pane is suggested for, that the band and footer
   paint, and that a held or deliberately cleared range is never overwritten by the poll.
 - `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt` — minimal sanitized excerpts
-  preserving the real gutter shape. The fixtures are the spec; a glyph change breaks a test rather
-  than a user.
+  preserving the real gutter shape, each ending in the composer prompt line the live pane ends in.
+  The fixtures are the spec; a glyph change breaks a test rather than a user.
 
 Test cases: Claude fixture selects the `⏺ Ready. Name the change.` block and excludes every `⎿`
 line; Codex fixture selects `• S2b review clean` through `Next: S3 …` across two blank lines and
-stops before `─ Worked for`; a pane ending in a tool execution selects nothing; an unknown
-harness selects nothing.
+stops before `─ Worked for`; each fixture has exactly one line the prompt gutters match; a pane
+ending in a tool execution selects nothing; an unknown harness selects nothing.
 
 ## Verification
 
@@ -271,11 +311,13 @@ npx playwright test          # page still boots, selection still clears between 
    way; a selection outside the block changes nothing.
 7. A suggested range never starts or ends on a blank line.
 8. Nothing on the wire changed.
-9. ↓ ↑ step between the agent's messages and never land on a tool block; the pill is absent on a
-   harness with no profile.
+9. ↓ ↑ step one stop per turn on a harness with a prompt gutter, landing on the message that
+   closed each turn; the pill is absent on a harness with no profile at all.
 10. Learn on an unseen harness asks before storing, shows the character it read, and stores nothing
-    when declined. Once accepted it can record trims from manual selections, but gains neither the
-    pill nor Summary until a complete profile is shipped.
+    when declined. Once accepted that harness gains the pill and Summary, and still never gets an
+    automatic suggestion.
+11. Turning a highlight off changes only what is painted: the ruler, Summary and stepping are
+    unaffected, and the preference survives a reload.
 
 ## What is deliberately left for later
 

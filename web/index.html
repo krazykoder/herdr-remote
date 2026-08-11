@@ -587,6 +587,21 @@
       color: var(--text);
     }
 
+    .setting-group .toggle-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 0;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .setting-group .toggle-option input {
+      width: auto;
+      padding: 0;
+      accent-color: var(--blue);
+    }
+
     .setting-group select {
       width: 100%;
       padding: 8px;
@@ -1169,13 +1184,18 @@
     /* Colour and a rule, no fill: a terminal is already a wall of colour, and a highlight block
        behind monospace text is the thing that reads as broken rather than as structure. The rule
        is pulled into the pane's own left padding so it never sits on the first character cell. */
-    .term-line.user-prompt {
-      color: var(--blue);
+    .term-line.user-prompt,
+    .term-line.summary-highlight {
       font-weight: 600;
-      border-left: 3px solid var(--blue);
+      border-left: 3px solid;
       margin-left: -7px;
       padding-left: 4px;
     }
+
+    /* Blue for what you said, orange for what the agent closed with — the same orange the ruler
+       paints a found range in, because it marks the same lines. */
+    .term-line.user-prompt { color: var(--blue); border-left-color: var(--blue); }
+    .term-line.summary-highlight { color: var(--orange); border-left-color: var(--orange); }
 
     /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
        pointer-events:none because the text underneath stays scrollable while it shows. */
@@ -1973,6 +1993,13 @@
     </div>
 
     <div class="setting-group">
+      <label>Highlights</label>
+      <label class="toggle-option"><input type="checkbox" id="userHighlight" onchange="setUserHighlight(this.checked)"> Auto highlight user input</label>
+      <label class="toggle-option"><input type="checkbox" id="summaryHighlight" onchange="setSummaryHighlight(this.checked)"> Auto highlight agent summary</label>
+      <div class="hint">Prompt turns are blue; detected summaries are orange.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2749,6 +2776,28 @@
     }
 
     setTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+
+    // Both defaults preserve the existing prompt treatment and make a detected summary useful the
+    // first time a pane opens. The parser still runs when a colour is off; only row classes stop.
+    const USER_HIGHLIGHT_KEY = 'herdr_highlight_user', SUMMARY_HIGHLIGHT_KEY = 'herdr_highlight_summary';
+    function highlightOn(key) {
+      try { return localStorage.getItem(key) !== 'off'; } catch (e) { return true; }
+    }
+    function repaintHighlights() {
+      // The band is drawn against row geometry, so it is re-placed whether or not there are rows
+      // to rebuild — a pane with no text still has a ruler to clear.
+      if (paneRows.length) { renderPaneRows(); invalidateRows(); }
+      drawSel();
+    }
+    function setHighlight(key, id, on) {
+      try { localStorage.setItem(key, on ? 'on' : 'off'); } catch (e) { /* session-only */ }
+      document.getElementById(id).checked = on;
+      repaintHighlights();
+    }
+    function setUserHighlight(on) { setHighlight(USER_HIGHLIGHT_KEY, 'userHighlight', on); }
+    function setSummaryHighlight(on) { setHighlight(SUMMARY_HIGHLIGHT_KEY, 'summaryHighlight', on); }
+    document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
+    document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
 
 
 
@@ -4208,6 +4257,9 @@
       if (selSuggested) { said('Trim it first'); return; }
       const at = learnFromSelection();
       said(at ? `Learned ${at[0]}/${at[1]} ✓` : 'Not a message');
+      // The trim it just learned moves the summary, and the orange rows are drawn from it. Without
+      // this they stay where they were until the pane's text happens to change.
+      if (at) { scanFinalMessage(); repaintHighlights(); }
     }
 
     function learnGutter(agent) {
@@ -4225,7 +4277,7 @@
       catch (e) { /* private mode: session-only */ }
       scanFinalMessage();
       renderQuickActions();
-      drawSel();
+      repaintHighlights();   // draws the ruler too
       return true;
     }
 
@@ -4402,6 +4454,7 @@
       const same = next === paneText;
       paneText = next;
       paneRows = next.split('\n');
+      scanFinalMessage();   // rows below need the current summary range; parse once per read
       // Rebuilt only when the text actually changed. The pane is re-read every 3s and is usually
       // identical; rebuilding thousands of rows on each of those reads is the one thing per-line
       // DOM could plausibly cost, and this is what keeps it off the poll.
@@ -4409,7 +4462,6 @@
         renderPaneRows();
         invalidateRows();
       }
-      scanFinalMessage();   // before anything that asks whether there is one
       const had = selA !== null;
       if (had) {
         const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
@@ -4428,11 +4480,14 @@
     // measuring a Range through a single text node.
     function renderPaneRows() {
       const a = activePane ? paneOf(activePane) : null;
-      const userLines = a ? userInputLines(paneRows, a.agent) : new Set();
+      const userLines = a && highlightOn(USER_HIGHLIGHT_KEY) ? userInputLines(paneRows, a.agent) : new Set();
+      const summaryStart = highlightOn(SUMMARY_HIGHLIGHT_KEY) && finalAt ? finalAt[0] : -1;
+      const summaryEnd = highlightOn(SUMMARY_HIGHLIGHT_KEY) && finalAt ? finalAt[1] : -1;
       const frag = document.createDocumentFragment();
       paneRows.forEach((row, i) => {
         const line = document.createElement('span');
-        line.className = userLines.has(i) ? 'term-line user-prompt' : 'term-line';
+        line.className = 'term-line' + (userLines.has(i) ? ' user-prompt' : '') +
+          (i >= summaryStart && i <= summaryEnd ? ' summary-highlight' : '');
         line.textContent = row;
         frag.append(line);
       });
