@@ -1150,13 +1150,46 @@
       flex: 1;
       min-height: 0;
       display: flex;
+      background: var(--term-bg);
       /* The band is positioned against this box and has to clip to it. */
       overflow: hidden;
     }
 
     .term-wrap>.term-content {
       flex: 1;
+      position: relative;
+      z-index: 1;
+      background: var(--term-bg);
     }
+
+    /* Lines are DOM rows rather than a scrolling overlay, so prompt treatment stays attached to
+       its text in every wrap mode. `min-height` keeps an empty terminal line real. */
+    .term-line {
+      display: block;
+      min-height: 1.5em;
+    }
+
+    .term-line.user-prompt {
+      position: relative;
+      z-index: 0;
+      isolation: isolate;
+      color: var(--blue);
+      font-weight: 600;
+      background: color-mix(in srgb, var(--blue) 13%, transparent);
+      box-shadow: inset 3px 0 var(--blue);
+    }
+
+    /* One quiet row above the user turn, without inserting whitespace into the transcript. */
+    .term-line.user-prompt-start::before,
+    .term-line.user-prompt-end::after {
+      content: '';
+      position: absolute;
+      z-index: -1;
+      background: color-mix(in srgb, var(--blue) 7%, transparent);
+    }
+
+    .term-line.user-prompt-start::before { inset: -1.5em 0 0; }
+    .term-line.user-prompt-end::after { inset: 0 0 -1.5em; }
 
     /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
        pointer-events:none because the text underneath stays scrollable while it shows. */
@@ -3274,12 +3307,12 @@
         if (!paneTextPrimed) {
           paneTextPrimed = true;
           syncPaneLoading();  // this read is the one the pill was waiting for
-        } else if (next !== el.textContent) {
+        } else if (next !== paneText) {
           paneStampAt = new Date();
           noteActivity(activePane);
           renderStatusBar();
         }
-        el.textContent = next;
+        setPaneText(next);
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
           const growth = el.scrollHeight - prevHeight;
@@ -3287,8 +3320,8 @@
         } else {
           el.scrollTop = el.scrollHeight;
         }
-        // After the scroll settles, not before: the band is drawn against scrollTop.
-        setPaneText(next);
+        // setPaneText drew against the old scroll position; the band lives outside the scroller.
+        drawSel();
       }
     }
 
@@ -3919,16 +3952,16 @@
     // selected. tests/fixtures/pane_*_done.txt are those reads, so a harness that changes its
     // glyphs breaks a test rather than a user.
     const GUTTERS = {
-      claude: { speaker: '⏺', result: ['⎿'] },
-      codex: { speaker: '•', result: ['└', '│'] },
+      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
+      codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
     };
 
     // A harness the user taught by selecting one of its messages. The first character of the line
     // they started on is its speaker glyph — the one thing a selection can reveal. It cannot
     // reveal the result glyph, which by definition sits in the tool blocks they did *not* select,
-    // so a learned profile carries no result list. That is why it navigates and selects on demand
-    // but is never allowed to suggest on its own: with no result glyph it cannot tell a command
-    // from a sentence, and a silent wrong guess is worse than no guess.
+    // so a learned profile carries no result list. It supports explicit trim learning only;
+    // Summary and message navigation require a complete shipped profile. With no result glyph it
+    // cannot tell a command from a sentence, and a wrong tool-output selection is worse than no shortcut.
     const GUTTER_KEY = 'herdr_gutters', GUTTER_VERSION = 1;
 
     // Memoized: profileFor sits under drawSel, which runs on every scroll event, and parsing JSON
@@ -3967,13 +4000,43 @@
       return [start, end];
     }
 
-    // The last block, and null if it ran a tool. Deliberately not "the last block that didn't":
-    // an agent that stopped after a command has no closing message, and walking further up would
-    // offer something it said before doing work it has not reported on.
+    function isUserInput(row, agent) {
+      const g = profileFor(agent);
+      return !!g && g.user && g.user.includes((row || '')[0]);
+    }
+
+    function lastUserInput(rows, agent) {
+      for (let i = (rows || []).length - 1; i >= 0; i--) {
+        if (isUserInput(rows[i], agent)) return i;
+      }
+      return -1;
+    }
+
+    // A user turn is its gutter plus every continuation line until the next agent utterance.
+    // That is the one contiguous region that should be visually distinct in the terminal.
+    function userInputLines(rows, agent) {
+      const g = profileFor(agent), lines = new Set();
+      if (!g || !rows) return lines;
+      let inTurn = false;
+      rows.forEach((row, i) => {
+        if ((row || '')[0] === g.speaker) inTurn = false;
+        if (isUserInput(row, agent)) inTurn = true;
+        if (inTurn) lines.add(i);
+      });
+      return lines;
+    }
+
+    // The last block above the latest user prompt, and null if it ran a tool. A `>` line closes
+    // the completed turn the user is about to transfer; without one this remains the last block
+    // in the pane. Deliberately not "the last block that didn't": an agent that stopped after a
+    // command has no closing message, and walking further up would offer something it said before
+    // doing work it has not reported on.
     function findFinalMessage(rows, agent) {
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
-      for (let i = rows.length - 1; i >= 0; i--) {
+      const lastInput = lastUserInput(rows, agent);
+      const before = lastInput < 0 ? rows.length : lastInput;
+      for (let i = before - 1; i >= 0; i--) {
         if (rows[i][0] === g.speaker) return blockSpan(rows, g, i);
       }
       return null;
@@ -4031,25 +4094,27 @@
     // trailing next-steps paragraph. Either way it is a pair of small line offsets measured from
     // the block's own edges, it is stable per harness, and a tally of the pairs already confirmed
     // is the entire model. No content is stored — two integers and a count.
-    const TRIM_KEY = 'herdr_summary_trim', TRIM_VERSION = 1;
+    const TRIM_KEY = 'herdr_summary_trim', TRIM_VERSION = 2;
 
     function loadTrims() {
       try {
         const d = JSON.parse(localStorage.getItem(TRIM_KEY) || '');
-        return d && d.version === TRIM_VERSION && d.byAgent ? d.byAgent : {};
+        return d && (d.version === 1 || d.version === TRIM_VERSION) && d.byAgent ? d.byAgent : {};
       } catch (e) { return {}; }   // a corrupt blob is no trims, never a broken pane
     }
 
-    // The pair confirmed most often. Ties go to whichever keeps more of the block: over-selecting
-    // costs a drag, under-selecting silently drops a line the user wanted to send.
+    // The pair confirmed most often. Ties go to the most recent explicit trim.
     function learnedTrim(agent) {
       const tally = loadTrims()[agent];
-      let best = [0, 0], top = 0;
+      let best = [0, 0], top = 0, newest = -1;
       for (const k in tally || {}) {
         const [h, t] = k.split(',').map(Number);
+        const vote = tally[k], count = Array.isArray(vote) ? vote[0] : vote;
+        const last = Array.isArray(vote) ? vote[1] : 0;
         if (!(h >= 0 && t >= 0)) continue;
-        if (tally[k] > top || (tally[k] === top && h + t < best[0] + best[1])) {
-          top = tally[k];
+        if (count > top || (count === top && last > newest)) {
+          top = count;
+          newest = last;
           best = [h, t];
         }
       }
@@ -4061,7 +4126,9 @@
       const all = loadTrims();
       const tally = all[agent] || (all[agent] = {});
       const k = head + ',' + tail;
-      tally[k] = (tally[k] || 0) + 1;
+      const old = tally[k], count = Array.isArray(old) ? old[0] : old || 0;
+      const last = Math.max(0, ...Object.values(tally).map(v => Array.isArray(v) ? v[1] : 0));
+      tally[k] = [count + 1, last + 1];
       try { localStorage.setItem(TRIM_KEY, JSON.stringify({ version: TRIM_VERSION, byAgent: all })); }
       catch (e) { /* private mode: session-only */ }
     }
@@ -4074,8 +4141,10 @@
     function scanFinalMessage() {
       const a = activePane ? paneOf(activePane) : null;
       paneProfile = a ? profileFor(a.agent) : null;
-      const raw = a ? findFinalMessage(paneRows, a.agent) : null;
-      finalAt = raw ? trimRange(raw, a.agent) : null;
+      const raw = a && GUTTERS[a.agent] ? findFinalMessage(paneRows, a.agent) : null;
+      // Summary is the complete parsed block. A trim is a manual reading preference, not a
+      // licence to silently omit part of the agent's completed answer.
+      finalAt = raw;
     }
 
     // Redundant lines come off both ends: the ones this user has trimmed before, and then any
@@ -4096,7 +4165,9 @@
     // block: that is a different intent and says nothing about how much of a block to keep.
     function learnFromSelection() {
       const a = activePane ? paneOf(activePane) : null;
-      if (!a || selA === null) return null;
+      // An untouched suggestion says nothing about the user's trim. Its accidental 0/0 vote
+      // would otherwise eventually drown out every real correction.
+      if (!a || selA === null || selSuggested) return null;
       const s = Math.min(selA, selB), e = Math.max(selA, selB);
       const raw = blockContaining(paneRows, a.agent, s);
       if (!raw || s < raw[0] || e > raw[1]) return null;
@@ -4124,6 +4195,7 @@
         setTimeout(() => { if (btn.textContent === t) btn.textContent = 'Learn'; }, 1600);
       };
       if (!profileFor(a.agent)) { if (learnGutter(a.agent)) said('Learned ✓'); return; }
+      if (selSuggested) { said('Trim it first'); return; }
       const at = learnFromSelection();
       said(at ? `Learned ${at[0]}/${at[1]} ✓` : 'Not a message');
     }
@@ -4223,22 +4295,13 @@
     function rowGeom(i) {
       const { el, lh, pad } = lineGeom();
       if (currentWrapMode() !== 'reflow') return { top: pad + i * lh, height: lh };
-      const node = el.firstChild;
-      // Only ever a single text node in practice; anything else means the pane is not rendered
-      // yet, and the arithmetic is a better answer than a thrown range.
-      if (!node || node.nodeType !== 3) return { top: pad + i * lh, height: lh };
+      const row = el.children[i];
+      if (!row) return { top: pad + i * lh, height: lh };
       if (!rowCache) rowCache = new Map();
       const hit = rowCache.get(i);
       if (hit) return hit;
-      const start = lineStarts[i];
-      if (start === undefined) return { top: pad + i * lh, height: lh };
-      const r = document.createRange();
-      // Through the newline, not just the text: a blank line is a zero-length range, and a
-      // zero-length range has no rect to read a height off.
-      r.setStart(node, start);
-      r.setEnd(node, Math.min(node.length, start + (paneRows[i] || '').length + 1));
-      const box = r.getBoundingClientRect();
       const base = el.getBoundingClientRect().top - el.scrollTop;
+      const box = row.getBoundingClientRect();
       const geom = { top: box.top - base, height: box.height || lh };
       rowCache.set(i, geom);
       return geom;
@@ -4273,9 +4336,9 @@
       const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
       const bar = document.getElementById('selBar');
       ruler.hidden = !rulerOn();
-      // Nothing to step through without a profile, and an unknown harness gets one by the user
-      // selecting a message by hand and pressing Learn — so the pill appears once that has happened.
-      document.getElementById('blockNav').hidden = !rulerOn() || !paneProfile || !paneRows.length;
+      // A learned marker has no result gutter, so it cannot distinguish a tool block from an
+      // agent message. Navigation needs the complete shipped profile, not merely a speaker glyph.
+      document.getElementById('blockNav').hidden = !rulerOn() || !GUTTERS[agentOf(activePane)] || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;
@@ -4320,13 +4383,19 @@
     function setPaneText(next) {
       paneText = next;
       paneRows = next.split('\n');
-      // Character offset of each line, which is what a Range needs. Built here because this is
-      // the one place the text changes.
-      lineStarts = [];
-      for (let i = 0, at = 0; i < paneRows.length; i++) {
-        lineStarts.push(at);
-        at += paneRows[i].length + 1;
-      }
+      const a = activePane ? paneOf(activePane) : null;
+      const userLines = a ? userInputLines(paneRows, a.agent) : new Set();
+      const frag = document.createDocumentFragment();
+      paneRows.forEach((row, i) => {
+        const line = document.createElement('span');
+        const user = userLines.has(i);
+        line.className = 'term-line' + (user ? ' user-prompt' : '') +
+          (user && !userLines.has(i - 1) ? ' user-prompt-start' : '') +
+          (user && !userLines.has(i + 1) ? ' user-prompt-end' : '');
+        line.textContent = row;
+        frag.append(line);
+      });
+      document.getElementById('termContent').replaceChildren(frag);
       invalidateRows();
       scanFinalMessage();   // before anything that asks whether there is one
       const had = selA !== null;
@@ -5750,11 +5819,13 @@
       // the list is what is on screen — stepping a strip hidden behind an open pane is a keypress
       // with no visible effect. Phones keep plain Tab, which is how a touch keyboard moves between
       // fields. Windows never sees this: Alt+Tab belongs to the OS there.
-      if (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Tab') {
+      // Safari can report Option+Tab by physical code with an empty key value. Capture also keeps
+      // a focused filter or chip from consuming the browser shortcut before the tab strip sees it.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'Tab' || e.code === 'Tab')) {
         if (activePane || window.innerWidth < 768) return;
-        if (stepTab(e.shiftKey ? -1 : 1)) e.preventDefault();
+        if (stepTab(e.shiftKey ? -1 : 1)) { e.preventDefault(); e.stopPropagation(); }
       }
-    });
+    }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;

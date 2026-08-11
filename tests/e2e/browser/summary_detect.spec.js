@@ -109,6 +109,19 @@ test('an auto-selected band reads orange, and a dragged one does not', async ({p
   expect(await band.evaluate(el => getComputedStyle(el).borderTopColor)).not.toBe(auto);
 });
 
+test('the Claude user turn paints through its continuation rows', async ({page}) => {
+  await feed(page, '❯ allow the test commands\n  confirmation\n\n⏺ Done.\n', 'working');
+  const row = page.locator('#termContent .term-line.user-prompt');
+  await expect(row).toHaveCount(3);
+  await expect(row.first()).toHaveText('❯ allow the test commands');
+  await expect(row.first()).toHaveCSS('color', /rgb/);
+  await expect(row.first()).toHaveCSS('background-color', /rgb/);
+  await expect(row.first()).toHaveClass(/user-prompt-start/);
+  await expect(row.last()).toHaveClass(/user-prompt-end/);
+  await expect(row.nth(1)).not.toHaveClass(/user-prompt-(start|end)/);
+  await expect(page.locator('#termContent .term-line', {hasText: '⏺ Done.'})).not.toHaveClass(/user-prompt/);
+});
+
 // Walking back through the conversation. Three blocks with a tool execution between them, which is
 // the thing ↓↑ has to step over — the user is reading what the agent said, not what it ran.
 const CHAT = [
@@ -179,14 +192,11 @@ test('Learn teaches an unknown harness its marker, once confirmed', async ({page
   page.once('dialog', d => d.accept());
   await page.locator('#selLearn').click();
   await expect(page.locator('#selLearn')).toHaveText('Learned ✓');
-  await expect(page.locator('#blockNav')).toBeVisible();
+  await expect(page.locator('#blockNav')).toBeHidden();
+  await expect(page.locator('#quickActions .qa-summary')).toHaveCount(0);
 
-  // Navigation, yes. A silent guess on the next read, no — without a result glyph it cannot tell
-  // a command from a sentence.
+  // No navigation or silent guess: without a result glyph it cannot tell a command from a sentence.
   await feed(page, PI_PANE, 'working');
-  await page.evaluate(() => clearSel());
-  await page.locator('#blockNav button', {hasText: '↑'}).click();
-  expect(await sel(page)).toEqual([3, 4]);
   await page.evaluate(() => clearSel());
   await feed(page, PI_PANE);              // a finished pane, and still no suggestion
   expect(await sel(page)).toBeNull();
@@ -201,6 +211,12 @@ test('Learn records the trim, and says what it recorded', async ({page}) => {
   await page.evaluate(() => clearSel());
   await page.locator('#blockNav button', {hasText: '↑'}).click();
   expect(await sel(page)).toEqual([6, 6], 'the next found range arrives already trimmed');
+});
+
+test('Learn asks the user to trim an untouched suggestion first', async ({page}) => {
+  await feed(page, PANE);
+  await page.locator('#selLearn').click();
+  await expect(page.locator('#selLearn')).toHaveText('Trim it first');
 });
 
 test('switching panes drops the suggestion with the rest of the ruler', async ({page}) => {

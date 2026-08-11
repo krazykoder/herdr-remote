@@ -130,6 +130,12 @@ test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   await page.keyboard.press('Alt+Shift+Tab');
   await expect(tabs.nth(2)).toHaveClass(/active/);
 
+  // Safari may provide the physical key code but no printable key value for Option+Tab.
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', {
+    bubbles: true, cancelable: true, altKey: true, code: 'Tab',
+  })));
+  await expect(tabs.nth(0)).toHaveClass(/active/);
+
   // Not while a pane is open: the strip is not on screen, and Tab there belongs to the composer.
   await page.locator('#agents .agent').first().click();
   await expect(page.locator('#termContent')).toContainText('done.');

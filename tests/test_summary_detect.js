@@ -49,6 +49,7 @@ beforeEach(() => {
   vm.runInContext('gutterCache = null', ctx);   // the memo outlives localStorage otherwise
   toasts.length = 0;
   answer = true;
+  vm.runInContext('selSuggested = false', ctx);
 });
 
 // A pane the user is looking at, with a range on it: what learnFromSelection reads.
@@ -127,6 +128,16 @@ test('the glyph line alone is a valid range', () => {
   assert.deepEqual(find(['⏺ Bash(x)', '  ⎿  y', '', '⏺ Done.'], 'claude'), [3, 3]);
 });
 
+test('the latest user prompt bounds the completed turn above it', () => {
+  const rows = [
+    '⏺ Older summary.', '', '❯ first request',
+    '⏺ Previous summary.', '  ready to transfer.', '',
+    '❯ please start the next task',
+    '⏺ New work is underway.',
+  ];
+  assert.deepEqual(find(rows, 'claude'), [3, 4]);
+});
+
 test('empty and malformed input do not throw', () => {
   assert.equal(find([], 'claude'), null);
   assert.equal(find([''], 'claude'), null);
@@ -146,18 +157,28 @@ test('the range as parsed: whole block, no trailing blanks', () => {
   assert.deepEqual(scan(), [3, 5]);
 });
 
-test('a transfer teaches the trim, and the next read arrives already trimmed', () => {
+test('a transfer teaches trim for message stepping, not the complete summary', () => {
   open(BLOCK, 'claude', 5, 5);       // user kept only the last line of the message
   ctx.scanFinalMessage();
   ctx.learnFromSelection();
   open(BLOCK, 'claude');
-  assert.deepEqual(scan(), [5, 5]);
+  assert.deepEqual(scan(), [3, 5]);
+  assert.deepEqual(ctx.trimRange([3, 5], 'claude'), [5, 5]);
+});
+
+test('an untouched suggestion teaches no 0/0 trim', () => {
+  open(BLOCK, 'claude', 3, 5);
+  vm.runInContext('selSuggested = true', ctx);
+  assert.equal(ctx.learnFromSelection(), null);
+  open(BLOCK, 'claude');
+  assert.deepEqual(scan(), [3, 5]);
 });
 
 test('a trim that lands on a blank line keeps walking', () => {
   open(BLOCK, 'claude');
   ctx.noteTrim('claude', 1, 0);      // index 4, which is blank
-  assert.deepEqual(scan(), [5, 5]);
+  assert.deepEqual(scan(), [3, 5]);
+  assert.deepEqual(ctx.trimRange([3, 5], 'claude'), [5, 5]);
 });
 
 test('the trim is per harness', () => {
@@ -239,8 +260,8 @@ test('an unknown harness is inert until it is taught', () => {
 test('Learn takes the marker off the line the selection starts on', () => {
   open(OTHER, 'pi', 3, 4);
   assert.equal(ctx.learnGutter('pi'), true);
-  assert.deepEqual(scan(), [3, 4]);
-  assert.deepEqual(ctx.blockBefore(OTHER, 'pi', 3), [0, 1], 'and navigation works from then on');
+  assert.deepEqual(ctx.profileFor('pi'), { speaker: '◆', result: [] });
+  assert.equal(scan(), null, 'a speaker alone cannot safely identify a final message');
 });
 
 test('a declined confirmation stores nothing', () => {
@@ -266,17 +287,29 @@ test('a learned harness never suggests on its own', () => {
   ctx.scanFinalMessage();
   ctx.suggestFinalMessage();
   assert.equal(ctx.selA, null, 'no result glyph means no way to tell a command from a sentence');
-  // Asking is different from being told: Summary still selects it.
+  // Asking is no safer than being told without a result gutter.
   ctx.selectFinalMessage();
-  assert.deepEqual([ctx.selA, ctx.selB], [3, 4]);
+  assert.deepEqual([ctx.selA, ctx.selB], [null, null]);
 });
 
-test('the most-confirmed trim wins, ties keep more of the block', () => {
+test('the most-confirmed trim wins, ties use the latest explicit trim', () => {
   open(BLOCK, 'claude');
   ctx.noteTrim('claude', 3, 0);
   ctx.noteTrim('claude', 3, 0);
   ctx.noteTrim('claude', 1, 0);
   assert.deepEqual(ctx.learnedTrim('claude'), [3, 0]);
   ctx.noteTrim('claude', 1, 0);
-  assert.deepEqual(ctx.learnedTrim('claude'), [1, 0], 'tied at two each, so the smaller trim wins');
+  assert.deepEqual(ctx.learnedTrim('claude'), [1, 0], 'tied at two each, so the later trim wins');
+});
+
+test('known prompt gutters identify user input at column zero', () => {
+  assert.equal(ctx.isUserInput('❯ allow it', 'claude'), true);
+  assert.equal(ctx.isUserInput('> allow it', 'claude'), true);
+  assert.equal(ctx.isUserInput('› continue', 'codex'), true);
+  assert.equal(ctx.isUserInput(' > indented', 'claude'), false);
+});
+
+test('a prompt highlight covers its continuation through the next agent block', () => {
+  const rows = ['❯ inspect this', '  with both files', '', '⏺ I found it.', '  details'];
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'claude')), [0, 1, 2]);
 });

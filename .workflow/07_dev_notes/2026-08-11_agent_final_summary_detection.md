@@ -85,13 +85,14 @@ One rule, identical for both harnesses:
    — Codex's closing message is three paragraphs separated by blanks.
 2. A block is a **tool execution** if any line in it starts (after indent) with a *result glyph*.
    `⏺ Bash(…)` always carries `⎿`; `• Ran …` always carries `└` or `│`. Closing prose never does.
-3. The **final summary** is the last block that is not a tool execution.
+3. The **final summary** is the last block that is not a tool execution, bounded above the latest
+   harness-specific user-input gutter (`❯` / `>` for Claude, `›` for Codex) when one exists.
    `start` = its glyph line. `end` = its last non-blank line.
 4. No such block: no selection, no message.
 
 Nothing above reads a word of the content. It reads column 0 and one character.
 
-### Harness profiles — seeded, three characters each
+### Harness profiles — seeded gutter characters
 
 | harness | speaker | result gutter | turn footer |
 |---------|---------|---------------|-------------|
@@ -111,12 +112,11 @@ Keyed on `a.agent`, which the relay already sends.
 
 **What is built on top of that ceiling.** The half a selection *can* teach is worth having, so
 **Learn** stores the speaker glyph alone, under `herdr_gutters`
-(`{version: 1, byAgent: {pi: "◆"}}`), and `profileFor()` returns it with an empty result list. That
-is enough to cut the pane into blocks and step between them, and enough to answer **Summary** when
-asked. It is not enough to volunteer one: with no result glyph, `blockSpan` cannot tell a command
-from a sentence, so a learned harness is excluded from the automatic suggestion by name —
-`suggestFinalMessage` gates on `GUTTERS[a.agent]`, the shipped table, not on `profileFor`. The vm
-test *a learned harness never suggests on its own* is that rule.
+(`{version: 1, byAgent: {pi: "◆"}}`), and `profileFor()` returns it with an empty result list.
+That is enough to recognize a hand-selected block for trim learning. It is not enough to offer
+**Summary**, navigation, or an automatic suggestion: with no result glyph, `blockSpan` cannot tell
+a command from a sentence. Those shortcuts gate on `GUTTERS[a.agent]`, the complete shipped table,
+not on `profileFor`. The vm test *a learned harness never suggests on its own* is that rule.
 
 **Confirmed by showing, not by counting.** Pressing a button twice conveys no new information;
 showing the character it read does. So teaching a glyph asks `Learn "◆" as pi's message marker?`
@@ -157,10 +157,11 @@ stable per harness, and it is the only thing worth remembering.
   than remembering the last parse is also what lets a hand-drawn range anywhere in the pane teach —
   the user is not restricted to correcting the suggestion.
 - **A selection outside the block teaches nothing.** Different intent, not a smaller trim.
-- **Stored as a tally, not a last-write.** `{version: 1, byAgent: {claude: {"2,0": 3}}}` under
-  `herdr_summary_trim`. The most-confirmed pair wins; ties keep more of the block, because
-  over-selecting costs a drag while under-selecting silently drops a line the user wanted to send.
-  A corrupt or older-version blob is read as no trim.
+- **Stored as a tally, not a last-write.** `{version: 2, byAgent: {claude: {"2,0": [3, 8]}}}`
+  under `herdr_summary_trim`: count plus a local recency tick. The most-confirmed pair wins;
+  ties use the most recent explicit trim. An untouched suggested range teaches nothing — otherwise
+  its accidental `0,0` votes would drown out a real correction. A corrupt or older-version blob is
+  read as no trim.
 - **Blank edges come off after.** The parse already ends on the last non-blank line, but a learned
   head offset can land on one. A trim that would leave nothing is discarded and the block kept
   whole — a preference, not a licence to select zero lines.
@@ -173,14 +174,16 @@ No content is stored: two integers and a count, per harness.
 (`.auto`) to say the range was found rather than dragged. Touching a handle drops both — it is the
 user's range from then on. A **Summary** button in the quick-actions nav row selects it on demand;
 it appears only on a pane that has one, and unlike the automatic suggestion it has no `done` gate,
-because pressing it is the user asking. Otherwise a suggested range is an ordinary ruler range —
-drag it, tap the text to clear it (`:3937`), transfer it.
+because pressing it is the user asking. It preserves the complete parsed agent block; learned trims
+apply only when walking individual messages. Otherwise a suggested range is an ordinary ruler range
+— drag it, tap the text to clear it (`:3937`), transfer it.
 
 **Learn**, left of Copy in the selection bar. On a harness with a profile it records the trim and
 says what it recorded — `Learned 1/0 ✓`, head and tail — so the user finds out what was inferred
 after the fact rather than having to predict it. On one without, it reads the glyph off the line
-the selection starts on and asks before storing it. It hides itself on a selection that is not
-inside a block, because there is nothing there to learn.
+the selection starts on and asks before storing it. A learned glyph does not unlock Summary or
+navigation until a complete profile supplies its result gutter. It hides itself on a selection that
+is not inside a block, because there is nothing there to learn.
 
 **↓ ↑**, a floating pill at the pane's top-right (`.block-nav`, out of flow so the pane keeps its
 height). Steps to the next and previous agent message, scrolls it into view, and selects it as a
@@ -188,8 +191,16 @@ found range. Beside the ruler rather than on it: the ruler's handles travel that
 tap target sitting on a drag target turns a drag into a jump. Stepping *passes over* tool blocks —
 `blockBefore`/`blockAfter` skip them, while `findFinalMessage` stops on one, and the difference is
 intent: the user walking the conversation is reading what the agent said, not what it ran. At the
-top of what is loaded, ↑ calls `loadMore()` rather than reporting nothing there. Hidden entirely
-when the harness has no profile, which is also the invitation to press Learn.
+top of what is loaded, ↑ calls `loadMore()` rather than reporting nothing there. Hidden unless the
+harness has a complete shipped profile; Learn alone cannot establish that safety boundary.
+
+**User prompts** are harness-specific column-zero gutters (`❯` / `>` for Claude and `›` for Codex).
+Their highlight starts there and continues through every user continuation line, stopping at the
+next agent speaker glyph. The quiet one-line halo is placed only at the start and end of that range,
+so adjacent continuation rows do not compound their background. They are real terminal rows, not a
+scrolling overlay, so they move with text in every wrap mode and keep the ruler geometry exact.
+Summary uses `lastUserInput()` as the same boundary, selecting the closest preceding complete agent
+block. Turn-aware ↑/↓ remains a separate follow-up.
 
 ## Rejected options, and why
 
@@ -263,8 +274,8 @@ npx playwright test          # page still boots, selection still clears between 
 9. ↓ ↑ step between the agent's messages and never land on a tool block; the pill is absent on a
    harness with no profile.
 10. Learn on an unseen harness asks before storing, shows the character it read, and stores nothing
-    when declined. Once accepted that harness gains the pill and Summary — and still never gets an
-    automatic suggestion.
+    when declined. Once accepted it can record trims from manual selections, but gains neither the
+    pill nor Summary until a complete profile is shipped.
 
 ## What is deliberately left for later
 
