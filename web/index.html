@@ -437,6 +437,14 @@
       animation: pulse 2s infinite;
     }
 
+    /* The colour already says "working"; the motion is emphasis on top of it, so it is the part
+       that goes. Same bargain the armed Clear button's drain makes. */
+    @media (prefers-reduced-motion: reduce) {
+      .dot.pulse {
+        animation: none;
+      }
+    }
+
     @keyframes pulse {
 
       0%,
@@ -2105,6 +2113,10 @@
     // reading the dot must never give. Keyed by pane_id, and a pane_id herdr later reuses costs
     // nothing worse than one dot warm for an hour.
     const SEEN_KEY = 'herdr_last_seen';
+    // Two thresholds, used by both the dots and the status bar's word: under five minutes a pane
+    // is still live, under an hour it is idle, past that it is cold. Declared together because
+    // they are one scale — moving one without the other leaves a gap or an overlap.
+    const LIVE_MS = 5 * 60 * 1000;
     const RECENT_MS = 60 * 60 * 1000;
     let lastSeen = {};
 
@@ -2125,15 +2137,28 @@
       catch (e) { /* private mode: session-only */ }
     }
 
-    function activeWithinHour(paneId) { return Date.now() - (lastSeen[paneId] || 0) < RECENT_MS; }
+    // How recently a pane moved, in the three bands the colours are drawn from. One function so
+    // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
+    function activityBucket(paneId) {
+      const since = Date.now() - (lastSeen[paneId] || 0);
+      if (since < LIVE_MS) return 'live';
+      if (since < RECENT_MS) return 'idle';
+      return 'cold';
+    }
 
-    // One rule for every agent status dot, list and tab strip alike. Green is live and nothing
-    // else — a dot that is green an hour after the agent stopped is the reading this replaces.
-    // Amber is "you were in here recently", muted is cold, and blocked outranks both.
+    // One rule for every agent status dot, list and tab strip alike.
+    //
+    // Green is live: working, or moved within the last five minutes. An agent that finished
+    // seconds ago is as live as one still running, and the previous rule painted it amber the
+    // instant it left 'working' — which read as "going cold" at the exact moment it wanted
+    // attention. Amber is now what it says: idle, somewhere between five minutes and an hour.
+    // Muted is cold, and blocked outranks all of it.
     function statusColor(a) {
       if (a.status === 'blocked') return 'var(--red)';
       if (a.status === 'working') return 'var(--green)';
-      if (activeWithinHour(a.pane_id)) return 'var(--orange)';
+      const bucket = activityBucket(a.pane_id);
+      if (bucket === 'live') return 'var(--green)';
+      if (bucket === 'idle') return 'var(--orange)';
       return 'var(--muted)';
     }
     let activeWorkspace = null;
@@ -2488,10 +2513,11 @@
       // Array#sort is stable. That is the whole ordering rule — see togglePin.
       const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
       live.sort((x, y) => rank(x) - rank(y));
-      // Recency is in the signature too, or a tab whose amber has aged out keeps the colour it
-      // was built with until something else happens to rebuild the strip.
+      // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
+      // built with until something else happens to rebuild the strip. The band and not a boolean:
+      // there are two thresholds now, and a boolean would sit still across the first of them.
       const sig = live.map(a =>
-        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activeWithinHour(a.pane_id)}`).join(' /// ');
+        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
@@ -2562,9 +2588,6 @@
       return fmtStamp(d);
     }
 
-    // Below 5 minutes a pane counts as still going. Only shells use it — an agent has herdr's own
-    // word for this and does not need a second, coarser one.
-    const LIVE_MS = 5 * 60 * 1000;
     // The words herdr itself reports, which the landing page already groups by. Anything outside
     // this set — 'unknown', or no status at all — falls through to recency rather than inventing a
     // label for it. The old code collapsed all five into active/idle, which is why a finished agent
