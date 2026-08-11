@@ -97,6 +97,10 @@ test('the fold survives a reload', async ({page}) => {
 
 test('the fold and Last sit on opposite edges of the nav row', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
+  // Settled before it is measured. renderQuickActions re-runs on every 2s snapshot, so measuring
+  // straight off the click can catch the row mid-rebuild and read a stale width for one of three
+  // boxes — which is what made this fail about one run in three.
+  await expect(page.locator('#termContent')).toContainText('done.');
   const row = await page.locator('#quickActions .qa-nav').boundingBox();
   const fold = await page.locator('#quickActions .qa-fold').boundingBox();
   const last = await page.locator('#quickActions .qa-last').boundingBox();

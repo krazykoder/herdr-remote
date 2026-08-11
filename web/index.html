@@ -10,6 +10,10 @@
   <link rel="manifest"
     href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%231a1b26&quot;,&quot;theme_color&quot;:&quot;%231a1b26&quot;}">
   <title>herdr-remote</title>
+  <!-- Swapped to red by syncBrowserTab when something needs you. Present here rather than created
+       in JS so a tab that has not connected yet still has an icon of its own. -->
+  <link rel="icon" id="favicon"
+    href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='4'%20fill='%231a1b26'/%3E%3Ccircle%20cx='8'%20cy='8'%20r='4.5'%20fill='%237aa2f7'/%3E%3C/svg%3E">
   <!-- Before first paint, or the light user gets a dark flash on every load. Inline and
        synchronous for that reason; it must not wait for the module script below. -->
   <script>
@@ -467,7 +471,10 @@
     /* The colour already says "working"; the motion is emphasis on top of it, so it is the part
        that goes. Same bargain the armed Clear button's drain makes. */
     @media (prefers-reduced-motion: reduce) {
-      .dot.pulse {
+
+      .dot.pulse,
+      .chip.alert::after,
+      .agent-tab.alert::after {
         animation: none;
       }
     }
@@ -611,7 +618,9 @@
       height: 10px;
     }
 
-    .agent.blocked {
+    /* Blocked and done read the same here on purpose: both are a pane waiting on you, and the
+       card's own dot and section header already say which. */
+    .agent.attention {
       border-color: var(--red);
       background: color-mix(in srgb, var(--red) 5%, var(--surface));
     }
@@ -722,6 +731,42 @@
       border-radius: 50%;
       background: var(--red);
       border: 2px solid var(--bg);
+      /* Motion, because a chip strip is scanned rather than read and a static dot 8px across is
+         easy to scroll past. Slow and opacity-only — this can be on screen for a long time.
+         prefers-reduced-motion turns it off with everything else, below. */
+      animation: attention 1.6s ease-in-out infinite;
+    }
+
+    /* Same badge on the pane strip, which is the only place a backgrounded pane is visible while
+       a terminal is open. On the button and not the pill: the pill clips its own overflow to keep
+       long labels inside the 132px cap, and a badge on it would be cut in half. */
+    .agent-tab {
+      position: relative;
+    }
+
+    .agent-tab.alert::after {
+      content: '';
+      position: absolute;
+      top: 6px;
+      right: 1px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--red);
+      border: 2px solid var(--bg);
+      animation: attention 1.6s ease-in-out infinite;
+    }
+
+    @keyframes attention {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
     }
 
     .chip:active {
@@ -2241,6 +2286,58 @@
       catch (e) { /* private mode: session-only */ }
     }
 
+    // --- Attention ---
+    //
+    // A pane is asking for you when it is blocked or done and you have not looked at it since.
+    // One predicate, because five surfaces signal it — the card, the hoist above the list, the
+    // Project/Space/Tab chips, the pane strip, and the browser tab — and a badge that disagrees
+    // with the list it points at is worse than no badge.
+    //
+    // Acked per *status*, not per pane. Opening a pane records what it was when you looked, so a
+    // pane that later moves to the other attention status raises the badge again. Per pane, a
+    // done agent would badge until it was restarted; per pane, a pane acked while blocked would
+    // stay silent when it finished.
+    const ACK_KEY = 'herdr_acked';
+    const ATTENTION = ['blocked', 'done'];
+    let acked = {};
+    try { acked = JSON.parse(localStorage.getItem(ACK_KEY)) || {}; } catch (e) { acked = {}; }
+
+    function needsAttention(a) {
+      return !!a && ATTENTION.includes(a.status) && acked[a.pane_id] !== a.status;
+    }
+    function attentionCount() { return agents.filter(needsAttention).length; }
+
+    function saveAcked() {
+      try { localStorage.setItem(ACK_KEY, JSON.stringify(acked)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+    // Looking at a pane is what clears it. Called from openTerminal rather than from a timer or a
+    // scroll, because opening is the only unambiguous "I have seen this".
+    function ackPane(paneId) {
+      const a = agents.find(x => x.pane_id === paneId);
+      if (!a || acked[paneId] === a.status) return;
+      acked[paneId] = a.status;
+      saveAcked();
+    }
+    // An ack only ever means "this is the status I looked at", so it is dropped the moment the
+    // pane is no longer in it. That covers two things at once:
+    //
+    // - A pane that went back to work and finished again is a new thing to look at. Without this
+    //   the second `done` is indistinguishable from the first and stays silent.
+    // - A pane herdr no longer reports. Without this the map grows for the life of the browser
+    //   profile, and a recycled pane ID would arrive pre-acked — silently, which is the bad half.
+    //
+    // Called from render rather than from the snapshot handler, because agent_update merges a
+    // single pane without one and that merge is exactly when a badge is owed.
+    function syncAcked(live) {
+      const status = new Map(live.map(a => [a.pane_id, a.status]));
+      let dropped = false;
+      for (const [id, was] of Object.entries(acked)) {
+        if (status.get(id) !== was) { delete acked[id]; dropped = true; }
+      }
+      if (dropped) saveAcked();
+    }
+
     // How recently a pane moved, in the three bands the colours are drawn from. One function so
     // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
     function activityBucket(paneId) {
@@ -2631,8 +2728,11 @@
       // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
       // built with until something else happens to rebuild the strip. The band and not a boolean:
       // there are two thresholds now, and a boolean would sit still across the first of them.
+      // The badge is in the signature too, or acking a pane leaves its dot on the strip until
+      // something else happens to rebuild it.
       const sig = live.map(a =>
-        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}`).join(' /// ');
+        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}` +
+        ` | ${needsAttention(a) ? '!' : '-'}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
@@ -2642,7 +2742,7 @@
           // merely green there says "recent" just as loudly as it says "running now".
           const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
           const pulse = a.status === 'working' ? ' pulse' : '';
-          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
+          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${needsAttention(a) ? ' alert' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
@@ -3059,11 +3159,35 @@
     }
 
     function render() {
+      syncAcked(agents.concat(shells));   // before anything reads needsAttention
       renderStatusBar();
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
       renderAgentTabs();
+      syncBrowserTab();
+    }
+
+    // The browser tab, which is the only surface that reaches you when the app is not on screen —
+    // another tab, another window, a phone with the PWA in the background. Everything else in this
+    // file signals inside a page nobody is looking at.
+    //
+    // A count and a colour rather than a flashing title: a title that alternates is unreadable in
+    // the tab strip and reads as spam, and browsers truncate it to a few characters anyway, which
+    // is why the favicon carries the same signal on its own.
+    const TAB_TITLE = 'herdr-remote';
+    const favicon = fill => 'data:image/svg+xml,' + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">` +
+      `<rect width="16" height="16" rx="4" fill="#1a1b26"/>` +
+      `<circle cx="8" cy="8" r="4.5" fill="${fill}"/></svg>`);
+    function syncBrowserTab() {
+      const n = attentionCount();
+      document.title = n ? `(${n}) ${TAB_TITLE}` : TAB_TITLE;
+      const el = document.getElementById('favicon');
+      // Hex and not var(--red): this is an SVG in a data: URI, which resolves no custom property
+      // from the page. The two are the dark theme's --red and --blue.
+      const href = favicon(n ? '#f7768e' : '#7aa2f7');
+      if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 
     // One insertion point for all three paths below: each writes #agents itself, and a Terminals
@@ -3102,16 +3226,16 @@
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
-        const hasBlocked = list.some(a => a.status === 'blocked');
-        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
+        const waiting = list.some(needsAttention);
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
       }
       html += `</div>`;
       if (activeProject === null) {
         html += projects.map(projectCard).join('');
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
-        // is now one. Blocked are already hoisted to the top, so they are not repeated here.
-        const rest = agents.filter(a => a.status !== 'blocked');
+        // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
+        const rest = agents.filter(a => !needsAttention(a));
         if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
@@ -3133,11 +3257,11 @@
 
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
-      const blocked = list.filter(a => a.status === 'blocked').length;
-      const color = blocked ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
+      const waiting = list.filter(needsAttention).length;
+      const color = waiting ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
       const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
       const meta = list.length
-        ? `${list.length} session${list.length > 1 ? 's' : ''}${blocked ? ` · ${blocked} blocked` : ''}`
+        ? `${list.length} session${list.length > 1 ? 's' : ''}${waiting ? ` · ${waiting} needs you` : ''}`
         : 'No sessions';
       // Available on every Project card, including one with zero live sessions.
       const start = startOptions
@@ -3152,10 +3276,10 @@
     }
 
     function hoistHtml(list) {
-      const blocked = list.filter(a => a.status === 'blocked');
-      if (!blocked.length) return '';
-      return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
-        + blocked.map(a => agentCard(a)).join('');
+      const waiting = list.filter(needsAttention);
+      if (!waiting.length) return '';
+      return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
+        + waiting.map(a => agentCard(a)).join('');
     }
 
     // Native workspace/tab navigation over `list` — all agents, or one Project's.
@@ -3171,9 +3295,9 @@
         html += `<button class="chip${activeWorkspace === null ? ' active' : ''}" onclick="backToWorkspaces()">All</button>`;
         for (const wsId of workspaces) {
           const wsAgents = list.filter(a => a.workspace_id === wsId);
-          const hasBlocked = wsAgents.some(a => a.status === 'blocked');
+          const waiting = wsAgents.some(needsAttention);
           const name = wsAgents[0]?.project || wsId.slice(0, 8);
-          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
         }
         html += `</div>`;
         // Tab chip strip (always show when workspace selected)
@@ -3185,16 +3309,17 @@
           }
           wsTabs.forEach((tid, i) => {
             const tabAgents = list.filter(a => a.tab_id === tid);
-            const hasBlocked = tabAgents.some(a => a.status === 'blocked');
+            const waiting = tabAgents.some(needsAttention);
             const tabLabel = tabAgents[0]?.label || 'Tab ' + (i + 1);
-            html += `<button class="chip${activeTab === tid ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+            html += `<button class="chip${activeTab === tid ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
           });
           html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
           html += `</div>`;
         }
       }
-      // Agent list (filtered). Blocked are already hoisted above.
-      let filtered = list;
+      // Agent list (filtered). Whatever needs you is already hoisted above, so it is dropped here
+      // rather than repeated — a done agent would otherwise appear in Needs you and in Done.
+      let filtered = list.filter(a => !needsAttention(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
@@ -3207,11 +3332,15 @@
     }
 
     function renderAgentList(list) {
-      const blocked = list.filter(a => a.status === 'blocked');
-      const working = list.filter(a => a.status === 'working');
-      const done = list.filter(a => a.status === 'done');
-      const idle = list.filter(a => a.status === 'idle' || a.status === 'unknown');
-      let html = '';
+      // Same rule as layoutHtml: the hoist owns whatever needs you, and the sections below get
+      // what is left. Blocked no longer needs a section of its own — an unacked blocked pane is
+      // in the hoist, and an acked one is one you have already looked at.
+      const rest = list.filter(a => !needsAttention(a));
+      const blocked = rest.filter(a => a.status === 'blocked');
+      const working = rest.filter(a => a.status === 'working');
+      const done = rest.filter(a => a.status === 'done');
+      const idle = rest.filter(a => a.status === 'idle' || a.status === 'unknown');
+      let html = hoistHtml(list);
       if (blocked.length) html += section('Blocked', blocked);
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);
@@ -4395,7 +4524,7 @@
       // the path, where it is the same width every time and the list reads as a column. The dot
       // to the left is untouched — it is the live status, and the emoji only says what kind of
       // pane this is, which is why the two do not share a column.
-      return `<div class="agent${a.status === 'blocked' ? ' blocked' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+      return `<div class="agent${needsAttention(a) ? ' attention' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${needsAttention(a) ? ', needs you' : ''}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
     <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
@@ -4473,6 +4602,13 @@
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
       renderAgentTabs();  // the tab for this pane has to read as active straight away
+      // Looking at a pane is what clears its badge — see needsAttention — and that badge is on the
+      // list, the chips, the strip and the browser tab, so clearing it is a full render. After the
+      // strip has been laid out and not before: a render while it is still display:none would
+      // claim the active tab without being able to centre it, and the call above would then have
+      // nothing left to do.
+      ackPane(paneId);
+      render();
       // Seeded from lastSeen rather than blanked: that map is stamped for *every* pane on a status
       // transition, not only the open one, so a pane that blocked twenty minutes ago while you were
       // elsewhere can say so the moment it opens. Blank only for a pane this device has never seen
