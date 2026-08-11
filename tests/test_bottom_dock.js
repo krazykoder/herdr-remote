@@ -33,6 +33,7 @@ function dockCtx({status = 'idle'} = {}) {
     localStorage: {getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }},
     window: {}, console,
     activePane: 'p1',
+    paneTextPrimed: false,
     agents: [{pane_id: 'p1', status}],
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},
@@ -93,6 +94,23 @@ test('Last goes to the end of the pane, not part way', () => {
   el('termContent').scrollTop = 120;
   run('scrollPaneToBottom()');
   assert.equal(el('termContent').scrollTop, el('termContent').scrollHeight);
+});
+
+test('the pill hangs over the pane until its own first read lands', () => {
+  const {el, run} = dockCtx();
+  run('syncPaneLoading()');
+  assert.equal(el('termLoading').hidden, false);
+  assert.ok(el('termWrap').classes.has('loading'), 'the stale text goes quiet behind it');
+  run('paneTextPrimed = true; syncPaneLoading()');
+  assert.equal(el('termLoading').hidden, true);
+  assert.ok(!el('termWrap').classes.has('loading'));
+});
+
+test('no open pane means no pill, however the flag was left', () => {
+  const {el, run} = dockCtx();
+  run('activePane = null; syncPaneLoading()');
+  assert.equal(el('termLoading').hidden, true);
+  assert.ok(!el('termWrap').classes.has('loading'));
 });
 
 test('an approval outranks the switch, folded or not', () => {

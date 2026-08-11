@@ -1047,6 +1047,31 @@
       flex: 1;
     }
 
+    /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
+       pointer-events:none because the text underneath stays scrollable while it shows. */
+    .term-loading {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      pointer-events: none;
+    }
+
+    /* The stale text is the *previous* pane's, and left at full strength it reads as this one's.
+       Dimming it is what makes the pill mean "not here yet" rather than "here, plus a badge".
+       Opacity only, so it costs a composite and not a repaint. */
+    .term-wrap.loading>.term-content {
+      opacity: 0.3;
+    }
+
     .ruler {
       position: absolute;
       top: 0;
@@ -1882,7 +1907,10 @@
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
     <div class="term-wrap" id="termWrap">
-      <div class="term-content" id="termContent">Loading…</div>
+      <div class="term-content" id="termContent"></div>
+      <!-- A pane opened a moment ago still holds the last one's text until its own first read
+           lands, so this hangs over the middle of the pane rather than replacing it. -->
+      <div class="term-loading" id="termLoading" hidden>Loading…</div>
       <div class="sel-band" id="selBand" hidden></div>
       <div class="ruler" id="ruler" hidden aria-hidden="true">
         <div class="ruler-handle" id="rulerTop" hidden></div>
@@ -2970,6 +2998,7 @@
         // whole reason this field read the current time no matter which pane you switched to.
         if (!paneTextPrimed) {
           paneTextPrimed = true;
+          syncPaneLoading();  // this read is the one the pill was waiting for
         } else if (next !== el.textContent) {
           paneStampAt = new Date();
           noteActivity(activePane);
@@ -4326,6 +4355,7 @@
       // move. The first content read must not overwrite it — see paneTextPrimed.
       paneStampAt = lastSeen[paneId] ? new Date(lastSeen[paneId]) : null;
       paneTextPrimed = false;
+      syncPaneLoading();   // after the flag, which is the thing it reads
       paneCols = null;     // and its column count is not this one's either
       paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
       clearSel();
@@ -4345,6 +4375,7 @@
 
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
+      syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
       disarmClear();
       disarmQuit();
       disarmShortcut();
@@ -4442,6 +4473,14 @@
     function scrollPaneToBottom() {
       const el = document.getElementById('termContent');
       el.scrollTop = el.scrollHeight;
+    }
+
+    // paneTextPrimed is already exactly "this pane has not delivered its own text yet" — it exists
+    // so the first read does not overwrite the opening timestamp — so the wait needs no second flag.
+    function syncPaneLoading() {
+      const waiting = !!activePane && !paneTextPrimed;
+      document.getElementById('termLoading').hidden = !waiting;
+      document.getElementById('termWrap').classList.toggle('loading', waiting);
     }
 
     function syncBottomDock() {
