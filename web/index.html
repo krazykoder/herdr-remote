@@ -4681,12 +4681,33 @@
     // of lines every three seconds to redraw the same text is a standing cost on the relay, on
     // any SSH hop, and on a phone's radio. Coming back to the tail turns it live again.
     const POLL_MAX_LINES = 1000;
+    // How often the open pane is re-read, by what it is doing. A working agent's pane changes
+    // between one tick and the next; an idle one does not change at all until something is sent
+    // to it, and reading it twenty times a minute was most of what the relay did at rest. Safe to
+    // back off because the status itself does not come from here — the snapshot broadcast carries
+    // it on its own poll, so the tick after an agent starts working is already the fast one.
+    // Anything that is not plainly idle keeps the fast cadence: blocked is about to be answered,
+    // unknown means the status is not to be trusted, and a terminal has none at all.
+    const POLL_MS = 3000, IDLE_POLL_MS = 12000;
+    let lastPaneRead = 0;
+    function paneIsIdle() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      return !!a && a.status === 'idle';
+    }
     // auto=true is the interval. Every other caller — the refresh button, Load more, a key that
     // was just sent — is a read someone asked for and is never skipped.
     function refreshPane(auto) {
-      if (auto && paneLines > POLL_MAX_LINES) return;
-      if (ws && activePane) ws.send(JSON.stringify(
-        { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+      if (auto) {
+        if (paneLines > POLL_MAX_LINES) return;
+        // Slack, because the tick that lands 4ms early is the same tick: without it an idle pane
+        // on a 12s gap and a 3s timer waits 15.
+        if (Date.now() - lastPaneRead < (paneIsIdle() ? IDLE_POLL_MS : POLL_MS) - 250) return;
+      }
+      if (ws && activePane) {
+        lastPaneRead = Date.now();
+        ws.send(JSON.stringify(
+          { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+      }
     }
 
     // --- Slots ---

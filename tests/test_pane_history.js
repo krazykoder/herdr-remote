@@ -20,10 +20,11 @@ const from = HTML.indexOf("    const HISTORY_KEY = 'herdr_pane_history';");
 const to = HTML.indexOf('    // --- Slots ---', from);
 assert.ok(from !== -1 && to > from, 'pane history block not found in web/index.html');
 
-function historyCtx({stored = null, paneLines = 200} = {}) {
+function historyCtx({stored = null, paneLines = 200, status = 'working', now = 100000} = {}) {
   const store = stored === null ? {} : {herdr_pane_history: String(stored)};
   const el = {value: ''};
   const reads = [];
+  const clock = {at: now};
   const ctx = vm.createContext({
     document: {getElementById: () => el},
     localStorage: {
@@ -37,9 +38,15 @@ function historyCtx({stored = null, paneLines = 200} = {}) {
     activePane: 'w1:p1',
     paneSource: 'recent-unwrapped',
     ws: {send: s => reads.push(JSON.parse(s))},
+    agents: [{pane_id: 'w1:p1', status}],
+    // The clock is the thing the cadence is measured against, so the test moves it rather than
+    // waiting on it.
+    Date: {now: () => clock.at},
   });
   vm.runInContext(HTML.slice(from, to), ctx);
-  return {el, store, reads, run: src => vm.runInContext(src, ctx)};
+  // A tick of the real 3s interval, wherever the clock currently is.
+  const tick = () => { clock.at += 3000; vm.runInContext('refreshPane(true)', ctx); };
+  return {el, store, reads, clock, tick, run: src => vm.runInContext(src, ctx)};
 }
 
 test('the default is what the ceiling has always been', () => {
@@ -99,6 +106,48 @@ test('a shallow pane still follows the tail', () => {
   const {reads, run} = historyCtx({paneLines: 200});
   run('refreshPane(true)');
   assert.equal(reads.length, 1, 'the ordinary case must not have been paused');
+});
+
+test('a working pane is read on every tick', () => {
+  const {reads, tick} = historyCtx({status: 'working'});
+  for (let i = 0; i < 4; i++) tick();
+  assert.equal(reads.length, 4);
+});
+
+test('an idle pane sits out three ticks in four', () => {
+  // It cannot have changed: nothing has been sent to it. The status that would say otherwise
+  // arrives on the snapshot broadcast, not on this read, so backing off cannot hide a wake-up.
+  const {reads, tick} = historyCtx({status: 'idle'});
+  for (let i = 0; i < 8; i++) tick();
+  assert.equal(reads.length, 2, 'four ticks to a read, twice over');
+});
+
+test('a pane that starts working is back at the fast cadence on the next tick', () => {
+  const {reads, tick, run} = historyCtx({status: 'idle'});
+  tick();                       // the first read, whatever the cadence
+  tick(); tick();               // and two the idle gap swallows
+  assert.equal(reads.length, 1);
+  run("agents[0].status = 'working'");
+  tick();
+  assert.equal(reads.length, 2, 'a woken agent waited out the idle gap');
+});
+
+test('anything but plainly idle keeps the fast cadence', () => {
+  // blocked is about to be answered and unknown means the status is not to be trusted; a
+  // terminal has no status at all and is where someone is typing.
+  for (const status of ['blocked', 'busy', 'unknown', undefined]) {
+    const {reads, tick} = historyCtx({status});
+    tick(); tick();
+    assert.equal(reads.length, 2, `status ${status} was backed off`);
+  }
+});
+
+test('a read the user asked for is never held back by the cadence', () => {
+  const {reads, tick, run} = historyCtx({status: 'idle'});
+  tick();
+  run('refreshPane()');
+  run('refreshPane()');
+  assert.equal(reads.length, 3);
 });
 
 test('raising it leaves the open pane where it is', () => {

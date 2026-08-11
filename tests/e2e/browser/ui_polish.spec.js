@@ -133,7 +133,9 @@ test('Last returns a scrolled-up pane to the newest line, and to following it', 
 });
 
 test('the loading pill hangs over the pane without moving the composer', async ({page}) => {
-  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  // The working pane, because the last assertion waits for the poll to clear the pill and an idle
+  // pane is read every 12s rather than every 3. Nothing else here cares which pane it is.
+  await page.locator('#agents .agent', {hasText: WORKING}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
   await expect(page.locator('#termLoading')).toBeHidden();
 
