@@ -10,4 +10,6 @@ __pycache__/
 .venv313/
 tests/e2e/logs/
 tests/e2e/fake_herdr.log
+node_modules/
+test-results/
 .github/workflows/*

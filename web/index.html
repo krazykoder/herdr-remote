@@ -439,8 +439,12 @@
       flex-shrink: 0;
     }
 
+    /* An 8px disc fading to 40% is easy to miss at arm's length, so the beat is carried by size
+       as well: it breathes between roughly half and one and a half its resting diameter. Only
+       transform and opacity animate, both compositor-only — no layout, no repaint, and the disc's
+       box stays 8px however large it looks, so nothing beside it shifts. */
     .dot.pulse {
-      animation: pulse 2s infinite;
+      animation: pulse 1.4s ease-in-out infinite;
     }
 
 
@@ -456,11 +460,13 @@
 
       0%,
       100% {
-        opacity: 1;
+        transform: scale(0.6);
+        opacity: 0.5;
       }
 
       50% {
-        opacity: 0.4;
+        transform: scale(1.5);
+        opacity: 1;
       }
     }
 
@@ -1203,9 +1209,9 @@
     }
 
     /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. The row is a positioning context for the hide button,
-       which sits over its right edge rather than in the flow — otherwise it would count as a
-       third item and pull the pair off centre. */
+       never compete for the same line. The row is a positioning context for the fold button and
+       for Last, which sit over its left and right edges rather than in the flow — otherwise they
+       would count as extra items and pull the pair off centre. */
     .qa-nav {
       flex: 1 0 100%;
       position: relative;
@@ -1221,9 +1227,10 @@
     .quick-actions .qa-nav button.nav {
       flex: 0 1 140px;
       min-width: 96px;
-      /* Clear of the hide button at the right edge, so a wide thumb aimed at forward cannot
-         land on dismiss instead. */
-      max-width: calc(50% - 24px);
+      /* Clear of the fold button at the left edge and Last at the right, so a wide thumb aimed
+         at either arrow cannot land on the small control beyond it. Last carries a word rather
+         than a glyph, so the reserve is wider than the 24px a pair of circles wanted. */
+      max-width: calc(50% - 52px);
       padding: 2px 10px;
       line-height: 1.3;
       background: var(--surface);
@@ -1237,11 +1244,11 @@
       cursor: default;
     }
 
-    /* Deliberately small and quiet. Hiding the bar is a one-off, and the control for it sits
-       next to two buttons meant to be pressed constantly. */
-    .quick-actions .qa-nav button.qa-hide {
+    /* Deliberately small and quiet. Folding the composer away is a one-off, and the control for
+       it sits next to two buttons meant to be pressed constantly. */
+    .quick-actions .qa-nav button.qa-fold {
       position: absolute;
-      right: 0;
+      left: 0;
       top: 50%;
       transform: translateY(-50%);
       flex: 0 0 auto;
@@ -1255,6 +1262,35 @@
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 400;
+    }
+
+    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
+       pair pressed constantly. Sized to its word instead of to a circle, which is the only reason
+       the two rules are not one. */
+    .quick-actions .qa-nav button.qa-last {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      flex: 0 0 auto;
+      min-width: 0;
+      height: 22px;
+      padding: 0 9px;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
+    }
+
+    /* The v folds the whole composer stack away — the button rail, the text area, and whichever
+       dock is open — and leaves the quick actions bar itself on screen, so approvals and ‹ › stay
+       reachable while a long pane gets the height back. !important because each dock's open state
+       lives in its own inline `display`, which a plain class could not outrank. */
+    .terminal-view.dock-folded .term-input,
+    .terminal-view.dock-folded .term-keys {
+      display: none !important;
     }
 
     .btn-yes {
@@ -3006,7 +3042,7 @@
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Blocked are already hoisted to the top, so they are not repeated here.
         const rest = agents.filter(a => a.status !== 'blocked');
-        if (rest.length) html += section('Agents', 'var(--muted)', rest);
+        if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
           // + New terminal only when the relay says both of open_terminal's gates are open —
@@ -3020,7 +3056,7 @@
         // Terminals below it kept a heading. It gets a separator of its own, saying why it is
         // empty in the header rather than under it.
         const mine = agents.filter(a => a.project_id === activeProject);
-        html += mine.length ? layoutHtml(mine) : section('Agents', 'var(--muted)', [], 'No sessions');
+        html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
     }
@@ -3048,7 +3084,7 @@
     function hoistHtml(list) {
       const blocked = list.filter(a => a.status === 'blocked');
       if (!blocked.length) return '';
-      return `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
+      return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
         + blocked.map(a => agentCard(a)).join('');
     }
 
@@ -3094,9 +3130,9 @@
       const working = filtered.filter(a => a.status === 'working');
       const done = filtered.filter(a => a.status === 'done');
       const idle = filtered.filter(a => a.status === 'idle' || a.status === 'unknown');
-      if (working.length) html += section('Working', 'var(--green)', working);
-      if (done.length) html += section('Done', 'var(--muted)', done);
-      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      if (working.length) html += section('Working', working);
+      if (done.length) html += section('Done', done);
+      if (idle.length) html += section('Idle', idle);
       return html;
     }
 
@@ -3106,10 +3142,10 @@
       const done = list.filter(a => a.status === 'done');
       const idle = list.filter(a => a.status === 'idle' || a.status === 'unknown');
       let html = '';
-      if (blocked.length) html += section('Blocked', 'var(--red)', blocked);
-      if (working.length) html += section('Working', 'var(--green)', working);
-      if (done.length) html += section('Done', 'var(--muted)', done);
-      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      if (blocked.length) html += section('Blocked', blocked);
+      if (working.length) html += section('Working', working);
+      if (done.length) html += section('Done', done);
+      if (idle.length) html += section('Idle', idle);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }
@@ -3355,7 +3391,7 @@
       if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
       // Same section header and same cards as the list above, so a recent reads as the session it
       // is rather than as a second kind of thing.
-      el.innerHTML = `<div class="section-header"><span class="dot" style="background:var(--blue)"></span>Recents</div>`
+      el.innerHTML = `<div class="section-header">Recents</div>`
         + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('');
       el.style.display = '';
     }
@@ -4216,8 +4252,8 @@
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
     // kept on screen with nothing under it has to say why in the only row it has.
-    function section(title, color, list, note) {
-      return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}` +
+    function section(title, list, note) {
+      return `<div class="section-header">${title}` +
         (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
         list.map(a => agentCard(a)).join('');
     }
@@ -4240,7 +4276,7 @@
     function terminalsHtml() {
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
       if (!list.length) return '';
-      return `<div class="section-header"><span class="dot" style="background:var(--shell)"></span>Terminals</div>`
+      return `<div class="section-header">Terminals</div>`
         + list.map(terminalCard).join('');
     }
 
@@ -4388,6 +4424,30 @@
       input.spellcheck = !shell;
     }
 
+    // Whether the composer stack is folded away. Open by default, and remembered: someone reading
+    // long panes on a phone folds it once, not once per pane.
+    const DOCK_KEY = 'herdr_bottom_dock';
+    function bottomDockOpen() { return localStorage.getItem(DOCK_KEY) !== 'folded'; }
+
+    function toggleBottomDock() {
+      try { localStorage.setItem(DOCK_KEY, bottomDockOpen() ? 'folded' : 'open'); }
+      catch (e) { /* private mode: session-only */ }
+      syncBottomDock();
+      renderQuickActions();  // the v has to become a ^, and vice versa
+    }
+
+    // Jump to the newest line. It also puts the pane back to following the tail: the scroll
+    // handler recomputes userScrolledUp from where this lands, so one assignment does both.
+    // Reading backscroll is what pins the pane, and thumbing back down a long one is real work.
+    function scrollPaneToBottom() {
+      const el = document.getElementById('termContent');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function syncBottomDock() {
+      document.getElementById('terminalView').classList.toggle('dock-folded', !bottomDockOpen());
+    }
+
     function toggleQuickActions() {
       try { localStorage.setItem(QA_KEY, quickActionsOn() ? 'off' : 'on'); }
       catch (e) { /* private mode: session-only */ }
@@ -4412,17 +4472,25 @@
       if (!activePane) { qa.innerHTML = ''; return; }
       const a = agents.find(x => x.pane_id === activePane);
       const blocked = a && a.status === 'blocked';
+      // The nav row carries the fold control, so it also has to survive the bar being switched
+      // off — folded with an empty bar would leave no way back to the composer.
+      const showNav = quickActionsOn() || !bottomDockOpen();
       // An approval prompt is not a quick action the user chose to hide. Turning the bar off
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
-      if (!blocked && !quickActionsOn()) { qa.innerHTML = ''; return; }
+      if (!blocked && !showNav) { qa.innerHTML = ''; return; }
       const nav = (step, glyph, label) =>
         `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
         `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      const open = bottomDockOpen();
       const navRow = `<div class="qa-nav">${nav(-1, '‹', 'Previous session')}` +
         `${nav(1, '›', 'Next session')}` +
-        `<button class="qa-hide" onclick="toggleQuickActions()" title="Hide this bar — turn it ` +
-        `back on from the pane menu" aria-label="Hide quick actions bar">✕</button></div>`;
+        `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
+        `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
+        `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
+        `${open ? 'v' : '^'}</button>` +
+        `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
+        `aria-label="Jump to the newest line">Last</button></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
@@ -4435,7 +4503,7 @@
       }
       // Approvals first and on their own line, nav underneath: the row order is what puts the
       // thing that needs answering closest to the terminal it is about.
-      qa.innerHTML = middle + (quickActionsOn() ? navRow : '');
+      qa.innerHTML = middle + (showNav ? navRow : '');
     }
 
     let paneLines = 200;
@@ -5071,6 +5139,7 @@
     applyWrapMode();
     placePairStrip();
     syncQaBtn();
+    syncBottomDock();
     setDictationEnabled(dictationOn());  // hidden unless asked for, and where there is no speech recognition
     loadTermShortcuts();
     syncPromptsBtn();  // no pane is open yet, so this labels the button for an agent
