@@ -19,8 +19,7 @@ const to = HTML.indexOf('    let paneLines = 200;', from);
 assert.ok(from !== -1 && to > from, 'quick actions block not found in web/index.html');
 
 // A fresh context per test: both switches are localStorage-backed module state.
-function dockCtx({status = 'idle'} = {}) {
-  const store = {};
+function dockCtx({status = 'idle', store = {}} = {}) {
   const els = {};
   const el = id => els[id] || (els[id] =
     {id, innerHTML: '', style: {}, setAttribute() {}, scrollTop: 0, scrollHeight: 4000,
@@ -60,12 +59,10 @@ test('the fold hides the composer and flips the glyph to ^', () => {
 });
 
 test('the fold is remembered, so it survives a reload', () => {
-  const {store} = dockCtx();
-  const {el, run} = dockCtx();
-  run('toggleBottomDock()');
-  assert.equal(Object.keys(store).length, 0, 'contexts do not share storage');
-  const reloaded = dockCtx();
-  reloaded.run("localStorage.setItem('herdr_bottom_dock', 'folded'); syncBottomDock()");
+  const store = {};
+  dockCtx({store}).run('toggleBottomDock()');
+  const reloaded = dockCtx({store});
+  reloaded.run('syncBottomDock()');
   assert.ok(reloaded.el('terminalView').classes.has('dock-folded'));
 });
 
