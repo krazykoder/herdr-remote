@@ -125,11 +125,37 @@ reason. So the trigger reads whether a range existed when the read *arrived*, an
 destroyed one makes no suggestion. Found while building, not while designing — the browser spec
 `a read that destroys the range does not replace it with a guess` is there to keep it.
 
+## Trim — the one thing that is learned
+
+The gutter parse gets the *block* right. What it cannot know is how much of that block a given
+person wants: some always drop the opening sentence, some always drop the trailing next-steps
+paragraph. That difference is a pair of line offsets measured from the block's own edges, it is
+stable per harness, and it is the only thing worth remembering.
+
+- **Taught by transfers, not by drags.** A drag is exploratory; a transfer is the user committing
+  to a range. `doTransfer()` calls `noteTransferTrim()` before `openTerminal()` moves `activePane`
+  to the partner.
+- **Measured against `finalRaw`, the untrimmed block.** Learning against the already-trimmed range
+  would compound: each transfer would trim one more line than the last, forever.
+- **A selection outside the block teaches nothing.** Different intent, not a smaller trim.
+- **Stored as a tally, not a last-write.** `{version: 1, byAgent: {claude: {"2,0": 3}}}` under
+  `herdr_summary_trim`. The most-confirmed pair wins; ties keep more of the block, because
+  over-selecting costs a drag while under-selecting silently drops a line the user wanted to send.
+  A corrupt or older-version blob is read as no trim.
+- **Blank edges come off after.** The parse already ends on the last non-blank line, but a learned
+  head offset can land on one. A trim that would leave nothing is discarded and the block kept
+  whole — a preference, not a licence to select zero lines.
+
+No content is stored: two integers and a count, per harness.
+
 ## UI
 
-`selCount` gains the source: `12 lines · final message`. That is the entire visible surface. A
-suggested range is an ordinary ruler range — drag it, tap the text to clear it (`:3937`),
-transfer it.
+`selCount` gains the source: `12 lines · final message`, and the band and handles paint orange
+(`.auto`) to say the range was found rather than dragged. Touching a handle drops both — it is the
+user's range from then on. A **Summary** button in the quick-actions nav row selects it on demand;
+it appears only on a pane that has one, and unlike the automatic suggestion it has no `done` gate,
+because pressing it is the user asking. Otherwise a suggested range is an ordinary ruler range —
+drag it, tap the text to clear it (`:3937`), transfer it.
 
 ## Rejected options, and why
 
@@ -142,7 +168,7 @@ transfer it.
 | `Useful` / `Not summary` feedback buttons | Transferring is yes, dragging elsewhere is no. Both already exist on screen. |
 | High/medium/low confidence tiers | Either a non-tool block was found or it was not. |
 | Running detection on every pane read | Poll is 3s. Once per done-run, guarded by `selA === null`. |
-| Learning the *end* boundary | End is the block's last non-blank line, which the block rule already gives. |
+| Learning the *end* boundary from the block rule | Superseded, not rejected: the block rule gives the last non-blank line, and the trim tally then learns how many lines back from it this user actually wants. See *Trim*. |
 
 ## Open product decision — closed
 
@@ -163,9 +189,10 @@ drags the handle.
 
 ## Files
 
-- `[MODIFY] web/index.html` — one `// --- Final message detection ---` block (profiles and block
-  parse), a call site in the `pane_content` handler, in-memory suggestion state, one string in
-  `drawSel`.
+- `[MODIFY] web/index.html` — one `// --- Final message detection ---` block (profiles, block
+  parse, trim tally), a call site in the `pane_content` handler, in-memory suggestion state, the
+  `.auto` band styling and string in `drawSel`, the Summary button in `renderQuickActions`, and one
+  `noteTransferTrim()` call in `doTransfer`.
 - `[NEW] tests/test_summary_detect.js` — vm-slice over that block, same trick as
   `tests/test_attention.js`.
 - `[NEW] tests/e2e/browser/summary_detect.spec.js` — the wiring the slice cannot see: that a read
@@ -194,7 +221,10 @@ npx playwright test          # page still boots, selection still clears between 
 3. A pane whose last block is a tool execution opens with no selection.
 4. An unknown harness makes no selection.
 5. A range the user is holding is never replaced by a suggestion.
-6. Nothing on the wire changed.
+6. A transfer of a trimmed range makes the next suggestion on that harness arrive trimmed the same
+   way; a selection outside the block changes nothing.
+7. A suggested range never starts or ends on a blank line.
+8. Nothing on the wire changed.
 
 ---
 

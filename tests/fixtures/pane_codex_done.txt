@@ -1,5 +1,6 @@
 • Ran npm run test:e2e
-  └ 19 passed
+  │ 19 passed
+  └ exit 0
 
 • S2b review clean. No edit needed.
 

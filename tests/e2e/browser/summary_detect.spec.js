@@ -78,6 +78,37 @@ test('a suggestion the user cleared does not come back on the poll', async ({pag
   expect(await sel(page)).toBeNull();
 });
 
+test('Summary is offered only on a pane that has one, and selects it', async ({page}) => {
+  const btn = page.locator('#quickActions .qa-summary');
+  await feed(page, '⏺ Bash(x)\n  ⎿  y\n', 'working');   // last block ran a tool
+  await expect(btn).toHaveCount(0);
+
+  await feed(page, PANE, 'working');   // no status gate on the button, unlike the suggestion
+  await expect(btn).toBeVisible();
+  expect(await sel(page)).toBeNull();
+  await btn.click();
+  await expect(page.locator('#selBand')).toBeVisible();
+  expect(await page.evaluate(() => selText)).toMatch(/^⏺ Ready\. Name the change\./);
+});
+
+test('an auto-selected band reads orange, and a dragged one does not', async ({page}) => {
+  await feed(page, PANE);
+  const band = page.locator('#selBand');
+  await expect(band).toHaveClass(/auto/);
+  const auto = await band.evaluate(el => getComputedStyle(el).borderTopColor);
+
+  // A finger on the bottom handle: it is the user's range now, whatever it started as.
+  const h = await page.locator('#rulerBot').boundingBox();
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2 + 40, {steps: 4});
+  await page.mouse.up();
+
+  await expect(band).not.toHaveClass(/auto/);
+  await expect(page.locator('#selCount')).not.toHaveText(/final message/);
+  expect(await band.evaluate(el => getComputedStyle(el).borderTopColor)).not.toBe(auto);
+});
+
 test('switching panes drops the suggestion with the rest of the ruler', async ({page}) => {
   await feed(page, PANE);
   expect(await sel(page)).not.toBeNull();

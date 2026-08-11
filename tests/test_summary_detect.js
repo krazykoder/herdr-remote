@@ -10,7 +10,7 @@
 //
 //   node --test tests/test_summary_detect.js
 
-const {test} = require('node:test');
+const {test, beforeEach} = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -21,11 +21,36 @@ const from = HTML.indexOf('    // --- Final message detection ---');
 const to = HTML.indexOf('    // --- Line ruler ---', from);
 assert.ok(from !== -1 && to > from, 'final message block not found in web/index.html');
 
-// suggestFinalMessage() reaches for activePane, paneOf and drawSel; the parse itself does not.
-// Stubbing them keeps the slice loadable while the tests stay on findFinalMessage.
-const ctx = vm.createContext({console, activePane: null, paneOf: () => null, drawSel: () => {}});
+// Everything the block reaches for and does not declare: the ruler's state, the pane it belongs
+// to, and the store the trim is remembered in. The parse itself needs none of them.
+const store = new Map();
+const ctx = vm.createContext({
+  console,
+  activePane: null, paneOf: () => null, drawSel: () => {},
+  paneRows: [], selA: null, selB: null,
+  localStorage: {
+    getItem: k => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+  },
+});
 vm.runInContext(HTML.slice(from, to), ctx);
 const find = (rows, agent) => ctx.findFinalMessage(rows, agent);
+// The block's own state is declared with let, which is a lexical binding rather than a property
+// of the context object, so it is read back the same way the browser specs read it: by evaluating
+// the name in the context it lives in.
+const val = expr => vm.runInContext(expr, ctx);
+
+// What the user has learned so far is per test, not per pane — switching panes must not forget it.
+beforeEach(() => store.clear());
+
+// A pane the user is looking at, with a range on it: what noteTransferTrim reads.
+function open(rows, agent, a = null, b = null) {
+  ctx.paneRows = rows;
+  ctx.activePane = 'p1';
+  ctx.paneOf = () => ({agent, status: 'done'});
+  ctx.selA = a;
+  ctx.selB = b;
+}
 
 function fixture(name) {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8').split('\n');
@@ -98,4 +123,72 @@ test('empty and malformed input do not throw', () => {
   assert.equal(find([], 'claude'), null);
   assert.equal(find([''], 'claude'), null);
   assert.equal(find(null, 'claude'), null);
+});
+
+// --- what the user trims off it ---
+//
+// The block runs from the speaker glyph to the last line with anything on it. The trim is what
+// the user takes off either end of that, learned from the transfers they actually send.
+
+const BLOCK = ['⏺ Bash(x)', '  ⎿  y', '', '⏺ Here is what I did.', '', '  A change.', '', ''];
+const scan = () => { ctx.scanFinalMessage(); return val('finalAt'); };
+
+test('the range as parsed: whole block, no trailing blanks', () => {
+  open(BLOCK, 'claude');
+  assert.deepEqual(scan(), [3, 5]);
+  assert.deepEqual(val('finalRaw'), [3, 5]);
+});
+
+test('a transfer teaches the trim, and the next read arrives already trimmed', () => {
+  open(BLOCK, 'claude', 5, 5);       // user kept only the last line of the message
+  ctx.scanFinalMessage();
+  ctx.noteTransferTrim();
+  open(BLOCK, 'claude');
+  assert.deepEqual(scan(), [5, 5]);
+});
+
+test('a trim that lands on a blank line keeps walking', () => {
+  open(BLOCK, 'claude');
+  ctx.noteTrim('claude', 1, 0);      // index 4, which is blank
+  assert.deepEqual(scan(), [5, 5]);
+});
+
+test('the trim is per harness', () => {
+  open(BLOCK, 'claude', 5, 5);
+  ctx.scanFinalMessage();
+  ctx.noteTransferTrim();
+  open(['• Said a thing.', '  and another'], 'codex');
+  assert.deepEqual(scan(), [0, 1], "claude's trim left codex alone");
+});
+
+test('a selection outside the block teaches nothing', () => {
+  open(BLOCK, 'claude', 0, 1);       // the tool block above it, not the message
+  ctx.scanFinalMessage();
+  ctx.noteTransferTrim();
+  open(BLOCK, 'claude');
+  assert.deepEqual(scan(), [3, 5]);
+});
+
+test('a trim that would leave nothing keeps the block whole', () => {
+  open(BLOCK, 'claude');
+  ctx.noteTrim('claude', 9, 9);
+  assert.deepEqual(scan(), [3, 5]);
+});
+
+test('a corrupt or stale store is no trim, never a broken pane', () => {
+  open(BLOCK, 'claude');
+  store.set('herdr_summary_trim', '{not json');
+  assert.deepEqual(scan(), [3, 5]);
+  store.set('herdr_summary_trim', JSON.stringify({version: 0, byAgent: {claude: {'2,0': 9}}}));
+  assert.deepEqual(scan(), [3, 5], 'a trim written by an older shape is ignored');
+});
+
+test('the most-confirmed trim wins, ties keep more of the block', () => {
+  open(BLOCK, 'claude');
+  ctx.noteTrim('claude', 3, 0);
+  ctx.noteTrim('claude', 3, 0);
+  ctx.noteTrim('claude', 1, 0);
+  assert.deepEqual(ctx.learnedTrim('claude'), [3, 0]);
+  ctx.noteTrim('claude', 1, 0);
+  assert.deepEqual(ctx.learnedTrim('claude'), [1, 0], 'tied at two each, so the smaller trim wins');
 });

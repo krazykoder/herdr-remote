@@ -1251,6 +1251,19 @@
       z-index: 1;
     }
 
+    /* Orange while the range is one the app found rather than one a finger drew. The colour is
+       the whole claim: this is a guess at where the agent's closing message starts and ends.
+       Touching either handle repaints it blue, because from that moment it is not a guess. */
+    .sel-band.auto {
+      background: color-mix(in srgb, var(--orange) 20%, transparent);
+      border-top-color: var(--orange);
+      border-bottom-color: var(--orange);
+    }
+
+    .ruler-handle.auto::before {
+      background: var(--orange);
+    }
+
     /* At 9px the user cannot read the row they are landing on. This is how they confirm the
        line without needing pixel precision. */
     .sel-bubble {
@@ -1375,6 +1388,12 @@
       font-size: 0.9rem;
     }
 
+    /* Summary roughly doubles what sits at the right edge, so the arrows have to give up the
+       width or they end up underneath it. Only while the button is there. */
+    .quick-actions .qa-nav.has-summary button.nav {
+      max-width: calc(50% - 120px);
+    }
+
     .quick-actions .qa-nav button.nav:disabled {
       opacity: 0.35;
       cursor: default;
@@ -1400,14 +1419,24 @@
       font-weight: 400;
     }
 
-    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
-       pair pressed constantly. Sized to its word instead of to a circle, which is the only reason
-       the two rules are not one. */
-    .quick-actions .qa-nav button.qa-last {
+    /* The right edge of the nav row. Last is always there; Summary joins it only when the pane
+       has a closing message to offer. Pinned as a group rather than each button to the edge, so
+       the two cannot land on top of each other the moment both are present. */
+    .quick-actions .qa-nav .qa-right {
       position: absolute;
       right: 0;
       top: 50%;
       transform: translateY(-50%);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
+       pair pressed constantly. Sized to their word instead of to a circle, which is the only
+       reason these are not one rule with the fold. */
+    .quick-actions .qa-nav button.qa-last,
+    .quick-actions .qa-nav button.qa-summary {
       flex: 0 0 auto;
       min-width: 0;
       height: 22px;
@@ -1418,6 +1447,13 @@
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 400;
+    }
+
+    /* Wearing the colour of the band it draws, so the connection between pressing this and the
+       orange range that appears needs no explaining. */
+    .quick-actions .qa-nav button.qa-summary {
+      border-color: var(--orange);
+      color: var(--orange);
     }
 
     /* The v folds the whole composer stack away — the button rail, the text area, and whichever
@@ -3858,9 +3894,89 @@
       return [start, end];
     }
 
-    // Set while a range is one this found rather than one the user dragged — the only thing it
-    // changes is what the footer says.
+    // Set while a range is one this found rather than one the user dragged. It is what paints the
+    // band orange and what the footer names, and it is the whole difference between a suggestion
+    // and a selection.
     let selSuggested = false;
+
+    // What the user trims off a suggestion, remembered per harness.
+    //
+    // The gutter parse gets the block right; what it cannot know is how much of that block a
+    // given person actually wants. Some always drop the opening sentence, some always drop the
+    // trailing next-steps paragraph. Either way it is a pair of small line offsets measured from
+    // the block's own edges, it is stable per harness, and a tally of the pairs already confirmed
+    // is the entire model. No content is stored — two integers and a count.
+    const TRIM_KEY = 'herdr_summary_trim', TRIM_VERSION = 1;
+
+    function loadTrims() {
+      try {
+        const d = JSON.parse(localStorage.getItem(TRIM_KEY) || '');
+        return d && d.version === TRIM_VERSION && d.byAgent ? d.byAgent : {};
+      } catch (e) { return {}; }   // a corrupt blob is no trims, never a broken pane
+    }
+
+    // The pair confirmed most often. Ties go to whichever keeps more of the block: over-selecting
+    // costs a drag, under-selecting silently drops a line the user wanted to send.
+    function learnedTrim(agent) {
+      const tally = loadTrims()[agent];
+      let best = [0, 0], top = 0;
+      for (const k in tally || {}) {
+        const [h, t] = k.split(',').map(Number);
+        if (!(h >= 0 && t >= 0)) continue;
+        if (tally[k] > top || (tally[k] === top && h + t < best[0] + best[1])) {
+          top = tally[k];
+          best = [h, t];
+        }
+      }
+      return best;
+    }
+
+    function noteTrim(agent, head, tail) {
+      if (!agent || head < 0 || tail < 0) return;
+      const all = loadTrims();
+      const tally = all[agent] || (all[agent] = {});
+      const k = head + ',' + tail;
+      tally[k] = (tally[k] || 0) + 1;
+      try { localStorage.setItem(TRIM_KEY, JSON.stringify({ version: TRIM_VERSION, byAgent: all })); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // The current pane's closing message. finalRaw is the block as parsed — what a learned trim is
+    // measured against, so the offsets stay absolute instead of compounding every time one is
+    // applied. finalAt is what actually gets selected. Both are computed once per read rather than
+    // per render: the Summary button's presence depends on them, renderQuickActions runs on every
+    // snapshot, and a pane can be tens of thousands of lines long.
+    let finalRaw = null, finalAt = null;
+
+    function scanFinalMessage() {
+      const a = activePane ? paneOf(activePane) : null;
+      finalRaw = a ? findFinalMessage(paneRows, a.agent) : null;
+      finalAt = finalRaw ? trimRange(finalRaw, a.agent) : null;
+    }
+
+    // Redundant lines come off both ends: the ones this user has trimmed before, and then any
+    // blank ones on the edges — the trim can expose them, and a block can carry one from the
+    // start. A trim that would leave nothing is discarded and the block kept whole; a learned
+    // offset is a preference, not a licence to select no lines at all.
+    function trimRange([a, b], agent) {
+      const [head, tail] = learnedTrim(agent);
+      let s = a + head, e = b - tail;
+      if (s > e) { s = a; e = b; }
+      while (s < e && !(paneRows[s] || '').trim()) s++;
+      while (e > s && !(paneRows[e] || '').trim()) e--;
+      return [s, e];
+    }
+
+    // A transfer going out is the one unambiguous statement that a range was the right one, so it
+    // is the only thing that teaches. A selection that has left the detected block entirely is a
+    // different intent and says nothing about how much of the block to keep.
+    function noteTransferTrim() {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a || !finalRaw || selA === null) return;
+      const s = Math.min(selA, selB), e = Math.max(selA, selB);
+      if (s < finalRaw[0] || e > finalRaw[1]) return;
+      noteTrim(a.agent, s - finalRaw[0], finalRaw[1] - e);
+    }
 
     // At most one suggestion per pane per snapshot. The 3s poll re-delivers identical text, and
     // re-selecting a range the user just cleared would make it impossible to clear.
@@ -3871,10 +3987,16 @@
       if (!a || a.status !== 'done' || selA !== null) return;
       const key = activePane + ' ' + paneRows.length + ' ' + (paneRows[paneRows.length - 1] || '');
       if (key === suggestedKey) return;
-      suggestedKey = key;   // set before the parse, so a pane with nothing to find stays quiet
-      const at = findFinalMessage(paneRows, a.agent);
-      if (!at) return;
-      [selA, selB] = at;
+      suggestedKey = key;   // set before the check, so a pane with nothing to find stays quiet
+      if (finalAt) selectFinalMessage();
+    }
+
+    // The Summary button, and the automatic suggestion, land on the same range through here.
+    // Unlike the suggestion it has no status gate: pressing it is the user asking, and an agent
+    // that is mid-turn still has a previous message worth lifting out.
+    function selectFinalMessage() {
+      if (!finalAt) return;
+      [selA, selB] = finalAt;
       selSuggested = true;
       drawSel();
     }
@@ -3963,6 +4085,9 @@
       const h = document.getElementById('termWrap').clientHeight;
       park(top, y0, h);
       park(bot, y1, h);
+      band.classList.toggle('auto', selSuggested);
+      top.classList.toggle('auto', selSuggested);
+      bot.classList.toggle('auto', selSuggested);
       document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines') +
         (selSuggested ? ' · final message' : '');
       // Transfer is the reason this feature exists, but the button only means something while
@@ -3990,6 +4115,7 @@
         at += paneRows[i].length + 1;
       }
       invalidateRows();
+      scanFinalMessage();   // before anything that asks whether there is one
       const had = selA !== null;
       if (had) {
         const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
@@ -4000,6 +4126,7 @@
       // Only ever fills a ruler that was already empty when the read arrived. A read that just
       // destroyed someone's range is the last moment to replace it with a guess.
       if (!had) suggestFinalMessage();
+      renderQuickActions();   // Summary appears and goes with the message it selects
     }
 
     function copySel() {
@@ -4529,6 +4656,9 @@
         ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
       const out = composeTransfer(instruction, mine.role, transferSelection);
       if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+      // Before openTerminal moves activePane to the partner: the range being transferred belongs
+      // to this pane, and this is the point at which the user has committed to it.
+      noteTransferTrim();
       closeTransfer();
       openTerminal(partner.pane_id);
       const input = document.getElementById('termInput');
@@ -4927,14 +5057,22 @@
         `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
         `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
       const open = bottomDockOpen();
-      const navRow = `<div class="qa-nav">${nav(-1, '‹', 'Previous session')}` +
+      // Offered only when there is one to select. A button that does nothing on most panes would
+      // teach people to stop pressing it on the panes where it works.
+      const summary = finalAt
+        ? `<button class="qa-summary" onclick="selectFinalMessage()" ` +
+        `title="Select the agent's closing message" ` +
+        `aria-label="Select the agent's closing message">Summary</button>`
+        : '';
+      const navRow = `<div class="qa-nav${summary ? ' has-summary' : ''}">${nav(-1, '‹', 'Previous session')}` +
         `${nav(1, '›', 'Next session')}` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>` +
+        `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
-        `aria-label="Jump to the newest line">Last</button></div>`;
+        `aria-label="Jump to the newest line">Last</button></div></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
