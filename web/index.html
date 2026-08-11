@@ -49,26 +49,35 @@
       --term-text: #c0caf5;
     }
 
+    /* Light holds two things the first cut got wrong. First, a card is *lighter* than the page in
+       both themes now — dark lifts --surface off --bg, and light used to darken it, so the same
+       list read as raised on one theme and sunken on the other. Nothing here is pure white: the
+       page is a soft grey and the pane is the brightest thing on screen, which is the one place
+       the eye is meant to go.
+
+       Second, every accent is the dark value's *hue* rather than its lightness. The first cut
+       pushed all seven to the same 5.8:1, which is well past the 4.5:1 anything needed and far
+       enough down that green came out olive and orange came out brown — the status dots stopped
+       being colours and became seven shades of mud. Each one now sits just over 4.5:1 against --bg,
+       the darkest ground it can land on, at the highest saturation that clears it. Green moves to
+       a true green hue on the way: dark's yellow-green reads green while it is bright and reads
+       olive the moment it is dark enough for this background. */
     :root[data-theme="light"] {
-      --bg: #e1e2e7;
-      --surface: #d8d9e0;
-      --border: #b6bbd1;
-      --text: #1f2f66;
-      /* Every one of these is the dark value's hue held and its lightness lowered until it
-         clears 4.5:1 as 10px text on all four things it can land on: --bg, --surface, --term-bg,
-         and the badge fill. The dark palette needs no such treatment — a bright accent on a dark
-         ground is already there. */
-      --muted: #4d5373;
-      --green: #455c2d;
-      --red: #ab0837;
-      --blue: #1252a9;
-      --orange: #744d0d;
-      --agent-claude: #8a4014;
-      --shell: #005c7a;
-      /* A shade off --bg rather than pure white: the pane is the surface being read, and it
-         should sit forward of the shell around it without glaring. */
-      --term-bg: #f2f3f7;
-      --term-text: #1f2f66;
+      --bg: #e6e8ee;
+      --surface: #eef0f6;
+      --border: #cdd2e0;
+      --text: #2d3b76;
+      --muted: #606996;
+      --green: #0d7835;
+      --red: #cf1130;
+      --blue: #2461da;
+      --orange: #965904;
+      --agent-claude: #b74208;
+      --shell: #046fa0;
+      /* Brightest surface in the theme, still a shade off white: the pane is what is being read,
+         and it should sit forward of the shell around it without glaring. */
+      --term-bg: #f5f6fa;
+      --term-text: #2d3b76;
     }
 
     * {
@@ -530,7 +539,7 @@
       border-radius: 6px;
       border: none;
       background: var(--green);
-      color: #000;
+      color: var(--bg);
       font-weight: 600;
       font-size: 13px;
       cursor: pointer;
@@ -687,7 +696,7 @@
 
     .chip.active {
       background: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
 
     .chip.alert::after {
@@ -1257,19 +1266,24 @@
       font-weight: 400;
     }
 
+    /* Every label that sits on an accent fill — these three, the armed keys, Send, Start, the
+       active chip — is var(--bg), the same trick .agent-tab.active .pill already used. It is the
+       furthest thing from any accent in whichever theme is on: near-black over dark's bright
+       accents, near-white over light's dark ones. The hardcoded #fff these replace was doing that
+       job in light and failing it in dark, where white on --green measured 1.9:1. */
     .btn-yes {
       background: var(--green);
-      color: #fff;
+      color: var(--bg);
     }
 
     .btn-trust {
       background: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
 
     .btn-no {
       background: var(--red);
-      color: #fff;
+      color: var(--bg);
     }
 
     .term-input {
@@ -1344,7 +1358,7 @@
       flex: 1.6;
       border: none;
       background: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
 
     .term-input-side button.clear.armed {
@@ -1441,7 +1455,7 @@
       border-radius: 6px;
       border: none;
       background: var(--blue);
-      color: #fff;
+      color: var(--bg);
       font-weight: 700;
       font-size: 16px;
       flex-shrink: 0;
@@ -1483,7 +1497,7 @@
     .nav-key.armed {
       background: var(--red);
       border-color: var(--red);
-      color: #fff;
+      color: var(--bg);
     }
 
     .mod-key {
@@ -1493,7 +1507,7 @@
     .mod-key.armed {
       background: var(--blue);
       border-color: var(--blue);
-      color: #fff;
+      color: var(--bg);
     }
 
     .tab-btn {
@@ -1536,7 +1550,7 @@
 
     .ctrl-key.confirm {
       background: var(--red);
-      color: #fff;
+      color: var(--bg);
       border-color: var(--red);
     }
 
@@ -2047,7 +2061,7 @@
         <div id="startTargetRow"></div>
         <p id="startError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
         <button id="startSubmit" onclick="submitStart()"
-          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Start
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
           session</button>
       </div>
     </div>
@@ -2078,7 +2092,7 @@
         </div>
         <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
         <button id="pairSubmit" onclick="savePair()"
-          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Save
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Save
           pair</button>
       </div>
     </div>
@@ -2404,7 +2418,7 @@
       document.getElementById('themePick').value = light ? 'light' : 'dark';
       // The installed PWA paints its chrome from this, so it has to track the choice.
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.content = light ? '#e1e2e7' : '#1a1b26';
+      if (meta) meta.content = light ? '#e6e8ee' : '#1a1b26';
     }
 
     setTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
@@ -4602,7 +4616,7 @@
       }).join('');
       if (armedMod) html += `<span style="color:var(--muted);font-size:12px;padding:4px">${armedMod === 'shift' ? '\u21e7' : 'Ctrl'} + \u2026</span>`;
       html += `<span style="margin-left:auto;display:flex;gap:4px">`;
-      html += `<button onclick="sendQueuedKeys()" style="padding:6px 12px;border-radius:6px;border:none;background:${keyQueue.some(k => DANGER_KEYS.has(k.toLowerCase())) ? 'var(--red)' : 'var(--blue)'};color:#fff;font-size:12px;font-weight:600;cursor:pointer">Send</button>`;
+      html += `<button onclick="sendQueuedKeys()" style="padding:6px 12px;border-radius:6px;border:none;background:${keyQueue.some(k => DANGER_KEYS.has(k.toLowerCase())) ? 'var(--red)' : 'var(--blue)'};color:var(--bg);font-size:12px;font-weight:600;cursor:pointer">Send</button>`;
       html += `<button onclick="clearKeyQueue()" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-size:12px;cursor:pointer">✕</button>`;
       html += `</span>`;
       strip.innerHTML = html;
