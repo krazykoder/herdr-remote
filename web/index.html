@@ -1150,46 +1150,32 @@
       flex: 1;
       min-height: 0;
       display: flex;
-      background: var(--term-bg);
       /* The band is positioned against this box and has to clip to it. */
       overflow: hidden;
     }
 
     .term-wrap>.term-content {
       flex: 1;
-      position: relative;
-      z-index: 1;
-      background: var(--term-bg);
     }
 
     /* Lines are DOM rows rather than a scrolling overlay, so prompt treatment stays attached to
-       its text in every wrap mode. `min-height` keeps an empty terminal line real. */
+       its text in every wrap mode. `min-height` keeps an empty terminal line real, and matches
+       the container's line-height so the ruler's arithmetic row geometry stays true. */
     .term-line {
       display: block;
       min-height: 1.5em;
     }
 
+    /* Colour and a rule, no fill: a terminal is already a wall of colour, and a highlight block
+       behind monospace text is the thing that reads as broken rather than as structure. The rule
+       is pulled into the pane's own left padding so it never sits on the first character cell. */
     .term-line.user-prompt {
-      position: relative;
-      z-index: 0;
-      isolation: isolate;
       color: var(--blue);
       font-weight: 600;
-      background: color-mix(in srgb, var(--blue) 13%, transparent);
-      box-shadow: inset 3px 0 var(--blue);
+      border-left: 3px solid var(--blue);
+      margin-left: -7px;
+      padding-left: 4px;
     }
-
-    /* One quiet row above the user turn, without inserting whitespace into the transcript. */
-    .term-line.user-prompt-start::before,
-    .term-line.user-prompt-end::after {
-      content: '';
-      position: absolute;
-      z-index: -1;
-      background: color-mix(in srgb, var(--blue) 7%, transparent);
-    }
-
-    .term-line.user-prompt-start::before { inset: -1.5em 0 0; }
-    .term-line.user-prompt-end::after { inset: 0 0 -1.5em; }
 
     /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
        pointer-events:none because the text underneath stays scrollable while it shows. */
@@ -4017,11 +4003,16 @@
     function userInputLines(rows, agent) {
       const g = profileFor(agent), lines = new Set();
       if (!g || !rows) return lines;
-      let inTurn = false;
+      let inTurn = false, pending = [];
       rows.forEach((row, i) => {
         if ((row || '')[0] === g.speaker) inTurn = false;
-        if (isUserInput(row, agent)) inTurn = true;
-        if (inTurn) lines.add(i);
+        if (isUserInput(row, agent)) { inTurn = true; pending = []; }
+        if (!inTurn) return;
+        // A blank line inside the turn is part of it only if more of the turn follows. Trailing
+        // blanks are the gap before the agent answers, and a rule running down empty rows reads
+        // as the turn never ending.
+        if ((row || '').trim()) { pending.forEach(j => lines.add(j)); pending = []; lines.add(i); }
+        else pending.push(i);
       });
       return lines;
     }
@@ -4066,6 +4057,23 @@
         if (at) return at;
       }
       return null;
+    }
+
+    // One range per turn: the agent's closing message, which is the last thing it said before the
+    // user typed again. Stepping walks these rather than every block, because between two prompts
+    // an agent says a dozen things and only the last of them answers the question — that is what
+    // ↑ is for. Falls back to nothing on a harness with no prompt gutter, and stepBlock then walks
+    // messages the old way.
+    function turnSummaries(rows, agent) {
+      const out = [];
+      if (!profileFor(agent) || !rows) return out;
+      for (let i = 0; i < rows.length; i++) {
+        if (!isUserInput(rows[i], agent)) continue;
+        const at = blockBefore(rows, agent, i);
+        // Two prompts in a row share the block above them; one entry, not two.
+        if (at && (!out.length || at[0] > out[out.length - 1][0])) out.push(at);
+      }
+      return out;
     }
 
     // The block a line falls inside, or null. Walking up from the line is what lets teaching work
@@ -4141,10 +4149,12 @@
     function scanFinalMessage() {
       const a = activePane ? paneOf(activePane) : null;
       paneProfile = a ? profileFor(a.agent) : null;
-      const raw = a && GUTTERS[a.agent] ? findFinalMessage(paneRows, a.agent) : null;
-      // Summary is the complete parsed block. A trim is a manual reading preference, not a
-      // licence to silently omit part of the agent's completed answer.
-      finalAt = raw;
+      const raw = a ? findFinalMessage(paneRows, a.agent) : null;
+      // Trimmed, because that is the whole point of learning one: the range arrives the way this
+      // user selects it rather than the way the parser found it. Only an explicit act votes for a
+      // trim now (learnFromSelection ignores an untouched suggestion), so what comes off here is
+      // something the user asked for at least once.
+      finalAt = raw ? trimRange(raw, a.agent) : null;
     }
 
     // Redundant lines come off both ends: the ones this user has trimmed before, and then any
@@ -4225,9 +4235,14 @@
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
       const from = selA === null ? null : Math.min(selA, selB);
-      const at = dir < 0
-        ? blockBefore(paneRows, a.agent, from === null ? paneRows.length : from)
-        : blockAfter(paneRows, a.agent, from === null ? 0 : from + 1);
+      const turns = turnSummaries(paneRows, a.agent);
+      const at = turns.length
+        ? (dir < 0
+          ? [...turns].reverse().find(t => t[0] < (from === null ? paneRows.length : from))
+          : turns.find(t => t[0] > (from === null ? -1 : from))) || null
+        : (dir < 0
+          ? blockBefore(paneRows, a.agent, from === null ? paneRows.length : from)
+          : blockAfter(paneRows, a.agent, from === null ? 0 : from + 1));
       if (!at) {
         // Off the top of what has been read. The pane opens on 200 lines and two long tool blocks
         // eat that, so running out here means asking for more history rather than dead-ending.
@@ -4267,9 +4282,10 @@
     }
 
     // --- Line ruler ---
-    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — which
-    // is what keeps it cheap in every wrap mode, including the one that has to measure.
-    let selA = null, selB = null, selText = '', paneText = '', paneRows = [], lineStarts = [];
+    // Two integers and one band element — the selection itself is never per-line DOM, and nothing
+    // here is rebuilt on the 3s poll. The rows it measures against are spans (renderPaneRows), so
+    // the reflow mode reads geometry off a box rather than measuring a Range.
+    let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
 
     function rulerOn() { return !!activePane; }
 
@@ -4336,9 +4352,11 @@
       const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
       const bar = document.getElementById('selBar');
       ruler.hidden = !rulerOn();
-      // A learned marker has no result gutter, so it cannot distinguish a tool block from an
-      // agent message. Navigation needs the complete shipped profile, not merely a speaker glyph.
-      document.getElementById('blockNav').hidden = !rulerOn() || !GUTTERS[agentOf(activePane)] || !paneRows.length;
+      // Nothing to step through without a profile, and an unknown harness gets one by the user
+      // selecting a message by hand and pressing Learn — so the pill appears once that has
+      // happened. A learned marker has no result gutter, so stepping on one can land on a tool
+      // block; pressing again passes it, which is a smaller cost than having no pill at all.
+      document.getElementById('blockNav').hidden = !rulerOn() || !paneProfile || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;
@@ -4381,22 +4399,16 @@
     // Called with every read. The selection follows its text; reanchorSel decides whether it
     // survived at all.
     function setPaneText(next) {
+      const same = next === paneText;
       paneText = next;
       paneRows = next.split('\n');
-      const a = activePane ? paneOf(activePane) : null;
-      const userLines = a ? userInputLines(paneRows, a.agent) : new Set();
-      const frag = document.createDocumentFragment();
-      paneRows.forEach((row, i) => {
-        const line = document.createElement('span');
-        const user = userLines.has(i);
-        line.className = 'term-line' + (user ? ' user-prompt' : '') +
-          (user && !userLines.has(i - 1) ? ' user-prompt-start' : '') +
-          (user && !userLines.has(i + 1) ? ' user-prompt-end' : '');
-        line.textContent = row;
-        frag.append(line);
-      });
-      document.getElementById('termContent').replaceChildren(frag);
-      invalidateRows();
+      // Rebuilt only when the text actually changed. The pane is re-read every 3s and is usually
+      // identical; rebuilding thousands of rows on each of those reads is the one thing per-line
+      // DOM could plausibly cost, and this is what keeps it off the poll.
+      if (!same || document.getElementById('termContent').childElementCount !== paneRows.length) {
+        renderPaneRows();
+        invalidateRows();
+      }
       scanFinalMessage();   // before anything that asks whether there is one
       const had = selA !== null;
       if (had) {
@@ -4409,6 +4421,22 @@
       // destroyed someone's range is the last moment to replace it with a guess.
       if (!had) suggestFinalMessage();
       renderQuickActions();   // Summary appears and goes with the message it selects
+    }
+
+    // One row per line. Costs a span per line and buys the prompt rule staying attached to its
+    // text in every wrap mode — and row geometry the ruler can read off the box instead of
+    // measuring a Range through a single text node.
+    function renderPaneRows() {
+      const a = activePane ? paneOf(activePane) : null;
+      const userLines = a ? userInputLines(paneRows, a.agent) : new Set();
+      const frag = document.createDocumentFragment();
+      paneRows.forEach((row, i) => {
+        const line = document.createElement('span');
+        line.className = userLines.has(i) ? 'term-line user-prompt' : 'term-line';
+        line.textContent = row;
+        frag.append(line);
+      });
+      document.getElementById('termContent').replaceChildren(frag);
     }
 
     function copySel() {

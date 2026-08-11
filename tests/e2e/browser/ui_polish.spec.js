@@ -137,11 +137,12 @@ test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   await expect(tabs.nth(0)).toHaveClass(/active/);
 
   // Not while a pane is open: the strip is not on screen, and Tab there belongs to the composer.
+  // The ring is on All from the press above, and coming back it is still on All.
   await page.locator('#agents .agent').first().click();
   await expect(page.locator('#termContent')).toContainText('done.');
   await page.keyboard.press('Alt+Tab');
   await page.locator('.back').first().click();
-  await expect(tabs.nth(2)).toHaveClass(/active/);
+  await expect(tabs.nth(0)).toHaveClass(/active/);
 });
 
 test('Last returns a scrolled-up pane to the newest line, and to following it', async ({page}) => {

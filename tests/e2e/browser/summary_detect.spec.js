@@ -109,17 +109,33 @@ test('an auto-selected band reads orange, and a dragged one does not', async ({p
   expect(await band.evaluate(el => getComputedStyle(el).borderTopColor)).not.toBe(auto);
 });
 
-test('the Claude user turn paints through its continuation rows', async ({page}) => {
+test('the Claude user turn is coloured and ruled, and nothing is filled', async ({page}) => {
   await feed(page, '❯ allow the test commands\n  confirmation\n\n⏺ Done.\n', 'working');
   const row = page.locator('#termContent .term-line.user-prompt');
-  await expect(row).toHaveCount(3);
+  // The gutter line and its continuation. The blank line before the agent answers is the gap
+  // between turns, not part of one, so the rule stops at the last line with text on it.
+  await expect(row).toHaveCount(2);
   await expect(row.first()).toHaveText('❯ allow the test commands');
-  await expect(row.first()).toHaveCSS('color', /rgb/);
-  await expect(row.first()).toHaveCSS('background-color', /rgb/);
-  await expect(row.first()).toHaveClass(/user-prompt-start/);
-  await expect(row.last()).toHaveClass(/user-prompt-end/);
-  await expect(row.nth(1)).not.toHaveClass(/user-prompt-(start|end)/);
+  await expect(row.last()).toHaveText('  confirmation');
   await expect(page.locator('#termContent .term-line', {hasText: '⏺ Done.'})).not.toHaveClass(/user-prompt/);
+
+  // Colour and a rule left of the text. A fill behind monospace is what this must not become.
+  const seen = await row.first().evaluate(el => {
+    const cs = getComputedStyle(el);
+    const plain = getComputedStyle(el.parentElement.querySelector('.term-line:not(.user-prompt)'));
+    return {
+      colour: cs.color, plainColour: plain.color,
+      fill: cs.backgroundColor, width: cs.borderLeftWidth,
+      x: el.getBoundingClientRect().left,
+      textX: el.parentElement.querySelector('.term-line:not(.user-prompt)').getBoundingClientRect().left,
+    };
+  });
+  expect(seen.colour).not.toBe(seen.plainColour);
+  expect(seen.fill).toBe('rgba(0, 0, 0, 0)');
+  expect(parseFloat(seen.width)).toBeGreaterThan(0);
+  // The rule sits in the pane's padding, left of where the first character starts, so the glyph
+  // it belongs to is never underneath it.
+  expect(seen.x).toBeLessThan(seen.textX);
 });
 
 // Walking back through the conversation. Three blocks with a tool execution between them, which is
@@ -192,11 +208,14 @@ test('Learn teaches an unknown harness its marker, once confirmed', async ({page
   page.once('dialog', d => d.accept());
   await page.locator('#selLearn').click();
   await expect(page.locator('#selLearn')).toHaveText('Learned ✓');
-  await expect(page.locator('#blockNav')).toBeHidden();
-  await expect(page.locator('#quickActions .qa-summary')).toHaveCount(0);
+  await expect(page.locator('#blockNav')).toBeVisible();
 
-  // No navigation or silent guess: without a result glyph it cannot tell a command from a sentence.
+  // Navigation, yes. A silent guess on the next read, no — without a result glyph it cannot tell
+  // a command from a sentence.
   await feed(page, PI_PANE, 'working');
+  await page.evaluate(() => clearSel());
+  await page.locator('#blockNav button', {hasText: '↑'}).click();
+  expect(await sel(page)).toEqual([3, 4]);
   await page.evaluate(() => clearSel());
   await feed(page, PI_PANE);              // a finished pane, and still no suggestion
   expect(await sel(page)).toBeNull();

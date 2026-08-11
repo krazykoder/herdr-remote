@@ -29,7 +29,7 @@ let answer = true;                 // what the confirm dialog comes back with
 const ctx = vm.createContext({
   console,
   activePane: null, paneOf: () => null, drawSel: () => {}, renderQuickActions: () => {},
-  showToast: t => toasts.push(t), confirm: () => answer,
+  showToast: t => toasts.push(t), confirm: () => answer, scrollPaneToLine: () => {},
   paneRows: [], selA: null, selB: null,
   localStorage: {
     getItem: k => (store.has(k) ? store.get(k) : null),
@@ -157,13 +157,12 @@ test('the range as parsed: whole block, no trailing blanks', () => {
   assert.deepEqual(scan(), [3, 5]);
 });
 
-test('a transfer teaches trim for message stepping, not the complete summary', () => {
+test('a transfer teaches the trim, and the next read arrives already trimmed', () => {
   open(BLOCK, 'claude', 5, 5);       // user kept only the last line of the message
   ctx.scanFinalMessage();
   ctx.learnFromSelection();
   open(BLOCK, 'claude');
-  assert.deepEqual(scan(), [3, 5]);
-  assert.deepEqual(ctx.trimRange([3, 5], 'claude'), [5, 5]);
+  assert.deepEqual(scan(), [5, 5]);
 });
 
 test('an untouched suggestion teaches no 0/0 trim', () => {
@@ -177,8 +176,7 @@ test('an untouched suggestion teaches no 0/0 trim', () => {
 test('a trim that lands on a blank line keeps walking', () => {
   open(BLOCK, 'claude');
   ctx.noteTrim('claude', 1, 0);      // index 4, which is blank
-  assert.deepEqual(scan(), [3, 5]);
-  assert.deepEqual(ctx.trimRange([3, 5], 'claude'), [5, 5]);
+  assert.deepEqual(scan(), [5, 5]);
 });
 
 test('the trim is per harness', () => {
@@ -240,6 +238,40 @@ test('next walks down the same way', () => {
   assert.equal(ctx.blockAfter(CHAT, 'claude', 6), null, 'nothing below the last');
 });
 
+// A conversation with prompts in it: two turns, each with a tool block and chatter before the
+// message that actually answers. Stepping must land on the answers, not on the chatter.
+const TURNS = [
+  '⏺ Starting on it.',            // 0
+  '',
+  '⏺ Bash(git status)',
+  '  ⎿  clean',
+  '⏺ Nothing to commit, so here is the plan.',   // 4  <- turn 1's closing message
+  '',
+  '❯ go ahead',                   // 6
+  '⏺ Working.',                   // 7
+  '',
+  '⏺ Done: two files changed.',   // 9  <- turn 2's closing message
+  '  and the tests pass',         // 10
+  '',
+  '❯ ',                           // 12  the composer, always the last line of a live pane
+];
+
+test('a turn is one entry, taken from just above each prompt', () => {
+  assert.deepEqual(ctx.turnSummaries(TURNS, 'claude'), [[4, 4], [9, 10]]);
+  assert.deepEqual(ctx.turnSummaries(CHAT, 'claude'), [], 'no prompt gutter, no turns');
+});
+
+test('stepping walks turns, not every block the agent emitted', () => {
+  open(TURNS, 'claude');
+  ctx.scanFinalMessage();
+  ctx.stepBlock(-1);
+  assert.deepEqual([ctx.selA, ctx.selB], [9, 10], 'the newest turn, not `⏺ Working.` above it');
+  ctx.stepBlock(-1);
+  assert.deepEqual([ctx.selA, ctx.selB], [4, 4], 'past the whole of turn 1 in one press');
+  ctx.stepBlock(1);
+  assert.deepEqual([ctx.selA, ctx.selB], [9, 10]);
+});
+
 test('the block a line sits in, and the lines that sit in none', () => {
   assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 6), [5, 6], 'a continuation line');
   assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 5), [5, 6], 'the glyph line itself');
@@ -261,7 +293,8 @@ test('Learn takes the marker off the line the selection starts on', () => {
   open(OTHER, 'pi', 3, 4);
   assert.equal(ctx.learnGutter('pi'), true);
   assert.deepEqual(ctx.profileFor('pi'), { speaker: '◆', result: [] });
-  assert.equal(scan(), null, 'a speaker alone cannot safely identify a final message');
+  assert.deepEqual(scan(), [3, 4]);
+  assert.deepEqual(ctx.blockBefore(OTHER, 'pi', 3), [0, 1], 'and navigation works from then on');
 });
 
 test('a declined confirmation stores nothing', () => {
@@ -287,9 +320,9 @@ test('a learned harness never suggests on its own', () => {
   ctx.scanFinalMessage();
   ctx.suggestFinalMessage();
   assert.equal(ctx.selA, null, 'no result glyph means no way to tell a command from a sentence');
-  // Asking is no safer than being told without a result gutter.
+  // Asking is different from being told: Summary still selects it.
   ctx.selectFinalMessage();
-  assert.deepEqual([ctx.selA, ctx.selB], [null, null]);
+  assert.deepEqual([ctx.selA, ctx.selB], [3, 4]);
 });
 
 test('the most-confirmed trim wins, ties use the latest explicit trim', () => {
@@ -309,7 +342,10 @@ test('known prompt gutters identify user input at column zero', () => {
   assert.equal(ctx.isUserInput(' > indented', 'claude'), false);
 });
 
-test('a prompt highlight covers its continuation through the next agent block', () => {
+test('a prompt rule covers its continuation and stops at the last line with text', () => {
   const rows = ['❯ inspect this', '  with both files', '', '⏺ I found it.', '  details'];
-  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'claude')), [0, 1, 2]);
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'claude')), [0, 1]);
+  // A blank inside the turn is kept: the rule must not break in the middle of one message.
+  const gapped = ['❯ first line', '', '  second line', '', '⏺ Answer.'];
+  assert.deepEqual(Array.from(ctx.userInputLines(gapped, 'claude')), [0, 1, 2]);
 });
