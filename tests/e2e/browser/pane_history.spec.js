@@ -66,6 +66,45 @@ test('an idle pane is polled at the slow cadence', async ({page}) => {
   expect(await reads(page), 'an idle pane was read at the working cadence').toEqual([]);
 });
 
+// Pushed, not asked for: the relay polls herdr on its own and broadcasts this. Synthesised here
+// because the fake herdr's statuses are fixed — what is under test is the handler's reaction, and
+// the socket is the real one it would arrive on.
+const pushStatus = (page, status) => page.evaluate(s => ws.onmessage({
+  data: JSON.stringify({type: 'agent_update', agent: {pane_id: activePane, status: s}}),
+}), status);
+
+test('a status change read the pane, without waiting for the tick', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await tapWire(page);
+
+  await pushStatus(page, 'working');
+  // No poll interval was waited out — an idle pane's is 12s and the fast one is 3s.
+  await expect.poll(() => reads(page).then(r => r.length), {timeout: 1000}).toBe(1);
+});
+
+test('a status that did not change reads nothing', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await tapWire(page);
+
+  await pushStatus(page, 'idle');   // what it already is
+  await page.waitForTimeout(500);
+  expect(await reads(page), 'a snapshot that said nothing new cost a read').toEqual([]);
+});
+
+test('a status change does not re-fetch a deep read', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await page.evaluate(() => { paneLines = 20000; });
+  await tapWire(page);
+
+  await pushStatus(page, 'working');
+  await page.waitForTimeout(500);
+  expect(await reads(page), 'scrollback does not change, so 20,000 lines were re-read for nothing')
+    .toEqual([]);
+});
+
 test('a deep read pauses the poll, and the tail turns it back on', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');

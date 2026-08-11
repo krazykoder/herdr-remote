@@ -2984,6 +2984,13 @@
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();
           noteActivity(update.pane_id);
+          // A status change is the one thing that says the pane's text is about to be worth
+          // re-reading, and it arrives here rather than being asked for — the relay polls herdr on
+          // its own and pushes this. Reading now instead of waiting for the next tick is what
+          // keeps an agent that woke up locally feeling live while idle panes are polled slowly.
+          // Not while a deep read is on screen: scrollback does not change, and re-fetching tens
+          // of thousands of lines is exactly what POLL_MAX_LINES exists to stop.
+          if (update.pane_id === activePane && paneLines <= POLL_MAX_LINES) refreshPane();
         }
         prevStatuses[update.pane_id] = update.status;
         render();
