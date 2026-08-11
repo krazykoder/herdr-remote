@@ -1,0 +1,163 @@
+// The pane-view chrome, in a real browser: the composer fold, Last, the loading pill, the pulse,
+// and the section headers that lost their dot.
+//
+// The vm slices in tests/test_bottom_dock.js cover the branches — which glyph, which flag, what is
+// stored. None of them can see a stylesheet, so none can tell whether the fold actually removes
+// the composer from the page, whether the pill lands over the pane instead of pushing it, or
+// whether the pulse rule survives being written. That is what this file is for.
+//
+//   npx playwright test
+const {test, expect} = require('@playwright/test');
+
+const AGENT = 'Architect 1';
+const WORKING = 'scratch';   // the fake herdr reports this one as working, so its dot pulses
+
+test.beforeEach(async ({page}) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  page.__errors = errors;
+  await page.goto('/');
+});
+
+test.afterEach(async ({page}) => {
+  expect(page.__errors, 'the page logged errors').toEqual([]);
+});
+
+test('section headers carry their word and nothing else', async ({page}) => {
+  const header = page.locator('#agents .section-header').first();
+  await expect(header).toBeVisible();
+  expect(await page.locator('#agents .section-header .dot').count()).toBe(0);
+  // The cards below still have theirs — a dot in that position means status, which is the whole
+  // reason it had no business in a heading.
+  expect(await page.locator('#agents .agent .dot').count()).toBeGreaterThan(0);
+});
+
+test('a working agent gets the size pulse, an idle one gets nothing', async ({page}) => {
+  const dotOf = name => page.locator('#agents .agent', {hasText: name}).locator('.dot');
+  await expect(dotOf(WORKING)).toBeVisible();
+  const anim = await dotOf(WORKING).evaluate(el => {
+    const cs = getComputedStyle(el);
+    return {name: cs.animationName, duration: cs.animationDuration};
+  });
+  expect(anim.name).toBe('pulse');
+  expect(anim.duration).toBe('1.4s');
+  // Sampled across a full beat: the disc shrinks and comes back, and full size is the ceiling —
+  // a pulsing dot must never read larger than a still one beside it.
+  const scales = [];
+  for (let i = 0; i < 24; i++) {
+    scales.push(await dotOf(WORKING).evaluate(el => {
+      const m = new DOMMatrix(getComputedStyle(el).transform);
+      return m.a;
+    }));
+    await page.waitForTimeout(70);
+  }
+  expect(Math.max(...scales), 'the pulse grew past the resting diameter').toBeLessThanOrEqual(1.001);
+  expect(Math.min(...scales), 'the pulse is not visible as a size change').toBeLessThan(0.7);
+  await expect(dotOf(AGENT)).toHaveCSS('animation-name', 'none');
+});
+
+test('the v folds the composer away and leaves the quick actions bar', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('.term-input')).toBeVisible();
+
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('.term-input')).toBeHidden();
+  await expect(page.locator('#quickActions')).toBeVisible();
+  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+  // The pane takes the height the composer gave up rather than leaving a gap.
+  await expect(page.locator('#quickActions .qa-last')).toBeVisible();
+
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('.term-input')).toBeVisible();
+  await expect(page.locator('#quickActions .qa-fold')).toHaveText('v');
+});
+
+test('an open keys dock folds away with the rest of the stack', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await page.locator('#keysBtn').click();
+  await expect(page.locator('#termKeys')).toBeVisible();
+
+  await page.locator('#quickActions .qa-fold').click();
+  // The dock's own display is inline and still says "open" — the fold has to outrank it, which is
+  // the one thing the !important in that rule is buying.
+  await expect(page.locator('#termKeys')).toBeHidden();
+});
+
+test('the fold survives a reload', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('.term-input')).toBeHidden();
+
+  await page.reload();
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('.term-input')).toBeHidden();
+  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+});
+
+test('the fold and Last sit on opposite edges of the nav row', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  const row = await page.locator('#quickActions .qa-nav').boundingBox();
+  const fold = await page.locator('#quickActions .qa-fold').boundingBox();
+  const last = await page.locator('#quickActions .qa-last').boundingBox();
+  expect(fold.x).toBeCloseTo(row.x, 0);
+  expect(last.x + last.width).toBeCloseTo(row.x + row.width, 0);
+  // And neither overlaps an arrow, which is what the widened max-width reserve is for.
+  for (const arrow of await page.locator('#quickActions .qa-nav button.nav').all()) {
+    const b = await arrow.boundingBox();
+    expect(b.x, 'an arrow runs under the fold').toBeGreaterThanOrEqual(fold.x + fold.width);
+    expect(b.x + b.width, 'an arrow runs under Last').toBeLessThanOrEqual(last.x);
+  }
+});
+
+test('Last returns a scrolled-up pane to the newest line, and to following it', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  // The fake herdr's pane is five lines and cannot overflow a desktop viewport, so the backscroll
+  // is stood in for. The button, the handler and the follow flag under test are all the real ones.
+  await page.evaluate(() => {
+    const el = document.getElementById('termContent');
+    el.textContent = Array.from({length: 400}, (_, i) => `line ${i}`).join('\n');
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await expect.poll(() => page.evaluate(() => userScrolledUp)).toBe(true);
+
+  await page.locator('#quickActions .qa-last').click();
+  await expect.poll(() => page.evaluate(() => {
+    const el = document.getElementById('termContent');
+    return el.scrollHeight - el.scrollTop - el.clientHeight;
+  })).toBeLessThanOrEqual(1);
+  // The point of the button is not the jump but what the jump restores: live reads follow again.
+  await expect.poll(() => page.evaluate(() => userScrolledUp)).toBe(false);
+});
+
+test('the loading pill hangs over the pane without moving the composer', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await expect(page.locator('#termLoading')).toBeHidden();
+
+  const composerBefore = await page.locator('.term-input').boundingBox();
+  // The wait itself is over in milliseconds against a local fake, so it is re-entered rather than
+  // raced for. The flag is the same one openTerminal clears; what is under test here is where the
+  // pill lands and what it does to the text, which is CSS and invisible to a vm slice.
+  await page.evaluate(() => { paneTextPrimed = false; syncPaneLoading(); });
+
+  await expect(page.locator('#termLoading')).toBeVisible();
+  await expect(page.locator('#termLoading')).toHaveText('Loading…');
+
+  const wrap = await page.locator('#termWrap').boundingBox();
+  const pill = await page.locator('#termLoading').boundingBox();
+  expect(pill.x + pill.width / 2).toBeCloseTo(wrap.x + wrap.width / 2, 0);
+  expect(pill.y + pill.height / 2).toBeCloseTo(wrap.y + wrap.height / 2, 0);
+  expect(pill.y + pill.height, 'the pill hangs above the composer').toBeLessThan(composerBefore.y);
+  // Out of flow, so nothing below it moved to make room.
+  expect(await page.locator('.term-input').boundingBox()).toEqual(composerBefore);
+  // And the stale text behind it is dimmed, which is what makes the pill mean "not this pane yet".
+  await expect(page.locator('#termContent')).toHaveCSS('opacity', '0.3');
+  await expect(page.locator('#termLoading')).toHaveCSS('pointer-events', 'none');
+
+  // The next read clears it, the same way the first one does after a real switch.
+  await expect(page.locator('#termLoading')).toBeHidden({timeout: 6000});
+  await expect(page.locator('#termContent')).toHaveCSS('opacity', '1');
+});

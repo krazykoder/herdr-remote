@@ -440,9 +440,10 @@
     }
 
     /* An 8px disc fading to 40% is easy to miss at arm's length, so the beat is carried by size
-       as well: it breathes between roughly half and one and a half its resting diameter. Only
-       transform and opacity animate, both compositor-only — no layout, no repaint, and the disc's
-       box stays 8px however large it looks, so nothing beside it shifts. */
+       as well. It breathes down and back rather than out: full size is the top of the range, so a
+       pulsing dot never reads larger than a still one beside it and the column of dots down the
+       left of the list keeps one diameter. Only transform and opacity animate, both
+       compositor-only — no layout, no repaint, and nothing beside it shifts. */
     .dot.pulse {
       animation: pulse 1.4s ease-in-out infinite;
     }
@@ -460,12 +461,12 @@
 
       0%,
       100% {
-        transform: scale(0.6);
-        opacity: 0.5;
+        transform: scale(0.45);
+        opacity: 0.45;
       }
 
       50% {
-        transform: scale(1.5);
+        transform: scale(1);
         opacity: 1;
       }
     }
