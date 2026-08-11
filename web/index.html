@@ -2527,13 +2527,33 @@
     }
 
     // --- Bottom status bar ---
-    // Left: when the open pane's content last actually changed. Stamping every poll would read
-    // "now" forever and mean nothing, so the stamp is taken only when the text differs.
+    // Left: how long ago the open pane last changed. Stamping every poll would read "now" forever
+    // and mean nothing, so the stamp is taken only when the text differs — and, for the same
+    // reason, the first paint after opening a pane does not count. That paint always "differs"
+    // (the element was empty), which is what used to make this field read the current time on
+    // every switch and say nothing at all.
+    //
+    // Relative, not a clock time: the question this answers is "is what I am looking at stale",
+    // and "4m ago" answers it without the reader doing arithmetic. Past a day it falls back to
+    // the date, where the arithmetic stops being worth it.
     let paneStampAt = null;
+    // False until the pane's first content arrives. Per-pane, reset by openPane.
+    let paneTextPrimed = false;
 
     function fmtStamp(d) {
       const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       return `${t} · ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
+    }
+
+    function fmtAgo(d) {
+      const s = Math.round((Date.now() - d.getTime()) / 1000);
+      if (s < 10) return 'just now';
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s / 60);
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      return fmtStamp(d);
     }
 
     function renderStatusBar() {
@@ -2541,13 +2561,18 @@
       const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
       const on = !!agent && agent.status === 'working';
       document.getElementById('statusBarLeft').textContent =
-        pane && paneStampAt ? fmtStamp(paneStampAt) : '';
+        pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
       // Deliberately `agent` and not `pane`: "idle" here means the agent is not working, and a
       // shell has no agent. Blank rather than a status it cannot have.
       right.textContent = agent ? (on ? 'active' : 'idle') : '';
       right.classList.toggle('on', on);
     }
+
+    // A relative label goes stale on its own, so it is repainted on a timer rather than from every
+    // path that could have carried the clock past a boundary. 15s is finer than the smallest step
+    // the label can take once it is past a minute, and free at this size.
+    setInterval(() => { if (activePane && paneStampAt) renderStatusBar(); }, 15000);
 
     // With the scrollbar hidden, nothing else says there are more tabs off-screen.
     function syncTabFades() {
@@ -2821,7 +2846,17 @@
         // Only a real change is activity. The pane is re-read every 3s regardless.
         // The pane's text changing is the finest-grained activity there is — it catches an agent
         // that answered without ever leaving 'working', which no status transition reports.
-        if (next !== el.textContent) { paneStampAt = new Date(); noteActivity(activePane); renderStatusBar(); }
+        //
+        // The first content after opening is skipped: the element was empty, so it always differs,
+        // and counting it stamped every pane the moment you looked at it. That one line was the
+        // whole reason this field read the current time no matter which pane you switched to.
+        if (!paneTextPrimed) {
+          paneTextPrimed = true;
+        } else if (next !== el.textContent) {
+          paneStampAt = new Date();
+          noteActivity(activePane);
+          renderStatusBar();
+        }
         el.textContent = next;
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
@@ -4164,7 +4199,12 @@
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
       renderAgentTabs();  // the tab for this pane has to read as active straight away
-      paneStampAt = null;  // the previous pane's timestamp is not this one's
+      // Seeded from lastSeen rather than blanked: that map is stamped for *every* pane on a status
+      // transition, not only the open one, so a pane that blocked twenty minutes ago while you were
+      // elsewhere can say so the moment it opens. Blank only for a pane this device has never seen
+      // move. The first content read must not overwrite it — see paneTextPrimed.
+      paneStampAt = lastSeen[paneId] ? new Date(lastSeen[paneId]) : null;
+      paneTextPrimed = false;
       paneCols = null;     // and its column count is not this one's either
       paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
       clearSel();
