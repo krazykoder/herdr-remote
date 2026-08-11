@@ -114,10 +114,15 @@ Keyed on `a.agent`, which the relay already sends.
 ## Detection trigger
 
 Runs after a `pane_content` update when `status === 'done'`, `selA === null`, and this pane-content
-snapshot has not already been suggested. The in-memory suggestion key is `pane_id` plus the final
-content line; it prevents the 3s poll from reselecting a range the user cleared. Never fight a
-selection the user is holding. The existing `reanchorSel` keeps an accepted suggestion aligned on
-later reads.
+snapshot has not already been suggested. The in-memory suggestion key is `pane_id` plus the line
+count plus the final line; it prevents the 3s poll from reselecting a range the user cleared. The
+existing `reanchorSel` keeps an accepted suggestion aligned on later reads.
+
+**Two guards, not one.** `selA === null` at the moment of the read is not sufficient: a read whose
+text no longer contains the user's selection clears it, and the ruler is then empty for the wrong
+reason. So the trigger reads whether a range existed when the read *arrived*, and a read that just
+destroyed one makes no suggestion. Found while building, not while designing — the browser spec
+`a read that destroys the range does not replace it with a guess` is there to keep it.
 
 ## UI
 
@@ -162,6 +167,9 @@ drags the handle.
   `drawSel`.
 - `[NEW] tests/test_summary_detect.js` — vm-slice over that block, same trick as
   `tests/test_attention.js`.
+- `[NEW] tests/e2e/browser/summary_detect.spec.js` — the wiring the slice cannot see: that a read
+  is what runs the parse, that only a finished pane is suggested for, that the band and footer
+  paint, and that a held or deliberately cleared range is never overwritten by the poll.
 - `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt` — the real pane reads above,
   verbatim. The fixtures are the spec; a glyph change breaks a test rather than a user.
 

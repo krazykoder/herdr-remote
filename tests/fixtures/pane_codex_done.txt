@@ -1,0 +1,200 @@
+    changes ~54 inline handlers, and unlike S2a a mistake there is
+    behavioural rather than structural — it'd send a keystroke to the
+    wrong view. With one view mounted, no test can catch that, because
+    both answers are the same view. So S2b's real verification only
+    arrives with S3.
+
+
+• Review S2a: template roles, scoped lookup, pair-strip parent, terminal chrome, browser coverage.
+
+• Ran git status --short --branch && git log --oneline -5 && git show --stat --oneline 0fb2a30 && git show --format= 0fb2a30 | sed -n '1,460p'
+  │ ast-grep run --pattern 'document.getElementById($ID)' --lang javascript web/index.html | sed -n '1,300p'
+  │ ast-grep run --pattern 'function vq($$$) { $$$BODY }' --lang javascript web/index.html | sed -n '1,180p'
+  │ … +4 lines
+  └ web/index.html:3798:    function placePairStrip(view = fv()) {
+    web/index.html:3799:      const place = currentPairPlace();
+    … +190 lines (ctrl + t to view transcript)
+    web/index.html:4938:    vq(fv(), 'termContent').addEventListener('scroll', function () {
+    web/index.html:5180:    placePairStrip();
+
+• Ran sed -n '2168,2225p' web/index.html
+  │ sed -n '2968,3035p' web/index.html
+  │ sed -n '3778,3822p' web/index.html
+  │ … +3 lines
+  └ ✔ both hosts paint the same buttons (1.716167ms)
+    ✔ the rail button paints before it opens, so the dock is never empty (0.539417ms)
+    … +122 lines (ctrl + t to view transcript)
+    ℹ todo 0
+    ℹ duration_ms 77.671625
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• S2a review finds no current one-view regression. Run browser suite; S3 must change pane-content vq(fv(), …) to vq(view, …).
+
+• Ran npm run test:e2e
+  └ [WebServer] 2026-08-11 08:05:13 [INFO] mDNS registering at 192.168.86.41
+    [WebServer] 2026-08-11 08:05:13 [WARNING] UDP 8376 in use, plugin push disabled
+    … +52 lines (ctrl + t to view transcript)
+
+      14 passed (7.3s)
+
+• Explored
+  └ Read 2026-08-10_s3_two_views.md
+    Search pane_content|refreshView|refreshPane|viewOfPane|fv\(\) in 2026-08-10_s{2,3,4}_*.md
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• Found S3 plan drift from S1/S2a: ordering and scheduler callback wrong; pane-content scope missing. Fix plan before S2b.
+
+• Edited .workflow/04_implementation_plans/2026-08-10_s3_two_views.md (+13 -4)
+      4  **Spec:** `.workflow/03_specs/2026-08-10_split_view_spec.md` §7, §8, §9
+      5 -**Precedes:** S2 — `.workflow/04_implementation_plans/2026-08-10_s2_view_scoped_dom.md`
+      5 +**Follows:** S2 — `.workflow/04_implementation_plans/2026-08-10_s2_view_scoped_dom.md`
+      6  **Ships:** two working columns, reachable only from a temporary debug hook. The user-facing setting is S4.
+        ⋮
+     59  ```js
+     60 -function tick() { views.forEach(refreshPane); }
+     60 +function tick() { views.forEach(refreshView); }
+     61  refreshInterval = setInterval(tick, 3000);   // started once, never per view
+        ⋮
+     66
+     67 +`pane_content` already finds its destination with `viewOfPane(msg.pane_id)`. Every read and write in
+     68 +that branch must use that `view`, including `vq(view, 'termContent')`, wrapping, selection geometry,
+     69 +scroll position, and activity state. `fv()` is wrong in this branch: a reply may be for the
+     70 +unfocused view.
+     71 +
+     72  ### 2.5 Opening a pane, with two views on screen
+        ⋮
+    100
+     96 -None new. This plan's correctness is layout and scheduling, which the pure tests cannot see; S4 adds
+     97 -`tests/test_split.js` over the resolution function that decides what this plan renders.
+    101 +**[NEW] `tests/e2e/browser/s3_two_views.spec.js`**. Pure tests cannot see layout, concurrent reads,
+    102 +or a control targeting its own column. Start from the fake-herdr Playwright fixture and use the
+    103 +temporary `window.__split(otherPaneId)` hook. Assert: two `.term-view` roots; each pane's content
+    104 +lands in its own root; typing, selection, clear arms, and docks stay in their source view; focus
+    105 +switch changes only the ring; and a gate collapse removes the second root and its reads. Keep
+    106 +`tests/test_split.js` for S4's pure mode-resolution function.
+    107
+
+• Ran git diff --check && git diff -- .workflow/04_implementation_plans/2026-08-10_s3_two_views.md && git status --short
+  └ diff --git a/.workflow/04_implementation_plans/2026-08-10_s3_two_views.md b/.workflow/04_implementation_plans/2026-08-10_s3_two_views.md
+    index d7d8184..bdbc39f 100644
+    … +45 lines (ctrl + t to view transcript)
+
+     M .workflow/04_implementation_plans/2026-08-10_s3_two_views.md
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• S2a clean: 118 Node + 14 Playwright tests pass.
+
+  Fixed .workflow/04_implementation_plans/2026-08-10_s3_two_views.md:
+
+  - S3 follows S2.
+  - Scheduler uses refreshView, not zero-arg refreshPane.
+  - pane_content must use matched view, never fv().
+  - Requires S3 Playwright coverage.
+
+  Next: implement S2b; then S3 with two-view browser tests.
+
+─ Worked for 2m 50s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Review, edit, fix; then propose next steps.
+
+  feedback from Architect 1:
+        feat(web): a tap focuses its view, which is how a control
+        finds it…)
+    ⎿  43f51e4 feat(web): a tap focuses its view, which is how a
+       control finds it
+    ⎿  Allowed by auto mode classifier
+
+  ⏺ S2b shipped (43f51e4). 118 node + 19 browser tests green.
+
+    I did not build what the plan said. The plan was to thread this
+    through 54 handlers and ~40 signatures. What shipped is one
+    capture-phase listener on #terminalView, ~40 lines.
+
+    The reason isn't line count. Spec §8 already says "clicking
+    anywhere in a view focuses it" — focus and targeting are the same
+    fact, and the capture phase runs before the target's own onclick,
+    so every handler reading fv() is already reading its own view. The
+    plan had built a second targeting mechanism alongside the focus
+    model it had scheduled for S3, where it even noted the listener
+    would land first and "that handler already targets its own view
+    anyway." Two mechanisms, one job.
+
+    The decisive argument is the one I flagged at the end of last
+    turn: with one view mounted, a this threaded wrongly resolves to
+    the same view as a correct one. 54 silent chances to send a
+    keystroke to the wrong pane, no test able to tell. The listener is
+    one mechanism and it's testable now — mount a second view, drive
+    it. I verified each new assertion fails with the listener
+    disabled, and the ruler regression fails against the old line.
+
+    Three real bugs fixed along the way, all of which would have
+    reached S3:
+
+    - The ruler's pointerdown read e.target.id to pick the grabbed
+    handle. S2a made those data-role, so it never matched — every
+    press started a fresh one-line range instead of dragging an end. A
+    selection you could make but not adjust, live on the branch right
+    now.
+    - armFire's 1.5s expiry and pressCtrl's 3s confirm re-read fv()
+    when they fired. Two views means a live one-tap QUIT, CLS or
+    Ctrl-D left armed on a view you walked away from — the exact
+    accident the arm exists to prevent.
+    - Nine listeners were bound to view 0's elements at load. A second
+    view would have had no ruler, no composer keydown, no scroll.
+
+    The S1 accessors stay, against the plan. fv() is now wrong in
+    exactly one place — the poll/render path, where there's no user to
+    have focused anything. Deleting them in S2b meant ~86 edits with
+
+
+• Review S2b: capture focus routing, timer safety, ruler roles, per-view listeners, retained accessors.
+
+• Ran git status --short --branch && git log --oneline -5 && git show --stat --oneline 43f51e4 && git show --format= 43f51e4 | sed -n '1,520p'
+  │ ast-grep run --pattern 'addEventListener($EVENT, $CALLBACK, $$$OPTIONS)' --lang javascript web/index.html | sed -n '1,340p'
+  │ ast-grep run --pattern 'function armFire($$$) { $$$BODY }' --lang javascript web/index.html | sed -n '1,220p'
+  │ … +3 lines
+  └ web/index.html:4937:    function pressCtrl(label) {
+    web/index.html:4938:      const preset = CTRL_PRESETS.find(p => p.label === label);
+    … +634 lines (ctrl + t to view transcript)
+    web/index.html-4903-    function switchKeyTab(tab) {
+    web/index.html:4904:      vq(fv(), 'tabKeys').classList.toggle('active', tab === 'keys');
+
+• Ran sed -n '2200,2255p' web/index.html
+  │ sed -n '3520,3625p' web/index.html
+  │ sed -n '4638,4680p' web/index.html
+  │ … +2 lines
+  └ ✔ both hosts paint the same buttons (1.5955ms)
+    ✔ the rail button paints before it opens, so the dock is never empty (0.5195ms)
+    … +122 lines (ctrl + t to view transcript)
+    ℹ todo 0
+    ℹ duration_ms 69.814708
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• S2b unit suite passes: 118. Run two-view browser checks.
+
+• Ran npm run test:e2e
+  └ [WebServer] 2026-08-11 08:22:25 [INFO] mDNS registering at 192.168.86.41
+    [WebServer] 2026-08-11 08:22:25 [WARNING] UDP 8376 in use, plugin push disabled
+    … +67 lines (ctrl + t to view transcript)
+
+      19 passed (8.5s)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• S2b review clean. No edit needed.
+
+  Verified: 118 Node + 19 Playwright tests pass.
+
+  Next: S3. Convert poll/render path to explicit view, then remove S1 accessors under two-view browser coverage.
+
+─ Worked for 1m 01s ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Summarize recent commits
+
+  gpt-5.6-terra medium · Context 63% used · weekly 98% left · 258K window · 195K used

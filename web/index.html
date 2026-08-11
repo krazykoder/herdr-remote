@@ -3812,6 +3812,73 @@
       applyWrapMode();
     }
 
+    // --- Final message detection ---
+    // A finished pane is mostly tool output — command runs, diffs, test logs — with the agent's
+    // closing message a handful of lines at the end of it. Both harnesses already separate the
+    // two in column 0: every block opens on a speaker glyph, and a tool call hangs its results
+    // off a second one. So a block is an execution exactly when a result glyph appears under it,
+    // and the closing message is the last block where none does.
+    //
+    // That reads one character per line and never a word of the content, which is what keeps the
+    // whole feature in the browser — nothing stored, nothing asked of the relay, no second
+    // opinion from a model about text a model just wrote.
+    //
+    // Headings were the obvious idea and are the wrong one. Neither sampled pane had one: Claude
+    // closed with "Sound half committed on main as dd51cea", Codex with "S2b review clean."
+    //
+    // Profiles are literal and only cover harnesses whose panes have actually been read. An
+    // unknown harness gets no suggestion rather than a guess — a user's selection could hint at
+    // the speaker glyph, but never at the result gutter, which sits outside the block they
+    // selected. tests/fixtures/pane_*_done.txt are those reads, so a harness that changes its
+    // glyphs breaks a test rather than a user.
+    const GUTTERS = {
+      claude: { speaker: '⏺', result: ['⎿'] },
+      codex: { speaker: '•', result: ['└', '│'] },
+    };
+
+    function findFinalMessage(rows, agent) {
+      const g = GUTTERS[agent];
+      if (!g || !rows || !rows.length) return null;
+      let start = -1;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i][0] === g.speaker) { start = i; break; }
+      }
+      if (start < 0) return null;
+      // The block ends at the next line with anything at all in column 0 — the next glyph, the
+      // turn footer, a rule, the prompt. Blank lines stay inside it: Codex closes with three
+      // paragraphs, and ending on the first blank would take only the last one.
+      let end = start;
+      for (let j = start + 1; j < rows.length && !/^\S/.test(rows[j]); j++) {
+        const line = rows[j].trimStart();
+        if (!line) continue;
+        // A result glyph means the agent's last act was running something, not saying something.
+        if (g.result.includes(line[0])) return null;
+        end = j;
+      }
+      return [start, end];
+    }
+
+    // Set while a range is one this found rather than one the user dragged — the only thing it
+    // changes is what the footer says.
+    let selSuggested = false;
+
+    // At most one suggestion per pane per snapshot. The 3s poll re-delivers identical text, and
+    // re-selecting a range the user just cleared would make it impossible to clear.
+    let suggestedKey = '';
+
+    function suggestFinalMessage() {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a || a.status !== 'done' || selA !== null) return;
+      const key = activePane + ' ' + paneRows.length + ' ' + (paneRows[paneRows.length - 1] || '');
+      if (key === suggestedKey) return;
+      suggestedKey = key;   // set before the parse, so a pane with nothing to find stays quiet
+      const at = findFinalMessage(paneRows, a.agent);
+      if (!at) return;
+      [selA, selB] = at;
+      selSuggested = true;
+      drawSel();
+    }
+
     // --- Line ruler ---
     // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — which
     // is what keeps it cheap in every wrap mode, including the one that has to measure.
@@ -3819,7 +3886,7 @@
 
     function rulerOn() { return !!activePane; }
 
-    function clearSel() { selA = selB = null; selText = ''; drawSel(); }
+    function clearSel() { selA = selB = null; selText = ''; selSuggested = false; drawSel(); }
 
     function lineGeom() {
       const el = document.getElementById('termContent'), cs = getComputedStyle(el);
@@ -3896,7 +3963,8 @@
       const h = document.getElementById('termWrap').clientHeight;
       park(top, y0, h);
       park(bot, y1, h);
-      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines');
+      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines') +
+        (selSuggested ? ' · final message' : '');
       // Transfer is the reason this feature exists, but the button only means something while
       // this pane is half of a live pair.
       document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
@@ -3922,12 +3990,16 @@
         at += paneRows[i].length + 1;
       }
       invalidateRows();
-      if (selA !== null) {
+      const had = selA !== null;
+      if (had) {
         const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
-        if (!at) { clearSel(); return; }
-        [selA, selB] = at;
+        if (at) [selA, selB] = at;
+        else clearSel();   // the text it was anchored to is gone, so the range is meaningless
       }
       drawSel();
+      // Only ever fills a ruler that was already empty when the read arrived. A read that just
+      // destroyed someone's range is the last moment to replace it with a guess.
+      if (!had) suggestFinalMessage();
     }
 
     function copySel() {
@@ -3957,6 +4029,7 @@
       function moveTo(clientY) {
         const i = lineAt(clientY);
         if (drag === 'top') selA = i; else selB = i;
+        selSuggested = false;   // touched by hand, so it is the user's range now
         drawSel();
         const wrapTop = document.getElementById('termWrap').getBoundingClientRect().top;
         bubble.textContent = (paneRows[i] || '').trim().slice(0, 40) || '(blank)';
