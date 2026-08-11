@@ -138,6 +138,23 @@ test('the Claude user turn is coloured and ruled, and nothing is filled', async 
   expect(seen.x).toBeLessThan(seen.textX);
 });
 
+test('every turn back through the scrollback is marked, not only the newest', async ({page}) => {
+  await feed(page, [
+    '⏺ Older answer.', '  with a second line', '',
+    '❯ next request',
+    '⏺ Bash(git status)', '  ⎿  clean',
+    '⏺ Newer answer.', '',
+    '❯ ',
+  ].join('\n'), 'working');
+  const marked = page.locator('#termContent .summary-highlight');
+  await expect(marked).toHaveCount(3);
+  await expect(marked.nth(0)).toHaveText('⏺ Older answer.');
+  await expect(marked.nth(1)).toHaveText('  with a second line');
+  await expect(marked.nth(2)).toHaveText('⏺ Newer answer.');
+  // The tool block between the two turns is output, not an answer.
+  await expect(page.locator('#termContent .term-line', {hasText: '⎿'})).not.toHaveClass(/summary-highlight/);
+});
+
 test('highlight settings repaint the current pane and persist', async ({page}) => {
   await feed(page, '⏺ Complete summary.\n  Ready to transfer.\n❯ next request\n  with context\n', 'working');
   await expect(page.locator('#termContent .user-prompt')).toHaveCount(2);

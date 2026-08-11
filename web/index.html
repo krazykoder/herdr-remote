@@ -4125,6 +4125,21 @@
       return out;
     }
 
+    // Every turn's closing message, as line numbers, trimmed the way this user trims. Scrolling
+    // back is exactly when the marks earn their keep: the newest summary is on screen anyway, and
+    // the one being hunted for is four screens up. Falls back to the pane's final message on a
+    // harness with no prompt gutter, which is the only range there is to mark there.
+    function summaryRows(rows, agent) {
+      const out = new Set();
+      const turns = turnSummaries(rows, agent);
+      const ranges = turns.length ? turns : (finalAt ? [finalAt] : []);
+      for (const at of ranges) {
+        const [s, e] = trimRange(at, agent);
+        for (let i = s; i <= e; i++) out.add(i);
+      }
+      return out;
+    }
+
     // The block a line falls inside, or null. Walking up from the line is what lets teaching work
     // anywhere in the pane: a range is measured against its own block rather than against whichever
     // one happened to be last read. Hitting a footer, rule or prompt on the way up means the line
@@ -4481,13 +4496,12 @@
     function renderPaneRows() {
       const a = activePane ? paneOf(activePane) : null;
       const userLines = a && highlightOn(USER_HIGHLIGHT_KEY) ? userInputLines(paneRows, a.agent) : new Set();
-      const summaryStart = highlightOn(SUMMARY_HIGHLIGHT_KEY) && finalAt ? finalAt[0] : -1;
-      const summaryEnd = highlightOn(SUMMARY_HIGHLIGHT_KEY) && finalAt ? finalAt[1] : -1;
+      const summaryLines = a && highlightOn(SUMMARY_HIGHLIGHT_KEY) ? summaryRows(paneRows, a.agent) : new Set();
       const frag = document.createDocumentFragment();
       paneRows.forEach((row, i) => {
         const line = document.createElement('span');
         line.className = 'term-line' + (userLines.has(i) ? ' user-prompt' : '') +
-          (i >= summaryStart && i <= summaryEnd ? ' summary-highlight' : '');
+          (summaryLines.has(i) ? ' summary-highlight' : '');
         line.textContent = row;
         frag.append(line);
       });

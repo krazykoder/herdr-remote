@@ -232,6 +232,12 @@ rebuild is skipped when a read delivers text identical to the last one — the p
 3s and rebuilding thousands of spans for an unchanged read is the one cost per-line DOM could
 plausibly carry.
 
+**Every turn is marked, not only the newest.** `summaryRows()` paints the same list stepping
+walks, trimmed the same way, so the orange rows and the range ↑ selects are the same lines.
+Marking only `finalAt` looked right on an open pane and was useless where it mattered: the newest
+summary is on screen anyway, and the one being hunted for is four screens up. On a harness with no
+prompt gutter there is one mark, the pane's final message.
+
 **Highlight preferences** sit below Appearance in Settings, both default on, both persisted
 (`herdr_highlight_user`, `herdr_highlight_summary`). Only the row classes are affected — the parse
 runs either way, because the ruler, Summary and stepping all depend on it. Toggling repaints the

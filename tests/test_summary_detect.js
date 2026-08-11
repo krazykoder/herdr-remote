@@ -284,6 +284,21 @@ test('stepping walks turns, not every block the agent emitted', () => {
   assert.deepEqual([ctx.selA, ctx.selB], [9, 10]);
 });
 
+test('every turn is marked, not only the newest one', () => {
+  open(TURNS, 'claude');
+  ctx.scanFinalMessage();
+  assert.deepEqual(Array.from(ctx.summaryRows(TURNS, 'claude')), [4, 9, 10]);
+  // Trimmed the way the user trims: the mark and the range ↑ selects are the same lines.
+  ctx.noteTrim('claude', 1, 0);
+  assert.deepEqual(Array.from(ctx.summaryRows(TURNS, 'claude')), [4, 10]);
+});
+
+test('with no prompt gutter there is one mark: the final message', () => {
+  open(CHAT, 'claude');
+  ctx.scanFinalMessage();
+  assert.deepEqual(Array.from(ctx.summaryRows(CHAT, 'claude')), [5, 6]);
+});
+
 test('the block a line sits in, and the lines that sit in none', () => {
   assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 6), [5, 6], 'a continuation line');
   assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 5), [5, 6], 'the glyph line itself');
