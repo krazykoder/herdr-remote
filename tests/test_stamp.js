@@ -145,6 +145,19 @@ test('working outranks recency, blocked outranks everything', () => {
   assert.strictEqual(dot('blocked', SEC), 'var(--red)');
 });
 
+test('a shell keeps its own blue when cold, rather than going grey like an agent', () => {
+  // A shell only stamps while it is open, so cold is where most of them sit. Muting them would
+  // have traded the one cue that says "terminal" for a cue that says nothing.
+  const shell = agoMs => {
+    dotCtx.lastSeen = agoMs === null ? {} : {'w1:p0': Date.now() - agoMs};
+    return vm.runInContext(`shellColor('w1:p0')`, dotCtx);
+  };
+  assert.strictEqual(shell(30 * SEC), 'var(--green)');
+  assert.strictEqual(shell(20 * MIN), 'var(--orange)');
+  assert.strictEqual(shell(3 * HOUR), 'var(--shell)');
+  assert.strictEqual(shell(null), 'var(--shell)', 'never seen is the same as cold here');
+});
+
 test('the bands line up end to end, with no gap and no overlap', () => {
   // The tab strip caches on this, so a pane must be in exactly one band at any moment.
   const bucket = agoMs => {

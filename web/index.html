@@ -392,9 +392,15 @@
       background: color-mix(in srgb, var(--blue) 8%, transparent);
     }
 
-    /* The dot sits on a saturated fill once selected; the ring is what keeps it readable there. */
+    /* The dot sits on a saturated fill once selected, and at 8px a green disc on --blue is two
+       mid-tones touching. A translucent white ring used to separate them, but white sits between
+       the two hues and washed the dot out rather than isolating it. --bg is the furthest thing
+       from the fill in either theme — near-black on dark, near-white on light — so the dot ends
+       up in a well instead of on a wash. A pixel wider too, since it is the one being looked at. */
     .agent-tab.active .dot {
-      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+      width: 9px;
+      height: 9px;
+      box-shadow: 0 0 0 2px var(--bg);
     }
 
     .header h1 {
@@ -436,6 +442,7 @@
     .dot.pulse {
       animation: pulse 2s infinite;
     }
+
 
     /* The colour already says "working"; the motion is emphasis on top of it, so it is the part
        that goes. Same bargain the armed Clear button's drain makes. */
@@ -2161,6 +2168,17 @@
       if (bucket === 'idle') return 'var(--orange)';
       return 'var(--muted)';
     }
+
+    // A shell has no status, so recency is the whole signal — and the cold end is its own blue
+    // rather than the muted grey a cold agent gets. That blue is what says "terminal" at a
+    // glance, and a shell only ever stamps while it is open, so most of them sit cold most of
+    // the time: a strip of grey dots would have thrown the identity away to say nothing.
+    function shellColor(paneId) {
+      const bucket = activityBucket(paneId);
+      if (bucket === 'live') return 'var(--green)';
+      if (bucket === 'idle') return 'var(--orange)';
+      return 'var(--shell)';
+    }
     let activeWorkspace = null;
     let activeTab = null;
     let projects = [], activeProject = null;
@@ -2521,16 +2539,17 @@
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
-          // Solid, never animated. Colour alone says what the pane is doing; a blinking dot in a
-          // bar that is always on screen is motion the user cannot turn off or look away from.
-          // A shell has no status of its own, so it keeps its own colour rather than borrowing
-          // one that means something about an agent.
-          const color = !a.agent ? 'var(--shell)' : statusColor(a);
+          // The strip pulses a working agent the same as the cards do. It was held solid on the
+          // grounds that a bar which is always on screen should not carry motion — but the strip
+          // is also the only place a backgrounded agent is visible at all, and a dot that is
+          // merely green there says "recent" just as loudly as it says "running now".
+          const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
+          const pulse = a.status === 'working' ? ' pulse' : '';
           return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
-            `<span class="dot" style="background:${color}" aria-hidden="true"></span>` +
+            `<span class="dot${pulse}" style="background:${color}" aria-hidden="true"></span>` +
             `<span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>` +
             `<span class="label">${escapeHtml(paneLabel(a))}</span></span></button>`;
         }).join('');
