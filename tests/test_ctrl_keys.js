@@ -23,7 +23,12 @@ function ctrlCtx() {
   const els = {};
   const el = id => els[id] || (els[id] =
     // display starts hidden, as every dock does in the markup, so toggleDock's read is honest.
-    {id, innerHTML: '', textContent: '', style: {display: 'none'}, addEventListener() {}});
+    // classes is a plain Set so a test can assert which tab ended up active.
+    {id, innerHTML: '', textContent: '', style: {display: 'none'}, addEventListener() {},
+     classes: new Set(),
+     get classList() {
+       return {toggle: (c, on) => { on ? this.classes.add(c) : this.classes.delete(c); }};
+     }});
   const sent = [];
   const ctx = vm.createContext({
     document: {getElementById: el, addEventListener() {}},
@@ -75,6 +80,29 @@ test('disarmCtrl repaints, so an expiring arm leaves no live trigger on screen',
   run("paintCtrlPresets(); pressCtrl('Ctrl Z'); disarmCtrl()");
   assert.doesNotMatch(el('ctrlPresets').innerHTML, /Confirm\?/);
   assert.doesNotMatch(el('ctrlDockGrid').innerHTML, /Confirm\?/);
+});
+
+test('the ^C tab replaces the pad content rather than sitting under it', () => {
+  const {el, run} = ctrlCtx();
+  run("switchKeyTab('ctrl')");
+  assert.equal(el('keysPad').style.display, 'none');
+  assert.equal(el('digitsPad').style.display, 'none');
+  assert.equal(el('ctrlPresets').style.display, 'grid');
+  assert.match(el('ctrlPresets').innerHTML, /Ctrl C/);
+  assert.ok(el('tabCtrl').classes.has('active'));
+  assert.ok(!el('tabKeys').classes.has('active'), 'only one tab is active');
+});
+
+test('an arm survives leaving the ^C tab and coming back', () => {
+  const {el, run} = ctrlCtx();
+  run("switchKeyTab('ctrl'); pressCtrl('Ctrl D')");
+  assert.match(el('ctrlPresets').innerHTML, /Confirm\?/);
+  run("switchKeyTab('keys')");
+  assert.equal(el('ctrlPresets').style.display, 'none');
+  assert.equal(el('keysPad').style.display, '', 'the keys pad comes back');
+  // Repainted on entry, not filled once: a stale label here would offer a one-tap Ctrl D.
+  run("switchKeyTab('ctrl')");
+  assert.match(el('ctrlPresets').innerHTML, /Confirm\?/);
 });
 
 test('a queued composition stages the keys instead of sending them', () => {

@@ -786,7 +786,6 @@
     .terminal-view.is-terminal #quickDock,
     .terminal-view.is-terminal #commandBtn,
     .terminal-view.is-terminal #micBtn,
-    .terminal-view.is-terminal #ctrlPresetsWrap,
     .terminal-view.is-terminal #menuStart,
     .terminal-view.is-terminal #termMenuPair,
     .terminal-view.is-terminal #menuPairPlace {
@@ -797,9 +796,9 @@
       display: grid;
     }
 
-    /* The mic's slot in the rail, over a terminal: the Ctrl keys, out of the keys pad where they
-       sat three taps deep behind a disclosure. ^C is why — it is the only way to stop what you
-       started — and the other five ride along rather than living in two places. */
+    /* The mic's slot in the rail, over a terminal: the Ctrl keys, reachable without opening the
+       keys pad at all. ^C is why — it is the only way to stop what you started. The pad's own ^C
+       tab shows the same six; paintCtrlPresets fills both, so they cannot disagree. */
     #ctrlKeysBtn {
       display: none;
     }
@@ -1902,10 +1901,12 @@
       <div id="keyQueueStrip"
         style="display:none;width:100%;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center">
       </div>
-      <!-- Tab toggle -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-bottom:6px">
-        <button class="tab-btn active" id="tabKeys" onclick="switchKeyTab('keys')">Keys</button>
-        <button class="tab-btn" id="tabDigits" onclick="switchKeyTab('digits')">123</button>
+      <!-- Tab toggle. flex, not a fixed grid: the ^C tab is one of three here and the row has to
+           close up cleanly if one is ever hidden. -->
+      <div style="display:flex;gap:4px;width:100%;margin-bottom:6px">
+        <button class="tab-btn active" id="tabKeys" style="flex:1" onclick="switchKeyTab('keys')">Keys</button>
+        <button class="tab-btn" id="tabDigits" style="flex:1" onclick="switchKeyTab('digits')">123</button>
+        <button class="tab-btn" id="tabCtrl" style="flex:1;color:var(--red)" onclick="switchKeyTab('ctrl')">^C</button>
       </div>
       <!-- Keys pad -->
       <div id="keysPad" style="width:100%">
@@ -1932,17 +1933,14 @@
           <button class="nav-key mod-key" id="modShift" onclick="armMod('shift')">⇧ Shift</button>
           <button class="nav-key mod-key" id="modCtrl" onclick="armMod('ctrl')">Ctrl</button>
         </div>
-        <!-- Ctrl presets. Over a terminal these live in their own dock instead — same buttons,
-             one tap from the composer rather than folded behind this disclosure. -->
-        <div id="ctrlPresetsWrap">
-          <button onclick="toggleCtrlPresets()"
-            style="background:none;border:none;color:var(--muted);font-size:0.7rem;cursor:pointer;padding:2px 4px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase">Presets
-            <span id="ctrlChevron">▸</span></button>
-          <div id="ctrlPresets" style="display:none;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px"></div>
-        </div>
       </div>
       <!-- Digits pad -->
       <div id="digitsPad" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
+      <!-- Ctrl presets pad. Was a disclosure at the foot of the keys pad, which put ^C three taps
+           deep and left it below the fold on a phone. Now a peer of the other two pads, reached by
+           the ^C tab. Over a terminal the rail's own ^C dock shows the same buttons — one function
+           paints both, so the armed "Confirm?" state cannot disagree between them. -->
+      <div id="ctrlPresets" style="display:none;width:100%;grid-template-columns:repeat(3,1fr);gap:4px"></div>
       <!-- Action keys for blocked state -->
       <div id="actionKeys" style="width:100%;margin-top:4px"></div>
     </div>
@@ -4611,15 +4609,20 @@
     function switchKeyTab(tab) {
       document.getElementById('tabKeys').classList.toggle('active', tab === 'keys');
       document.getElementById('tabDigits').classList.toggle('active', tab === 'digits');
+      document.getElementById('tabCtrl').classList.toggle('active', tab === 'ctrl');
       document.getElementById('keysPad').style.display = tab === 'keys' ? '' : 'none';
       const dp = document.getElementById('digitsPad');
       dp.style.display = tab === 'digits' ? 'grid' : 'none';
       if (tab === 'digits' && !dp.innerHTML) {
         dp.innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => `<button class="digit-key" onclick="fireKey('${d}')">${d}</button>`).join('');
       }
+      document.getElementById('ctrlPresets').style.display = tab === 'ctrl' ? 'grid' : 'none';
+      // Repainted on every entry, not filled once like the digits: a preset can be sitting armed
+      // as "Confirm?" from a previous visit, and the pad has to show that rather than a stale label.
+      if (tab === 'ctrl') paintCtrlPresets();
     }
 
-    // The presets exist in two places \u2014 the keys pad's disclosure and the terminal's own dock \u2014
+    // The presets exist in two places \u2014 the keys pad's ^C tab and the terminal's own dock \u2014
     // so the armed state is painted into both from one function rather than into whichever one
     // the tap came from. Painting both also means the disarm below actually repaints: the old
     // toggle-twice trick left "Confirm?" on screen, because a toggle only paints an empty grid.
@@ -4630,15 +4633,6 @@
         return `<button class="${cls}" onclick="pressCtrl('${p.label}')">${armed ? 'Confirm?' : p.label}</button>`;
       }).join('');
       ['ctrlPresets', 'ctrlDockGrid'].forEach(id => { document.getElementById(id).innerHTML = html; });
-    }
-
-    function toggleCtrlPresets() {
-      const el = document.getElementById('ctrlPresets');
-      const chevron = document.getElementById('ctrlChevron');
-      const show = el.style.display === 'none';
-      el.style.display = show ? 'grid' : 'none';
-      chevron.textContent = show ? '\u25be' : '\u25b8';
-      if (show) paintCtrlPresets();
     }
 
     function toggleCtrlDock() {
