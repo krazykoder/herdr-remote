@@ -14,6 +14,7 @@ not a setting until the cost is understood.
 | `58e9e2a` | `fix(relay)`: quote the remote argv, and bound the read depth |
 | `cac25f2` | `perf(relay)`: keep the herdr calls off the event loop |
 | `ad1f460` | `perf(web)`: back off the pane poll when the agent is idle |
+| `c65db43` | `perf(web)`: read the pane the moment its status changes |
 
 Nothing is pushed. `feat/split-view` remains separate and unmerged.
 
@@ -243,20 +244,45 @@ backoff slows the pulled half while the pushed half keeps arriving at full rate.
 
 Two consequences:
 
-- **An agent that wakes locally is noticed within one tick.** `refreshPane` re-evaluates
-  `paneIsIdle()` at tick time, so the moment `agent_update` flips the status to `working` the gate
-  is 3s again, not 12s — even mid-idle-gap, because the elapsed time already exceeds the shorter
-  threshold. `tests/test_pane_history.js` pins this ("a pane that starts working is back at the
-  fast cadence on the next tick").
+- **An agent that wakes locally is read immediately** (`c65db43`). The `agent_update` handler reads
+  the pane on a status transition, so the text follows the status rather than waiting up to 3s for
+  the next tick:
+
+  ```js
+  if (update.pane_id === activePane && paneLines <= POLL_MAX_LINES) refreshPane();
+  ```
+
+  Only on a *change* — a snapshot repeating a status costs nothing — only for the pane on screen,
+  and never while a deep read is up, because scrollback does not change and re-fetching tens of
+  thousands of lines is exactly what `POLL_MAX_LINES` exists to stop. Even without this,
+  `refreshPane` re-evaluates `paneIsIdle()` at tick time, so a woken agent was never held for the
+  full 12s; this removes the remaining tick.
+
+  **This is what makes the idle backoff free rather than a trade.** The slow cadence now only ever
+  applies to a pane whose status has not moved.
 - **The one uncovered case: pane text that changes while the status stays `idle`.** Someone typing
   into the herdr TUI directly, or a background process printing into an idle agent's pane. Nothing
   pushes that, so it is seen up to 12s late. Accepted: no status transition means nothing is
   waiting on the reader, and a terminal pane — where local typing is actually likely — has no
-  status and therefore never backs off at all.
+  status and therefore never backs off at all. This is the case the Refresh button exists for.
 
-An available refinement, not taken: `agent_update` for the active pane could call `refreshPane()`
-directly, cutting the ≤3s wake lag to ~0 for one line. Left out because 3s is already below the
-threshold at which anyone notices, and the handler currently has no pane-read responsibility.
+### What the Refresh button is for
+
+Not redundant, but narrower than it looks. `refreshPane()` called with no argument is the only read
+that is never skipped for any reason:
+
+| Guard | The 3s poll | Refresh button |
+|-------|-------------|----------------|
+| deep read (>1,000 lines) | paused | reads at full depth |
+| idle cadence (12s) | waits | reads now |
+| status unchanged | nothing pushed | reads now |
+
+So it covers exactly the gap above — text that moved while the status did not — and it is the only
+way to re-read at all while scrolled deep into history, where the poll is off by design. Everything
+else that reads is automatic: `openTerminal`, `loadMore`, `burstPoll` after keys are sent
+(400/1200/2500ms), scrolling back to the tail, and a status change. That it is a manual override
+for one narrow case, rather than something to reach for routinely, is why it sits beside QUIT and
+CLS instead of somewhere more prominent.
 
 ### Measured effect
 
@@ -338,7 +364,7 @@ or when `herdr` shows measurable CPU at rest** — not before.
 | `tests/test_remote_exec.py` | 9 | local argv has no shell; remote is one quoted string; six metacharacter payloads round-trip; a label with a space survives; `read_pane_lines` bounds and fallbacks |
 | `tests/test_start_dupe.js` | 11 | the duplicate wire message; `new_workspace` fallback; role inference; four refusal cases; intent routing; intent spent once; dialog clears an abandoned intent; dead pair source |
 | `tests/test_pane_history.js` | 15 | ceiling validation and step scaling; lowering re-reads; deep read not re-polled; the idle cadence, with `Date.now` injected so the test moves the clock rather than waiting on it |
-| `tests/e2e/browser/pane_history.spec.js` | 5 | the setting survives a reload; a working pane is followed on the 3s poll; an idle pane is not read within 7s; a deep read pauses the poll and the tail resumes it; the refresh button still reads at full depth |
+| `tests/e2e/browser/pane_history.spec.js` | 8 | the setting survives a reload; a working pane is followed on the 3s poll; an idle pane is not read within 7s; a deep read pauses the poll and the tail resumes it; the refresh button still reads at full depth; a status change reads at once; a repeated status reads nothing; a status change does not re-fetch a deep read |
 | `tests/test_pane_cols.py` | +1 | the sample is capped however deep the read goes |
 
 `tests/test_pane_history.js` slices the block that contains the **real** `refreshPane` and observes
@@ -346,7 +372,12 @@ reads on a stub `ws.send`, rather than stubbing `refreshPane` itself — the rea
 would silently stop happening. The browser spec taps `ws.send` on the live page for the same
 reason: the relay is real, so those are the requests themselves.
 
-Suite state: 236 Python, 145 node, 17 Playwright, plus `e2e_start_agent.py` and `e2e_pane_slots.py`.
+Suite state: 236 Python, 145 node, 21 Playwright, plus `e2e_start_agent.py` and `e2e_pane_slots.py`.
+
+One regression was caught by the suite rather than by review: `ui_polish.spec.js`'s loading-pill test
+forced `paneTextPrimed = false` on the idle fixture and waited 6s for the poll to clear it, which the
+12s cadence no longer met. Pointed at the working fixture — the geometry under test does not care
+which pane it is, and production never clears that flag without issuing a read alongside it.
 
 ---
 
