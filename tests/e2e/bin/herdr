@@ -12,6 +12,11 @@ PANES = {
          "cwd": "/work/charts/relay", "workspace_id": "w1", "tab_id": "w1:t1"},
         {"pane_id": "w8:p1", "agent": "codex", "label": "scratch", "agent_status": "working",
          "cwd": "/tmp", "workspace_id": "w8", "tab_id": "w8:t1"},
+        # A harness the app ships no gutter profile for. In w1's existing workspace on purpose —
+        # no new Space chip for another spec's count to trip over — but in a second tab, which
+        # makes w1 the one Space with a tab strip to walk.
+        {"pane_id": "w1:p2", "agent": "pi", "label": "pi", "agent_status": "idle",
+         "cwd": "/work/charts/web", "workspace_id": "w1", "tab_id": "w1:t2"},
         # Panes with no agent. They have always been in this payload and were dropped before any
         # client saw them; terminal mode is the filter changing, not the data. w9 on purpose —
         # no start test names that workspace, so no spacer here can be reclaimed by one.

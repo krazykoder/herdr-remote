@@ -109,6 +109,100 @@ test('an auto-selected band reads orange, and a dragged one does not', async ({p
   expect(await band.evaluate(el => getComputedStyle(el).borderTopColor)).not.toBe(auto);
 });
 
+// Walking back through the conversation. Three blocks with a tool execution between them, which is
+// the thing ↓↑ has to step over — the user is reading what the agent said, not what it ran.
+const CHAT = [
+  '⏺ First thing I said.', '', '⏺ Bash(git status)', '  ⎿  clean', '',
+  '⏺ Second thing I said.', '  over two lines', '', '✻ Worked for 3s', '',
+].join('\n');
+
+test('the pill steps between messages and passes over tool blocks', async ({page}) => {
+  await feed(page, CHAT, 'working');
+  await expect(page.locator('#blockNav')).toBeVisible();
+  const [next, prev] = ['↓', '↑'].map(g => page.locator('#blockNav button', {hasText: g}));
+
+  await prev.click();                       // from the end of the pane: the last message
+  expect(await sel(page)).toEqual([5, 6]);
+  await expect(page.locator('#selCount')).toHaveText(/· final message$/);
+
+  await prev.click();                       // and past the Bash block, not onto it
+  expect(await sel(page)).toEqual([0, 0]);
+  await expect(page.locator('#selBand')).toHaveClass(/auto/);
+  await expect(page.locator('#selCount')).toHaveText(/· agent message$/);
+
+  await next.click();
+  expect(await sel(page)).toEqual([5, 6]);
+});
+
+// The fake herdr reports this one as `pi`, which the app ships no gutter profile for.
+const UNKNOWN = 'pi';
+const PI_PANE = '◆ Ran the build\n  compiled\n\n◆ All finished.\n  and here is why\n';
+
+const openUnknown = async page => {
+  await page.locator('.back').first().click();
+  await page.locator('#agents .agent', {hasText: UNKNOWN}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+};
+
+test('the pill stays away from a harness the app has never seen', async ({page}) => {
+  await openUnknown(page);
+  await feed(page, PI_PANE, 'working');
+  await expect(page.locator('#blockNav')).toBeHidden();
+  await expect(page.locator('#quickActions .qa-summary')).toHaveCount(0);
+});
+
+test('Learn teaches an unknown harness its marker, once confirmed', async ({page}) => {
+  await openUnknown(page);
+  // A dialog round-trip outlasts the poll, and a real read of the fake pane arriving mid-test
+  // would replace the fed text — and with it the range, permanently, since nothing puts it back.
+  // The reads are what this test does not exercise, so they are switched off; a read already in
+  // flight when they were is dropped by its text, which is the fake herdr's rows of x.
+  await page.evaluate(() => {
+    refreshPane = () => {};
+    const set = setPaneText;
+    setPaneText = t => { if (!t.startsWith('x')) set(t); };
+  });
+  const select = async (a, b) => {
+    await feed(page, PI_PANE, 'working');
+    await page.evaluate(([a, b]) => { selA = a; selB = b; drawSel(); }, [a, b]);
+  };
+
+  await select(3, 4);
+  page.once('dialog', d => {
+    expect(d.message()).toContain('◆');     // the character itself, which is the confirmation
+    d.dismiss();
+  });
+  await page.locator('#selLearn').click();
+  await expect(page.locator('#blockNav')).toBeHidden();   // declined, so nothing was stored
+
+  await select(3, 4);
+  page.once('dialog', d => d.accept());
+  await page.locator('#selLearn').click();
+  await expect(page.locator('#selLearn')).toHaveText('Learned ✓');
+  await expect(page.locator('#blockNav')).toBeVisible();
+
+  // Navigation, yes. A silent guess on the next read, no — without a result glyph it cannot tell
+  // a command from a sentence.
+  await feed(page, PI_PANE, 'working');
+  await page.evaluate(() => clearSel());
+  await page.locator('#blockNav button', {hasText: '↑'}).click();
+  expect(await sel(page)).toEqual([3, 4]);
+  await page.evaluate(() => clearSel());
+  await feed(page, PI_PANE);              // a finished pane, and still no suggestion
+  expect(await sel(page)).toBeNull();
+});
+
+test('Learn records the trim, and says what it recorded', async ({page}) => {
+  await feed(page, CHAT, 'working');
+  await page.evaluate(() => { selA = 6; selB = 6; drawSel(); });   // dropped the opening line
+  await page.locator('#selLearn').click();
+  await expect(page.locator('#selLearn')).toHaveText('Learned 1/0 ✓');
+
+  await page.evaluate(() => clearSel());
+  await page.locator('#blockNav button', {hasText: '↑'}).click();
+  expect(await sel(page)).toEqual([6, 6], 'the next found range arrives already trimmed');
+});
+
 test('switching panes drops the suggestion with the rest of the ruler', async ({page}) => {
   await feed(page, PANE);
   expect(await sel(page)).not.toBeNull();

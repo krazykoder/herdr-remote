@@ -24,9 +24,12 @@ assert.ok(from !== -1 && to > from, 'final message block not found in web/index.
 // Everything the block reaches for and does not declare: the ruler's state, the pane it belongs
 // to, and the store the trim is remembered in. The parse itself needs none of them.
 const store = new Map();
+const toasts = [];
+let answer = true;                 // what the confirm dialog comes back with
 const ctx = vm.createContext({
   console,
-  activePane: null, paneOf: () => null, drawSel: () => {},
+  activePane: null, paneOf: () => null, drawSel: () => {}, renderQuickActions: () => {},
+  showToast: t => toasts.push(t), confirm: () => answer,
   paneRows: [], selA: null, selB: null,
   localStorage: {
     getItem: k => (store.has(k) ? store.get(k) : null),
@@ -41,9 +44,14 @@ const find = (rows, agent) => ctx.findFinalMessage(rows, agent);
 const val = expr => vm.runInContext(expr, ctx);
 
 // What the user has learned so far is per test, not per pane — switching panes must not forget it.
-beforeEach(() => store.clear());
+beforeEach(() => {
+  store.clear();
+  vm.runInContext('gutterCache = null', ctx);   // the memo outlives localStorage otherwise
+  toasts.length = 0;
+  answer = true;
+});
 
-// A pane the user is looking at, with a range on it: what noteTransferTrim reads.
+// A pane the user is looking at, with a range on it: what learnFromSelection reads.
 function open(rows, agent, a = null, b = null) {
   ctx.paneRows = rows;
   ctx.activePane = 'p1';
@@ -136,13 +144,12 @@ const scan = () => { ctx.scanFinalMessage(); return val('finalAt'); };
 test('the range as parsed: whole block, no trailing blanks', () => {
   open(BLOCK, 'claude');
   assert.deepEqual(scan(), [3, 5]);
-  assert.deepEqual(val('finalRaw'), [3, 5]);
 });
 
 test('a transfer teaches the trim, and the next read arrives already trimmed', () => {
   open(BLOCK, 'claude', 5, 5);       // user kept only the last line of the message
   ctx.scanFinalMessage();
-  ctx.noteTransferTrim();
+  ctx.learnFromSelection();
   open(BLOCK, 'claude');
   assert.deepEqual(scan(), [5, 5]);
 });
@@ -156,7 +163,7 @@ test('a trim that lands on a blank line keeps walking', () => {
 test('the trim is per harness', () => {
   open(BLOCK, 'claude', 5, 5);
   ctx.scanFinalMessage();
-  ctx.noteTransferTrim();
+  ctx.learnFromSelection();
   open(['• Said a thing.', '  and another'], 'codex');
   assert.deepEqual(scan(), [0, 1], "claude's trim left codex alone");
 });
@@ -164,7 +171,7 @@ test('the trim is per harness', () => {
 test('a selection outside the block teaches nothing', () => {
   open(BLOCK, 'claude', 0, 1);       // the tool block above it, not the message
   ctx.scanFinalMessage();
-  ctx.noteTransferTrim();
+  ctx.learnFromSelection();
   open(BLOCK, 'claude');
   assert.deepEqual(scan(), [3, 5]);
 });
@@ -181,6 +188,87 @@ test('a corrupt or stale store is no trim, never a broken pane', () => {
   assert.deepEqual(scan(), [3, 5]);
   store.set('herdr_summary_trim', JSON.stringify({version: 0, byAgent: {claude: {'2,0': 9}}}));
   assert.deepEqual(scan(), [3, 5], 'a trim written by an older shape is ignored');
+});
+
+// --- stepping between messages ---
+//
+// A different question from "which is the closing one": here a tool block is passed over rather
+// than stopped on, because the user is walking the conversation and a command is not part of it.
+
+const CHAT = [
+  '⏺ First thing I said.',
+  '',
+  '⏺ Bash(git status)',
+  '  ⎿  clean',
+  '',
+  '⏺ Second thing I said.',
+  '  over two lines',
+  '',
+  '✻ Worked for 3s',
+];
+
+test('previous walks up past tool blocks', () => {
+  assert.deepEqual(ctx.blockBefore(CHAT, 'claude', CHAT.length), [5, 6]);
+  assert.deepEqual(ctx.blockBefore(CHAT, 'claude', 5), [0, 0], 'the tool block in between is skipped');
+  assert.equal(ctx.blockBefore(CHAT, 'claude', 0), null, 'nothing above the first');
+});
+
+test('next walks down the same way', () => {
+  assert.deepEqual(ctx.blockAfter(CHAT, 'claude', 0), [0, 0]);
+  assert.deepEqual(ctx.blockAfter(CHAT, 'claude', 1), [5, 6]);
+  assert.equal(ctx.blockAfter(CHAT, 'claude', 6), null, 'nothing below the last');
+});
+
+test('the block a line sits in, and the lines that sit in none', () => {
+  assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 6), [5, 6], 'a continuation line');
+  assert.deepEqual(ctx.blockContaining(CHAT, 'claude', 5), [5, 6], 'the glyph line itself');
+  assert.equal(ctx.blockContaining(CHAT, 'claude', 3), null, 'inside a tool block');
+  assert.equal(ctx.blockContaining(CHAT, 'claude', 8), null, 'the turn footer');
+});
+
+// --- an unknown harness, taught by one selection ---
+
+const OTHER = ['◆ Ran the build', '  compiled', '', '◆ All finished.', '  and here is why'];
+
+test('an unknown harness is inert until it is taught', () => {
+  open(OTHER, 'pi');
+  assert.equal(scan(), null);
+  assert.equal(ctx.blockBefore(OTHER, 'pi', OTHER.length), null);
+});
+
+test('Learn takes the marker off the line the selection starts on', () => {
+  open(OTHER, 'pi', 3, 4);
+  assert.equal(ctx.learnGutter('pi'), true);
+  assert.deepEqual(scan(), [3, 4]);
+  assert.deepEqual(ctx.blockBefore(OTHER, 'pi', 3), [0, 1], 'and navigation works from then on');
+});
+
+test('a declined confirmation stores nothing', () => {
+  open(OTHER, 'pi', 3, 4);
+  answer = false;
+  assert.equal(ctx.learnGutter('pi'), false);
+  assert.equal(scan(), null);
+});
+
+test('a letter in column 0 is prose and is refused', () => {
+  open(['Summary of the work', '  and the rest'], 'pi', 0, 1);
+  assert.equal(ctx.learnGutter('pi'), false);
+  assert.match(toasts[0], /marker/);
+  open(['  indented, so no marker at all'], 'pi', 0, 0);
+  assert.equal(ctx.learnGutter('pi'), false);
+});
+
+test('a learned harness never suggests on its own', () => {
+  open(OTHER, 'pi', 3, 4);
+  ctx.learnGutter('pi');
+  ctx.selA = ctx.selB = null;
+  vm.runInContext('suggestedKey = ""', ctx);
+  ctx.scanFinalMessage();
+  ctx.suggestFinalMessage();
+  assert.equal(ctx.selA, null, 'no result glyph means no way to tell a command from a sentence');
+  // Asking is different from being told: Summary still selects it.
+  ctx.selectFinalMessage();
+  assert.deepEqual([ctx.selA, ctx.selB], [3, 4]);
 });
 
 test('the most-confirmed trim wins, ties keep more of the block', () => {

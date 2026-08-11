@@ -106,11 +106,26 @@ Keyed on `a.agent`, which the relay already sends.
 2. An unknown harness gets no suggestion. A wrong tool-output selection is worse than no
    convenience.
 3. A user-selected final block can reveal a candidate speaker glyph, but it cannot reliably reveal
-   the result-gutter glyph: that glyph is outside the selected final block. One transfer therefore
-   cannot safely teach a complete profile.
-4. Add a profile only after collecting a real pane sample that contains both a tool block and a
-   closing prose block. The profile remains two literal characters; no `localStorage`, model,
-   content retention, or feedback UI is needed.
+   the result-gutter glyph: that glyph sits in the tool blocks the user did *not* select. One
+   selection therefore cannot teach a complete profile.
+
+**What is built on top of that ceiling.** The half a selection *can* teach is worth having, so
+**Learn** stores the speaker glyph alone, under `herdr_gutters`
+(`{version: 1, byAgent: {pi: "◆"}}`), and `profileFor()` returns it with an empty result list. That
+is enough to cut the pane into blocks and step between them, and enough to answer **Summary** when
+asked. It is not enough to volunteer one: with no result glyph, `blockSpan` cannot tell a command
+from a sentence, so a learned harness is excluded from the automatic suggestion by name —
+`suggestFinalMessage` gates on `GUTTERS[a.agent]`, the shipped table, not on `profileFor`. The vm
+test *a learned harness never suggests on its own* is that rule.
+
+**Confirmed by showing, not by counting.** Pressing a button twice conveys no new information;
+showing the character it read does. So teaching a glyph asks `Learn "◆" as pi's message marker?`
+and a whitespace or word character in column 0 is refused outright — prose, not a marker. A wrong
+glyph breaks every block boundary in the pane, which is why this one step confirms; a wrong trim is
+outvoted by the tally, which is why that one does not.
+
+A shipped profile still needs a real pane sample containing both a tool block and a closing prose
+block; add it to `GUTTERS` and that harness gets suggestions like the other two.
 
 ## Detection trigger
 
@@ -132,11 +147,15 @@ person wants: some always drop the opening sentence, some always drop the traili
 paragraph. That difference is a pair of line offsets measured from the block's own edges, it is
 stable per harness, and it is the only thing worth remembering.
 
-- **Taught by transfers, not by drags.** A drag is exploratory; a transfer is the user committing
-  to a range. `doTransfer()` calls `noteTransferTrim()` before `openTerminal()` moves `activePane`
-  to the partner.
-- **Measured against `finalRaw`, the untrimmed block.** Learning against the already-trimmed range
-  would compound: each transfer would trim one more line than the last, forever.
+- **Taught by committing to a range, not by dragging one.** A drag is exploratory. Transfer, Copy
+  and **Learn** all call `learnFromSelection()`; Copy is in that list because Transfer only exists
+  on a configured pane pair, and Learn because the range worth teaching is often one the user has
+  no intention of sending anywhere.
+- **Measured against the untrimmed block**, which `blockContaining(paneRows, agent, selA)` recovers
+  from the selection itself. Learning against the already-trimmed range would compound: each
+  transfer would trim one more line than the last, forever. Deriving the block at teach time rather
+  than remembering the last parse is also what lets a hand-drawn range anywhere in the pane teach —
+  the user is not restricted to correcting the suggestion.
 - **A selection outside the block teaches nothing.** Different intent, not a smaller trim.
 - **Stored as a tally, not a last-write.** `{version: 1, byAgent: {claude: {"2,0": 3}}}` under
   `herdr_summary_trim`. The most-confirmed pair wins; ties keep more of the block, because
@@ -156,6 +175,21 @@ user's range from then on. A **Summary** button in the quick-actions nav row sel
 it appears only on a pane that has one, and unlike the automatic suggestion it has no `done` gate,
 because pressing it is the user asking. Otherwise a suggested range is an ordinary ruler range —
 drag it, tap the text to clear it (`:3937`), transfer it.
+
+**Learn**, left of Copy in the selection bar. On a harness with a profile it records the trim and
+says what it recorded — `Learned 1/0 ✓`, head and tail — so the user finds out what was inferred
+after the fact rather than having to predict it. On one without, it reads the glyph off the line
+the selection starts on and asks before storing it. It hides itself on a selection that is not
+inside a block, because there is nothing there to learn.
+
+**↓ ↑**, a floating pill at the pane's top-right (`.block-nav`, out of flow so the pane keeps its
+height). Steps to the next and previous agent message, scrolls it into view, and selects it as a
+found range. Beside the ruler rather than on it: the ruler's handles travel that same track, and a
+tap target sitting on a drag target turns a drag into a jump. Stepping *passes over* tool blocks —
+`blockBefore`/`blockAfter` skip them, while `findFinalMessage` stops on one, and the difference is
+intent: the user walking the conversation is reading what the agent said, not what it ran. At the
+top of what is loaded, ↑ calls `loadMore()` rather than reporting nothing there. Hidden entirely
+when the harness has no profile, which is also the invitation to press Learn.
 
 ## Rejected options, and why
 
@@ -190,9 +224,10 @@ drags the handle.
 ## Files
 
 - `[MODIFY] web/index.html` — one `// --- Final message detection ---` block (profiles, block
-  parse, trim tally), a call site in the `pane_content` handler, in-memory suggestion state, the
-  `.auto` band styling and string in `drawSel`, the Summary button in `renderQuickActions`, and one
-  `noteTransferTrim()` call in `doTransfer`.
+  parse, trim tally, learned gutters, stepping), a call site in the `pane_content` handler,
+  in-memory suggestion state, the `.auto` band styling and string in `drawSel`, the Summary button
+  in `renderQuickActions`, the `.block-nav` pill and the Learn button, and a `learnFromSelection()`
+  call in `doTransfer` and `copySel`.
 - `[NEW] tests/test_summary_detect.js` — vm-slice over that block, same trick as
   `tests/test_attention.js`.
 - `[NEW] tests/e2e/browser/summary_detect.spec.js` — the wiring the slice cannot see: that a read
@@ -225,6 +260,18 @@ npx playwright test          # page still boots, selection still clears between 
    way; a selection outside the block changes nothing.
 7. A suggested range never starts or ends on a blank line.
 8. Nothing on the wire changed.
+9. ↓ ↑ step between the agent's messages and never land on a tool block; the pill is absent on a
+   harness with no profile.
+10. Learn on an unseen harness asks before storing, shows the character it read, and stores nothing
+    when declined. Once accepted that harness gains the pill and Summary — and still never gets an
+    automatic suggestion.
+
+## What is deliberately left for later
+
+Syncing what a browser has learned to the relay, so a second device starts taught. Proposed and
+postponed: the store is two small JSON blobs under known keys, so the shape does not have to change
+for it — a `learning` message in each direction and a merge (glyph: last write; trim: add the
+counters) is the whole of it. Nothing in the current code assumes the store is local.
 
 ---
 

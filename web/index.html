@@ -1183,6 +1183,36 @@
       opacity: 0.3;
     }
 
+    /* Stepping between the agent's messages. Beside the ruler rather than on it: the handles
+       travel that track from top to bottom, and a tap target sitting on a drag target is how a
+       drag becomes a jump. Out of flow, so the pane keeps its full height. */
+    .block-nav {
+      position: absolute;
+      top: 6px;
+      right: 36px;
+      display: flex;
+      gap: 4px;
+      z-index: 4;
+    }
+
+    /* display:flex outranks the user agent's [hidden] rule, so hiding it needs saying twice —
+       the same guard .sel-bar[hidden] carries for the same reason. */
+    .block-nav[hidden] {
+      display: none;
+    }
+
+    .block-nav button {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1;
+    }
+
     .ruler {
       position: absolute;
       top: 0;
@@ -2081,10 +2111,15 @@
         <div class="ruler-handle" id="rulerBot" hidden></div>
       </div>
       <div class="sel-bubble" id="selBubble" hidden></div>
+      <div class="block-nav" id="blockNav" hidden>
+        <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
+        <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
+      </div>
     </div>
     <div class="sel-bar" id="selBar" hidden>
       <span class="count" id="selCount"></span>
       <span class="spacer"></span>
+      <button onclick="learnSelection()" id="selLearn">Learn</button>
       <button onclick="copySel()" id="selCopy">Copy</button>
       <button class="primary" onclick="openTransfer()" id="selTransfer" hidden>Transfer ›</button>
       <button onclick="clearSel()" aria-label="Clear selection">✕</button>
@@ -3394,6 +3429,7 @@
     function layoutHtml(list) {
       const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
       let html = '';
+      visibleTabs = [];
       if (workspaces.length <= 1) {
         activeWorkspace = null;
         activeTab = null;
@@ -3411,6 +3447,7 @@
         // Tab chip strip (always show when workspace selected)
         if (activeWorkspace) {
           const wsTabs = [...new Set(list.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
+          visibleTabs = wsTabs;
           html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
           if (wsTabs.length > 1) {
             html += `<button class="chip${!activeTab ? ' active' : ''}" onclick="selectTab(null)">All</button>`;
@@ -3463,6 +3500,20 @@
     function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
     function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
     function selectTab(id) { activeTab = id; render(); }
+
+    // The tab strip as last rendered. Read rather than recomputed, so the keyboard shortcut and
+    // the chips can never disagree about what the next tab is.
+    let visibleTabs = [];
+
+    // One step along that strip, wrapping. "All" is a real position in it, and — as in the strip
+    // itself — only offered once there is more than one tab to be "all" of.
+    function stepTab(dir) {
+      if (!visibleTabs.length) return false;
+      const ring = visibleTabs.length > 1 ? [null, ...visibleTabs] : visibleTabs;
+      const at = ring.indexOf(activeTab);
+      selectTab(ring[(at + dir + ring.length) % ring.length]);
+      return true;
+    }
 
     function createTab(workspaceId) {
       if (!ws) return;
@@ -3872,26 +3923,100 @@
       codex: { speaker: '•', result: ['└', '│'] },
     };
 
-    function findFinalMessage(rows, agent) {
-      const g = GUTTERS[agent];
-      if (!g || !rows || !rows.length) return null;
-      let start = -1;
-      for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i][0] === g.speaker) { start = i; break; }
-      }
-      if (start < 0) return null;
-      // The block ends at the next line with anything at all in column 0 — the next glyph, the
-      // turn footer, a rule, the prompt. Blank lines stay inside it: Codex closes with three
-      // paragraphs, and ending on the first blank would take only the last one.
+    // A harness the user taught by selecting one of its messages. The first character of the line
+    // they started on is its speaker glyph — the one thing a selection can reveal. It cannot
+    // reveal the result glyph, which by definition sits in the tool blocks they did *not* select,
+    // so a learned profile carries no result list. That is why it navigates and selects on demand
+    // but is never allowed to suggest on its own: with no result glyph it cannot tell a command
+    // from a sentence, and a silent wrong guess is worse than no guess.
+    const GUTTER_KEY = 'herdr_gutters', GUTTER_VERSION = 1;
+
+    // Memoized: profileFor sits under drawSel, which runs on every scroll event, and parsing JSON
+    // out of localStorage at that rate is a cost for nothing. Only learnGutter writes it.
+    let gutterCache = null;
+
+    function loadGutters() {
+      if (gutterCache) return gutterCache;
+      try {
+        const d = JSON.parse(localStorage.getItem(GUTTER_KEY) || '');
+        gutterCache = d && d.version === GUTTER_VERSION && d.byAgent ? d.byAgent : {};
+      } catch (e) { gutterCache = {}; }
+      return gutterCache;
+    }
+
+    function profileFor(agent) {
+      if (GUTTERS[agent]) return GUTTERS[agent];
+      const ch = loadGutters()[agent];
+      return ch ? { speaker: ch, result: [] } : null;
+    }
+
+    // How far a block starting on `start` runs, or null when it turns out to be a tool execution.
+    //
+    // It ends at the next line with anything at all in column 0 — the next glyph, the turn footer,
+    // a rule, the prompt. Blank lines stay inside it: Codex closes with three paragraphs, and
+    // ending on the first blank would take only the last one.
+    function blockSpan(rows, g, start) {
       let end = start;
       for (let j = start + 1; j < rows.length && !/^\S/.test(rows[j]); j++) {
         const line = rows[j].trimStart();
         if (!line) continue;
-        // A result glyph means the agent's last act was running something, not saying something.
+        // A result glyph means this block ran something rather than said something.
         if (g.result.includes(line[0])) return null;
         end = j;
       }
       return [start, end];
+    }
+
+    // The last block, and null if it ran a tool. Deliberately not "the last block that didn't":
+    // an agent that stopped after a command has no closing message, and walking further up would
+    // offer something it said before doing work it has not reported on.
+    function findFinalMessage(rows, agent) {
+      const g = profileFor(agent);
+      if (!g || !rows || !rows.length) return null;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i][0] === g.speaker) return blockSpan(rows, g, i);
+      }
+      return null;
+    }
+
+    // Stepping between messages, which is a different question: here tool blocks are passed over
+    // rather than stopped on, because the user is walking the conversation and a command is not
+    // part of it. `before` and `after` are line indices, exclusive and inclusive respectively, so
+    // a returned range's own start feeds straight back in to get the next one.
+    function blockBefore(rows, agent, before) {
+      const g = profileFor(agent);
+      if (!g || !rows) return null;
+      for (let i = Math.min(before, rows.length) - 1; i >= 0; i--) {
+        if (rows[i][0] !== g.speaker) continue;
+        const at = blockSpan(rows, g, i);
+        if (at) return at;
+      }
+      return null;
+    }
+
+    function blockAfter(rows, agent, after) {
+      const g = profileFor(agent);
+      if (!g || !rows) return null;
+      for (let i = Math.max(0, after); i < rows.length; i++) {
+        if (rows[i][0] !== g.speaker) continue;
+        const at = blockSpan(rows, g, i);
+        if (at) return at;
+      }
+      return null;
+    }
+
+    // The block a line falls inside, or null. Walking up from the line is what lets teaching work
+    // anywhere in the pane: a range is measured against its own block rather than against whichever
+    // one happened to be last read. Hitting a footer, rule or prompt on the way up means the line
+    // is not inside a block at all.
+    function blockContaining(rows, agent, i) {
+      const g = profileFor(agent);
+      if (!g || !rows || !rows.length) return null;
+      for (let s = Math.min(i, rows.length - 1); s >= 0; s--) {
+        if (rows[s][0] === g.speaker) return blockSpan(rows, g, s);
+        if (/^\S/.test(rows[s])) return null;
+      }
+      return null;
     }
 
     // Set while a range is one this found rather than one the user dragged. It is what paints the
@@ -3941,17 +4066,16 @@
       catch (e) { /* private mode: session-only */ }
     }
 
-    // The current pane's closing message. finalRaw is the block as parsed — what a learned trim is
-    // measured against, so the offsets stay absolute instead of compounding every time one is
-    // applied. finalAt is what actually gets selected. Both are computed once per read rather than
-    // per render: the Summary button's presence depends on them, renderQuickActions runs on every
-    // snapshot, and a pane can be tens of thousands of lines long.
-    let finalRaw = null, finalAt = null;
+    // Computed once per read rather than per render: the Summary button and the ↓↑ pill depend on
+    // these, renderQuickActions and drawSel both run constantly, and a pane can be tens of
+    // thousands of lines long.
+    let paneProfile = null, finalAt = null;
 
     function scanFinalMessage() {
       const a = activePane ? paneOf(activePane) : null;
-      finalRaw = a ? findFinalMessage(paneRows, a.agent) : null;
-      finalAt = finalRaw ? trimRange(finalRaw, a.agent) : null;
+      paneProfile = a ? profileFor(a.agent) : null;
+      const raw = a ? findFinalMessage(paneRows, a.agent) : null;
+      finalAt = raw ? trimRange(raw, a.agent) : null;
     }
 
     // Redundant lines come off both ends: the ones this user has trimmed before, and then any
@@ -3967,15 +4091,82 @@
       return [s, e];
     }
 
-    // A transfer going out is the one unambiguous statement that a range was the right one, so it
-    // is the only thing that teaches. A selection that has left the detected block entirely is a
-    // different intent and says nothing about how much of the block to keep.
-    function noteTransferTrim() {
+    // A range the user has committed to — sent, copied, or explicitly taught — measured against
+    // the block it sits in. Returns the offsets learned, or null when the range is not inside a
+    // block: that is a different intent and says nothing about how much of a block to keep.
+    function learnFromSelection() {
       const a = activePane ? paneOf(activePane) : null;
-      if (!a || !finalRaw || selA === null) return;
+      if (!a || selA === null) return null;
       const s = Math.min(selA, selB), e = Math.max(selA, selB);
-      if (s < finalRaw[0] || e > finalRaw[1]) return;
-      noteTrim(a.agent, s - finalRaw[0], finalRaw[1] - e);
+      const raw = blockContaining(paneRows, a.agent, s);
+      if (!raw || s < raw[0] || e > raw[1]) return null;
+      const at = [s - raw[0], raw[1] - e];
+      noteTrim(a.agent, at[0], at[1]);
+      return at;
+    }
+
+    // The Learn button, which does one of two quite different jobs.
+    //
+    // On a harness with no profile it teaches the speaker glyph, and that is confirmed before it
+    // is stored — a wrong glyph misplaces *every* block boundary in the pane, and there is no
+    // tally to outvote it. The confirmation shows the character itself, because pressing a button
+    // twice confirms nothing: the second press carries no information the first did not.
+    //
+    // On a known harness it records the trim, which is a two-line offset against a tally that
+    // already outvotes a stray press. So it is a single press, and what it learned is shown after
+    // the fact rather than gated before it.
+    function learnSelection() {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a || selA === null) return;
+      const btn = document.getElementById('selLearn');
+      const said = t => {
+        btn.textContent = t;
+        setTimeout(() => { if (btn.textContent === t) btn.textContent = 'Learn'; }, 1600);
+      };
+      if (!profileFor(a.agent)) { if (learnGutter(a.agent)) said('Learned ✓'); return; }
+      const at = learnFromSelection();
+      said(at ? `Learned ${at[0]}/${at[1]} ✓` : 'Not a message');
+    }
+
+    function learnGutter(agent) {
+      const ch = (paneRows[Math.min(selA, selB)] || '')[0];
+      // A letter or digit in column 0 is prose, not a gutter. Learning one would make every
+      // unindented sentence a block boundary and the feature worse than absent.
+      if (!ch || /[\s\w]/.test(ch)) {
+        showToast('Start the selection on the line with the agent\'s marker.');
+        return false;
+      }
+      if (!confirm(`Learn "${ch}" as ${agent}'s message marker?`)) return false;
+      const all = Object.assign({}, loadGutters(), { [agent]: ch });
+      gutterCache = all;
+      try { localStorage.setItem(GUTTER_KEY, JSON.stringify({ version: GUTTER_VERSION, byAgent: all })); }
+      catch (e) { /* private mode: session-only */ }
+      scanFinalMessage();
+      renderQuickActions();
+      drawSel();
+      return true;
+    }
+
+    // Walking the conversation. With no range on screen this starts from the end of the pane going
+    // up, or the beginning coming down, so it works before anything has been selected.
+    function stepBlock(dir) {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a) return;
+      const from = selA === null ? null : Math.min(selA, selB);
+      const at = dir < 0
+        ? blockBefore(paneRows, a.agent, from === null ? paneRows.length : from)
+        : blockAfter(paneRows, a.agent, from === null ? 0 : from + 1);
+      if (!at) {
+        // Off the top of what has been read. The pane opens on 200 lines and two long tool blocks
+        // eat that, so running out here means asking for more history rather than dead-ending.
+        if (dir < 0 && paneLines < paneHistoryMax()) { loadMore(); showToast('Loading more history…'); }
+        else showToast(dir < 0 ? 'No earlier message' : 'No later message');
+        return;
+      }
+      [selA, selB] = trimRange(at, a.agent);
+      selSuggested = true;
+      drawSel();
+      scrollPaneToLine(Math.min(selA, selB));
     }
 
     // At most one suggestion per pane per snapshot. The 3s poll re-delivers identical text, and
@@ -3984,7 +4175,9 @@
 
     function suggestFinalMessage() {
       const a = activePane ? paneOf(activePane) : null;
-      if (!a || a.status !== 'done' || selA !== null) return;
+      // Shipped profiles only. A learned one has no result glyph, so it cannot tell a command from
+      // a sentence — it answers when asked and never volunteers.
+      if (!a || !GUTTERS[a.agent] || a.status !== 'done' || selA !== null) return;
       const key = activePane + ' ' + paneRows.length + ' ' + (paneRows[paneRows.length - 1] || '');
       if (key === suggestedKey) return;
       suggestedKey = key;   // set before the check, so a pane with nothing to find stays quiet
@@ -4066,12 +4259,23 @@
       return Math.min(last, Math.max(0, lo));
     }
 
+    // Bring a line into view with a couple of rows of room above it, so a range that was jumped to
+    // reads as a block in its context rather than as something pinned to the top edge.
+    function scrollPaneToLine(i) {
+      const { el, lh } = lineGeom();
+      el.scrollTop = Math.max(0, rowGeom(i).top - lh * 2);
+      drawSel();   // the band lives outside the scroller, so it is re-placed by hand
+    }
+
     function drawSel() {
       const ruler = document.getElementById('ruler');
       const band = document.getElementById('selBand');
       const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
       const bar = document.getElementById('selBar');
       ruler.hidden = !rulerOn();
+      // Nothing to step through without a profile, and an unknown harness gets one by the user
+      // selecting a message by hand and pressing Learn — so the pill appears once that has happened.
+      document.getElementById('blockNav').hidden = !rulerOn() || !paneProfile || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;
@@ -4088,8 +4292,17 @@
       band.classList.toggle('auto', selSuggested);
       top.classList.toggle('auto', selSuggested);
       bot.classList.toggle('auto', selSuggested);
-      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines') +
-        (selSuggested ? ' · final message' : '');
+      // "final message" is a claim about *which* message, so it is only made about the last one.
+      // Stepping back through the conversation lands on earlier ones, still found rather than
+      // drawn, and they are named for what they are.
+      const found = !selSuggested ? ''
+        : (finalAt && a === finalAt[0] && b === finalAt[1]) ? ' · final message' : ' · agent message';
+      document.getElementById('selCount').textContent =
+        (b - a + 1) + (b === a ? ' line' : ' lines') + found;
+      // Learn is only meaningful where there is something to teach: a harness with no profile yet,
+      // or a range sitting inside a block whose trim it can record.
+      document.getElementById('selLearn').hidden =
+        !!paneProfile && !blockContaining(paneRows, agentOf(activePane), a);
       // Transfer is the reason this feature exists, but the button only means something while
       // this pane is half of a live pair.
       document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
@@ -4132,6 +4345,9 @@
     function copySel() {
       const btn = document.getElementById('selCopy'), text = selText;
       if (!text) return;
+      // Copying is a commit too. Without a pair configured the Transfer button never appears
+      // (:4095), so this is the only thing most panes will ever teach from.
+      learnFromSelection();
       const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
       // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way
       // this app is reached. The textarea path is the one that actually runs at home.
@@ -4658,7 +4874,7 @@
       if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
       // Before openTerminal moves activePane to the partner: the range being transferred belongs
       // to this pane, and this is the point at which the user has committed to it.
-      noteTransferTrim();
+      learnFromSelection();
       closeTransfer();
       openTerminal(partner.pane_id);
       const input = document.getElementById('termInput');
@@ -5529,6 +5745,14 @@
         if (!activePane || !pairFor(pairs, activePane)) return;
         e.preventDefault();
         switchToPartner();
+      }
+      // ⌥Tab / ⌥⇧Tab step the tab strip, on a screen wide enough to be showing one and only while
+      // the list is what is on screen — stepping a strip hidden behind an open pane is a keypress
+      // with no visible effect. Phones keep plain Tab, which is how a touch keyboard moves between
+      // fields. Windows never sees this: Alt+Tab belongs to the OS there.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Tab') {
+        if (activePane || window.innerWidth < 768) return;
+        if (stepTab(e.shiftKey ? -1 : 1)) e.preventDefault();
       }
     });
     document.getElementById('termContent').addEventListener('scroll', function () {
