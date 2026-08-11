@@ -10,6 +10,7 @@ __pycache__/
 .venv313/
 tests/e2e/logs/
 tests/e2e/fake_herdr.log
+.github/workflows/*
 node_modules/
 test-results/
-.github/workflows/*
+playwright-report/

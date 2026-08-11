@@ -1,0 +1,12 @@
+{
+  "name": "herdr-remote-tests",
+  "private": true,
+  "description": "Test-only manifest. The web app itself is a single self-contained file with no build step and no runtime dependencies; nothing here ships.",
+  "scripts": {
+    "test": "node --test tests/*.js",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
