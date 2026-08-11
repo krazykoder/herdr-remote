@@ -811,6 +811,7 @@
     .terminal-view.is-terminal #commandBtn,
     .terminal-view.is-terminal #micBtn,
     .terminal-view.is-terminal #menuStart,
+    .terminal-view.is-terminal #menuDuplicate,
     .terminal-view.is-terminal #termMenuPair,
     .terminal-view.is-terminal #menuPairPlace {
       display: none !important;
@@ -1854,6 +1855,10 @@
             onclick="closeTermMenu(); togglePin(activePane)">Pin tab to front</button>
           <button class="menu-item" role="menuitem" id="menuStart" hidden
             onclick="closeTermMenu(); startInThisProject()">New session</button>
+          <!-- Another one of these, beside this one, without answering the dialog again.
+               renderTermMenuState names the agent and hides it when it cannot be started. -->
+          <button class="menu-item" role="menuitem" id="menuDuplicate" hidden
+            onclick="closeTermMenu(); duplicatePane()">Duplicate</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -3210,6 +3215,11 @@
 
     // A session the relay just started, waiting for the poll to catch up so it can be opened.
     let pendingStart = null;
+    // What the next successful start was asked for, when it was asked for from inside a pane:
+    // 'open' to land in it regardless, {pair: paneId} to come back to the pair dialog with it
+    // chosen. null — every other route in — keeps the old deferring behaviour. Set at request
+    // time and cleared when it is acted on, so an abandoned dialog cannot claim a later start.
+    let startIntent = null;
 
     function openPendingStart() {
       if (!pendingStart) return;
@@ -3220,9 +3230,57 @@
       // Cleared before opening, not after: openTerminal can throw on a half-rendered snapshot,
       // and a pending id that survives that would reopen the pane on every poll from then on.
       pendingStart = null;
+      const intent = startIntent;
+      startIntent = null;
+      // The pair dialog reopens on the pane it was left from, with the session that was started
+      // for it already chosen — the name and the replace warning are still the user's to confirm.
+      // Only while the pane that asked is still live — a pair cannot be made against a pane that
+      // has since exited, and the new session is better opened than left nowhere.
+      if (intent && intent.pair && agents.some(x => x.pane_id === intent.pair)) {
+        openPairDialog(intent.pair);
+        choosePartner(a.pane_id);
+        return;
+      }
       // Never over a pane the user has since opened themselves — the start was a while ago in
       // phone terms, and yanking them out of what they are reading is worse than not landing.
-      if (!activePane) openTerminal(a.pane_id);
+      // Unless the start was a Duplicate, which is a request made from that very pane.
+      if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+    }
+
+    // A pane does not carry the role it was started with — herdr reports labels — so it is read
+    // back off the label, which the relay derives from the role ("Architect 1"). A pane renamed
+    // since falls back to the first role, the same one the dialog would have opened on.
+    function roleOf(a) {
+      const roles = (startOptions && startOptions.roles) || [];
+      const first = String(a.label || '').split(' ')[0].toLowerCase();
+      return roles.includes(first) ? first : roles[0];
+    }
+
+    // Can this pane be duplicated: the relay must be willing to start, the Project must be known,
+    // and the agent must be one it will start. A pane running something outside the allowlist
+    // would only earn an "agent not in allowlist" refusal, so the item is absent rather than dead.
+    function canDuplicate(a) {
+      return !!(a && a.agent && a.project_id && startOptions &&
+        (startOptions.agents || []).includes(a.agent) && roleOf(a));
+    }
+
+    // Same harness, same Project, same tab, no dialog. Everything the dialog would have asked is
+    // answered from the pane it was asked from — which is the whole point of the item.
+    function duplicatePane() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      if (!ws || !canDuplicate(a)) return;
+      const tab = !!a.workspace_id;
+      const msg = {
+        type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
+        // Beside it, so a duplicate lands where the pane it came from is. A pane whose workspace
+        // the snapshot does not name has nowhere to be beside, and gets its own.
+        placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
+      };
+      if (tab) msg.workspace_id = a.workspace_id;
+      // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
+      // "Architect 2" rather than as a second pane with the same name.
+      startIntent = 'open';
+      ws.send(JSON.stringify(msg));
     }
 
     // Spawn into the Project the open pane belongs to, without going back to the list to find
@@ -3251,6 +3309,9 @@
     function openStartDialog(projectId, ev, mode) {
       if (ev) ev.stopPropagation();
       if (!startOptions) return;
+      // Every route into the dialog clears it; startAndPair sets it back after opening. An
+      // abandoned pair-and-start must not attach itself to whatever is started next.
+      startIntent = null;
       startMode = mode === 'terminal' ? 'terminal' : 'agent';
       const terminal = startMode === 'terminal';
       if (terminal && !startOptions.terminal) return;
@@ -3283,6 +3344,10 @@
     function closeStart() {
       document.getElementById('startSheet').style.display = 'none';
       startProjectId = null;
+      // Cleared here, not only on open: the field is read back when the relay reports the name it
+      // actually used, and a start made without the dialog — a Duplicate — would otherwise be
+      // compared against whatever the last dialog was left holding.
+      document.getElementById('startName').value = '';
     }
 
     // New tab lists this Project's live workspaces; Split lists its live panes. Neither is
@@ -3821,6 +3886,10 @@
       const can = !!(a && a.project_id && startOptions);
       start.hidden = !can;
       if (can) start.textContent = `New session in ${a.project || a.project_id}`;
+      const dup = document.getElementById('menuDuplicate');
+      // Names the harness, because "Duplicate" alone reads as copying the pane's text.
+      dup.hidden = !canDuplicate(a);
+      if (!dup.hidden) dup.textContent = `Duplicate this ${a.agent}`;
     }
 
     // Says what the strip is currently hiding, because a tab bar that is missing a pane and does
@@ -3951,8 +4020,15 @@
       const box = document.getElementById('pairCandidates');
       const submit = document.getElementById('pairSubmit');
       const candidates = pairCandidates(agents, pairSource);
+      // The way out of "there is nobody to pair with": start the partner from here. Offered
+      // alongside a full list too — the partner wanted is often one that does not exist yet.
+      // Gated on the dialog being usable at all, not on this pane's agent: which agent the new
+      // session runs is answered in that dialog, not inherited from here.
+      const spawn = (startOptions && pairSource.project_id)
+        ? `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-top:6px" onclick="startAndPair()">+ Start a session and pair with it</button>`
+        : '';
       if (!candidates.length) {
-        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>`;
+        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>` + spawn;
         submit.disabled = true;
         return;
       }
@@ -3964,8 +4040,20 @@
           const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
           const on = pairPartner && pairPartner.pane_id === a.pane_id;
           return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
-        }).join('');
+        }).join('') + spawn;
       submit.disabled = !pairPartner;
+    }
+
+    // A pair needs a second live pane and there is not always one. Hands off to the start dialog —
+    // same fields, same validation — and comes back here with the new session chosen as the
+    // partner once the poll has seen it, so the pair is two taps rather than a round trip through
+    // the Projects list.
+    function startAndPair() {
+      if (!pairSource || !startOptions || !pairSource.project_id) return;
+      const source = pairSource.pane_id, project = pairSource.project_id;
+      closePair();
+      openStartDialog(project);   // clears startIntent, so it is set after
+      startIntent = { pair: source };
     }
 
     function choosePartner(paneId) {
