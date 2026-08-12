@@ -488,11 +488,22 @@
        whatever the pill already sits on, so one value works across all eleven themes and both
        schemes instead of being pinned to one palette.
 
-       After .pinned and guarded with :not(.active), for the same reason that rule is: in this mode
-       the tint is the information, so it has to outrank a pin — and selection has to outrank both,
-       which source order alone would get backwards. */
+       The ring is an outline and not the pill's inset shadow, which is the whole reason it can be
+       unguarded: selection, hover and pinning all write box-shadow, and a tint drawn there would
+       have to win a specificity argument against each of them — or lose, which is what left the
+       one tab being looked at as the one tab not saying which pair it is in. On its own property
+       it simply survives all three. Inset by its own width so it lands on the pill's edge rather
+       than outside it, where 2px each side would close the strip's 4px gap and weld neighbouring
+       tabs together. 2px because a hairline over a saturated fill reads as an artefact. */
+    .agent-tab.tinted .pill {
+      outline: 2px solid hsl(var(--tint) 70% 55%);
+      outline-offset: -2px;
+    }
+
+    /* The wash underneath it, which selection does have to outrank — a filled blue pill repainted
+       at 14% tint is no longer legible as the selected one. Same :not(.active) load-bearing guard
+       the pinned rule above carries, and for the same reason. */
     .agent-tab.tinted:not(.active) .pill {
-      box-shadow: inset 0 0 0 1px hsl(var(--tint) 70% 55% / 0.55);
       background: hsl(var(--tint) 70% 55% / 0.14);
       color: var(--text);
     }
@@ -1626,12 +1637,22 @@
     }
 
     /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. The row is a positioning context for the fold button and
-       for Last, which sit over its left and right edges rather than in the flow — otherwise they
-       would count as extra items and pull the pair off centre. */
+       never compete for the same line. Three columns: the fold, the arrows, and the right-edge
+       group. The edges size to their content and the middle takes the rest, which is what keeps
+       the arrows off them — a track cannot be overrun by its neighbour. These used to be absolute
+       with the arrows reserving width for them by hand, and the hand-written reserve was wrong the
+       moment Summary appeared and made the right edge twice as wide. */
     .qa-nav {
       flex: 1 0 100%;
-      position: relative;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* The arrows, centred in whatever the edges leave rather than in the row. Off-centre by the
+       difference between the two edges, which is the price of never sitting under either. */
+    .qa-nav .qa-mid {
       display: flex;
       justify-content: center;
       gap: 8px;
@@ -1642,24 +1663,17 @@
        this row is always on screen, and a permanent 52px band cost more than a mis-tap on a
        control whose worst outcome is opening the wrong session. */
     .quick-actions .qa-nav button.nav {
+      /* Shrinks with the middle track. No floor: on a 320px screen with Summary showing there is
+         about 160px to share, and an arrow that refused to go under 96 would be pushed out of its
+         own column rather than getting narrower. */
       flex: 0 1 140px;
-      min-width: 96px;
-      /* Clear of the fold button at the left edge and Last at the right, so a wide thumb aimed
-         at either arrow cannot land on the small control beyond it. Last carries a word rather
-         than a glyph, so the reserve is wider than the 24px a pair of circles wanted. */
-      max-width: calc(50% - 52px);
+      min-width: 0;
       padding: 2px 10px;
       line-height: 1.3;
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       font-size: 0.9rem;
-    }
-
-    /* Summary roughly doubles what sits at the right edge, so the arrows have to give up the
-       width or they end up underneath it. Only while the button is there. */
-    .quick-actions .qa-nav.has-summary button.nav {
-      max-width: calc(50% - 120px);
     }
 
     .quick-actions .qa-nav button.nav:disabled {
@@ -1670,11 +1684,6 @@
     /* Deliberately small and quiet. Folding the composer away is a one-off, and the control for
        it sits next to two buttons meant to be pressed constantly. */
     .quick-actions .qa-nav button.qa-fold {
-      position: absolute;
-      left: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      flex: 0 0 auto;
       min-width: 0;
       width: 22px;
       height: 22px;
@@ -1688,13 +1697,9 @@
     }
 
     /* The right edge of the nav row. Last is always there; Summary joins it only when the pane
-       has a closing message to offer. Pinned as a group rather than each button to the edge, so
-       the two cannot land on top of each other the moment both are present. */
+       has a closing message to offer. One column holding both, so the width the pair needs is
+       measured rather than guessed and the middle track gives up exactly that much. */
     .quick-actions .qa-nav .qa-right {
-      position: absolute;
-      right: 0;
-      top: 50%;
-      transform: translateY(-50%);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -6284,12 +6289,14 @@
         `title="Select the agent's closing message" ` +
         `aria-label="Select the agent's closing message">Summary</button>`
         : '';
-      const navRow = `<div class="qa-nav${summary ? ' has-summary' : ''}">${nav(-1, '‹', 'Previous session')}` +
-        `${nav(1, '›', 'Next session')}` +
+      // Source order is the column order now that the edges are grid tracks rather than absolute:
+      // fold, arrows, right group.
+      const navRow = `<div class="qa-nav">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>` +
+        `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;
