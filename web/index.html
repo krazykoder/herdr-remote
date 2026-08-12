@@ -3262,8 +3262,12 @@
       // same tap. Only on the way on: playing a sound to confirm silence is a joke at the user.
       if (on && window.cue) cue(group === 'alert' ? 'chime' : group === 'result' ? 'success' : 'tick');
     }
+    // Guarded the same way every cue call site is. The head script that defines these is the one
+    // piece of this app that can be missing — a CSP, a truncated download — and every other line
+    // that touches it says `if (window.cue)`. This one ran unguarded and would have taken the whole
+    // page's initialisation down with it, which is a hard failure to trade for a missing beep.
     for (const [group, id] of Object.entries(SOUND_GROUPS)) {
-      document.getElementById(id).checked = window.cueOn(group);
+      document.getElementById(id).checked = window.cueOn ? window.cueOn(group) : true;
     }
 
     // --- Main page sections ---

@@ -182,6 +182,31 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
   expect(pairBox).toBe(orderBox);
 });
 
+test('the way out of "nobody to pair with" is a row in the same list', async ({page}) => {
+  // Only offered when the relay allows starts. This one does not — the browser fixture runs with
+  // no Projects file — so startOptions is stood in for and the list re-rendered. What is under
+  // test is the row: it was the one branch of the picker with no coverage at all, being the one
+  // the fixture can never reach.
+  await setup(page);
+  const label = await page.evaluate(() => {
+    const source = agents.find(a => paneLabel(a) === 'scratch');
+    // Both halves of the gate the relay would have supplied: write extensions on, and a Project
+    // for the new session's cwd to come from.
+    source.project_id = 'charts';
+    startOptions = {roles: ['architect'], agents: ['claude'], terminal: false};
+    openPairDialog(source.pane_id);
+    const add = document.querySelector('#pairCandidates .pair-add');
+    return {
+      name: add.querySelector('.name').textContent,
+      last: add === document.querySelector('#pairCandidates > *:last-child'),
+      dot: !!add.querySelector('.dot'),
+    };
+  });
+  expect(label.name).toBe('Start a session and pair with it');
+  expect(label.last, 'the way out sits under the panes, not above them').toBe(true);
+  expect(label.dot, 'it wears a status dot for a pane that does not exist yet').toBe(false);
+});
+
 test('choosing a partner marks its row, not just the fields below', async ({page}) => {
   await setup(page);
   await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
