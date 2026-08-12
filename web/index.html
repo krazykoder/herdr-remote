@@ -7,8 +7,13 @@
   <meta name="theme-color" content="#1a1b26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="manifest"
-    href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%231a1b26&quot;,&quot;theme_color&quot;:&quot;%231a1b26&quot;}">
+  <!-- A file, not the data: URI this used to be. iOS only offers Add to Home Screen for a page
+       with a fetchable manifest and a real icon, and only a home-screen web app can receive Web
+       Push — so these two lines are load-bearing for Lock Screen notifications, not polish.
+       apple-touch-icon is separate because iOS takes the home-screen icon from it and ignores the
+       manifest's icons array; that icon is also what a push notification is drawn with. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <title>herdr-remote</title>
   <!-- Swapped to red by syncBrowserTab when something needs you. Present here rather than created
        in JS so a tab that has not connected yet still has an icon of its own. -->
@@ -1887,7 +1892,9 @@
       <label>Push Notifications</label>
       <div id="pushStatus" style="font-size:0.75rem;margin-bottom:6px"></div>
       <button id="pushToggle" onclick="togglePush()">Enable Push</button>
-      <div class="hint">Get notified when agents are blocked, even with this tab closed.</div>
+      <div class="hint">Lock Screen alerts when an agent needs you or finishes, even with this
+        closed. On iPhone: open this page in <b>Safari</b>, Share ▸ Add to Home Screen, then enable
+        push from the installed app — iOS delivers push nowhere else.</div>
     </div>
 
     <div class="setting-group">
@@ -5485,9 +5492,24 @@
     // --- Web Push ---
     let pushSubscription = null;
 
+    // Why push can't work here, or '' if it can. Every one of these is a dead end the browser
+    // reports as a bare failure — an iOS home screen that was added from Chrome, or a page opened
+    // over http on the LAN, both surface as "subscribe failed" with nothing to act on.
+    function pushBlocker() {
+      if (!window.isSecureContext) return 'Push needs https — open the app over the tunnel or Pages URL.';
+      // iOS defines navigator.standalone and sets it false in a Safari tab. There, push is
+      // delivered only to a web app on the Home Screen, so a tab is not an error, it is a step.
+      if (navigator.standalone === false) return 'Add to Home Screen first (Safari ▸ Share ▸ Add to Home Screen), then enable push from there.';
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        return 'Push is not supported in this browser.';
+      }
+      return '';
+    }
+
     async function initPush() {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        document.getElementById('pushStatus').textContent = 'Push not supported in this browser';
+      const blocked = pushBlocker();
+      if (blocked) {
+        document.getElementById('pushStatus').textContent = blocked;
         document.getElementById('pushToggle').style.display = 'none';
         return;
       }
@@ -5507,7 +5529,13 @@
         btn.textContent = 'Disable Push';
         btn.style.background = 'var(--red)';
         status.innerHTML = '<span style="color:var(--green)">● Enabled</span>';
+      } else if (window.Notification && Notification.permission === 'denied') {
+        // The prompt is one-shot per install: once denied, subscribe() fails forever and the only
+        // way back is the OS. Saying so beats a button that silently does nothing.
+        btn.style.display = 'none';
+        status.innerHTML = '<span style="color:var(--red)">● Blocked</span> — allow notifications for this app in iOS Settings ▸ Notifications.';
       } else {
+        btn.style.display = '';
         btn.textContent = 'Enable Push';
         btn.style.background = 'var(--green)';
         status.innerHTML = '<span style="color:var(--muted)">○ Disabled</span>';
@@ -5526,6 +5554,17 @@
       } else {
         // Subscribe
         try {
+          // Chrome prompts for permission from inside subscribe(); Safari does not, and returns a
+          // bare NotAllowedError instead. This call is what makes iOS ask at all — and it has to
+          // stay on the click path, because Safari only honours it during a user gesture.
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') {
+            updatePushUI();
+            if (permission !== 'denied') {
+              document.getElementById('pushStatus').textContent = 'Notifications were not allowed.';
+            }
+            return;
+          }
           const relayUrl = localStorage.getItem('herdr_relay_url') || '';
           const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
           // The token gates the relay's whole HTTP surface, not only the socket upgrade, so this

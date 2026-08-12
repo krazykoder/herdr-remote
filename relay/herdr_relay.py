@@ -99,6 +99,21 @@ VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 
+# The web app, served from disk on every request so an edit needs only a browser reload.
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
+# Name -> (Content-Type, extra headers). The manifest and the icons are not decoration: iOS only
+# offers Add to Home Screen for a page that has them, and only a home-screen web app can receive
+# Web Push at all — so on iOS these files are the difference between push working and not existing.
+STATIC_FILES = {
+    "sw.js": ("application/javascript",
+              (("Cache-Control", "no-cache"), ("Service-Worker-Allowed", "/"))),
+    "manifest.webmanifest": ("application/manifest+json", (("Cache-Control", "no-cache"),)),
+    "logo.svg": ("image/svg+xml", ()),
+    "apple-touch-icon.png": ("image/png", ()),
+    "icon-192.png": ("image/png", ()),
+    "icon-512.png": ("image/png", ()),
+}
+
 # Remote hosts: comma-separated SSH targets
 REMOTES = [r.strip() for r in os.environ.get("HERDR_REMOTES", "").split(",") if r.strip()]
 
@@ -239,11 +254,55 @@ def _save_push_subs():
         json.dump(push_subscriptions, f)
 
 
-async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False):
+# A notification is per pane, not per herd. Two panes blocked at once are two things you have to
+# decide about, and a single collapse key made the second silently replace the first — on the
+# Topic header at the push service, and again on the tag in the service worker. RFC 8030 restricts
+# Topic to the URL-safe base64 alphabet and 32 characters, which a herdr pane ID ("w24:p12")
+# is not, hence the substitution.
+def push_tag(pane_id: str) -> str:
+    return ("herdr-" + re.sub(r"[^A-Za-z0-9_-]", "-", pane_id or "herd"))[:32]
+
+
+# Lines a pane draws to frame its own output rather than to say anything.
+_BOXY = re.compile(r"^[\s─-╿▀-▟=~_+*#.\-]*$")
+# The choices under a prompt. They are the least informative part of it on a Lock Screen: the
+# question is what you need to read, and the answer needs the app open either way.
+_CHOICE = re.compile(r"^\s*[❯>›•●]?\s*\d+[.)]\s")
+# Leading gutter glyph and box side, stripped so the text starts at the text.
+_LEAD = re.compile(r"^[\s│┃┊⏺•❯>›└├⎿⋯]+")
+# The footer an agent animates while it thinks ("✻ Baked for 22s"). True of the pane, says
+# nothing about what it wants.
+_SPINNER = re.compile(r"^[✻✽✳✶✢∗*]\s")
+
+
+def notify_body(content: str, limit: int = 140) -> str:
+    """The part of a pane worth reading on a Lock Screen.
+
+    Reads from the bottom, because what a pane wants is always at its bottom — the previous
+    version took `content[:120]`, the top of the scrollback, which on a long-running agent is
+    whatever it happened to be doing minutes ago.
+    """
+    kept = []
+    for raw in reversed((content or "").splitlines()):
+        # Strip the frame before testing, or every rule has to know about the box the line is in:
+        # a choice inside a prompt box arrives as "│ ❯ 1. Yes  │", which matches nothing.
+        line = _LEAD.sub("", raw.rstrip().rstrip("│┃")).strip()
+        if not line or _BOXY.match(line) or _CHOICE.match(line) or _SPINNER.match(line):
+            continue
+        kept.append(line)
+        if len(kept) == 3:
+            break
+    text = " ".join(reversed(kept))
+    return text[:limit - 1] + "…" if len(text) > limit else text
+
+
+async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False,
+                        tag: str = "herdr-herd"):
     """Send push notification to all registered subscriptions.
-    
-    Uses collapse topic + TTL so offline devices get only the latest.
-    If clear=True, sends a clear instruction instead of showing a notification.
+
+    Uses a per-pane collapse topic + TTL so an offline device gets the latest state of each pane
+    rather than a burst of stale ones. If clear=True, sends a clear instruction instead of
+    showing a notification.
     """
     if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
         return
@@ -253,10 +312,10 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
         log.warning("pywebpush not installed, skipping push")
         return
     if clear:
-        payload = json.dumps({"type": "clear", "tag": "herdr-blocked"})
+        payload = json.dumps({"type": "clear", "tag": tag})
     else:
-        payload = json.dumps({"title": title, "body": body, "url": url})
-    headers = {"Topic": "herdr-herd", "TTL": "21600"}  # 6h TTL, collapse key
+        payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    headers = {"Topic": tag, "TTL": "21600"}  # 6h TTL, collapse key
     dead = []
     for i, sub in enumerate(push_subscriptions):
         try:
@@ -794,13 +853,28 @@ async def _poll_once():
                 })
                 # Web Push notification
                 await send_web_push(
-                    title=f"🐑 {a['project']} blocked",
-                    body=content[:120],
+                    title=f"🐑 {a['project']} needs you",
+                    body=notify_body(content),
                     url=f"/?pane={pid}",
+                    tag=push_tag(pid),
                 )
-            # Send clear push when agent unblocks
-            if status != "blocked" and last_statuses.get(pid) == "blocked":
-                await send_web_push("", "", clear=True)
+            # Finishing is the other thing worth a Lock Screen, and the one the web app has always
+            # treated as equal — ATTENTION there is ['blocked', 'done']. Only from working or
+            # blocked, so a pane already sitting done at startup does not announce itself. Sharing
+            # the pane's tag means this *replaces* its blocked notification rather than stacking
+            # under it, which is why it is also the clear for the approve-then-finish path.
+            elif status == "done" and last_statuses.get(pid) in ("working", "blocked"):
+                content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
+                await send_web_push(
+                    title=f"🐑 {a['project']} finished",
+                    body=notify_body(content),
+                    url=f"/?pane={pid}",
+                    tag=push_tag(pid),
+                )
+            # Unblocked into anything else — someone answered it elsewhere, so take the
+            # notification off this device's Lock Screen too.
+            elif status != "blocked" and last_statuses.get(pid) == "blocked":
+                await send_web_push("", "", clear=True, tag=push_tag(pid))
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
         current_pane_ids = {p["pane_id"] for p in agents + shells}
@@ -939,8 +1013,7 @@ async def process_request(connection, request, require_token=True):
     # Serve web app for GET / or GET /index.html
     path = (request.path or "/").split("?")[0]
     if path in ("/", "/index.html"):
-        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
-        index_path = os.path.join(web_dir, "index.html")
+        index_path = os.path.join(WEB_DIR, "index.html")
         if os.path.isfile(index_path):
             with open(index_path, "rb") as f:
                 body = f.read()
@@ -950,19 +1023,17 @@ async def process_request(connection, request, require_token=True):
             ])
             return Response(200, "OK", headers, body)
 
-    # Serve service worker
-    if path == "/sw.js":
-        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
-        sw_path = os.path.join(web_dir, "sw.js")
-        if os.path.isfile(sw_path):
-            with open(sw_path, "rb") as f:
+    # The rest of web/, by name. An allowlist rather than a directory walk: this handler answers
+    # the tunnel as well as the LAN, and any route that turns a request path into a filesystem
+    # path is one `..` away from serving the repo.
+    name = path.lstrip("/")
+    if name in STATIC_FILES:
+        ctype, extra = STATIC_FILES[name]
+        file_path = os.path.join(WEB_DIR, name)
+        if os.path.isfile(file_path):
+            with open(file_path, "rb") as f:
                 body = f.read()
-            headers = Headers([
-                ("Content-Type", "application/javascript"),
-                ("Cache-Control", "no-cache"),
-                ("Service-Worker-Allowed", "/"),
-            ])
-            return Response(200, "OK", headers, body)
+            return Response(200, "OK", Headers([("Content-Type", ctype), *extra]), body)
 
     # Serve VAPID public key
     if path == "/api/vapid-public-key":
@@ -972,16 +1043,6 @@ async def process_request(connection, request, require_token=True):
             ("Access-Control-Allow-Origin", "*"),
         ])
         return Response(200, "OK", headers, body)
-
-    # Serve logo.svg
-    if path == "/logo.svg":
-        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
-        svg_path = os.path.join(web_dir, "logo.svg")
-        if os.path.isfile(svg_path):
-            with open(svg_path, "rb") as f:
-                body = f.read()
-            headers = Headers([("Content-Type", "image/svg+xml")])
-            return Response(200, "OK", headers, body)
 
     # Fallback for unmatched paths
     headers = Headers([("Access-Control-Allow-Origin", "*")])

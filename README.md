@@ -171,6 +171,41 @@ because that combination publishes an unauthenticated relay to the internet.
 
 Full rationale: `.workflow/02_architecture/2026-08-09_dual_listener_access.md`
 
+## Lock Screen Notifications (Web Push)
+
+Off until the relay has a VAPID keypair. VAPID is generated locally — there is no account, no API
+key, and no Apple developer program involved. The public half tells the browser which relay it is
+subscribing to; the private half signs each push so Apple and Google will accept it.
+
+```bash
+uv run relay/make-vapid.py >> ~/.config/herdr-remote/secrets.env
+```
+
+Generate once. New keys invalidate every existing subscription, and each device has to enable push
+again.
+
+Then, on the phone:
+
+1. Open the app **in Safari** over `https://` — the Pages URL or the tunnel. Service workers need a
+   secure context, so a LAN relay at `http://192.168.x.x:8375` can never register one, and Chrome on
+   iOS makes a bookmark rather than a web app.
+2. Share ▸ **Add to Home Screen**.
+3. Open it from the Home Screen, then Settings ▸ **Enable Push** and allow the iOS prompt.
+
+iOS delivers Web Push only to a home-screen web app, and it reads the manifest once, when the icon
+is added — so after upgrading, delete the old icon and add it again.
+
+Delivery does not need the relay to be reachable from the phone: the relay pushes outbound to
+Apple, so alerts arrive on cellular with the tunnel down. Only *subscribing* needs a connection.
+
+Notifications are per pane, so two agents wanting you are two alerts. A pane's later state replaces
+its own earlier one, and answering a prompt anywhere clears it everywhere.
+
+**iOS does not render notification action buttons** — `Notification.maxActions` is 0 in Safari, so
+there is no approve/deny directly on the Lock Screen. Tapping the notification opens that pane's
+approve UI. For one-tap approval from a locked phone, use the Telegram bot, which gets real inline
+buttons because it is a native app.
+
 ## Remote Start Session
 
 Off by default. Starting an agent from a phone spawns a process on the relay's machine or on a

@@ -1,6 +1,8 @@
 // herdr-remote service worker — Web Push notifications
 const APP_SCOPE = self.registration.scope;
-const logoUrl = new URL('logo.svg', APP_SCOPE).href;
+// PNG rather than logo.svg: an SVG notification icon is ignored by most platforms, and this is the
+// same mark the installed app already wears. iOS draws the app icon regardless.
+const logoUrl = new URL('icon-192.png', APP_SCOPE).href;
 const appUrl = (url = '') => new URL(url.replace(/^\//, ''), APP_SCOPE).href;
 
 self.addEventListener('install', (e) => { self.skipWaiting(); });
@@ -21,12 +23,16 @@ self.addEventListener('push', (event) => {
     );
     return;
   }
+  // The tag is per pane, so two panes wanting you are two notifications rather than one silently
+  // replacing the other — and a pane's later state (finished, or the clear above) still lands on
+  // the same tag and replaces its own earlier one. Older relays send no tag; keep the fixed one
+  // for those, which is exactly the previous behaviour.
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: logoUrl,
       badge: logoUrl,
-      tag: 'herdr-blocked',
+      tag: data.tag || 'herdr-blocked',
       renotify: true,
       data: { url: data.url },
     })
