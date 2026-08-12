@@ -4090,6 +4090,33 @@
       claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
       pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
+      // OpenCode puts the user's messages, every tool block and the composer itself behind one
+      // `┃`, and prints nothing at all in column 0 — so it has no speaker glyph, no result glyph
+      // and no block starts. `messages: false` says so: Summary and the ↓↑ pill are switched off
+      // rather than left to find nothing, because its reasoning and its answer are both plain
+      // prose at the same indent with no boundary between them. The blue user rule is the one
+      // thing that can be got right here, and it is worth getting right: the pane is a wall of
+      // `┃` and the rule is what shows where your own questions were.
+      //
+      // Which `┃` is yours is a question about the whole run, not the line. A run holding a `$`
+      // is a command and everything under it is that command's output; a run closed by `╹` is
+      // the composer box at the foot; and a run reaching the top of what was read was cut off
+      // mid-block, so its opener is not here to check. Each of those was read as user input by
+      // the line-at-a-time version, on a real pane.
+      opencode: {
+        speaker: null, result: [], messages: false, endLine: /^\s*Thought:/,
+        userLine: (row, rows, i) => {
+          if (!/^\s*┃\s+\S/.test(row || '') || /^\s*┃\s+\$/.test(row)) return false;
+          if (!rows) return false;
+          const bar = r => /^\s*┃/.test(r || '');
+          let j = i - 1;
+          for (; j >= 0 && bar(rows[j]); j--) if (/^\s*┃\s+\$/.test(rows[j])) return false;
+          if (j < 0) return false;    // run cut off by the top of the read
+          let k = i + 1;
+          while (k < rows.length && bar(rows[k])) k++;
+          return !/^\s*╹/.test(rows[k] || '');
+        },
+      },
       // agy marks the user, its tool calls, its reasoning and its turn rules in column 0, and its
       // own reply not at all: that is plain prose two columns in. `speaker: null` is what makes a
       // block start positional rather than a glyph match, and `opens` says which column-0 lines a
@@ -4109,6 +4136,7 @@
     // glyphs do, and the glyph set is the only thing telling them apart. Applying that rule to
     // claude would cut a block at the first wrapped line beginning with `⏺`.
     function endsBlock(row, g) {
+      if (g.endLine && g.endLine.test(row || '')) return true;
       if (/^\S/.test(row || '')) return true;
       if (!g.indent) return false;
       const ch = gutterOf(row, g);
@@ -4178,14 +4206,15 @@
       return false;     // nothing above it, so nothing opened it
     }
 
-    function isUserInput(row, agent) {
+    function isUserInput(row, agent, rows, i) {
       const g = profileFor(agent);
-      return !!g && !!g.user && g.user.includes(gutterOf(row, g));
+      return !!g && ((g.userLine && g.userLine(row, rows, i)) ||
+        (!!g.user && g.user.includes(gutterOf(row, g))));
     }
 
     function lastUserInput(rows, agent) {
       for (let i = (rows || []).length - 1; i >= 0; i--) {
-        if (isUserInput(rows[i], agent)) return i;
+        if (isUserInput(rows[i], agent, rows, i)) return i;
       }
       return -1;
     }
@@ -4201,7 +4230,7 @@
       if (!g || !rows) return lines;
       let inTurn = false, pending = [];
       rows.forEach((row, i) => {
-        if (isUserInput(row, agent)) { inTurn = true; pending = []; }
+        if (isUserInput(row, agent, rows, i)) { inTurn = true; pending = []; }
         // The agent's reply ends the turn as surely as its glyph would. On agy that reply carries
         // no glyph and is not in column 0, so without this the blue rule runs on into it.
         else if (endsBlock(row, g) || startsBlock(rows, g, i)) inTurn = false;
@@ -4271,7 +4300,7 @@
         if (r && (!out.length || r[0] > out[out.length - 1][0])) out.push(r);
       };
       let prompts = 0;
-      for (let i = 0; i < rows.length; i++) if (isUserInput(rows[i], agent)) { prompts++; at(i); }
+      for (let i = 0; i < rows.length; i++) if (isUserInput(rows[i], agent, rows, i)) { prompts++; at(i); }
       // A harness whose composer carries no glyph has one more turn than it has prompt lines: the
       // newest reply sits below the last request, where the others sit above the next one. Counted
       // rather than read off `out`, because the first request has nothing above it to summarize.
@@ -4590,7 +4619,12 @@
       // selecting a message by hand and pressing Learn — so the pill appears once that has
       // happened. A learned marker has no result gutter, so stepping on one can land on a tool
       // block; pressing again passes it, which is a smaller cost than having no pill at all.
-      document.getElementById('blockNav').hidden = !rulerOn() || !paneProfile || !paneRows.length;
+      //
+      // `messages: false` is the other case: a profile that reads the pane but cannot mark where
+      // one message ends. Left in, the pill is two dead buttons, and ↑ on a dead pill asks for
+      // more history every press — it reads a null step as having run off the top of the read.
+      document.getElementById('blockNav').hidden =
+        !rulerOn() || !paneProfile || paneProfile.messages === false || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;

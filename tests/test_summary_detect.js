@@ -101,6 +101,54 @@ test('the composer at the foot of a real pane is a prompt line', () => {
   assert.equal(codex.filter(r => ctx.isUserInput(r, 'codex')).length, 1);
 });
 
+// OpenCode is the harness with one gutter for everything: the user's messages, every tool block
+// and the composer box all sit behind `┃`. These three cases are the ones a line-at-a-time rule
+// got wrong on a real pane, so each is checked against the whole run the line belongs to.
+test('OpenCode: only the user’s own lines are read as input', () => {
+  const rows = fixture('pane_opencode_done.txt');
+  const inputs = rows.filter((row, i) => ctx.isUserInput(row, 'opencode', rows, i));
+  assert.deepEqual(inputs, [
+    '  ┃  List out the last 10 commits in this repo',
+    '  ┃  Explain the goal of last commit',
+    '  ┃  Let’s explore the details of last commit',
+  ]);
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'opencode')).map(i => rows[i]), inputs);
+});
+
+test('OpenCode: the composer is a `┃` run too, and is not the user talking', () => {
+  // The box at the foot is drawn with the prompt's own glyph and holds the model name. It is the
+  // last `┃` run in every live pane, so reading it as input would make it the newest prompt —
+  // and on the harnesses that do have a composer glyph, the newest prompt is what Summary works
+  // back from. `╹` is the box's bottom-left corner and appears nowhere else.
+  const rows = fixture('pane_opencode_done.txt');
+  const composer = rows.findIndex(r => r.includes('Build · GPT-OSS-120B Nvidia'));
+  assert.ok(composer > 0);
+  assert.equal(ctx.isUserInput(rows[composer], 'opencode', rows, composer), false);
+});
+
+test('OpenCode: a read that starts inside a tool block claims nothing', () => {
+  // 200 lines off the foot of a long pane routinely begins mid-block, with the `$` that opened it
+  // above the window. Nothing above then says "not yours", and guessing "yours" painted a file
+  // listing as though the user had typed it.
+  const rows = fixture('pane_opencode_done.txt');
+  const cut = rows.findIndex(r => r.startsWith('  ┃  f1762cb'));
+  const window = rows.slice(cut);
+  const claimed = window.filter((row, i) => ctx.isUserInput(row, 'opencode', window, i));
+  // The severed block gives up nothing; the whole prompt further down is still found, because a
+  // window that loses one opener has not lost the rest of the pane.
+  assert.deepEqual(claimed, ['  ┃  Let’s explore the details of last commit']);
+});
+
+test('OpenCode: no message boundary is guessed, and nothing offers to step through one', () => {
+  // Its reasoning and its answer are both plain prose at the same indent, and it prints nothing in
+  // column 0 for a block to start on. Summary and the ↓↑ pill are off by declaration rather than
+  // by finding nothing, which is what keeps ↑ from asking for more history on every press.
+  const rows = fixture('pane_opencode_done.txt');
+  assert.equal(find(rows, 'opencode'), null);
+  assert.deepEqual(ctx.turnSummaries(rows, 'opencode'), []);
+  assert.equal(ctx.profileFor('opencode').messages, false);
+});
+
 // pi is the one harness whose gutter is not its own: extensions/pi/herdr-gutter.ts puts the
 // glyphs there, and pi indents its whole transcript by one space, so they land in column 1. Its
 // wrapped lines are *not* hang-indented — a continuation sits in the same column as a glyph — so
