@@ -20,7 +20,15 @@ SUFFIX_LEN = 5
 # "must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'".
 # Pane labels are not bound by this — "Architect 1" is a fine label and an illegal agent name.
 HERDR_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-DEFAULT_START_AGENTS = ["codex", "claude", "pi"]
+DEFAULT_START_AGENTS = ["codex", "claude", "pi", "agy"]
+# Extra argv a kind needs to come up usable, passed through herdr's `-- [AGENT_ARG]...`. Server
+# side and per kind, never from a client — a client that could name argv could name any argv.
+#
+# agy prompts for permission on every tool call in its own UI, and that UI is not herdr's
+# approval prompt, so the relay cannot see it or answer it. Left interactive, a remotely started
+# agy stalls on the first command with nothing to relay. Started this way it asks nothing, which
+# is the same trade the operator makes running `agy --dangerously-skip-permissions` by hand.
+AGENT_ARGS = {"agy": ("--dangerously-skip-permissions",)}
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 # herdr waits this long for the agent to reach interactive readiness. Explicit rather than
 # left to herdr's 30s default because the relay's own subprocess timeout must exceed it —
@@ -451,8 +459,10 @@ def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
     pane_id is always a pane the relay just created or one that passed
     validate_start_request — never a raw client value.
     """
-    return ("agent", "start", label, "--kind", kind, "--pane", pane_id,
+    args = ("agent", "start", label, "--kind", kind, "--pane", pane_id,
             "--timeout", str(timeout_ms))
+    extra = AGENT_ARGS.get(kind)
+    return args + ("--",) + extra if extra else args
 
 
 def pane_rename_args(pane_id, label):

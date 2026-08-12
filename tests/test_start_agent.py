@@ -241,6 +241,17 @@ class ArgsTests(unittest.TestCase):
         args = agent_start_args("claude", "Architect 1", "w3:p1")
         self.assertEqual(args[args.index("--timeout") + 1], str(AGENT_START_TIMEOUT_MS))
 
+    def test_a_kind_that_needs_argv_gets_it_after_the_separator(self):
+        # agy's own permission prompt is invisible to the relay, so a remote start that kept it
+        # would stall with nothing to approve.
+        args = agent_start_args("agy", "Architect 1", "w3:p1")
+        self.assertEqual(args[-2:], ("--", "--dangerously-skip-permissions"))
+        # And the separator is the last thing herdr sees, after every option it owns.
+        self.assertLess(args.index("--timeout"), args.index("--"))
+
+    def test_a_kind_that_needs_no_argv_has_no_separator(self):
+        self.assertNotIn("--", agent_start_args("claude", "Architect 1", "w3:p1"))
+
     def test_pane_split_goes_right_at_the_project_cwd(self):
         args = pane_split_args("w1:p2", "/work/charts")
         self.assertEqual(args[:3], ("pane", "split", "w1:p2"))

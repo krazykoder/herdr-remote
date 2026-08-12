@@ -182,7 +182,7 @@ deliberately open.
 export HERDR_PROJECTS_FILE="$HOME/.config/herdr-remote/projects.json"
 export HERDR_RELAY_TOKEN="$(openssl rand -hex 32)"
 export HERDR_ENABLE_WRITE_EXT=1
-export HERDR_START_AGENTS="claude,codex"   # optional; default codex,claude,pi
+export HERDR_START_AGENTS="claude,codex"   # optional; default codex,claude,pi,agy
 ```
 
 A Project is a trusted launch target from the Projects config:
@@ -197,8 +197,11 @@ host.
 
 The client sends only an agent name, a role, a Project ID, and where to place the session. The
 relay resolves cwd and host from the config — never from the client — and runs the agent with a
-fixed argv. `HERDR_START_AGENTS` limits **what** can be launched; the write flag plus the token
-limit **who** can launch it. Without the flag the browser is never told the feature exists and
+fixed argv. A kind that needs extra argv to be usable remotely gets it from the relay's own
+`AGENT_ARGS` table and never from the client: `agy` is started
+`--dangerously-skip-permissions`, because its permission prompt is its own UI rather than herdr's
+and the relay can neither see it nor answer it. `HERDR_START_AGENTS` limits **what** can be
+launched; the write flag plus the token limit **who** can launch it. Without the flag the browser is never told the feature exists and
 shows no Start session control.
 
 ## Requirements

@@ -146,6 +146,48 @@ test('pi: a reply followed by a command is not the closing message', () => {
   assert.equal(find(rows, 'pi'), null);
 });
 
+// agy is the harness with no speaker glyph at all. It marks the user (`>`), its tool calls (`●`),
+// its reasoning (`▸`) and its turn rules in column 0, and leaves the reply as plain prose two
+// columns in — so a message is identified by position: the first indented line after one of those
+// markers.
+test('agy: the closing message, which carries no glyph', () => {
+  const rows = fixture('pane_agy_done.txt');
+  assert.deepEqual(find(rows, 'agy'), [37, 37]);
+  assert.equal(rows[37], '  OK');
+});
+
+test('agy: a message opens under a marker, and the startup banner is not one', () => {
+  const rows = fixture('pane_agy_done.txt');
+  assert.deepEqual(ctx.turnSummaries(rows, 'agy'), [[12, 17], [26, 32], [37, 37]]);
+  // The banner is five indented lines under the shell command that launched agy. Nothing agy
+  // printed opens it, so it is not a message — without that rule it takes an orange mark.
+  assert.equal(ctx.blockContaining(rows, 'agy', 4), null);
+  // A reply under a tool call and a reply under a reasoning header are both messages.
+  assert.match(rows[12], /^  Here is a summary/);
+  assert.match(rows[26], /^  Formulating The Response/);
+});
+
+test('agy: the request is ruled, and the reply below it is not', () => {
+  const rows = fixture('pane_agy_done.txt');
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'agy')), [8, 21, 35, 40]);
+  // The blank line between `> say only the word OK` and `  OK` must not carry the rule into the
+  // reply — nothing in column 0 separates them, so only the block start does.
+  assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
+});
+
+test('agy: a request answered with a command alone has no closing message', () => {
+  const rows = [
+    '────────────────────',
+    '> check the tree',
+    '',
+    '● Bash(git status --short) (ctrl+o to expand)',
+    '',
+    '────────────────────',
+    '>',
+  ];
+  assert.equal(find(rows, 'agy'), null);
+});
+
 test('a pane whose last block ran a tool has nothing to offer', () => {
   const rows = [
     '⏺ Committed as dd51cea.',

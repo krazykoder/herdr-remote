@@ -1,7 +1,9 @@
 # Agent Final Summary Detection
 
-Change class: **A** — frontend only, `web/index.html`. No wire change, no relay change, no new
-message type, no dependency, no agent call, no backend assessment.
+Change class: **A** — the detection itself is frontend only, `web/index.html`. No wire change, no
+new message type, no dependency, no agent call, no backend assessment. Two harnesses added along
+the way reach outside it and only there: `extensions/pi/` is a pi package, and `agy` needed the
+relay's Start-session allowlist and one argv entry (`relay/start_agent.py`).
 
 ## Problem statement
 
@@ -98,8 +100,11 @@ Nothing above reads a word of the content. It reads column 0 and one character.
 |---------|---------|---------------|-------------|-------------|
 | `claude` | `⏺` | `⎿` | `❯` `>` | `✻ Worked for` / `✻ Baked for` |
 | `codex` | `•` | `└` `│` | `›` | `─ Worked for` |
+| `pi` | `⏺` | `$` | `›` | — |
+| `agy` | — | — | `>` | `────` |
 
-Keyed on `a.agent`, which the relay already sends.
+Keyed on `a.agent`, which the relay already sends. The last two rows arrived after this table was
+written and each needed the profile to grow a field; the two sections below say which and why.
 
 The prompt column was read off live panes on `2026-08-11` rather than guessed: `herdr pane read`
 on a running Claude pane shows `❯ /update-config` and `❯ allow the test commands without
@@ -110,7 +115,7 @@ pane is a prompt line* now pins: one prompt line in each fixture, no false posit
 
 ## Unknown harnesses
 
-1. The profile table covers the only two sampled harnesses: Claude and Codex.
+1. The profile table covers the sampled harnesses: Claude, Codex, pi and agy.
 2. An unknown harness gets no suggestion. A wrong tool-output selection is worse than no
    convenience.
 3. A user-selected final block can reveal a candidate speaker glyph, but it cannot reliably reveal
@@ -119,7 +124,7 @@ pane is a prompt line* now pins: one prompt line in each fixture, no false posit
 
 **What is built on top of that ceiling.** The half a selection *can* teach is worth having, so
 **Learn** stores the speaker glyph alone, under `herdr_gutters`
-(`{version: 1, byAgent: {pi: "◆"}}`), and `profileFor()` returns it with an empty result list.
+(`{version: 1, byAgent: {amp: "◆"}}`), and `profileFor()` returns it with an empty result list.
 That is enough to cut the pane into blocks: trim learning, the ↓↑ pill, and **Summary** on demand
 all work from it. It is not enough to *volunteer* a range. With no result glyph `blockSpan` cannot
 tell a command from a sentence, so the automatic suggestion alone gates on `GUTTERS[a.agent]` —
@@ -131,13 +136,13 @@ That was weighed against hiding the pill entirely and lost: a marker the user wa
 which then drives nothing they can see, is worse than a step that occasionally overshoots.
 
 **Confirmed by showing, not by counting.** Pressing a button twice conveys no new information;
-showing the character it read does. So teaching a glyph asks `Learn "◆" as pi's message marker?`
+showing the character it read does. So teaching a glyph asks `Learn "◆" as amp's message marker?`
 and a whitespace or word character in column 0 is refused outright — prose, not a marker. A wrong
 glyph breaks every block boundary in the pane, which is why this one step confirms; a wrong trim is
 outvoted by the tally, which is why that one does not.
 
 A shipped profile still needs a real pane sample containing both a tool block and a closing prose
-block; add it to `GUTTERS` and that harness gets suggestions like the other two.
+block; add it to `GUTTERS` and that harness gets suggestions like the shipped ones.
 
 `pi` was sampled on `2026-08-11` and had no glyph to ship: it indents its whole transcript by a
 space, so column 0 is empty, and user and agent text are the same shape. The evidence and the three
@@ -176,6 +181,37 @@ herdr reports as `done`.
 
 **Per host.** Every machine running pi needs the extension. One without it parses exactly as it did
 before, so the failure is soft.
+
+## agy — a harness whose reply has no marker at all
+
+Antigravity CLI marks four things in column 0 and its own answer is not one of them:
+
+```
+> summarize the last 5 commits          user
+● Bash(git log -n 5 --stat)             tool call
+▸ Thought for 4s, 876 tokens            reasoning
+────────────────────────────────        turn rule
+  Here is a summary of …                the reply — plain prose, indent 2, no glyph
+```
+
+Nothing can be installed here the way `extensions/pi` was, so the profile carries `speaker: null`
+and the block is found by *position* instead: the first indented line after a column-0 line that
+agy itself printed. `opens: ['>', '●', '▸', '─']` is that last clause, and it is not decoration —
+without it the shell command line that launched agy opens a block and the startup banner is read
+as the pane's first message.
+
+`result: []` because a tool call is column-0 and therefore already an end, never a line inside a
+block: `● Bash(…)` after a reply correctly makes that reply not the closing message, through
+`endsBlock` rather than through the result set.
+
+The one thing this cost outside the parser: a user turn's blue rule used to run until the next
+column-0 line, and on agy the reply is not one. `userInputLines` now ends the turn on a block
+start as well as on an end.
+
+**Started with argv.** agy prompts for tool permission in its own UI, which is not herdr's approval
+prompt — the relay cannot see it, so a remotely started agy would stall on the first command with
+nothing to relay. `AGENT_ARGS` in `relay/start_agent.py` passes `--dangerously-skip-permissions`
+through herdr's `-- [AGENT_ARG]…`, server side and per kind. A client still sends only a kind name.
 
 ## Detection trigger
 
@@ -328,7 +364,12 @@ drags the handle.
 - `[NEW] tests/e2e/browser/summary_detect.spec.js` — the wiring the slice cannot see: that a read
   is what runs the parse, that only a finished pane is suggested for, that the band and footer
   paint, and that a held or deliberately cleared range is never overwritten by the poll.
-- `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt` — minimal sanitized excerpts
+- `[NEW] extensions/pi/` — the pi package that gives pi a gutter, plus its README and
+  `tests/test_pi_gutter.js`.
+- `[MODIFY] relay/start_agent.py` — `agy` in `DEFAULT_START_AGENTS`, and `AGENT_ARGS` for the argv
+  a kind needs to be usable remotely. The only backend change the whole feature made.
+- `[NEW] tests/fixtures/pane_claude_done.txt`, `pane_codex_done.txt`, `pane_pi_done.txt`,
+  `pane_agy_done.txt` — minimal sanitized excerpts
   preserving the real gutter shape, each ending in the composer prompt line the live pane ends in.
   The fixtures are the spec; a glyph change breaks a test rather than a user.
 

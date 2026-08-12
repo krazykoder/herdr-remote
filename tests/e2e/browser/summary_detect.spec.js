@@ -91,6 +91,25 @@ test('Summary is offered only on a pane that has one, and selects it', async ({p
   expect(await page.evaluate(() => selText)).toMatch(/^⏺ Ready\. Name the change\./);
 });
 
+test('Summary scrolls to the message it selected', async ({page}) => {
+  // The message is only near the foot on a short pane. Push it up behind 300 lines of tool
+  // output and selecting it without scrolling leaves the user looking at nothing.
+  const filler = '⏺ Bash(x)\n' + '  ⎿  y\n'.repeat(300);
+  await feed(page, filler + PANE, 'working');
+  const term = page.locator('#termContent');
+  await term.evaluate(el => { el.scrollTop = el.scrollHeight; });
+
+  await page.locator('#quickActions .qa-summary').click();
+
+  const seen = await page.evaluate(() => {
+    const el = document.getElementById('termContent');
+    const row = el.children[Math.min(selA, selB)].getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    return row.top >= box.top && row.bottom <= box.bottom;
+  });
+  expect(seen, 'the selected line is on screen').toBe(true);
+});
+
 test('an auto-selected band reads orange, and a dragged one does not', async ({page}) => {
   await feed(page, PANE);
   const band = page.locator('#selBand');

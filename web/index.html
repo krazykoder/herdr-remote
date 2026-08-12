@@ -94,6 +94,9 @@
       /* Agent kinds, in the badge only. --orange doubles as the pi yellow; claude needs its own
          because the two sit side by side in a list and #e0af68 twice reads as one colour. */
       --agent-claude: #ff9e64;
+      /* agy needs a hue no status and no other kind owns. Purple is the one left: orange is a
+         shade off claude's, cyan means a shell, and red/green/blue are taken. */
+      --agent-agy: #bb9af7;
       /* Terminal panes. Deliberately not red/green/muted: those three mean agent status, and a
          shell has none. Named --shell rather than --term because --term-bg/--term-text already
          mean the pane's *content* — those two follow the theme, this one does not need to. */
@@ -126,6 +129,7 @@
       --blue: #0f58bc;
       --orange: #8f4b00;
       --agent-claude: #735831;
+      --agent-agy: #6a3ec4;
       --shell: #006486;
       /* A shade off --bg rather than pure white: the pane is the surface being read, and it
          should sit forward of the shell around it without glaring. */
@@ -4001,6 +4005,11 @@
       claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
       pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
+      // agy marks the user, its tool calls, its reasoning and its turn rules in column 0, and its
+      // own reply not at all: that is plain prose two columns in. `speaker: null` is what makes a
+      // block start positional rather than a glyph match, and `opens` says which column-0 lines a
+      // message may follow. `result` is empty because a column-0 tool call is already an end.
+      agy: { speaker: null, result: [], user: ['>'], opens: ['>', '●', '▸', '─'] },
     };
 
     // The character in a harness's gutter column, which is column 0 everywhere but pi.
@@ -4067,6 +4076,23 @@
       return [start, end];
     }
 
+    // Does a block start here? On every harness but agy that is one character in the gutter. agy
+    // has no speaker glyph, so its answer is positional: the first indented line under a column-0
+    // line that agy itself printed. `opens` is that last clause and it is load-bearing — without
+    // it the shell command line that launched agy opens a block and its startup banner is read as
+    // the pane's first message.
+    function startsBlock(rows, g, i) {
+      const row = rows[i] || '';
+      if (g.speaker) return gutterOf(row, g) === g.speaker;
+      if (!row.trim() || /^\S/.test(row)) return false;
+      for (let j = i - 1; j >= 0; j--) {
+        const above = rows[j] || '';
+        if (!above.trim()) continue;
+        return /^\S/.test(above) && (!g.opens || g.opens.includes(above[0]));
+      }
+      return false;     // nothing above it, so nothing opened it
+    }
+
     function isUserInput(row, agent) {
       const g = profileFor(agent);
       return !!g && !!g.user && g.user.includes(gutterOf(row, g));
@@ -4091,7 +4117,9 @@
       let inTurn = false, pending = [];
       rows.forEach((row, i) => {
         if (isUserInput(row, agent)) { inTurn = true; pending = []; }
-        else if (endsBlock(row, g)) inTurn = false;
+        // The agent's reply ends the turn as surely as its glyph would. On agy that reply carries
+        // no glyph and is not in column 0, so without this the blue rule runs on into it.
+        else if (endsBlock(row, g) || startsBlock(rows, g, i)) inTurn = false;
         if (!inTurn) return;
         // A blank line inside the turn is part of it only if more of the turn follows. Trailing
         // blanks are the gap before the agent answers, and a rule running down empty rows reads
@@ -4113,7 +4141,7 @@
       const lastInput = g.composer === false ? -1 : lastUserInput(rows, agent);
       const before = lastInput < 0 ? rows.length : lastInput;
       for (let i = before - 1; i >= 0; i--) {
-        if (gutterOf(rows[i], g) === g.speaker) return blockSpan(rows, g, i);
+        if (startsBlock(rows, g, i)) return blockSpan(rows, g, i);
       }
       return null;
     }
@@ -4126,7 +4154,7 @@
       const g = profileFor(agent);
       if (!g || !rows) return null;
       for (let i = Math.min(before, rows.length) - 1; i >= 0; i--) {
-        if (gutterOf(rows[i], g) !== g.speaker) continue;
+        if (!startsBlock(rows, g, i)) continue;
         const at = blockSpan(rows, g, i);
         if (at) return at;
       }
@@ -4137,7 +4165,7 @@
       const g = profileFor(agent);
       if (!g || !rows) return null;
       for (let i = Math.max(0, after); i < rows.length; i++) {
-        if (gutterOf(rows[i], g) !== g.speaker) continue;
+        if (!startsBlock(rows, g, i)) continue;
         const at = blockSpan(rows, g, i);
         if (at) return at;
       }
@@ -4189,7 +4217,7 @@
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
       for (let s = Math.min(i, rows.length - 1); s >= 0; s--) {
-        if (gutterOf(rows[s], g) === g.speaker) return blockSpan(rows, g, s);
+        if (startsBlock(rows, g, s)) return blockSpan(rows, g, s);
         if (endsBlock(rows[s], g)) return null;
       }
       return null;
@@ -4390,11 +4418,16 @@
     // The Summary button, and the automatic suggestion, land on the same range through here.
     // Unlike the suggestion it has no status gate: pressing it is the user asking, and an agent
     // that is mid-turn still has a previous message worth lifting out.
-    function selectFinalMessage() {
+    // `scroll` is what separates the two: pressing the button is a request to go and look at the
+    // message, and on a long pane it is usually far above the foot. The automatic suggestion does
+    // not scroll — it arrives with a poll, and moving the pane under someone reading scrollback
+    // would be the poll stealing their place.
+    function selectFinalMessage(scroll) {
       if (!finalAt) return;
       [selA, selB] = finalAt;
       selSuggested = true;
       drawSel();
+      if (scroll) scrollPaneToLine(Math.min(selA, selB));
     }
 
     // --- Line ruler ---
@@ -4807,6 +4840,7 @@
       if (k.startsWith('claude')) return 'var(--agent-claude)';
       if (k.startsWith('codex')) return 'var(--blue)';
       if (k.startsWith('pi') || k === 'kiro') return 'var(--green)';
+      if (k.startsWith('agy')) return 'var(--agent-agy)';
       return '';
     }
 
@@ -5491,7 +5525,7 @@
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
       const summary = finalAt
-        ? `<button class="qa-summary" onclick="selectFinalMessage()" ` +
+        ? `<button class="qa-summary" onclick="selectFinalMessage(true)" ` +
         `title="Select the agent's closing message" ` +
         `aria-label="Select the agent's closing message">Summary</button>`
         : '';
@@ -6008,6 +6042,22 @@
         { cmd: '/mention', desc: 'Attach files to context', common: false },
         { cmd: '/plan', desc: 'Enter plan mode', common: false },
       ],
+      // agy lists 57 commands; these are the ones worth a tap on a phone. Read off the live
+      // menu, not from docs — `/clear` and `/rewind` carry agy's own aliases in that menu.
+      agy: [
+        { cmd: '/context', desc: 'Visualize context usage', common: true },
+        { cmd: '/clear', desc: 'Clear conversation and start a new one', common: true, danger: true },
+        { cmd: '/model', desc: 'Set a model', common: true },
+        { cmd: '/effort', desc: 'Set the reasoning effort', common: true },
+        { cmd: '/diff', desc: 'View uncommitted changes and per-turn diffs', common: true },
+        { cmd: '/plan', desc: 'Plan carefully before executing', common: true },
+        { cmd: '/usage', desc: 'View model quota usage', common: false },
+        { cmd: '/rewind', desc: 'Rewind to a previous message', common: false, danger: true },
+        { cmd: '/tasks', desc: 'View background tasks', common: false },
+        { cmd: '/permissions', desc: 'Manage tool permissions', common: false },
+        { cmd: '/copy', desc: 'Copy the last response', common: false },
+        { cmd: '/help', desc: 'Show all commands and keybindings', common: false },
+      ],
       pi: [
         { cmd: '/compact', desc: 'Compact context', common: true },
         { cmd: '/new', desc: 'Start new session', common: true, danger: true },
@@ -6036,6 +6086,7 @@
       if (COMMANDS[key]) return COMMANDS[key];
       if (key.startsWith('claude')) return COMMANDS.claude;
       if (key.startsWith('codex')) return COMMANDS.codex;
+      if (key.startsWith('agy')) return COMMANDS.agy;
       if (key.startsWith('pi') || key === 'kiro') return COMMANDS.pi;
       if (key.startsWith('opencode')) return COMMANDS.opencode;
       return COMMANDS.claude; // fallback
