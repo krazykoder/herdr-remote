@@ -1053,7 +1053,9 @@
 
     /* Reorder sheet. Every row is the same fixed height on purpose: the drag turns a Y into an
        index by dividing, the same arithmetic the line ruler uses, and that only holds while the
-       rows are uniform. Nothing here may grow to two lines. */
+       rows are uniform. Two lines is the ceiling, and both of them are clipped to one line each —
+       a row that wrapped would be taller than its neighbours and every slot below it would be
+       computed from the wrong stride. */
     .order-row {
       display: flex;
       align-items: center;
@@ -2728,7 +2730,7 @@
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
         <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row with a mouse; on touch,
           use its right-side handle. Or focus one and use arrow keys. The main page still groups by
-          status, so this is the order inside each group. Terminals only change bottom-tab order.</p>
+          status, so this is the order inside each group.</p>
         <button class="nav-key" onclick="resetOrder()">Reset to default tab order</button>
       </div>
     </div>
@@ -3930,6 +3932,10 @@
     // One insertion point for the independently rendered landing-page sections.
     function renderBody() {
       renderBodyMain();
+      // Once, here, rather than at each of the three places that write #agents: every one of them
+      // is reached through renderBodyMain, and a fourth added later would otherwise be a list that
+      // silently lost its Reorder button.
+      addOrderButton();
       const html = terminalsHtml();
       document.getElementById('terminals').innerHTML = html;
       document.getElementById('pairs').innerHTML = pairsHtml();
@@ -3954,7 +3960,6 @@
       let html = hoistHtml(agents) + layoutHtml(agents);
       if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
-      addOrderButton();
     }
 
     // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
@@ -3991,7 +3996,6 @@
         html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
-      addOrderButton();
     }
 
     function projectCard(p) {
@@ -4096,7 +4100,6 @@
       if (idle.length) html += section('Idle', idle);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
-      addOrderButton();
     }
 
     // A workspace ID from one Project means nothing under another, and leaving it set
@@ -5557,7 +5560,7 @@
       <span class="grip" aria-hidden="true">⠿</span>
     </div>`;
         }).join('')
-        : '<div class="empty">No agents to order.</div>';
+        : '<div class="empty">No panes to order.</div>';
       document.getElementById('orderSheet').style.display = 'block';
     }
 
@@ -6072,6 +6075,8 @@
 
     // This action belongs with the live-pane list, not Settings. First heading is whichever agent
     // group is currently on top, so it stays visible without a second heading above status groups.
+    // Appended after the list is written rather than built into section(), which has no way of
+    // knowing which of its calls came first.
     function addOrderButton() {
       const header = document.querySelector('#agents .section-header');
       if (header) header.insertAdjacentHTML('beforeend',
@@ -6097,7 +6102,7 @@
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
       if (!list.length) return '';
       return `<div class="section-header">Terminals</div>`
-        + list.map(terminalCard).join('');
+        + orderedAgents(list).map(terminalCard).join('');
     }
 
     function pairsHtml() {

@@ -166,4 +166,12 @@ test('a terminal can move to the front of the bottom tab strip', async ({page}) 
   await drag(page, 4, 0);              // charts terminal, to the front
   expect(await names(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
   expect(await tabs(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
+
+  // And the Terminals section on the landing page, not the strip alone. One order for every list
+  // a pane appears in — a sheet that moved a row and left the page it was dragged from unchanged
+  // would read as having done nothing.
+  await backdrop(page).click();
+  const terminals = await page.locator('#terminals .agent')
+    .evaluateAll(els => els.map(e => e.getAttribute('aria-label').split(',')[0]));
+  expect(terminals).toEqual(['Terminal charts', 'Terminal build watch']);
 });
