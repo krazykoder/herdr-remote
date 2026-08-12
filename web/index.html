@@ -215,6 +215,10 @@
       background: transparent;
     }
 
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     body {
       font-family: -apple-system, system-ui, -webkit-system-font, sans-serif;
       background: var(--bg);
@@ -2366,6 +2370,13 @@
     </div>
   </div>
 
+  <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
+  <div id="spawnStatus" role="status" aria-live="polite"
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:201;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
+    <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
+    <span id="spawnStatusText"></span>
+  </div>
+
   <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
      so a rejected send_text or rename looked identical to one that worked. -->
   <div id="toast" role="status" aria-live="polite"
@@ -3217,7 +3228,10 @@
           // Say so when the relay had to rename around a collision — otherwise the pane shows up
           // under a name the user never typed and reads as the wrong session.
           const asked = document.getElementById('startName').value.trim();
-          if (asked && msg.label && msg.label !== asked) showToast(`Name taken — started as "${msg.label}"`);
+          const renamed = asked && msg.label && msg.label !== asked;
+          showSpawnStatus(renamed ? `Name taken — started as "${msg.label}" — opening…`
+            : `${msg.command === 'open_terminal' ? 'Terminal opened' : 'Session started'} — opening…`,
+            renamed ? 'warning' : 'busy');
           closeStart();
           // Open it once the poll has seen it. Not here: the session is not in `agents` yet, and
           // openTerminal reads the snapshot for the pane's title and its pair. Starting a session
@@ -3225,8 +3239,12 @@
           // wanted.
           pendingStart = msg.pane_id || null;
         }
-        else setStartError(withRetryHint(msg.error ||
-          (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed')));
+        else {
+          const error = withRetryHint(msg.error ||
+            (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
+          setStartError(error);
+          showSpawnStatus(error, 'error');
+        }
       }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
@@ -3632,6 +3650,7 @@
       // Only while the pane that asked is still live — a pair cannot be made against a pane that
       // has since exited, and the new session is better opened than left nowhere.
       if (intent && intent.pair && agents.some(x => x.pane_id === intent.pair)) {
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started — ready to pair.`, 'success');
         openPairDialog(intent.pair);
         choosePartner(a.pane_id);
         return;
@@ -3640,6 +3659,7 @@
       // phone terms, and yanking them out of what they are reading is worse than not landing.
       // Unless the start was a Duplicate, which is a request made from that very pane.
       if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+      showSpawnStatus(`${a.label || a.agent || 'Session'} started.`, 'success');
     }
 
     // A pane does not carry the role it was started with — herdr reports labels — so it is read
@@ -3675,6 +3695,7 @@
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
       // "Architect 2" rather than as a second pane with the same name.
       startIntent = 'open';
+      showSpawnStatus(`Duplicating ${a.label || a.agent || 'session'}…`, 'busy');
       ws.send(JSON.stringify(msg));
     }
 
@@ -3693,6 +3714,23 @@
       // opening the dialog on a blank select.
       const want = localStorage.getItem(key) || fallback;
       if (want && [...el.options].some(o => o.value === want)) el.value = want;
+    }
+
+    // A start can outlive its sheet (Duplicate has none), so its result also has one global card.
+    // Success and warnings clear shortly; errors stay long enough to be read and retried.
+    let spawnStatusTimer = null;
+    function showSpawnStatus(text, state) {
+      const el = document.getElementById('spawnStatus');
+      const spinner = document.getElementById('spawnSpinner');
+      document.getElementById('spawnStatusText').textContent = text || '';
+      el.style.display = text ? 'flex' : 'none';
+      const color = state === 'error' ? 'var(--red)' : state === 'warning' ? 'var(--orange)'
+        : state === 'success' ? 'var(--green)' : 'var(--blue)';
+      el.style.borderColor = color;
+      spinner.hidden = state !== 'busy';
+      clearTimeout(spawnStatusTimer);
+      if (state !== 'busy') spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
+        state === 'error' ? 10000 : 5000);
     }
 
     // One line under the fields carries both halves of what happens after Start is pressed:
@@ -3829,6 +3867,7 @@
         msg[placement === 'new_tab' ? 'workspace_id' : 'split_from'] = target.value;
       }
       setStartStatus(terminal ? 'Opening terminal…' : 'Starting session… this can take up to 30s.', true);
+      showSpawnStatus(terminal ? 'Opening terminal…' : 'Starting session…', 'busy');
       document.getElementById('startSubmit').disabled = true;
       // Remembered on send rather than on change: what the user actually spawned is the choice
       // worth reopening on, not one they scrolled past.

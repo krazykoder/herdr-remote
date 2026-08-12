@@ -554,6 +554,35 @@ test('a refusal the user can only answer by pressing again says try again', () =
   assert.equal(hint('pane is busy — try again.'), 'pane is busy — try again.');
 });
 
+function runSpawnStatus(body) {
+  const start = HTML.indexOf('let spawnStatusTimer');
+  const end = HTML.indexOf('function setStartStatus', start);
+  assert.ok(start !== -1 && end > start, 'floating start status block not found');
+  const els = {
+    spawnStatus: {style: {}}, spawnSpinner: {hidden: false}, spawnStatusText: {textContent: ''},
+  };
+  const ctx = vm.createContext({
+    document: {getElementById: id => els[id]}, clearTimeout: () => {}, setTimeout: () => 1,
+  });
+  vm.runInContext(HTML.slice(start, end) + '\n;' + body, ctx);
+  return els;
+}
+
+test('the floating start card carries progress, warnings, and errors', () => {
+  const busy = runSpawnStatus('showSpawnStatus("Duplicating Architect 1…", "busy")');
+  assert.equal(busy.spawnStatus.style.display, 'flex');
+  assert.equal(busy.spawnSpinner.hidden, false);
+  assert.equal(busy.spawnStatus.style.borderColor, 'var(--blue)');
+
+  const warning = runSpawnStatus('showSpawnStatus("Name taken", "warning")');
+  assert.equal(warning.spawnSpinner.hidden, true);
+  assert.equal(warning.spawnStatus.style.borderColor, 'var(--orange)');
+
+  const error = runSpawnStatus('showSpawnStatus("start failed", "error")');
+  assert.equal(error.spawnStatus.style.borderColor, 'var(--red)');
+  assert.equal(error.spawnStatusText.textContent, 'start failed');
+});
+
 // --- Enter in the composer ---
 
 const key = (over) => Object.assign({key: 'Enter', metaKey: false, ctrlKey: false, shiftKey: false}, over);
