@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, functools, hmac, json, logging, os, re, shutil, signal, socket, subprocess, time
+import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, subprocess, tempfile, time
 
 from agent_state import complete_agent_update_message
 from projects import (
@@ -286,9 +286,29 @@ _load_push_subs()
 START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
 
 
+# %r@%h:%p — one socket per user@host:port, in the user's own runtime dir. Not LOG_DIR: the path
+# is bounded by the platform's socket name limit (~104 bytes on macOS) and a deep log path
+# silently disables multiplexing rather than failing.
+SSH_CONTROL_PATH = os.path.join(tempfile.gettempdir(), "herdr-relay-%r@%h:%p")
+
+
 def run_herdr_result(*args, remote=None, timeout=15):
     if remote:
-        cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", remote, HERDR, *args]
+        # Quoted, because ssh does not take an argv. It concatenates everything after the target
+        # and hands the result to the remote login *shell*, so an unquoted argument carrying a
+        # semicolon, a backtick or $(...) is a command on that host — and several of these
+        # arguments are client-supplied (the text of a send_text, a pane label, a line count).
+        # One shell word per argument here is what keeps every caller's arguments data.
+        # The local branch needs none of this: no shell is involved in an argv exec.
+        remote_cmd = " ".join(shlex.quote(a) for a in (HERDR, *args))
+        # One multiplexed connection per host instead of a TCP connect, a key exchange and an
+        # auth round trip per call. Every open pane costs two of these calls every three seconds
+        # on top of the poll loop, so the handshake was the dominant cost of a remote pane — and
+        # it is paid on the relay's event loop. ControlPersist keeps the master alive between
+        # them; a stale socket is reopened by ssh itself, so there is nothing to clean up.
+        cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+               "-o", "ControlMaster=auto", "-o", f"ControlPath={SSH_CONTROL_PATH}",
+               "-o", "ControlPersist=60s", remote, remote_cmd]
     else:
         cmd = [HERDR, *args]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -373,6 +393,33 @@ def snapshot_message():
     return msg
 
 
+# The client asks for a depth and the relay decides what it is willing to read. Bounded because
+# the read is synchronous, runs every few seconds per open pane, and crosses SSH for a remote
+# one — an unbounded number here is a client asking the relay to spend a host's disk and a
+# tunnel's bandwidth. Anything unparseable falls back rather than refusing: a read is not worth
+# an error round trip, and 30 lines still shows the reader something.
+READ_LINES_MAX = 50000
+READ_LINES_DEFAULT = 30
+# What pane_cols samples, however deep the read goes. The wrap column is a property of the pane
+# now, so the newest lines are the ones that carry it — sampling 50k of scrollback to measure it
+# costs a second full read and answers with the width the pane used to be.
+COLS_SAMPLE_LINES = 200
+
+
+def read_pane_lines(raw):
+    try:
+        return max(1, min(int(raw), READ_LINES_MAX))
+    except (TypeError, ValueError, OverflowError):
+        return READ_LINES_DEFAULT
+
+
+def read_pane_content(pane_id, lines, source, remote=None):
+    """(content, cols) for one read_pane. Blocking; call through asyncio.to_thread."""
+    content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+                        "--source", source, remote=remote)
+    return content, pane_cols(pane_id, lines, remote=remote)
+
+
 def pane_cols(pane_id, lines, remote=None):
     """The wrap column of the scrollback being sent, or None if it cannot be established.
 
@@ -385,12 +432,14 @@ def pane_cols(pane_id, lines, remote=None):
     width.
 
     `--source recent` is the same scrollback `recent-unwrapped` returns with the terminal's own
-    breaks left in, so the longest line in it *is* the column those breaks were made at. Sampled
-    over exactly the lines being sent, not deeper: a pane that has been made narrower still holds
-    wider lines further back, and reporting one of those would lay the text out too wide. Read
-    per request, never cached — splitting or resizing a pane changes it.
+    breaks left in, so the longest line in it *is* the column those breaks were made at. Never
+    sampled deeper than the lines being sent, and never deeper than COLS_SAMPLE_LINES either: a
+    pane that has been made narrower still holds wider lines further back, and reporting one of
+    those would lay the text out too wide. The shallower sample is therefore the more accurate
+    one as well as the cheaper one — this is a second `pane read`, over SSH for a remote pane,
+    on every request. Read per request, never cached — splitting or resizing a pane changes it.
     """
-    raw = run_herdr("pane", "read", pane_id, "--lines", str(lines),
+    raw = run_herdr("pane", "read", pane_id, "--lines", str(min(lines, COLS_SAMPLE_LINES)),
                     "--source", "recent", remote=remote)
     # ponytail: a sample that happens to hold no wrapped line reads narrower than the pane is.
     # Only ever an under-estimate, and a harmless one — nothing wrapped, so nothing is laid out
@@ -712,7 +761,9 @@ def open_terminal_exec(plan):
 
 async def _poll_once():
         global latest_agents, latest_shells
-        agents, shells = get_all_panes()
+        # One `pane list` per configured host, each a subprocess and each an SSH round trip for a
+        # remote one — the longest blocking stretch in the relay, and it runs every poll interval.
+        agents, shells = await asyncio.to_thread(get_all_panes)
         latest_agents = agents
         latest_shells = shells
         ambiguous_panes.clear()
@@ -732,7 +783,7 @@ async def _poll_once():
         for a in agents:
             pid, status = a["pane_id"], a["status"]
             if status == "blocked" and last_statuses.get(pid) != "blocked":
-                content = read_pane(pid, remote=a.get("remote"))
+                content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
                 options = detect_options(content)
                 await broadcast({
                     "type": "blocked", "pane_id": pid,
@@ -1016,9 +1067,9 @@ async def handle_client(ws, listener="lan"):
                 # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
                 # inserted as literal text and the approval never submits. Paste, let the TUI
                 # settle, then press Enter.
-                run_herdr("pane", "send-text", pane_id, text, remote=remote)
+                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
                 await asyncio.sleep(SEND_SETTLE)
-                run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+                await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
             elif msg_type == "read_pane":
@@ -1027,7 +1078,7 @@ async def handle_client(ws, listener="lan"):
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
-                lines = msg.get("lines", "30")
+                lines = read_pane_lines(msg.get("lines"))
                 remote = pane_remote_map.get(pane_id)
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
                 # inserted, leaving only the ones the agent wrote. cols lets the client lay the
@@ -1038,11 +1089,15 @@ async def handle_client(ws, listener="lan"):
                 # live frame and nothing else is to read the frame rather than the backlog. An
                 # allowlist and not a pass-through — this string is an argv element.
                 source = "visible" if msg.get("source") == "visible" else "recent-unwrapped"
-                content = run_herdr("pane", "read", pane_id, "--lines", str(lines),
-                                    "--source", source, remote=remote)
+                # Off the event loop, both of them. This is two subprocesses — an SSH round trip
+                # each for a remote pane — and every open pane on every client repeats it every
+                # few seconds. Run inline it stops the relay: the poll broadcast, every other
+                # client's approval, and the ping that keeps this socket alive all wait behind
+                # one client's deep read.
+                content, cols = await asyncio.to_thread(read_pane_content, pane_id, lines, source, remote)
                 await ws.send(json.dumps({
                     "type": "pane_content", "pane_id": pane_id, "content": content,
-                    "source": source, "cols": pane_cols(pane_id, lines, remote=remote)}))
+                    "source": source, "cols": cols}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -1057,7 +1112,8 @@ async def handle_client(ws, listener="lan"):
                 log.info("Keys from %s (%s): pane=%s keys=%s", ip, device, pane_id, keys)
                 audit("send_keys", ip, device, pane_id, f"keys={keys}")
                 try:
-                    result = run_herdr_result("pane", "send-keys", pane_id, *keys, remote=remote)
+                    result = await asyncio.to_thread(
+                        run_herdr_result, "pane", "send-keys", pane_id, *keys, remote=remote)
                 except Exception as e:
                     log.warning("send_keys command failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "send_keys command failed"}))
@@ -1082,7 +1138,7 @@ async def handle_client(ws, listener="lan"):
                 remote = pane_remote_map.get(pane_id)
                 log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("send_text", ip, device, pane_id, f"text={text!r}")
-                run_herdr("pane", "send-text", pane_id, text, remote=remote)
+                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
                 # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
                 # right behind this — which is exactly what every composer does — lands late
                 # enough to submit. One choke point, rather than a delay in each client.
@@ -1103,7 +1159,8 @@ async def handle_client(ws, listener="lan"):
                 remote = pane_remote_map.get(pane_id)
                 audit("rename_pane", ip, device, pane_id, f"label={label!r}")
                 try:
-                    result = run_herdr_result(*pane_rename_args(pane_id, label), remote=remote)
+                    result = await asyncio.to_thread(
+                        run_herdr_result, *pane_rename_args(pane_id, label), remote=remote)
                 except Exception as e:
                     log.warning("rename failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
@@ -1151,7 +1208,8 @@ async def handle_client(ws, listener="lan"):
                     continue
                 log.info("Create tab from %s (%s): workspace=%s host=%s", ip, device, workspace_id, remote or "local")
                 audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
-                run_herdr("tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
+                await asyncio.to_thread(
+                    run_herdr, "tab", "create", "--workspace", workspace_id, "--focus", remote=remote)
                 await ws.send(json.dumps({"type": "tab_created", "ok": True}))
             elif msg_type == "start_agent":
                 # Reaching here proves write extensions are on — nothing more. It used to prove

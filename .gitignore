@@ -11,3 +11,6 @@ __pycache__/
 tests/e2e/logs/
 tests/e2e/fake_herdr.log
 .github/workflows/*
+node_modules/
+test-results/
+playwright-report/

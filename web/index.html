@@ -10,6 +10,10 @@
   <link rel="manifest"
     href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%231a1b26&quot;,&quot;theme_color&quot;:&quot;%231a1b26&quot;}">
   <title>herdr-remote</title>
+  <!-- Swapped to red by syncBrowserTab when something needs you. Present here rather than created
+       in JS so a tab that has not connected yet still has an icon of its own. -->
+  <link rel="icon" id="favicon"
+    href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='4'%20fill='%231a1b26'/%3E%3Ccircle%20cx='8'%20cy='8'%20r='4.5'%20fill='%237aa2f7'/%3E%3C/svg%3E">
   <!-- Before first paint, or the light user gets a dark flash on every load. Inline and
        synchronous for that reason; it must not wait for the module script below. -->
   <script>
@@ -17,10 +21,59 @@
       if (localStorage.getItem('herdr_theme') === 'light') document.documentElement.dataset.theme = 'light';
     } catch (e) { /* storage blocked: stay on the default */ }
   </script>
-  <script type="module">
-    import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
-    window.cue = play;
-    document.addEventListener('DOMContentLoaded', () => bind());
+  <!-- Sound, synthesised here rather than fetched. This was an ES module import from a CDN, which
+       cost the file the one property it is built around — a relay on a LAN with no route to the
+       internet, a strict CSP, or a plain offline PWA launch all left the app silent, and silently,
+       because every call site is guarded with `if (window.cue)`. A handful of oscillators is
+       smaller than the import line was.
+
+       Synchronous, not a module: a module is deferred, so window.cue was undefined for the first
+       cues of the page's life and those simply never played.
+
+       An AudioContext is built on the first cue and reused. Before any user gesture the browser
+       hands back a suspended one and nothing sounds — which is the autoplay policy working, not a
+       bug to route around. Almost every cue below is already inside a click. -->
+  <script>
+    window.cue = (() => {
+      // name: [wave, notes in Hz played in order, seconds per note, peak gain]
+      const VOICES = {
+        tick: ['square', [1200], 0.03, 0.05],
+        toggle: ['square', [800, 1200], 0.05, 0.05],
+        page: ['sine', [520, 780], 0.06, 0.05],
+        droplet: ['sine', [1480, 990], 0.07, 0.05],
+        success: ['sine', [880, 1320], 0.09, 0.06],
+        ready: ['sine', [660, 880, 1320], 0.09, 0.06],
+        sparkle: ['triangle', [1320, 1760, 2640], 0.05, 0.04],
+        error: ['sawtooth', [220, 165], 0.10, 0.05],
+        // The one that means "a pane is waiting on you", and the only one that has to carry across
+        // a room — so it is the longest and the loudest of them.
+        chime: ['sine', [880, 1174, 1568], 0.13, 0.08],
+      };
+      let ctx;
+      return name => {
+        const voice = VOICES[name];
+        if (!voice) return;
+        try {
+          ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+          if (ctx.state === 'suspended') ctx.resume();
+          const [wave, notes, dur, peak] = voice;
+          notes.forEach((hz, i) => {
+            const at = ctx.currentTime + i * dur;
+            const osc = ctx.createOscillator(), gain = ctx.createGain();
+            osc.type = wave;
+            osc.frequency.value = hz;
+            // Exponential and never to zero: a linear fade clicks at the end, and an exponential
+            // ramp to an actual 0 is undefined. 0.0001 is inaudible and legal.
+            gain.gain.setValueAtTime(0.0001, at);
+            gain.gain.exponentialRampToValueAtTime(peak, at + 0.008);
+            gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(at);
+            osc.stop(at + dur + 0.02);
+          });
+        } catch (e) { /* no audio on this device: not a reason to break the caller */ }
+      };
+    })();
   </script>
   <style>
     /* Dark is the product default, not the OS's. Light is opt-in from Settings and goes all the
@@ -47,6 +100,13 @@
       --shell: #7dcfff;
       --term-bg: #1a1b26;
       --term-text: #c0caf5;
+      /* Status dots (statusColor/shellColor and the two inline copies of their logic) are pure
+         fills with no text riding on them, so they carry none of the contrast obligations above
+         and can stay the saturated dark-theme hue in both themes — see the light override. */
+      --dot-green: var(--green);
+      --dot-red: var(--red);
+      --dot-orange: var(--orange);
+      --dot-shell: var(--shell);
     }
 
     /* Light holds two things the first cut got wrong. First, a card is *lighter* than the page in
@@ -73,11 +133,18 @@
       --blue: #2461da;
       --orange: #965904;
       --agent-claude: #b74208;
+      --agent-agy: #6a3ec4;
       --shell: #046fa0;
       /* Brightest surface in the theme, still a shade off white: the pane is what is being read,
          and it should sit forward of the shell around it without glaring. */
       --term-bg: #f5f6fa;
       --term-text: #2d3b76;
+      /* Kept at the dark theme's exact hue: a pure-fill dot has no text riding on it, so it has
+         none of the contrast floor the accents above are darkened for. */
+      --dot-green: #9ece6a;
+      --dot-red: #f7768e;
+      --dot-orange: #e0af68;
+      --dot-shell: #7dcfff;
     }
 
     * {
@@ -448,15 +515,23 @@
       flex-shrink: 0;
     }
 
+    /* An 8px disc fading to 40% is easy to miss at arm's length, so the beat is carried by size
+       as well. It breathes down and back rather than out: full size is the top of the range, so a
+       pulsing dot never reads larger than a still one beside it and the column of dots down the
+       left of the list keeps one diameter. Only transform and opacity animate, both
+       compositor-only — no layout, no repaint, and nothing beside it shifts. */
     .dot.pulse {
-      animation: pulse 2s infinite;
+      animation: pulse 1.4s ease-in-out infinite;
     }
 
 
     /* The colour already says "working"; the motion is emphasis on top of it, so it is the part
        that goes. Same bargain the armed Clear button's drain makes. */
     @media (prefers-reduced-motion: reduce) {
-      .dot.pulse {
+
+      .dot.pulse,
+      .chip.alert::after,
+      .agent-tab.alert::after {
         animation: none;
       }
     }
@@ -465,11 +540,13 @@
 
       0%,
       100% {
-        opacity: 1;
+        transform: scale(0.45);
+        opacity: 0.45;
       }
 
       50% {
-        opacity: 0.4;
+        transform: scale(1);
+        opacity: 1;
       }
     }
 
@@ -598,7 +675,9 @@
       height: 10px;
     }
 
-    .agent.blocked {
+    /* Blocked and done read the same here on purpose: both are a pane waiting on you, and the
+       card's own dot and section header already say which. */
+    .agent.attention {
       border-color: var(--red);
       background: color-mix(in srgb, var(--red) 5%, var(--surface));
     }
@@ -709,6 +788,42 @@
       border-radius: 50%;
       background: var(--red);
       border: 2px solid var(--bg);
+      /* Motion, because a chip strip is scanned rather than read and a static dot 8px across is
+         easy to scroll past. Slow and opacity-only — this can be on screen for a long time.
+         prefers-reduced-motion turns it off with everything else, below. */
+      animation: attention 1.6s ease-in-out infinite;
+    }
+
+    /* Same badge on the pane strip, which is the only place a backgrounded pane is visible while
+       a terminal is open. On the button and not the pill: the pill clips its own overflow to keep
+       long labels inside the 132px cap, and a badge on it would be cut in half. */
+    .agent-tab {
+      position: relative;
+    }
+
+    .agent-tab.alert::after {
+      content: '';
+      position: absolute;
+      top: 6px;
+      right: 1px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--red);
+      border: 2px solid var(--bg);
+      animation: attention 1.6s ease-in-out infinite;
+    }
+
+    @keyframes attention {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
     }
 
     .chip:active {
@@ -813,6 +928,7 @@
     .terminal-view.is-terminal #commandBtn,
     .terminal-view.is-terminal #micBtn,
     .terminal-view.is-terminal #menuStart,
+    .terminal-view.is-terminal #menuDuplicate,
     .terminal-view.is-terminal #termMenuPair,
     .terminal-view.is-terminal #menuPairPlace {
       display: none !important;
@@ -1050,6 +1166,31 @@
       flex: 1;
     }
 
+    /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
+       pointer-events:none because the text underneath stays scrollable while it shows. */
+    .term-loading {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 8px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      pointer-events: none;
+    }
+
+    /* The stale text is the *previous* pane's, and left at full strength it reads as this one's.
+       Dimming it is what makes the pill mean "not here yet" rather than "here, plus a badge".
+       Opacity only, so it costs a composite and not a repaint. */
+    .term-wrap.loading>.term-content {
+      opacity: 0.3;
+    }
+
     .ruler {
       position: absolute;
       top: 0;
@@ -1212,9 +1353,9 @@
     }
 
     /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. The row is a positioning context for the hide button,
-       which sits over its right edge rather than in the flow — otherwise it would count as a
-       third item and pull the pair off centre. */
+       never compete for the same line. The row is a positioning context for the fold button and
+       for Last, which sit over its left and right edges rather than in the flow — otherwise they
+       would count as extra items and pull the pair off centre. */
     .qa-nav {
       flex: 1 0 100%;
       position: relative;
@@ -1230,9 +1371,10 @@
     .quick-actions .qa-nav button.nav {
       flex: 0 1 140px;
       min-width: 96px;
-      /* Clear of the hide button at the right edge, so a wide thumb aimed at forward cannot
-         land on dismiss instead. */
-      max-width: calc(50% - 24px);
+      /* Clear of the fold button at the left edge and Last at the right, so a wide thumb aimed
+         at either arrow cannot land on the small control beyond it. Last carries a word rather
+         than a glyph, so the reserve is wider than the 24px a pair of circles wanted. */
+      max-width: calc(50% - 52px);
       padding: 2px 10px;
       line-height: 1.3;
       background: var(--surface);
@@ -1246,11 +1388,11 @@
       cursor: default;
     }
 
-    /* Deliberately small and quiet. Hiding the bar is a one-off, and the control for it sits
-       next to two buttons meant to be pressed constantly. */
-    .quick-actions .qa-nav button.qa-hide {
+    /* Deliberately small and quiet. Folding the composer away is a one-off, and the control for
+       it sits next to two buttons meant to be pressed constantly. */
+    .quick-actions .qa-nav button.qa-fold {
       position: absolute;
-      right: 0;
+      left: 0;
       top: 50%;
       transform: translateY(-50%);
       flex: 0 0 auto;
@@ -1264,6 +1406,35 @@
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 400;
+    }
+
+    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
+       pair pressed constantly. Sized to its word instead of to a circle, which is the only reason
+       the two rules are not one. */
+    .quick-actions .qa-nav button.qa-last {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      flex: 0 0 auto;
+      min-width: 0;
+      height: 22px;
+      padding: 0 9px;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
+    }
+
+    /* The v folds the whole composer stack away — the button rail, the text area, and whichever
+       dock is open — and leaves the quick actions bar itself on screen, so approvals and ‹ › stay
+       reachable while a long pane gets the height back. !important because each dock's open state
+       lives in its own inline `display`, which a plain class could not outrank. */
+    .terminal-view.dock-folded .term-input,
+    .terminal-view.dock-folded .term-keys {
+      display: none !important;
     }
 
     /* Every label that sits on an accent fill — these three, the armed keys, Send, Start, the
@@ -1730,6 +1901,19 @@
     </div>
 
     <div class="setting-group">
+      <label for="historyPick">Pane history</label>
+      <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
+        <option value="2000">2,000 lines</option>
+        <option value="5000">5,000 lines</option>
+        <option value="20000">20,000 lines</option>
+        <option value="50000">50,000 lines</option>
+      </select>
+      <div class="hint">How far back Load more will go. A pane opens on its last 200 lines whatever
+        this says, and only what you scroll up for is fetched. Past 1,000 lines the 3-second
+        refresh pauses while you read — scrolling back to the newest line makes it live again.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -1806,6 +1990,10 @@
             onclick="closeTermMenu(); togglePin(activePane)">Pin tab to front</button>
           <button class="menu-item" role="menuitem" id="menuStart" hidden
             onclick="closeTermMenu(); startInThisProject()">New session</button>
+          <!-- Another one of these, beside this one, without answering the dialog again.
+               renderTermMenuState names the agent and hides it when it cannot be started. -->
+          <button class="menu-item" role="menuitem" id="menuDuplicate" hidden
+            onclick="closeTermMenu(); duplicatePane()">Duplicate</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -1860,7 +2048,10 @@
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
     <div class="term-wrap" id="termWrap">
-      <div class="term-content" id="termContent">Loading…</div>
+      <div class="term-content" id="termContent"></div>
+      <!-- A pane opened a moment ago still holds the last one's text until its own first read
+           lands, so this hangs over the middle of the pane rather than replacing it. -->
+      <div class="term-loading" id="termLoading" hidden>Loading…</div>
       <div class="sel-band" id="selBand" hidden></div>
       <div class="ruler" id="ruler" hidden aria-hidden="true">
         <div class="ruler-handle" id="rulerTop" hidden></div>
@@ -2157,6 +2348,65 @@
       catch (e) { /* private mode: session-only */ }
     }
 
+    // --- Attention ---
+    //
+    // A pane is asking for you when it is blocked or done and you have not looked at it since.
+    // One predicate, because five surfaces signal it — the card, the hoist above the list, the
+    // Project/Space/Tab chips, the pane strip, and the browser tab — and a badge that disagrees
+    // with the list it points at is worse than no badge.
+    //
+    // Acked per *status*, not per pane. Opening a pane records what it was when you looked, so a
+    // pane that later moves to the other attention status raises the badge again. Per pane, a
+    // done agent would badge until it was restarted; per pane, a pane acked while blocked would
+    // stay silent when it finished.
+    const ACK_KEY = 'herdr_acked';
+    const ATTENTION = ['blocked', 'done'];
+    let acked = {};
+    try { acked = JSON.parse(localStorage.getItem(ACK_KEY)) || {}; } catch (e) { acked = {}; }
+
+    function needsAttention(a) {
+      return !!a && ATTENTION.includes(a.status) && acked[a.pane_id] !== a.status;
+    }
+    // Whether a pane arriving at `status` should be heard as well as seen. Not the pane you are
+    // watching with the tab in front of you — you can see it finish, and a sound for it is noise.
+    // Hidden is the distinction and not merely "is it open": a phone with the app backgrounded on
+    // that very pane is the case the sound exists for.
+    function shouldSound(paneId, status) {
+      return ATTENTION.includes(status) && !(paneId === activePane && !document.hidden);
+    }
+    function attentionCount() { return agents.filter(needsAttention).length; }
+
+    function saveAcked() {
+      try { localStorage.setItem(ACK_KEY, JSON.stringify(acked)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+    // Looking at a pane is what clears it. Called from openTerminal rather than from a timer or a
+    // scroll, because opening is the only unambiguous "I have seen this".
+    function ackPane(paneId) {
+      const a = agents.find(x => x.pane_id === paneId);
+      if (!a || acked[paneId] === a.status) return;
+      acked[paneId] = a.status;
+      saveAcked();
+    }
+    // An ack only ever means "this is the status I looked at", so it is dropped the moment the
+    // pane is no longer in it. That covers two things at once:
+    //
+    // - A pane that went back to work and finished again is a new thing to look at. Without this
+    //   the second `done` is indistinguishable from the first and stays silent.
+    // - A pane herdr no longer reports. Without this the map grows for the life of the browser
+    //   profile, and a recycled pane ID would arrive pre-acked — silently, which is the bad half.
+    //
+    // Called from render rather than from the snapshot handler, because agent_update merges a
+    // single pane without one and that merge is exactly when a badge is owed.
+    function syncAcked(live) {
+      const status = new Map(live.map(a => [a.pane_id, a.status]));
+      let dropped = false;
+      for (const [id, was] of Object.entries(acked)) {
+        if (status.get(id) !== was) { delete acked[id]; dropped = true; }
+      }
+      if (dropped) saveAcked();
+    }
+
     // How recently a pane moved, in the three bands the colours are drawn from. One function so
     // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
     function activityBucket(paneId) {
@@ -2174,11 +2424,11 @@
     // attention. Amber is now what it says: idle, somewhere between five minutes and an hour.
     // Muted is cold, and blocked outranks all of it.
     function statusColor(a) {
-      if (a.status === 'blocked') return 'var(--red)';
-      if (a.status === 'working') return 'var(--green)';
+      if (a.status === 'blocked') return 'var(--dot-red)';
+      if (a.status === 'working') return 'var(--dot-green)';
       const bucket = activityBucket(a.pane_id);
-      if (bucket === 'live') return 'var(--green)';
-      if (bucket === 'idle') return 'var(--orange)';
+      if (bucket === 'live') return 'var(--dot-green)';
+      if (bucket === 'idle') return 'var(--dot-orange)';
       return 'var(--muted)';
     }
 
@@ -2188,9 +2438,9 @@
     // the time: a strip of grey dots would have thrown the identity away to say nothing.
     function shellColor(paneId) {
       const bucket = activityBucket(paneId);
-      if (bucket === 'live') return 'var(--green)';
-      if (bucket === 'idle') return 'var(--orange)';
-      return 'var(--shell)';
+      if (bucket === 'live') return 'var(--dot-green)';
+      if (bucket === 'idle') return 'var(--dot-orange)';
+      return 'var(--dot-shell)';
     }
     let activeWorkspace = null;
     let activeTab = null;
@@ -2547,8 +2797,11 @@
       // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
       // built with until something else happens to rebuild the strip. The band and not a boolean:
       // there are two thresholds now, and a boolean would sit still across the first of them.
+      // The badge is in the signature too, or acking a pane leaves its dot on the strip until
+      // something else happens to rebuild it.
       const sig = live.map(a =>
-        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}`).join(' /// ');
+        `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}` +
+        ` | ${needsAttention(a) ? '!' : '-'}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
@@ -2558,7 +2811,7 @@
           // merely green there says "recent" just as loudly as it says "running now".
           const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
           const pulse = a.status === 'working' ? ' pulse' : '';
-          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
+          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${needsAttention(a) ? ' alert' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
@@ -2794,7 +3047,7 @@
     // connection stays visible on mobile where the app header is hidden. The dot carries the
     // whole signal — the text beside it said the same thing twice and cost tab room.
     function setStatus(s) {
-      const color = s === 'connected' ? 'var(--green)' : s === 'connecting' ? 'var(--orange)' : 'var(--red)';
+      const color = s === 'connected' ? 'var(--dot-green)' : s === 'connecting' ? 'var(--dot-orange)' : 'var(--dot-red)';
       const label = s === 'connected' ? 'Connected' : s === 'connecting' ? 'Connecting…' : 'Offline';
       document.querySelectorAll('.status-dot').forEach(d => {
         d.style.background = color;
@@ -2872,15 +3125,20 @@
       }
       else if (msg.type === 'agents') {
         // Track timeline on status changes
+        let ring = false;
         for (const a of msg.agents) {
           const prev = prevStatuses[a.pane_id];
           if (prev && prev !== a.status) {
             timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
             if (timeline.length > 100) timeline.pop();
             noteActivity(a.pane_id);
+            if (shouldSound(a.pane_id, a.status)) ring = true;
           }
           prevStatuses[a.pane_id] = a.status;
         }
+        // Once per snapshot, however many panes moved: a herd that all stop on the same poll is
+        // one event to the person hearing it, not a chord.
+        if (ring && window.cue) cue('chime');
         agents = msg.agents;
         // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
         // has to read as "no terminals" rather than crash the next .filter.
@@ -2915,6 +3173,14 @@
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();
           noteActivity(update.pane_id);
+          if (shouldSound(update.pane_id, update.status) && window.cue) cue('chime');
+          // A status change is the one thing that says the pane's text is about to be worth
+          // re-reading, and it arrives here rather than being asked for — the relay polls herdr on
+          // its own and pushes this. Reading now instead of waiting for the next tick is what
+          // keeps an agent that woke up locally feeling live while idle panes are polled slowly.
+          // Not while a deep read is on screen: scrollback does not change, and re-fetching tens
+          // of thousands of lines is exactly what POLL_MAX_LINES exists to stop.
+          if (update.pane_id === activePane && paneLines <= POLL_MAX_LINES) refreshPane();
         }
         prevStatuses[update.pane_id] = update.status;
         render();
@@ -2924,7 +3190,8 @@
         const a = agents.find(x => x.pane_id === msg.pane_id);
         if (a) { a.status = 'blocked'; a.prompt = msg.prompt; a.options = msg.options; }
         else agents.push({ ...msg, status: 'blocked' });
-        if (window.cue) cue('chime');
+        // No chime here. The relay broadcasts the snapshot before this message, so the transition
+        // into blocked has already been heard — sounding it again was two chimes for one event.
         noteActivity(msg.pane_id);
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
@@ -2948,6 +3215,7 @@
         // whole reason this field read the current time no matter which pane you switched to.
         if (!paneTextPrimed) {
           paneTextPrimed = true;
+          syncPaneLoading();  // this read is the one the pill was waiting for
         } else if (next !== el.textContent) {
           paneStampAt = new Date();
           noteActivity(activePane);
@@ -2967,11 +3235,44 @@
     }
 
     function render() {
+      syncAcked(agents.concat(shells));   // before anything reads needsAttention
+      // The pane on screen, in front of you, is by definition one you have looked at — including
+      // after it changes status while open. Gated on visibility rather than on activePane alone:
+      // a backgrounded tab sitting on the pane that just finished is exactly the case the badge
+      // and the chime exist for, and acking it there would swallow both.
+      if (activePane && !document.hidden) ackPane(activePane);
       renderStatusBar();
       renderPairStrip();  // pair health is recomputed from every snapshot, never cached
       renderBody();
       renderRecents();
       renderAgentTabs();
+      syncBrowserTab();
+    }
+
+    // Coming back to the tab is looking at it: a pane that finished while you were away has been
+    // seen the moment you return to it, and the title has to drop the count with it.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+
+    // The browser tab, which is the only surface that reaches you when the app is not on screen —
+    // another tab, another window, a phone with the PWA in the background. Everything else in this
+    // file signals inside a page nobody is looking at.
+    //
+    // A count and a colour rather than a flashing title: a title that alternates is unreadable in
+    // the tab strip and reads as spam, and browsers truncate it to a few characters anyway, which
+    // is why the favicon carries the same signal on its own.
+    const TAB_TITLE = 'herdr-remote';
+    const favicon = fill => 'data:image/svg+xml,' + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">` +
+      `<rect width="16" height="16" rx="4" fill="#1a1b26"/>` +
+      `<circle cx="8" cy="8" r="4.5" fill="${fill}"/></svg>`);
+    function syncBrowserTab() {
+      const n = attentionCount();
+      document.title = n ? `(${n}) ${TAB_TITLE}` : TAB_TITLE;
+      const el = document.getElementById('favicon');
+      // Hex and not var(--red): this is an SVG in a data: URI, which resolves no custom property
+      // from the page. The two are the dark theme's --red and --blue.
+      const href = favicon(n ? '#f7768e' : '#7aa2f7');
+      if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 
     // One insertion point for all three paths below: each writes #agents itself, and a Terminals
@@ -3010,17 +3311,17 @@
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
-        const hasBlocked = list.some(a => a.status === 'blocked');
-        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
+        const waiting = list.some(needsAttention);
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
       }
       html += `</div>`;
       if (activeProject === null) {
         html += projects.map(projectCard).join('');
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
-        // is now one. Blocked are already hoisted to the top, so they are not repeated here.
-        const rest = agents.filter(a => a.status !== 'blocked');
-        if (rest.length) html += section('Agents', 'var(--muted)', rest);
+        // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
+        const rest = agents.filter(a => !needsAttention(a));
+        if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
           // + New terminal only when the relay says both of open_terminal's gates are open —
@@ -3034,18 +3335,18 @@
         // Terminals below it kept a heading. It gets a separator of its own, saying why it is
         // empty in the header rather than under it.
         const mine = agents.filter(a => a.project_id === activeProject);
-        html += mine.length ? layoutHtml(mine) : section('Agents', 'var(--muted)', [], 'No sessions');
+        html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
     }
 
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
-      const blocked = list.filter(a => a.status === 'blocked').length;
-      const color = blocked ? 'var(--red)' : list.length ? 'var(--green)' : 'var(--muted)';
+      const waiting = list.filter(needsAttention).length;
+      const color = waiting ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
       const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
       const meta = list.length
-        ? `${list.length} session${list.length > 1 ? 's' : ''}${blocked ? ` · ${blocked} blocked` : ''}`
+        ? `${list.length} session${list.length > 1 ? 's' : ''}${waiting ? ` · ${waiting} needs you` : ''}`
         : 'No sessions';
       // Available on every Project card, including one with zero live sessions.
       const start = startOptions
@@ -3060,10 +3361,10 @@
     }
 
     function hoistHtml(list) {
-      const blocked = list.filter(a => a.status === 'blocked');
-      if (!blocked.length) return '';
-      return `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`
-        + blocked.map(a => agentCard(a)).join('');
+      const waiting = list.filter(needsAttention);
+      if (!waiting.length) return '';
+      return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
+        + waiting.map(a => agentCard(a)).join('');
     }
 
     // Native workspace/tab navigation over `list` — all agents, or one Project's.
@@ -3079,9 +3380,9 @@
         html += `<button class="chip${activeWorkspace === null ? ' active' : ''}" onclick="backToWorkspaces()">All</button>`;
         for (const wsId of workspaces) {
           const wsAgents = list.filter(a => a.workspace_id === wsId);
-          const hasBlocked = wsAgents.some(a => a.status === 'blocked');
+          const waiting = wsAgents.some(needsAttention);
           const name = wsAgents[0]?.project || wsId.slice(0, 8);
-          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
         }
         html += `</div>`;
         // Tab chip strip (always show when workspace selected)
@@ -3093,37 +3394,42 @@
           }
           wsTabs.forEach((tid, i) => {
             const tabAgents = list.filter(a => a.tab_id === tid);
-            const hasBlocked = tabAgents.some(a => a.status === 'blocked');
+            const waiting = tabAgents.some(needsAttention);
             const tabLabel = tabAgents[0]?.label || 'Tab ' + (i + 1);
-            html += `<button class="chip${activeTab === tid ? ' active' : ''}${hasBlocked ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+            html += `<button class="chip${activeTab === tid ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
           });
           html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
           html += `</div>`;
         }
       }
-      // Agent list (filtered). Blocked are already hoisted above.
-      let filtered = list;
+      // Agent list (filtered). Whatever needs you is already hoisted above, so it is dropped here
+      // rather than repeated — a done agent would otherwise appear in Needs you and in Done.
+      let filtered = list.filter(a => !needsAttention(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
       const done = filtered.filter(a => a.status === 'done');
       const idle = filtered.filter(a => a.status === 'idle' || a.status === 'unknown');
-      if (working.length) html += section('Working', 'var(--green)', working);
-      if (done.length) html += section('Done', 'var(--muted)', done);
-      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      if (working.length) html += section('Working', working);
+      if (done.length) html += section('Done', done);
+      if (idle.length) html += section('Idle', idle);
       return html;
     }
 
     function renderAgentList(list) {
-      const blocked = list.filter(a => a.status === 'blocked');
-      const working = list.filter(a => a.status === 'working');
-      const done = list.filter(a => a.status === 'done');
-      const idle = list.filter(a => a.status === 'idle' || a.status === 'unknown');
-      let html = '';
-      if (blocked.length) html += section('Blocked', 'var(--red)', blocked);
-      if (working.length) html += section('Working', 'var(--green)', working);
-      if (done.length) html += section('Done', 'var(--muted)', done);
-      if (idle.length) html += section('Idle', 'var(--muted)', idle);
+      // Same rule as layoutHtml: the hoist owns whatever needs you, and the sections below get
+      // what is left. Blocked no longer needs a section of its own — an unacked blocked pane is
+      // in the hoist, and an acked one is one you have already looked at.
+      const rest = list.filter(a => !needsAttention(a));
+      const blocked = rest.filter(a => a.status === 'blocked');
+      const working = rest.filter(a => a.status === 'working');
+      const done = rest.filter(a => a.status === 'done');
+      const idle = rest.filter(a => a.status === 'idle' || a.status === 'unknown');
+      let html = hoistHtml(list);
+      if (blocked.length) html += section('Blocked', blocked);
+      if (working.length) html += section('Working', working);
+      if (done.length) html += section('Done', done);
+      if (idle.length) html += section('Idle', idle);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }
@@ -3158,6 +3464,11 @@
 
     // A session the relay just started, waiting for the poll to catch up so it can be opened.
     let pendingStart = null;
+    // What the next successful start was asked for, when it was asked for from inside a pane:
+    // 'open' to land in it regardless, {pair: paneId} to come back to the pair dialog with it
+    // chosen. null — every other route in — keeps the old deferring behaviour. Set at request
+    // time and cleared when it is acted on, so an abandoned dialog cannot claim a later start.
+    let startIntent = null;
 
     function openPendingStart() {
       if (!pendingStart) return;
@@ -3168,9 +3479,57 @@
       // Cleared before opening, not after: openTerminal can throw on a half-rendered snapshot,
       // and a pending id that survives that would reopen the pane on every poll from then on.
       pendingStart = null;
+      const intent = startIntent;
+      startIntent = null;
+      // The pair dialog reopens on the pane it was left from, with the session that was started
+      // for it already chosen — the name and the replace warning are still the user's to confirm.
+      // Only while the pane that asked is still live — a pair cannot be made against a pane that
+      // has since exited, and the new session is better opened than left nowhere.
+      if (intent && intent.pair && agents.some(x => x.pane_id === intent.pair)) {
+        openPairDialog(intent.pair);
+        choosePartner(a.pane_id);
+        return;
+      }
       // Never over a pane the user has since opened themselves — the start was a while ago in
       // phone terms, and yanking them out of what they are reading is worse than not landing.
-      if (!activePane) openTerminal(a.pane_id);
+      // Unless the start was a Duplicate, which is a request made from that very pane.
+      if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+    }
+
+    // A pane does not carry the role it was started with — herdr reports labels — so it is read
+    // back off the label, which the relay derives from the role ("Architect 1"). A pane renamed
+    // since falls back to the first role, the same one the dialog would have opened on.
+    function roleOf(a) {
+      const roles = (startOptions && startOptions.roles) || [];
+      const first = String(a.label || '').split(' ')[0].toLowerCase();
+      return roles.includes(first) ? first : roles[0];
+    }
+
+    // Can this pane be duplicated: the relay must be willing to start, the Project must be known,
+    // and the agent must be one it will start. A pane running something outside the allowlist
+    // would only earn an "agent not in allowlist" refusal, so the item is absent rather than dead.
+    function canDuplicate(a) {
+      return !!(a && a.agent && a.project_id && startOptions &&
+        (startOptions.agents || []).includes(a.agent) && roleOf(a));
+    }
+
+    // Same harness, same Project, same tab, no dialog. Everything the dialog would have asked is
+    // answered from the pane it was asked from — which is the whole point of the item.
+    function duplicatePane() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      if (!ws || !canDuplicate(a)) return;
+      const tab = !!a.workspace_id;
+      const msg = {
+        type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
+        // Beside it, so a duplicate lands where the pane it came from is. A pane whose workspace
+        // the snapshot does not name has nowhere to be beside, and gets its own.
+        placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
+      };
+      if (tab) msg.workspace_id = a.workspace_id;
+      // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
+      // "Architect 2" rather than as a second pane with the same name.
+      startIntent = 'open';
+      ws.send(JSON.stringify(msg));
     }
 
     // Spawn into the Project the open pane belongs to, without going back to the list to find
@@ -3199,6 +3558,9 @@
     function openStartDialog(projectId, ev, mode) {
       if (ev) ev.stopPropagation();
       if (!startOptions) return;
+      // Every route into the dialog clears it; startAndPair sets it back after opening. An
+      // abandoned pair-and-start must not attach itself to whatever is started next.
+      startIntent = null;
       startMode = mode === 'terminal' ? 'terminal' : 'agent';
       const terminal = startMode === 'terminal';
       if (terminal && !startOptions.terminal) return;
@@ -3231,6 +3593,10 @@
     function closeStart() {
       document.getElementById('startSheet').style.display = 'none';
       startProjectId = null;
+      // Cleared here, not only on open: the field is read back when the relay reports the name it
+      // actually used, and a start made without the dialog — a Duplicate — would otherwise be
+      // compared against whatever the last dialog was left holding.
+      document.getElementById('startName').value = '';
     }
 
     // New tab lists this Project's live workspaces; Split lists its live panes. Neither is
@@ -3369,7 +3735,7 @@
       if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
       // Same section header and same cards as the list above, so a recent reads as the session it
       // is rather than as a second kind of thing.
-      el.innerHTML = `<div class="section-header"><span class="dot" style="background:var(--blue)"></span>Recents</div>`
+      el.innerHTML = `<div class="section-header">Recents</div>`
         + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('');
       el.style.display = '';
     }
@@ -3769,6 +4135,10 @@
       const can = !!(a && a.project_id && startOptions);
       start.hidden = !can;
       if (can) start.textContent = `New session in ${a.project || a.project_id}`;
+      const dup = document.getElementById('menuDuplicate');
+      // Names the harness, because "Duplicate" alone reads as copying the pane's text.
+      dup.hidden = !canDuplicate(a);
+      if (!dup.hidden) dup.textContent = `Duplicate this ${a.agent}`;
     }
 
     // Says what the strip is currently hiding, because a tab bar that is missing a pane and does
@@ -3899,8 +4269,15 @@
       const box = document.getElementById('pairCandidates');
       const submit = document.getElementById('pairSubmit');
       const candidates = pairCandidates(agents, pairSource);
+      // The way out of "there is nobody to pair with": start the partner from here. Offered
+      // alongside a full list too — the partner wanted is often one that does not exist yet.
+      // Gated on the dialog being usable at all, not on this pane's agent: which agent the new
+      // session runs is answered in that dialog, not inherited from here.
+      const spawn = (startOptions && pairSource.project_id)
+        ? `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-top:6px" onclick="startAndPair()">+ Start a session and pair with it</button>`
+        : '';
       if (!candidates.length) {
-        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>`;
+        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>` + spawn;
         submit.disabled = true;
         return;
       }
@@ -3912,8 +4289,20 @@
           const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
           const on = pairPartner && pairPartner.pane_id === a.pane_id;
           return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
-        }).join('');
+        }).join('') + spawn;
       submit.disabled = !pairPartner;
+    }
+
+    // A pair needs a second live pane and there is not always one. Hands off to the start dialog —
+    // same fields, same validation — and comes back here with the new session chosen as the
+    // partner once the poll has seen it, so the pair is two taps rather than a round trip through
+    // the Projects list.
+    function startAndPair() {
+      if (!pairSource || !startOptions || !pairSource.project_id) return;
+      const source = pairSource.pane_id, project = pairSource.project_id;
+      closePair();
+      openStartDialog(project);   // clears startIntent, so it is set after
+      startIntent = { pair: source };
     }
 
     function choosePartner(paneId) {
@@ -4220,7 +4609,7 @@
       // the path, where it is the same width every time and the list reads as a column. The dot
       // to the left is untouched — it is the live status, and the emoji only says what kind of
       // pane this is, which is why the two do not share a column.
-      return `<div class="agent${a.status === 'blocked' ? ' blocked' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+      return `<div class="agent${needsAttention(a) ? ' attention' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${needsAttention(a) ? ', needs you' : ''}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
     <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
@@ -4230,8 +4619,8 @@
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
     // kept on screen with nothing under it has to say why in the only row it has.
-    function section(title, color, list, note) {
-      return `<div class="section-header"><span class="dot" style="background:${color}"></span>${title}` +
+    function section(title, list, note) {
+      return `<div class="section-header">${title}` +
         (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
         list.map(a => agentCard(a)).join('');
     }
@@ -4254,7 +4643,7 @@
     function terminalsHtml() {
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
       if (!list.length) return '';
-      return `<div class="section-header"><span class="dot" style="background:var(--shell)"></span>Terminals</div>`
+      return `<div class="section-header">Terminals</div>`
         + list.map(terminalCard).join('');
     }
 
@@ -4298,12 +4687,20 @@
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
       renderAgentTabs();  // the tab for this pane has to read as active straight away
+      // Looking at a pane is what clears its badge — see needsAttention — and that badge is on the
+      // list, the chips, the strip and the browser tab, so clearing it is a full render. After the
+      // strip has been laid out and not before: a render while it is still display:none would
+      // claim the active tab without being able to centre it, and the call above would then have
+      // nothing left to do.
+      ackPane(paneId);
+      render();
       // Seeded from lastSeen rather than blanked: that map is stamped for *every* pane on a status
       // transition, not only the open one, so a pane that blocked twenty minutes ago while you were
       // elsewhere can say so the moment it opens. Blank only for a pane this device has never seen
       // move. The first content read must not overwrite it — see paneTextPrimed.
       paneStampAt = lastSeen[paneId] ? new Date(lastSeen[paneId]) : null;
       paneTextPrimed = false;
+      syncPaneLoading();   // after the flag, which is the thing it reads
       paneCols = null;     // and its column count is not this one's either
       paneText = ''; paneRows = [];  // nor are its lines, which a stale selection would re-anchor into
       clearSel();
@@ -4318,11 +4715,12 @@
       disarmShortcut();
       disarmCtrl();
       refreshPane();
-      refreshInterval = setInterval(refreshPane, 3000);
+      refreshInterval = setInterval(() => refreshPane(true), 3000);
     }
 
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
+      syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
       disarmClear();
       disarmQuit();
       disarmShortcut();
@@ -4402,6 +4800,38 @@
       input.spellcheck = !shell;
     }
 
+    // Whether the composer stack is folded away. Open by default, and remembered: someone reading
+    // long panes on a phone folds it once, not once per pane.
+    const DOCK_KEY = 'herdr_bottom_dock';
+    function bottomDockOpen() { return localStorage.getItem(DOCK_KEY) !== 'folded'; }
+
+    function toggleBottomDock() {
+      try { localStorage.setItem(DOCK_KEY, bottomDockOpen() ? 'folded' : 'open'); }
+      catch (e) { /* private mode: session-only */ }
+      syncBottomDock();
+      renderQuickActions();  // the v has to become a ^, and vice versa
+    }
+
+    // Jump to the newest line. It also puts the pane back to following the tail: the scroll
+    // handler recomputes userScrolledUp from where this lands, so one assignment does both.
+    // Reading backscroll is what pins the pane, and thumbing back down a long one is real work.
+    function scrollPaneToBottom() {
+      const el = document.getElementById('termContent');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // paneTextPrimed is already exactly "this pane has not delivered its own text yet" — it exists
+    // so the first read does not overwrite the opening timestamp — so the wait needs no second flag.
+    function syncPaneLoading() {
+      const waiting = !!activePane && !paneTextPrimed;
+      document.getElementById('termLoading').hidden = !waiting;
+      document.getElementById('termWrap').classList.toggle('loading', waiting);
+    }
+
+    function syncBottomDock() {
+      document.getElementById('terminalView').classList.toggle('dock-folded', !bottomDockOpen());
+    }
+
     function toggleQuickActions() {
       try { localStorage.setItem(QA_KEY, quickActionsOn() ? 'off' : 'on'); }
       catch (e) { /* private mode: session-only */ }
@@ -4426,17 +4856,25 @@
       if (!activePane) { qa.innerHTML = ''; return; }
       const a = agents.find(x => x.pane_id === activePane);
       const blocked = a && a.status === 'blocked';
+      // The nav row carries the fold control, so it also has to survive the bar being switched
+      // off — folded with an empty bar would leave no way back to the composer.
+      const showNav = quickActionsOn() || !bottomDockOpen();
       // An approval prompt is not a quick action the user chose to hide. Turning the bar off
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
-      if (!blocked && !quickActionsOn()) { qa.innerHTML = ''; return; }
+      if (!blocked && !showNav) { qa.innerHTML = ''; return; }
       const nav = (step, glyph, label) =>
         `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
         `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      const open = bottomDockOpen();
       const navRow = `<div class="qa-nav">${nav(-1, '‹', 'Previous session')}` +
         `${nav(1, '›', 'Next session')}` +
-        `<button class="qa-hide" onclick="toggleQuickActions()" title="Hide this bar — turn it ` +
-        `back on from the pane menu" aria-label="Hide quick actions bar">✕</button></div>`;
+        `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
+        `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
+        `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
+        `${open ? 'v' : '^'}</button>` +
+        `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
+        `aria-label="Jump to the newest line">Last</button></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
@@ -4449,16 +4887,70 @@
       }
       // Approvals first and on their own line, nav underneath: the row order is what puts the
       // thing that needs answering closest to the terminal it is about.
-      qa.innerHTML = middle + (quickActionsOn() ? navRow : '');
+      qa.innerHTML = middle + (showNav ? navRow : '');
     }
 
     let paneLines = 200;
     // Which end of the pane is being read. 'visible' is the live frame and nothing behind it,
     // which is what Clear screen leaves behind; anything that asks for more history puts it back.
     let paneSource = 'recent-unwrapped';
-    function refreshPane() {
-      if (ws && activePane) ws.send(JSON.stringify(
-        { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+
+    // How deep Load more is allowed to go. Not how much a pane opens on — that stays 200, because
+    // it is paid on every pane switch. Only the ceiling moves, because the depth reached is then
+    // re-read every 3 seconds for as long as the pane is open: this is a standing cost, not a
+    // one-off fetch, and the browser keeps no history of its own to fall back on. The relay
+    // clamps it again at READ_LINES_MAX regardless of what is stored here.
+    const HISTORY_KEY = 'herdr_pane_history';
+    const HISTORY_MAX = [2000, 5000, 20000, 50000], HISTORY_DEFAULT = 5000;
+    function paneHistoryMax() {
+      const v = parseInt(localStorage.getItem(HISTORY_KEY), 10);
+      return HISTORY_MAX.includes(v) ? v : HISTORY_DEFAULT;
+    }
+    // A tenth of the ceiling, so reaching a deep one does not take fifty taps. 500 at the default,
+    // which is the step this had before the ceiling was adjustable.
+    function historyStep() { return Math.max(500, Math.round(paneHistoryMax() / 10)); }
+
+    function setPaneHistoryMax(v) {
+      const n = parseInt(v, 10);
+      try { localStorage.setItem(HISTORY_KEY, HISTORY_MAX.includes(n) ? n : HISTORY_DEFAULT); }
+      catch (e) { /* private mode: session-only */ }
+      document.getElementById('historyPick').value = String(paneHistoryMax());
+      // Lowering it while a deeper read is on screen: the next poll comes back at the new ceiling
+      // rather than holding the old depth until the pane is closed.
+      if (paneLines > paneHistoryMax()) { paneLines = paneHistoryMax(); refreshPane(); }
+    }
+    // Above this depth the 3s poll stops, and only reads the user asks for are sent. Scrollback
+    // does not change — a deep read is a picture of the past, and re-fetching tens of thousands
+    // of lines every three seconds to redraw the same text is a standing cost on the relay, on
+    // any SSH hop, and on a phone's radio. Coming back to the tail turns it live again.
+    const POLL_MAX_LINES = 1000;
+    // How often the open pane is re-read, by what it is doing. A working agent's pane changes
+    // between one tick and the next; an idle one does not change at all until something is sent
+    // to it, and reading it twenty times a minute was most of what the relay did at rest. Safe to
+    // back off because the status itself does not come from here — the snapshot broadcast carries
+    // it on its own poll, so the tick after an agent starts working is already the fast one.
+    // Anything that is not plainly idle keeps the fast cadence: blocked is about to be answered,
+    // unknown means the status is not to be trusted, and a terminal has none at all.
+    const POLL_MS = 3000, IDLE_POLL_MS = 12000;
+    let lastPaneRead = 0;
+    function paneIsIdle() {
+      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      return !!a && a.status === 'idle';
+    }
+    // auto=true is the interval. Every other caller — the refresh button, Load more, a key that
+    // was just sent — is a read someone asked for and is never skipped.
+    function refreshPane(auto) {
+      if (auto) {
+        if (paneLines > POLL_MAX_LINES) return;
+        // Slack, because the tick that lands 4ms early is the same tick: without it an idle pane
+        // on a 12s gap and a 3s timer waits 15.
+        if (Date.now() - lastPaneRead < (paneIsIdle() ? IDLE_POLL_MS : POLL_MS) - 250) return;
+      }
+      if (ws && activePane) {
+        lastPaneRead = Date.now();
+        ws.send(JSON.stringify(
+          { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+      }
     }
 
     // --- Slots ---
@@ -4545,7 +5037,7 @@
     // Asking for history is what takes the pane back off the live frame Clear screen left it on.
     function loadMore() {
       paneSource = 'recent-unwrapped';
-      paneLines = Math.min(paneLines + 500, 5000);
+      paneLines = Math.min(paneLines + historyStep(), paneHistoryMax());
       refreshPane();
     }
     function sendText() {
@@ -4845,7 +5337,11 @@
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
       drawSel();  // the band lives outside the scroller, so it has to be re-placed by hand
-      if (el.scrollTop === 0 && paneLines < 5000) loadMore();
+      if (el.scrollTop === 0 && paneLines < paneHistoryMax()) loadMore();
+      // Back at the tail after reading history: the pane goes live again, at the depth it opens
+      // on. A frozen tail is worse than fetching the history a second time, and the history is
+      // one scroll up either way.
+      if (!userScrolledUp && paneLines > POLL_MAX_LINES) { paneLines = 200; refreshPane(); }
     });
 
     if (savedUrl) setTimeout(connect, 100); else showSetup();
@@ -5085,7 +5581,9 @@
     applyWrapMode();
     placePairStrip();
     syncQaBtn();
+    syncBottomDock();
     setDictationEnabled(dictationOn());  // hidden unless asked for, and where there is no speech recognition
+    document.getElementById('historyPick').value = String(paneHistoryMax());
     loadTermShortcuts();
     syncPromptsBtn();  // no pane is open yet, so this labels the button for an agent
   </script>

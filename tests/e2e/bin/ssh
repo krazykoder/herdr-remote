@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Fake ssh: strips -o flags, treats the next arg as the host, execs the rest locally."""
+"""Fake ssh: strips -o flags, treats the next arg as the host, runs the rest locally.
+
+Through a shell, because that is what ssh does: it has no argv to hand the far side, so it
+concatenates everything after the host and the remote login shell parses the result. A fixture
+that exec'd the arguments directly would quietly make the relay's quoting untestable — and it is
+the difference between a pane label with a space in it working and a client owning the host.
+"""
 import os, sys
 
 args = sys.argv[1:]
@@ -7,4 +13,4 @@ while args and args[0] == "-o":
     args = args[2:]
 host, cmd = args[0], args[1:]
 os.environ["HERDR_FAKE_HOST"] = host
-os.execv(cmd[0], cmd)
+os.execv("/bin/sh", ["/bin/sh", "-c", " ".join(cmd)])

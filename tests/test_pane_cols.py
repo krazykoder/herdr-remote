@@ -61,6 +61,13 @@ class PaneColsTests(unittest.TestCase):
         run.assert_called_once_with("pane", "read", "w11:p2", "--lines", "12",
                                     "--source", "recent", remote=None)
 
+    def test_the_sample_is_capped_however_deep_the_read_goes(self):
+        # A deep read is the client asking for history; the wrap column is a property of the pane
+        # now. Sampling all of it would cost a second full read per request — over SSH, every few
+        # seconds — to answer with the width the pane used to be.
+        _, run = self.cols(wrapped(87, 4), lines=20000)
+        self.assertEqual(run.call_args.args[4], str(herdr_relay.COLS_SAMPLE_LINES))
+
     def test_reads_the_wrapped_source_not_the_unwrapped_one(self):
         # recent-unwrapped drops the very breaks being measured; it would report the longest
         # logical line the agent wrote, which is unbounded by the pane.
