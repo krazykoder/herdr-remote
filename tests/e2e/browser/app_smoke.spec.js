@@ -50,6 +50,21 @@ test('opening a pane reads it, and going back leaves the list', async ({page}) =
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
 });
 
+test('a notification opens its pane in a fresh or focused app', async ({page}) => {
+  await page.goto('/?pane=w1:p1');
+  await expect(page.locator(R('termContent'))).toContainText('pane w1:p1');
+  await expect(page).not.toHaveURL(/pane=/);
+
+  await page.locator('.term-header .back').click();
+  // On navigator.serviceWorker, because that is where a service worker's postMessage lands. A
+  // window.dispatchEvent here would pass against a listener no real browser ever calls.
+  await page.evaluate(() => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', {
+    data: {type: 'navigate', url: location.origin + '/?pane=w1:p1'},
+  })));
+  await expect(page.locator(R('termContent'))).toContainText('pane w1:p1');
+  await expect(page).not.toHaveURL(/pane=/);
+});
+
 test('switching panes does not leave the first pane’s text behind', async ({page}) => {
   // The fake herdr writes each pane's own id into its output, so a stale paint is visible rather
   // than indistinguishable. This is the failure that made the harness worth having.
