@@ -66,6 +66,21 @@ test('the sheet lists the live agents, and out of the box changes nothing', asyn
   expect(await cards(page), 'opening and closing is not a change').toEqual(GROUPED);
 });
 
+test('rows identify agents and terminals without making the second line compete with the name', async ({page}) => {
+  await openSheet(page);
+  const agent = rows(page).filter({hasText: 'Architect 1'});
+  const terminal = rows(page).filter({hasText: 'build watch'});
+  await expect(agent.locator('.kind')).toHaveText('🤖');
+  await expect(agent.locator('.meta .badge')).toHaveText('claude');
+  await expect(terminal.locator('.kind')).toHaveText('⬛');
+  await expect(terminal.locator('.meta')).toContainText('charts/relay');
+  const sizes = await agent.evaluate(el => [
+    parseFloat(getComputedStyle(el.querySelector('.name')).fontSize),
+    parseFloat(getComputedStyle(el.querySelector('.meta')).fontSize),
+  ]);
+  expect(sizes[1], 'metadata is smaller than the pane name').toBeLessThan(sizes[0]);
+});
+
 test('dragging a row to the top reorders the main page, and it survives a reload', async ({page}) => {
   await openSheet(page);
   await drag(page, 2, 0);              // amp, to the front

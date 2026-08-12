@@ -1058,7 +1058,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      height: 44px;
+      height: 52px;
       padding: 0 16px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
@@ -1097,13 +1097,39 @@
       cursor: grab;
     }
 
-    .order-row .name {
+    .order-row .kind {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+    }
+
+    .order-row .info {
       flex: 1;
       min-width: 0;
-      font-size: 0.85rem;
+    }
+
+    .order-row .name,
+    .order-row .meta {
+      display: block;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .order-row .name {
+      font-size: 0.85rem;
+      line-height: 1.25;
+    }
+
+    .order-row .meta {
+      min-height: 16px;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.67rem;
+      line-height: 1.2;
+    }
+
+    .order-row .meta .badge {
+      font-size: 0.58rem;
     }
 
     .agent .project {
@@ -5521,11 +5547,16 @@
       const live = orderedAgents(all.filter(a =>
         all.filter(x => x.pane_id === a.pane_id).length === 1));
       box.innerHTML = live.length
-        ? live.map(a => `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
+        ? live.map(a => {
+          const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
+          const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
+          return `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
       <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
-      <span class="name">${escapeHtml(paneLabel(a))}</span>
+      <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
+      <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
       <span class="grip" aria-hidden="true">⠿</span>
-    </div>`).join('')
+    </div>`;
+        }).join('')
         : '<div class="empty">No agents to order.</div>';
       document.getElementById('orderSheet').style.display = 'block';
     }
