@@ -42,6 +42,22 @@ The full investigation, including the two routes not taken, is in
   agent is still writing, and reasoning is not a turn — marking it would let the parser mistake
   thinking for a closing message.
 
+## Where the glyph goes
+
+Inline, so it reads as a gutter on the same line as the text it marks:
+
+```
+ › hello there
+
+ ⏺ Hey! What can I help you with?
+```
+
+A message that opens with a markdown construct owning its line — a heading, a list item, a
+blockquote, a fence, a table row, a thematic break, indented code — gets the glyph on a line of
+its own instead. `⏺ ### Status` is not a heading, and the failure is silent: it renders a literal
+paragraph where a heading belonged. `tests/test_pi_gutter.js` reads the expression out of this
+extension and pins both sides of that branch.
+
 ## Glyphs
 
 `›` for the user, `⏺` for the agent. Chosen by scanning 400 lines of a live pi pane for

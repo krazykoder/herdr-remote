@@ -21,6 +21,15 @@ const GLYPH: Record<string, string> = {
   assistant: "⏺",   // ⏺
 };
 
+// Markdown constructs that have to own the start of their line: indented code, ATX headings,
+// blockquotes, bullet and ordered list items, fenced code, table rows, thematic breaks. Putting
+// a glyph in front of any of these stops it being that construct — `⏺ ### Status` is no longer a
+// heading — so a message opening with one keeps its glyph on a line of its own. Everything else,
+// which is most prose, gets it inline.
+//
+// Tested in tests/test_pi_gutter.js, which reads this expression out of this file.
+const OWNS_ITS_LINE = /^(?:\s{4}|\t|#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|\||([-*_])\s*\1\s*\1)/;
+
 export default function (pi) {
   pi.registerMarkdownTransformer((markdown: string, { messageType, isStreaming }) => {
     const glyph = GLYPH[messageType];
@@ -28,10 +37,9 @@ export default function (pi) {
     // is still writing. `assistant-thinking` gets no glyph at all: it is not a turn, and marking
     // it would make the parser treat reasoning as a closing message.
     if (!glyph || isStreaming) return markdown;
-    // The glyph gets its own paragraph rather than being prefixed onto the first line. Agent
-    // messages routinely open with a heading, and `⏺ ### Status` is no longer a heading — the
-    // prefix would silently break pi's own rendering. A paragraph holding one character cannot
-    // interact with whatever follows it.
-    return `${glyph}\n\n${markdown}`;
+    // Inline, so the glyph reads as a gutter on the same line as the text it marks. A message
+    // that opens with a construct owning its line falls back to a paragraph of its own, which
+    // cannot interact with whatever follows it.
+    return OWNS_ITS_LINE.test(markdown) ? `${glyph}\n\n${markdown}` : `${glyph} ${markdown}`;
   });
 }
