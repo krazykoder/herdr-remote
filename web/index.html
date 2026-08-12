@@ -4342,7 +4342,15 @@
     function stepBlock(dir) {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
-      const from = selA === null ? null : Math.min(selA, selB);
+      // Where to step from, in block coordinates. What is on screen is *trimmed*, and a trim of
+      // even one line puts the selection's start inside the block it came from — compare that
+      // against block starts and `previous` finds the block it is already on while `next` finds
+      // nothing past it, which wedges stepping entirely. So the anchor is the block the selection
+      // sits in. A range the user dragged themselves may sit in no block, and then it is its own
+      // anchor, exactly as before.
+      const sel = selA === null ? null : Math.min(selA, selB);
+      const here = sel === null ? null : blockContaining(paneRows, a.agent, sel);
+      const from = here ? here[0] : sel;
       const turns = turnSummaries(paneRows, a.agent);
       const at = turns.length
         ? (dir < 0

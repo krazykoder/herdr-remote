@@ -329,6 +329,36 @@ test('stepping walks turns, not every block the agent emitted', () => {
   assert.deepEqual([ctx.selA, ctx.selB], [9, 10]);
 });
 
+// What is on screen is the trimmed range; what stepping compares against is block starts. A trim
+// of even one line puts the selection's start inside its own block, and comparing the two directly
+// made `previous` land on the block it was already on and `next` find nothing past it — stepping
+// wedged on the newest turn, which Summary could still select.
+test('a learned trim does not wedge stepping', () => {
+  open(TURNS, 'claude');
+  ctx.noteTrim('claude', 1, 0);
+  ctx.scanFinalMessage();
+  ctx.selectFinalMessage();
+  assert.deepEqual([ctx.selA, ctx.selB], [10, 10], 'the newest turn, trimmed');
+  ctx.stepBlock(-1);
+  assert.deepEqual([ctx.selA, ctx.selB], [4, 4], 'previous moved off it');
+  ctx.stepBlock(1);
+  assert.deepEqual([ctx.selA, ctx.selB], [10, 10], 'and next came back to it');
+});
+
+// The same mix-up in the branch taken by a harness with no prompt gutter, where stepping walks
+// blocks rather than turns.
+test('a learned trim does not wedge block stepping either', () => {
+  open(CHAT, 'claude');
+  ctx.noteTrim('claude', 1, 0);
+  ctx.scanFinalMessage();
+  ctx.selectFinalMessage();
+  assert.deepEqual([ctx.selA, ctx.selB], [6, 6]);
+  ctx.stepBlock(-1);
+  assert.deepEqual([ctx.selA, ctx.selB], [0, 0]);
+  ctx.stepBlock(1);
+  assert.deepEqual([ctx.selA, ctx.selB], [6, 6]);
+});
+
 test('every turn is marked, not only the newest one', () => {
   open(TURNS, 'claude');
   ctx.scanFinalMessage();
