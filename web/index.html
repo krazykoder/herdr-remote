@@ -3043,7 +3043,13 @@
       let wsUrl = url;
       if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       ws = new WebSocket(wsUrl);
-      ws.onopen = () => { setStatus('connected'); if (window.cue) cue('ready'); };
+      // Re-announcing the push subscription here rather than only at subscribe time is what makes
+      // it survive the socket being down at the wrong moment — on a phone that is most of the time.
+      ws.onopen = () => {
+        setStatus('connected');
+        if (window.cue) cue('ready');
+        announceSubscription();
+      };
       ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
       ws.onerror = () => setStatus('disconnected');
       ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
@@ -5542,6 +5548,16 @@
       }
     }
 
+    // Tell the relay about this device's subscription. Returns whether it went out — the caller
+    // decides what to say about a socket that was not up. Idempotent by design: the relay keeps a
+    // set, so re-announcing on every connect is what heals a subscription made while offline, and
+    // repopulates a relay that lost its push_subs.json.
+    function announceSubscription() {
+      if (!pushSubscription || !ws || ws.readyState !== 1) return false;
+      ws.send(JSON.stringify({ type: 'push_subscribe', subscription: pushSubscription.toJSON() }));
+      return true;
+    }
+
     async function togglePush() {
       if (pushSubscription) {
         // Unsubscribe
@@ -5589,10 +5605,15 @@
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(publicKey)
           });
-          if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: 'push_subscribe', subscription: pushSubscription.toJSON() }));
-          }
+          // Subscribing in the browser is only half of it — the relay cannot push to a device it
+          // has never been told about. This used to be attempted once and dropped silently if the
+          // socket happened to be down, which left the button reading "Enabled" for a device the
+          // relay had no record of, and no notification would ever arrive.
           updatePushUI();
+          if (!announceSubscription()) {
+            document.getElementById('pushStatus').innerHTML =
+              '<span style="color:var(--orange)">● Pending</span> — allowed on this device, telling the relay when it reconnects.';
+          }
         } catch (e) {
           document.getElementById('pushStatus').textContent = 'Error: ' + e.message;
         }
