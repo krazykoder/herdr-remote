@@ -482,6 +482,27 @@
       background: color-mix(in srgb, var(--blue) 8%, transparent);
     }
 
+    /* Both halves of a pair wear the same tint, and that is the whole of "these two are a pair" —
+       at 0.72rem in a 44px bar there is no room for a link glyph between two tabs, so adjacency
+       and colour have to carry it. --tint is a hue and not a colour, mixed at low alpha over
+       whatever the pill already sits on, so one value works across all eleven themes and both
+       schemes instead of being pinned to one palette.
+
+       After .pinned and guarded with :not(.active), for the same reason that rule is: in this mode
+       the tint is the information, so it has to outrank a pin — and selection has to outrank both,
+       which source order alone would get backwards. */
+    .agent-tab.tinted:not(.active) .pill {
+      box-shadow: inset 0 0 0 1px hsl(var(--tint) 70% 55% / 0.55);
+      background: hsl(var(--tint) 70% 55% / 0.14);
+      color: var(--text);
+    }
+
+    /* The second half of each pair. One gap in the strip is what separates one pair from the next
+       — without it six tinted tabs read as a gradient rather than as three pairs. */
+    .agent-tab.pair-end {
+      margin-right: 14px;
+    }
+
     /* The dot sits on a saturated fill once selected, and at 8px a green disc on --blue is two
        mid-tones touching. A translucent white ring used to separate them, but white sits between
        the two hues and washed the dot out rather than isolating it. --bg is the furthest thing
@@ -2362,6 +2383,7 @@
             style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
             <option value="project">This project only</option>
             <option value="all">Every live pane</option>
+            <option value="pairs">Every pair</option>
           </select>
           <div id="tabScopeHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
@@ -3268,8 +3290,13 @@
     // What the bottom strip lists. Scoped to the open pane's Project by default: the strip is for
     // moving between the panes of the thing being worked on, and a machine hosting four projects
     // turns it into a row to scroll rather than one to tap. 'all' is the old behaviour, kept.
+    // 'pairs' is the third: the strip becomes the pairs themselves.
     const TAB_SCOPE_KEY = 'herdr_tab_scope';
-    function tabScope() { return localStorage.getItem(TAB_SCOPE_KEY) === 'all' ? 'all' : 'project'; }
+    const TAB_SCOPES = ['project', 'all', 'pairs'];
+    function tabScope() {
+      const v = localStorage.getItem(TAB_SCOPE_KEY);
+      return TAB_SCOPES.includes(v) ? v : 'project';
+    }
 
     // Two panes are in the same project when the relay resolved them to the same one. project_id
     // is the relay's answer and the label is only its display form, so the id wins where both
@@ -3277,7 +3304,7 @@
     function projectKey(a) { return a.project_id || a.project || ''; }
 
     function setTabScope(v) {
-      try { localStorage.setItem(TAB_SCOPE_KEY, v === 'all' ? 'all' : 'project'); }
+      try { localStorage.setItem(TAB_SCOPE_KEY, TAB_SCOPES.includes(v) ? v : 'project'); }
       catch (e) { /* private mode: session-only */ }
       renderAgentTabs();
       renderTabScopeHint();
@@ -3309,6 +3336,34 @@
       savePins();
     }
 
+    // Hues, not colours. A pair's tint has to read as a tint against eleven themes and both
+    // schemes, so it is mixed at low alpha over whatever the pill already sits on rather than
+    // picked from one palette. Six is enough to tell neighbours apart; past that it wraps, which
+    // is no worse than the strip today where every tab looks alike.
+    //
+    // Nothing near hue 220. That is --blue, which is the selected tab's fill in every theme — a
+    // pair washed in it sitting beside the selection is two blues an arm's length apart.
+    const PAIR_TINTS = [150, 35, 280, 350, 100, 15];
+
+    // The live members of every healthy pair, each pair's two panes adjacent and in the order the
+    // pair stores them. Adjacency and a shared tint are the whole of "side by side" — the strip
+    // has no room for a link glyph between two tabs.
+    function pairedTabs(list) {
+      const out = [];
+      pairs.forEach((pair, i) => {
+        if (pairHealth(pair, agents).state !== 'healthy') return;
+        const both = pair.members.map(m => list.find(a => memberMatches(m, a))).filter(Boolean);
+        both.forEach((a, half) => out.push({...a, pairTint: PAIR_TINTS[i % PAIR_TINTS.length],
+          pairEnd: half === both.length - 1}));
+      });
+      // The open pane, when it is in no pair. Same rule the project scope already follows: a strip
+      // that cannot show the pane on screen is worse than one carrying an extra tab. Untinted, so
+      // it reads as the exception it is.
+      const openPane = activePane && !out.some(a => a.pane_id === activePane) ? paneOf(activePane) : null;
+      if (openPane) out.push(openPane);
+      return out;
+    }
+
     function renderAgentTabs() {
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
@@ -3320,20 +3375,29 @@
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
       // worse than a long one. On the list screen nothing is open, so the strip stays complete.
-      const open = tabScope() === 'project' && activePane ? paneOf(activePane) : null;
+      const scope = tabScope();
+      const open = scope === 'project' && activePane ? paneOf(activePane) : null;
       if (open) live = live.filter(a => projectKey(a) === projectKey(open) || a.pane_id === activePane);
-      // Pinned first, in pin order; everything else keeps snapshot order behind them, because
-      // Array#sort is stable. That is the whole ordering rule — see togglePin.
-      const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
-      live.sort((x, y) => rank(x) - rank(y));
+      if (scope === 'pairs') {
+        live = pairedTabs(live);
+      } else {
+        // Pinned first, in pin order; everything else keeps snapshot order behind them, because
+        // Array#sort is stable. That is the whole ordering rule — see togglePin. Not in pairs
+        // mode: there, the two halves of a pair have to stay next to each other, and a pin that
+        // pulled one of them to the front would split the thing the mode exists to show.
+        const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
+        live.sort((x, y) => rank(x) - rank(y));
+      }
       // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
       // built with until something else happens to rebuild the strip. The band and not a boolean:
       // there are two thresholds now, and a boolean would sit still across the first of them.
       // The badge is in the signature too, or acking a pane leaves its dot on the strip until
       // something else happens to rebuild it.
+      // The tint is in the signature too, or editing a pair leaves the strip wearing the colours
+      // it was built with until something else happens to rebuild it.
       const sig = live.map(a =>
         `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}` +
-        ` | ${needsAttention(a) ? '!' : '-'}`).join(' /// ');
+        ` | ${needsAttention(a) ? '!' : '-'} | ${a.pairTint ?? '-'}${a.pairEnd ? '.' : ''}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
@@ -3343,7 +3407,9 @@
           // merely green there says "recent" just as loudly as it says "running now".
           const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
           const pulse = a.status === 'working' ? ' pulse' : '';
-          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${alertClass(attentionKind(a))}" data-pane="${escapeHtml(a.pane_id)}" ` +
+          const tinted = a.pairTint === undefined ? '' : ` tinted${a.pairEnd ? ' pair-end' : ''}`;
+          const tint = a.pairTint === undefined ? '' : ` style="--tint:${a.pairTint}"`;
+          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${alertClass(attentionKind(a))}${tinted}"${tint} data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
@@ -5298,7 +5364,15 @@
     // not say why reads as the pane having gone.
     function renderTabScopeHint() {
       const el = document.getElementById('tabScopeHint');
-      if (tabScope() === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      const scope = tabScope();
+      if (scope === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      if (scope === 'pairs') {
+        const n = pairs.filter(p => pairHealth(p, agents).state === 'healthy').length;
+        el.textContent = n
+          ? `Paired panes only, two to a colour. ${n} pair${n > 1 ? 's' : ''} running.`
+          : 'Paired panes only — nothing is paired right now, so the strip holds just this pane.';
+        return;
+      }
       const open = activePane ? paneOf(activePane) : null;
       const name = open ? (open.project || open.project_id) : '';
       el.textContent = name
