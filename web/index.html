@@ -652,15 +652,27 @@
     }
 
 
-    /* Agent list */
-    .agents {
-      padding: 12px;
+    /* The three sections are ordered by the user, so the column is a flex box and each one carries
+       its own `order`. Reordering by moving nodes would fight renderBody, which rewrites their
+       innerHTML on every snapshot; `order` is a paint concern and stays out of its way. */
+    #agentListView {
+      display: flex;
+      flex-direction: column;
     }
 
-    /* Recents sit below the list and share its card styling; the section header supplies the
-       top gap, so only the sides and bottom are padded here. */
+    /* Agent list, Terminals and Recents. One rule for all three: they hold the same cards and are
+       interchangeable in the column, so anything true of one has to be true of the others or the
+       page changes shape depending on the order it is read in. */
+    .agents,
+    .terminals,
     .recents {
       padding: 0 12px 12px;
+    }
+
+    /* Only the section drawn first, which CSS cannot pick out on its own: :first-child follows
+       source order and these are ordered by flex. applySections sets it. */
+    #agentListView>.section-first {
+      padding-top: 12px;
     }
 
     .section-header {
@@ -1919,7 +1931,11 @@
         padding: 0 16px;
       }
 
-      .agents {
+      /* All three, or Terminals and Recents sit full-width beside a grid of agent cards — which is
+         what happened the moment Terminals stopped being a child of .agents. */
+      .agents,
+      .terminals,
+      .recents {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
         gap: 12px;
@@ -1939,7 +1955,9 @@
         max-width: 1100px;
       }
 
-      .agents {
+      .agents,
+      .terminals,
+      .recents {
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       }
     }
@@ -1950,8 +1968,14 @@
         font-size: 0.9rem;
       }
 
-      .agents {
-        padding: 8px;
+      .agents,
+      .terminals,
+      .recents {
+        padding: 0 8px 8px;
+      }
+
+      #agentListView>.section-first {
+        padding-top: 8px;
       }
 
       .agent {
@@ -2046,6 +2070,16 @@
     </div>
 
     <div class="setting-group">
+      <label>Main page sections</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionAgents" onchange="toggleSection('agents', this.checked)"> Agents</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionRecents" onchange="toggleSection('recents', this.checked)"> Recents</label>
+      <div class="hint">Each section keeps its own separator on the main page. They are shown in the
+        order you switch them on, so turning one off and on again moves it to the bottom. One has
+        to stay on.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2074,10 +2108,14 @@
     </div>
   </div>
 
+  <!-- Three sections the user orders themselves — see applySections. Siblings and not nested:
+       each is rewritten wholesale on its own schedule, and each needs to be movable past the
+       others without the one above it owning where it lands. -->
   <div class="view" id="agentListView">
     <div class="agents" id="agents"></div>
-    <!-- Up to five recently opened panes, below the list and rendered with the same cards. A
-       sibling of #agents, not a child: renderBody rewrites that node's innerHTML every snapshot. -->
+    <!-- Shell panes. Was appended inside #agents; it is its own node now so it can be ordered. -->
+    <div class="terminals" id="terminals" style="display:none"></div>
+    <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
   </div>
 
@@ -2886,6 +2924,84 @@
     document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
     document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
 
+    // --- Main page sections ---
+    // Which of the three the main page shows, and in what order. Stored as the order itself rather
+    // than as three booleans plus a separate ranking: switching one on means "put it after what is
+    // already there", so the list *is* the setting and there is no second thing to keep in step.
+    //
+    // Order is applied with CSS `order` and never by moving nodes. renderBody, renderRecents and
+    // the terminals write rewrites each section's innerHTML on their own schedule, and a reorder
+    // that moved DOM nodes would race all three.
+    const SECTIONS_KEY = 'herdr_sections';
+    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', recents: 'recents'};
+    const SECTION_KEYS = Object.keys(SECTION_IDS);
+    // Today's layout, so an install that never opens Settings sees no change at all.
+    const SECTION_DEFAULT = ['agents', 'terminals', 'recents'];
+    let sectionOrder = SECTION_DEFAULT.slice();
+
+    // Anything unrecognised, duplicated or empty falls back to the default. This is a display
+    // preference read from storage a user can edit, and a bad value must not blank the page.
+    function loadSections() {
+      let v = null;
+      try { v = JSON.parse(localStorage.getItem(SECTIONS_KEY)); } catch (e) { v = null; }
+      if (!Array.isArray(v)) return SECTION_DEFAULT.slice();
+      const seen = v.filter((k, i) => SECTION_KEYS.includes(k) && v.indexOf(k) === i);
+      return seen.length ? seen : SECTION_DEFAULT.slice();
+    }
+
+    function saveSections() {
+      try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(sectionOrder)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // A section is on screen only if it is switched on *and* has something to say. Emptiness is
+    // still each renderer's own business — this reads what they wrote rather than second-guessing
+    // it, so a section that renders nothing does not leave a bare separator behind.
+    function applySections() {
+      SECTION_KEYS.forEach(key => {
+        const el = document.getElementById(SECTION_IDS[key]);
+        if (!el) return;
+        const at = sectionOrder.indexOf(key);
+        const on = at >= 0 && !!el.innerHTML;
+        el.style.order = at >= 0 ? String(at) : '';
+        el.style.display = on ? '' : 'none';
+        // Whichever section is drawn first needs the gap the header margin alone does not give it,
+        // and CSS cannot ask for it: :first-child follows source order, not flex order. A class and
+        // not an inline padding, so the size stays in the stylesheet where the narrow-screen media
+        // query can shrink it along with the sides.
+        el.classList.toggle('section-first', on && !sectionOrder.some((k, i) => i < at
+          && document.getElementById(SECTION_IDS[k])?.innerHTML));
+      });
+    }
+
+    function syncSectionBoxes() {
+      SECTION_KEYS.forEach(key => {
+        const box = document.getElementById('section' + key[0].toUpperCase() + key.slice(1));
+        if (!box) return;
+        box.checked = sectionOrder.includes(key);
+        // The last one on cannot be switched off — an empty main page is not a state worth being
+        // able to reach by accident, and the alternative is a screen whose only content explains
+        // how to get its content back.
+        box.disabled = box.checked && sectionOrder.length === 1;
+      });
+    }
+
+    function toggleSection(key, on) {
+      if (!SECTION_KEYS.includes(key)) return;
+      if (on) {
+        if (!sectionOrder.includes(key)) sectionOrder.push(key);
+      } else {
+        if (sectionOrder.length === 1) { syncSectionBoxes(); return; }
+        sectionOrder = sectionOrder.filter(k => k !== key);
+      }
+      saveSections();
+      syncSectionBoxes();
+      applySections();
+    }
+
+    sectionOrder = loadSections();
+    syncSectionBoxes();
+
 
 
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
@@ -3507,17 +3623,18 @@
     }
 
     // One insertion point for all three paths below: each writes #agents itself, and a Terminals
-    // section appended in each is three places to forget one.
+    // section written in each is three places to forget one.
     function renderBody() {
       renderBodyMain();
       const html = terminalsHtml();
-      if (!html) return;
-      const el = document.getElementById('agents');
+      document.getElementById('terminals').innerHTML = html;
       // "Waiting for agents…" is true of the agents and false of the box: a machine with
       // terminals and no agents is not waiting for anything. Only that placeholder goes — wiping
       // the node took the Projects strip and its cards with it.
-      if (!agents.length) el.querySelectorAll('.empty').forEach(n => n.remove());
-      el.insertAdjacentHTML('beforeend', html);
+      if (html && !agents.length) {
+        document.getElementById('agents').querySelectorAll('.empty').forEach(n => n.remove());
+      }
+      applySections();
     }
 
     function renderBodyMain() {
@@ -4024,12 +4141,14 @@
         .filter(p => p && agents.filter(x => x.pane_id === p.pane_id).length
           + shells.filter(x => x.pane_id === p.pane_id).length === 1)
         .slice(0, MAX_RECENTS);
-      if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
       // Same section header and same cards as the list above, so a recent reads as the session it
-      // is rather than as a second kind of thing.
-      el.innerHTML = `<div class="section-header">Recents</div>`
-        + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('');
-      el.style.display = '';
+      // is rather than as a second kind of thing. Whether the node is on screen is applySections'
+      // to decide — this only says whether there is anything to show.
+      el.innerHTML = live.length
+        ? `<div class="section-header">Recents</div>`
+          + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('')
+        : '';
+      applySections();
     }
 
     // --- Pairs (storage and UI) ---
