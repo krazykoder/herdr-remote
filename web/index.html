@@ -2646,6 +2646,9 @@
     // a link rather than retyped on a phone. Scheme-checked: this writes the address the app will
     // connect to, so anything that is not a WebSocket URL is ignored.
     const q = new URLSearchParams(location.search);
+    // A push carries its pane in the URL. Keep it until the relay snapshot proves that the pane
+    // exists; opening immediately would race the initial websocket connection.
+    let notificationPane = q.get('pane') || '';
     const urlRelay = q.get('relay');
     if (urlRelay && /^wss?:\/\/[^\s]+$/i.test(urlRelay)) localStorage.setItem('herdr_relay_url', urlRelay);
     const urlToken = q.get('token');
@@ -3173,6 +3176,7 @@
           }
         }
         openPendingStart();
+        openNotificationPane();
       }
       else if (msg.type === 'agent_update') {
         const update = msg.agent;
@@ -4188,6 +4192,33 @@
     // opens or titles a pane. Pairs deliberately keep looking only at `agents`.
     function paneOf(id) {
       return agents.find(a => a.pane_id === id) || shells.find(s => s.pane_id === id) || null;
+    }
+
+    function openNotificationPane() {
+      if (!notificationPane || !paneOf(notificationPane)) return;
+      openTerminal(notificationPane);
+      notificationPane = '';
+      const url = new URL(location.href);
+      url.searchParams.delete('pane');
+      history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+
+    // A service worker focuses an existing app before posting this message; a fresh app receives
+    // the same pane through its URL above.
+    //
+    // On navigator.serviceWorker and not on window: Client.postMessage() delivers to the
+    // ServiceWorkerContainer, which is a different EventTarget. A window listener hears iframes
+    // and other windows — everything except the one sender this is for.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type !== 'navigate') return;
+        try {
+          const url = new URL(event.data.url, location.href);
+          if (url.origin !== location.origin) return;
+          notificationPane = url.searchParams.get('pane') || '';
+          openNotificationPane();
+        } catch (e) { /* malformed service-worker message */ }
+      });
     }
     function isShell(id) { return shells.some(s => s.pane_id === id); }
 

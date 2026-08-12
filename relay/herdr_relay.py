@@ -227,7 +227,8 @@ def audit(action: str, ip: str, device: str, pane_id: str, detail: str = ""):
     """Append a write action to the audit log as structured JSONL."""
     import datetime
     entry = {
-        "ts": datetime.datetime.utcnow().isoformat() + "Z",
+        # Same "…Z" shape the log has always had; utcnow() is deprecated in 3.12+.
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "action": action,
         "paneId": pane_id,
         "ip": ip,
