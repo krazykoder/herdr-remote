@@ -4164,13 +4164,21 @@
       const intent = startIntent;
       startIntent = null;
       // The pair dialog reopens on the pane it was left from, with the session that was started
-      // for it already chosen — the name and the replace warning are still the user's to confirm.
+      // for it already chosen, and saves itself. "Start a session and pair with it" already said
+      // what the pair is; stopping at a filled-in form asks the user to confirm a decision they
+      // made two dialogs ago, and the default name it fills in is the one they would have kept.
       // Only while the pane that asked is still live — a pair cannot be made against a pane that
       // has since exited, and the new session is better opened than left nowhere.
       if (intent && intent.pair && agents.some(x => x.pane_id === intent.pair)) {
-        showSpawnStatus(`${a.label || a.agent || 'Session'} started — ready to pair.`, 'success');
         openPairDialog(intent.pair);
         choosePartner(a.pane_id);
+        // Not when either pane is in a pair already: savePair drops it, and the warning
+        // choosePartner has just written is the one thing that must not be auto-answered.
+        // Nor when saving refuses — at the pair ceiling the dialog stays up holding the reason.
+        if (![intent.pair, a.pane_id].some(id => pairFor(pairs, id))) savePair();
+        const paired = !pairSource;   // savePair closes the dialog; a refusal leaves it open
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started` +
+          (paired ? ' and paired.' : ' — confirm the pair.'), 'success');
         return;
       }
       // Never over a pane the user has since opened themselves — the start was a while ago in

@@ -27,14 +27,17 @@ const PANE = {
 
 // A fresh context per test: pendingStart and startIntent are module state and an abandoned
 // dialog's intent must not leak into the next one.
-function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'agent'], agents: ['claude', 'codex']}} = {}) {
+function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'agent'], agents: ['claude', 'codex']}, pairs = []} = {}) {
   const els = {};
   const el = id => els[id] || (els[id] =
     {id, value: '', textContent: '', hidden: false, style: {}, options: [], disabled: false});
   const sent = [];
   const calls = [];
   const live = pane ? [pane] : [];
-  const ctx = vm.createContext({
+  // The pair half of the dialog, stubbed to the two things this block reads back off it: which
+  // pane the dialog is open on, and whether saving closed it. The real savePair is covered in
+  // tests/test_pairs.js and in the browser.
+  const g = {
     document: {getElementById: el},
     localStorage: {getItem: () => null, setItem() {}},
     window: {}, console,
@@ -47,14 +50,20 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     slotFor: () => 'wide',
     paneOf: id => live.find(a => a.pane_id === id) || null,
     openTerminal: id => calls.push(['open', id]),
-    openPairDialog: id => calls.push(['pair', id]),
-    choosePartner: id => calls.push(['partner', id]),
+    openPairDialog: id => { calls.push(['pair', id]); g.pairSource = live.find(a => a.pane_id === id); },
+    choosePartner: id => { calls.push(['partner', id]); g.pairPartner = live.find(a => a.pane_id === id); },
+    savePair: () => { calls.push(['save']); g.pairSource = null; },
+    pairs,
+    pairSource: null,
+    pairPartner: null,
+    pairFor: (list, id) => list.find(p => p.members.some(m => m.pane_id === id)) || null,
     projects: [{id: 'proj', label: 'charts'}],
     fillSelect: () => 1,
     renderStartTarget() {},
-  });
+  };
+  const ctx = vm.createContext(g);
   vm.runInContext(HTML.slice(from, to), ctx);
-  return {el, sent, calls, run: src => vm.runInContext(src, ctx)};
+  return {el, sent, calls, g, run: src => vm.runInContext(src, ctx)};
 }
 
 test('a duplicate carries the pane\'s harness into the pane\'s own tab', () => {
@@ -111,11 +120,24 @@ test('a plain start still defers to the pane the user is reading', () => {
   assert.deepEqual(calls, [['open', 'w1:p2']]);
 });
 
-test('start-and-pair comes back to the dialog with the new session chosen', () => {
+test('start-and-pair comes back to the dialog with the new session chosen, and saves it', () => {
   const {calls, run} = startCtx();
   run("startIntent = {pair: 'w1:p1'}");
   run("agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2'; openPendingStart()");
-  assert.deepEqual(calls, [['pair', 'w1:p1'], ['partner', 'w1:p2']]);
+  // The pair the button named is made, not left as a form. Asking to start a session *and pair
+  // with it* is the whole decision; a dialog waiting on Save is the request half-done.
+  assert.deepEqual(calls, [['pair', 'w1:p1'], ['partner', 'w1:p2'], ['save']]);
+});
+
+test('a pane already in a pair is never replaced without being asked', () => {
+  // savePair drops whichever pair holds either pane. That is fine as an answer to a Save the user
+  // pressed and unacceptable as one nobody was asked — so the dialog is left open on the warning.
+  const existing = [{id: 'p1', name: 'Old pair', members: [{pane_id: 'w1:p1'}, {pane_id: 'w0:p9'}]}];
+  const {calls, g, run} = startCtx({pairs: existing});
+  run("startIntent = {pair: 'w1:p1'}");
+  run("agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2'; openPendingStart()");
+  assert.deepEqual(calls, [['pair', 'w1:p1'], ['partner', 'w1:p2']], 'saved over an existing pair');
+  assert.ok(g.pairSource, 'the dialog closed on a pair the user has not confirmed');
 });
 
 test('an intent is spent once, so the next start is a plain one', () => {
@@ -123,7 +145,7 @@ test('an intent is spent once, so the next start is a plain one', () => {
   run("startIntent = {pair: 'w1:p1'}");
   run("agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2'; openPendingStart()");
   run("agents.push({pane_id: 'w1:p3'}); pendingStart = 'w1:p3'; openPendingStart()");
-  assert.deepEqual(calls.slice(2), [], 'the second start reopened the pair dialog');
+  assert.deepEqual(calls.slice(3), [], 'the second start reopened the pair dialog');
 });
 
 test('opening the dialog any other way clears an abandoned intent', () => {

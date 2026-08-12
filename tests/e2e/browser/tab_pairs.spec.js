@@ -106,6 +106,55 @@ test('a pin cannot split a pair, and selection still outranks the tint', async (
     .toEqual([width, colour]);
 });
 
+test('starting a session to pair with it makes the pair, not a form', async ({page}) => {
+  // The vm slice in tests/test_start_dupe.js stubs the pair dialog out, so it can say the save was
+  // called and nothing about what it saved. Here openPairDialog, choosePartner and savePair are the
+  // real ones over the real sheet, which is the only place the default name and the stored
+  // membership can be checked. The started pane is pushed in by hand — the fake herdr's pane list
+  // is static, so a session it starts never appears in the next snapshot.
+  await page.locator('#agents .agent', {hasText: 'Architect 1'}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+
+  const after = await page.evaluate(() => {
+    const source = agents.find(a => paneLabel(a) === 'Architect 1');
+    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2'});
+    startIntent = {pair: source.pane_id};
+    pendingStart = 'w1:pNew';
+    openPendingStart();
+    return {
+      pairs: pairs.map(p => [p.name, p.members.map(m => m.pane_id)]),
+      sheet: document.getElementById('pairSheet').style.display,
+      stored: localStorage.getItem('herdr_pairs'),
+    };
+  });
+
+  expect(after.pairs).toEqual([['Architect 1 ↔ Reviewer 2', ['w1:p1', 'w1:pNew']]]);
+  expect(after.sheet, 'left waiting on a Save for a decision already made').toBe('none');
+  expect(after.stored, 'the pair only lived in memory').toContain('w1:pNew');
+});
+
+test('a pane already paired is not re-paired behind the user', async ({page}) => {
+  // savePair drops whichever pair holds either pane, and here that is a pair the user made. The
+  // dialog stays up carrying choosePartner's warning so the replacement is theirs to press.
+  await setup(page);
+  const after = await page.evaluate(() => {
+    const source = agents.find(a => paneLabel(a) === 'Architect 1');
+    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2'});
+    startIntent = {pair: source.pane_id};
+    pendingStart = 'w1:pNew';
+    openPendingStart();
+    return {
+      names: pairs.map(p => p.name),
+      sheet: document.getElementById('pairSheet').style.display,
+      warning: document.getElementById('pairError').textContent,
+    };
+  });
+
+  expect(after.names, 'replaced a pair nobody was asked about').toEqual(['Tab pair']);
+  expect(after.sheet).toBe('block');
+  expect(after.warning).toContain('Tab pair');
+});
+
 test('the setting says what it is hiding, and counts the pairs', async ({page}) => {
   await setup(page);
   await page.locator('#termMenuBtn').click();
