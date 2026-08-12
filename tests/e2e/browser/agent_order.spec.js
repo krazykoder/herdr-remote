@@ -12,7 +12,7 @@ const {test, expect} = require('@playwright/test');
 // The fake herdr's three agents, in the order it reports them. `scratch` is the working one and
 // the other two are idle, which is what makes this fixture worth naming: the main page groups by
 // status, so an order set across all three shows up as two of them swapping inside Idle.
-const SNAPSHOT = ['Architect 1', 'scratch', 'amp'];
+const SNAPSHOT = ['Architect 1', 'scratch', 'amp', 'build watch', 'charts'];
 const GROUPED = ['scratch', 'Architect 1', 'amp'];
 
 const rows = page => page.locator('#orderRows .order-row');
@@ -21,11 +21,13 @@ const names = page => rows(page).evaluateAll(els => els.map(e => e.querySelector
 // name — .project carries the agent emoji and the host too, which is chrome and not identity.
 const cards = page => page.locator('#agents .agent')
   .evaluateAll(els => els.map(e => e.getAttribute('aria-label').split(',')[0]));
+const tabs = page => page.locator('#agentTabs .agent-tab .label')
+  .evaluateAll(els => els.map(e => e.textContent));
 
 const backdrop = page => page.locator('#orderSheet > div').first();
 
 async function openSheet(page) {
-  await page.getByRole('button', {name: 'Reorder agents'}).click();
+  await page.getByRole('button', {name: 'Reorder tabs'}).click();
   await expect(page.locator('#orderSheet')).toBeVisible();
   await expect(rows(page).first()).toBeVisible();
 }
@@ -67,7 +69,9 @@ test('the sheet lists the live agents, and out of the box changes nothing', asyn
 test('dragging a row to the top reorders the main page, and it survives a reload', async ({page}) => {
   await openSheet(page);
   await drag(page, 2, 0);              // amp, to the front
-  expect(await names(page)).toEqual(['amp', 'Architect 1', 'scratch']);
+  expect(await names(page)).toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
+  expect(await tabs(page), 'terminal shares the reordered bottom tab strip')
+    .toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
 
   await backdrop(page).click();
   // Status still wins — scratch is working and stays hoisted above the idle pair. What the drag
@@ -94,7 +98,7 @@ test('a poll arriving mid-drag does not move the row under the pointer', async (
   await page.evaluate(() => render());   // the poll, at the worst possible moment
   await page.mouse.up();
 
-  expect(await names(page)).toEqual(['scratch', 'amp', 'Architect 1']);
+  expect(await names(page)).toEqual(['scratch', 'amp', 'Architect 1', 'build watch', 'charts']);
 });
 
 test('a desktop mouse drags the whole row; touch keeps a right-side grip for scrolling', async ({page}) => {
@@ -105,7 +109,7 @@ test('a desktop mouse drags the whole row; touch keeps a right-side grip for scr
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, {steps: 6});
   await page.mouse.up();
-  expect(await names(page), 'a desktop row drag reorders').toEqual(['amp', 'Architect 1', 'scratch']);
+  expect(await names(page), 'a desktop row drag reorders').toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
 
   const touch = await rows(page).nth(0).evaluate(el => {
     const grip = el.querySelector('.grip');
@@ -121,12 +125,12 @@ test('the arrow keys move a focused row, for anyone without a pointer', async ({
 
   await rows(page).nth(1).focus();
   await page.keyboard.press('ArrowUp');
-  expect(await names(page)).toEqual(['scratch', 'Architect 1', 'amp']);
+  expect(await names(page)).toEqual(['scratch', 'Architect 1', 'amp', 'build watch', 'charts']);
   // Focus follows the row it moved, or a second press acts on whatever slid into its place.
   await expect(rows(page).nth(0)).toBeFocused();
 
   await page.keyboard.press('ArrowUp');
-  expect(await names(page), 'the top row has nowhere to go').toEqual(['scratch', 'Architect 1', 'amp']);
+  expect(await names(page), 'the top row has nowhere to go').toEqual(['scratch', 'Architect 1', 'amp', 'build watch', 'charts']);
   await page.keyboard.press('ArrowDown');
   expect(await names(page)).toEqual(SNAPSHOT);
 });
@@ -134,10 +138,17 @@ test('the arrow keys move a focused row, for anyone without a pointer', async ({
 test('Reset puts the snapshot order back', async ({page}) => {
   await openSheet(page);
   await drag(page, 2, 0);
-  expect(await names(page)).toEqual(['amp', 'Architect 1', 'scratch']);
+  expect(await names(page)).toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
 
-  await page.getByRole('button', {name: 'Reset to default order'}).click();
+  await page.getByRole('button', {name: 'Reset to default tab order'}).click();
   expect(await names(page)).toEqual(SNAPSHOT);
   await backdrop(page).click();
   expect(await cards(page)).toEqual(GROUPED);
+});
+
+test('a terminal can move to the front of the bottom tab strip', async ({page}) => {
+  await openSheet(page);
+  await drag(page, 4, 0);              // charts terminal, to the front
+  expect(await names(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
+  expect(await tabs(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
 });

@@ -2686,7 +2686,7 @@
     </div>
   </div>
 
-  <!-- Agent order — drag the rows. A sheet and not the list itself, because the list's innerHTML
+  <!-- Tab order — drag the rows. A sheet and not the list itself, because the list's innerHTML
        is rewritten on every poll and would take a live drag with it. This is built once on open
        and left alone until it closes, so the only thing that can move a row is a finger. -->
   <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
@@ -2694,16 +2694,16 @@
     <div id="orderPanel"
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Agent order</span>
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Tab order</span>
         <button onclick="closeOrder()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
-      <div id="orderRows" role="listbox" aria-label="Agent order"></div>
+      <div id="orderRows" role="listbox" aria-label="Tab order"></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
         <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row with a mouse; on touch,
           use its right-side handle. Or focus one and use arrow keys. The main page still groups by
-          status, so this is the order inside each group.</p>
-        <button class="nav-key" onclick="resetOrder()">Reset to default order</button>
+          status, so this is the order inside each group. Terminals only change bottom-tab order.</p>
+        <button class="nav-key" onclick="resetOrder()">Reset to default tab order</button>
       </div>
     </div>
   </div>
@@ -3252,8 +3252,9 @@
 
     // --- Agent order ---
     // Browser-local, like pins: the relay's snapshots own membership and status, while this only
-    // says which live cards come first. The same order feeds the landing cards and the pane tabs,
-    // where it sits behind the pins — a pin is "put this one at the front" and outranks it.
+    // says which live panes come first. The existing key keeps prior agent orders; terminals join
+    // it when they appear. Landing cards read their agent subset from it, and tabs read every pane
+    // from it, behind pins — a pin is "put this one at the front" and outranks it.
     const AGENT_ORDER_KEY = 'herdr_agent_order';
     let agentOrder = [];
 
@@ -3377,9 +3378,9 @@
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
-      // Agents in the user's order, shells behind them. The pin sort below is stable, so this is
-      // what decides the strip wherever two panes are pinned alike — which is to say, unpinned.
-      const all = orderedAgents(agents).concat(shells);
+      // One order for agents and terminals, not an agent block followed by a terminal block. The
+      // pin sort below is stable, so this decides every unpinned tab's place.
+      const all = orderedAgents(agents.concat(shells));
       let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
@@ -5516,11 +5517,12 @@
       const box = document.getElementById('orderRows');
       // Live and unambiguous only. A pane_id that two hosts both claim cannot be ordered — there
       // is no one pane to order — and it is the same guard the tab strip already applies.
-      const live = orderedAgents(agents.filter(a =>
-        agents.filter(x => x.pane_id === a.pane_id).length === 1));
+      const all = agents.concat(shells);
+      const live = orderedAgents(all.filter(a =>
+        all.filter(x => x.pane_id === a.pane_id).length === 1));
       box.innerHTML = live.length
         ? live.map(a => `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
-      <span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>
+      <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
       <span class="name">${escapeHtml(paneLabel(a))}</span>
       <span class="grip" aria-hidden="true">⠿</span>
     </div>`).join('')
@@ -6037,13 +6039,12 @@
         agentCards(list);
     }
 
-    // This action belongs with the live-agent list, not Settings. First heading is whichever
-    // agent group is currently on top (Needs you, Working, or Idle), so it stays visible without
-    // inventing a second heading above the status groups.
+    // This action belongs with the live-pane list, not Settings. First heading is whichever agent
+    // group is currently on top, so it stays visible without a second heading above status groups.
     function addOrderButton() {
       const header = document.querySelector('#agents .section-header');
       if (header) header.insertAdjacentHTML('beforeend',
-        '<button class="section-action" onclick="openOrder()" aria-label="Reorder agents">Reorder</button>');
+        '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
     }
 
     function terminalCard(s) {

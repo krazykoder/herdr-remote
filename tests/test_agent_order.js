@@ -38,6 +38,16 @@ test('saved agent order leads the snapshot and leaves new agents after it', () =
   assert.deepEqual(ids(c), ['b', 'a', 'c']);
 });
 
+test('one order can interleave an agent and a terminal', () => {
+  const c = ctx([
+    {pane_id: 'agent-a', agent: 'claude'},
+    {pane_id: 'term', label: 'build watch'},
+    {pane_id: 'agent-b', agent: 'codex'},
+  ], {herdr_agent_order: '["term","agent-b","agent-a"]'});
+  c.run('loadAgentOrder()');
+  assert.deepEqual(ids(c), ['term', 'agent-b', 'agent-a']);
+});
+
 test('an unordered snapshot is left exactly as it arrived', () => {
   // The default has to be "no change at all" — an install that never opens the sheet must see the
   // list it has always seen, and a sort with one key for every unranked pane would not promise it.
