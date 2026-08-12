@@ -652,7 +652,7 @@
     }
 
 
-    /* The three sections are ordered by the user, so the column is a flex box and each one carries
+    /* The sections are ordered by the user, so the column is a flex box and each one carries
        its own `order`. Reordering by moving nodes would fight renderBody, which rewrites their
        innerHTML on every snapshot; `order` is a paint concern and stays out of its way. */
     #agentListView {
@@ -660,13 +660,34 @@
       flex-direction: column;
     }
 
-    /* Agent list, Terminals and Recents. One rule for all three: they hold the same cards and are
-       interchangeable in the column, so anything true of one has to be true of the others or the
-       page changes shape depending on the order it is read in. */
+    /* Landing-page sections share the same outer spacing. Pairs owns its inner two-card layout. */
     .agents,
     .terminals,
+    .pairs,
     .recents {
       padding: 0 12px 12px;
+    }
+
+    /* Stacked by default. Two agent cards side by side on a phone leaves each about 160px, which
+       wraps the name off its badges and turns a card into three ragged lines — the pair is only
+       readable side by side once there is room for two whole cards. */
+    .pair-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;   /* the gap the section grid uses, so the rhythm does not change at the Pairs header */
+      /* stretch, not center: the two cards are a unit and unequal heights read as two lists. */
+      align-items: stretch;
+      margin-bottom: 12px;
+    }
+
+    /* Turned upright while the cards are stacked — a sideways arrow between two cards one above
+       the other points at nothing. */
+    .pair-link {
+      color: var(--blue);
+      font-size: 1.25rem;
+      text-align: center;
+      align-self: center;
+      transform: rotate(90deg);
     }
 
     /* Only the section drawn first, which CSS cannot pick out on its own: :first-child follows
@@ -935,6 +956,32 @@
 
     .agent .info {
       flex: 1;
+    }
+
+    .agent-order {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    /* 28px square rather than 28x24: two of these stack inside a card that is already only about
+       70px tall, and the shorter one falls under the 24px minimum once the border is counted. */
+    .agent-order button {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .agent-order button:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
 
     .agent .project {
@@ -1753,22 +1800,6 @@
       white-space: nowrap;
     }
 
-    .pair-btn {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--muted);
-      font-size: 0.65rem;
-      padding: 4px 8px;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-
-    .pair-btn.paired {
-      border-color: var(--blue);
-      color: var(--blue);
-    }
-
     .term-input button:last-child {
       padding: 10px 14px;
       border-radius: 6px;
@@ -1931,14 +1962,23 @@
         padding: 0 16px;
       }
 
-      /* All three, or Terminals and Recents sit full-width beside a grid of agent cards — which is
-         what happened the moment Terminals stopped being a child of .agents. */
+      /* Sections made of independent cards share a responsive grid. Pairs is left out on purpose:
+         its cards are not independent, and auto-fill would let a pair be split across two rows. */
       .agents,
       .terminals,
       .recents {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
         gap: 12px;
+      }
+
+      /* Room for two whole cards, so the pair can say what it is in one glance. */
+      .pair-row {
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      }
+
+      .pair-link {
+        transform: none;
       }
 
       .section-header {
@@ -1970,6 +2010,7 @@
 
       .agents,
       .terminals,
+      .pairs,
       .recents {
         padding: 0 8px 8px;
       }
@@ -2073,6 +2114,7 @@
       <label>Main page sections</label>
       <label class="toggle-option"><input type="checkbox" id="sectionAgents" onchange="toggleSection('agents', this.checked)"> Agents</label>
       <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionPairs" onchange="toggleSection('pairs', this.checked)"> Pairs</label>
       <label class="toggle-option"><input type="checkbox" id="sectionRecents" onchange="toggleSection('recents', this.checked)"> Recents</label>
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
@@ -2115,6 +2157,7 @@
     <div class="agents" id="agents"></div>
     <!-- Shell panes. Was appended inside #agents; it is its own node now so it can be ordered. -->
     <div class="terminals" id="terminals" style="display:none"></div>
+    <div class="pairs" id="pairs" style="display:none"></div>
     <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
   </div>
@@ -2925,18 +2968,18 @@
     document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
 
     // --- Main page sections ---
-    // Which of the three the main page shows, and in what order. Stored as the order itself rather
-    // than as three booleans plus a separate ranking: switching one on means "put it after what is
+    // Which of the four the main page shows, and in what order. Stored as the order itself rather
+    // than as booleans plus a separate ranking: switching one on means "put it after what is
     // already there", so the list *is* the setting and there is no second thing to keep in step.
     //
     // Order is applied with CSS `order` and never by moving nodes. renderBody, renderRecents and
     // the terminals write rewrites each section's innerHTML on their own schedule, and a reorder
     // that moved DOM nodes would race all three.
     const SECTIONS_KEY = 'herdr_sections';
-    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', recents: 'recents'};
+    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents'};
     const SECTION_KEYS = Object.keys(SECTION_IDS);
     // Today's layout, so an install that never opens Settings sees no change at all.
-    const SECTION_DEFAULT = ['agents', 'terminals', 'recents'];
+    const SECTION_DEFAULT = ['agents', 'terminals', 'pairs', 'recents'];
     let sectionOrder = SECTION_DEFAULT.slice();
 
     // Anything unrecognised, duplicated or empty falls back to the default. This is a display
@@ -3048,6 +3091,46 @@
     // selection separately — switching panes then never touches the markup.
     let tabsSig = '', tabsActive = null;
 
+    // --- Agent order ---
+    // Browser-local, like pins: relay snapshots own membership and status, while this only says
+    // which live cards come first. The same order feeds both the landing cards and the pane tabs.
+    const AGENT_ORDER_KEY = 'herdr_agent_order';
+    let agentOrder = [];
+
+    function loadAgentOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem(AGENT_ORDER_KEY) || '[]');
+        agentOrder = Array.isArray(v) ? v.filter((id, i) => typeof id === 'string' && v.indexOf(id) === i) : [];
+      } catch (e) { agentOrder = []; }
+    }
+
+    function saveAgentOrder() {
+      try { localStorage.setItem(AGENT_ORDER_KEY, JSON.stringify(agentOrder)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    function orderedAgents(list) {
+      const rank = new Map(agentOrder.map((id, i) => [id, i]));
+      return list.map((agent, index) => ({agent, index})).sort((a, b) =>
+        (rank.get(a.agent.pane_id) ?? agentOrder.length + a.index)
+        - (rank.get(b.agent.pane_id) ?? agentOrder.length + b.index))
+        .map(x => x.agent);
+    }
+
+    function moveAgent(paneId, swapId) {
+      if (!paneId || !swapId || paneId === swapId
+          || agents.filter(a => a.pane_id === paneId).length !== 1
+          || agents.filter(a => a.pane_id === swapId).length !== 1) return;
+      const next = orderedAgents(agents);
+      const from = next.findIndex(a => a.pane_id === paneId);
+      const to = next.findIndex(a => a.pane_id === swapId);
+      if (from < 0 || to < 0) return;
+      [next[from], next[to]] = [next[to], next[from]];
+      agentOrder = next.map(a => a.pane_id);
+      saveAgentOrder();
+      render();
+    }
+
     // Pinned tabs, newest pin first: pinning is "put this one at the front", so a second pin has
     // to land ahead of the first. Order only, and local to this browser — a pane_id herdr later
     // reuses costs nothing worse than one tab sitting in the wrong place.
@@ -3112,7 +3195,7 @@
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
-      const all = agents.concat(shells);
+      const all = orderedAgents(agents).concat(shells);
       let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
@@ -3622,12 +3705,12 @@
       if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 
-    // One insertion point for all three paths below: each writes #agents itself, and a Terminals
-    // section written in each is three places to forget one.
+    // One insertion point for the independently rendered landing-page sections.
     function renderBody() {
       renderBodyMain();
       const html = terminalsHtml();
       document.getElementById('terminals').innerHTML = html;
+      document.getElementById('pairs').innerHTML = pairsHtml();
       // "Waiting for agents…" is true of the agents and false of the box: a machine with
       // terminals and no agents is not waiting for anything. Only that placeholder goes — wiping
       // the node took the Projects strip and its cards with it.
@@ -3718,14 +3801,15 @@
     // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
     // where it already sits, so this header means one thing and the eye can trust it.
     function hoistHtml(list) {
-      const waiting = list.filter(hoisted);
+      const waiting = orderedAgents(list).filter(hoisted);
       if (!waiting.length) return '';
       return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
-        + waiting.map(a => agentCard(a)).join('');
+        + agentCards(waiting);
     }
 
     // Native workspace/tab navigation over `list` — all agents, or one Project's.
     function layoutHtml(list) {
+      list = orderedAgents(list);
       const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
       let html = '';
       visibleTabs = [];
@@ -3774,6 +3858,7 @@
     }
 
     function renderAgentList(list) {
+      list = orderedAgents(list);
       // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
       // sections below get everything else. Blocked still keeps a section for the acked ones —
       // a pane you have seen is blocked is not news, but it is still stuck.
@@ -5580,12 +5665,14 @@
       if (window.cue) cue('error');
     }
 
-    function agentCard(a) {
+    function agentCard(a, previousId, nextId) {
       const color = statusColor(a);
       const pulseClass = a.status === 'working' ? ' pulse' : '';
       const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
       const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
-      const label = paneLabel(a);
+      // Escaped once here rather than at each aria-label: a pane can be renamed to anything with a
+      // quote in it, and an attribute that breaks out of itself is not a cosmetic bug.
+      const label = escapeHtml(paneLabel(a));
       // Line 1 is the name and never wraps into two; the agent badge rides down to line 2 with
       // the path, where it is the same width every time and the list reads as a column. The dot
       // to the left is untouched — it is the live status, and the emoji only says what kind of
@@ -5594,12 +5681,22 @@
       // Said apart to a screen reader too: "needs you" on a finished pane is a false alarm that
       // costs more when the colour and the blink are not there to correct it.
       const note = kind === 'blocked' ? ', needs you' : kind === 'done' ? ', finished' : '';
+      const order = previousId || nextId
+        ? `<span class="agent-order" role="group" aria-label="Move ${label}">` +
+          `<button aria-label="Move ${label} earlier" ${previousId ? `onclick="event.stopPropagation();moveAgent('${a.pane_id}','${previousId}')"` : 'disabled'}>↑</button>` +
+          `<button aria-label="Move ${label} later" ${nextId ? `onclick="event.stopPropagation();moveAgent('${a.pane_id}','${nextId}')"` : 'disabled'}>↓</button></span>`
+        : '';
       return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
-    <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
+    ${order}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
+    }
+
+    function agentCards(list) {
+      const ordered = orderedAgents(list);
+      return ordered.map((a, i) => agentCard(a, ordered[i - 1]?.pane_id, ordered[i + 1]?.pane_id)).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -5607,7 +5704,7 @@
     function section(title, list, note) {
       return `<div class="section-header">${title}` +
         (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
-        list.map(a => agentCard(a)).join('');
+        agentCards(list);
     }
 
     function terminalCard(s) {
@@ -5630,6 +5727,16 @@
       if (!list.length) return '';
       return `<div class="section-header">Terminals</div>`
         + list.map(terminalCard).join('');
+    }
+
+    function pairsHtml() {
+      const rows = pairs.map(pair => {
+        if (pairHealth(pair, agents).state !== 'healthy') return '';
+        const [left, right] = pair.members.map(member => agents.find(a => memberMatches(member, a)));
+        return `<div class="pair-row" role="group" aria-label="${escapeHtml(pair.name)}">` +
+          agentCard(left) + `<span class="pair-link" aria-label="paired with">↔</span>` + agentCard(right) + `</div>`;
+      }).filter(Boolean);
+      return rows.length ? `<div class="section-header">Pairs</div>` + rows.join('') : '';
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
@@ -6640,6 +6747,7 @@
     initPush();
 
     loadPairs();
+    loadAgentOrder();
     loadPins();
     loadSeen();
     measureCellRatio();  // before applyWrapMode, which divides by it

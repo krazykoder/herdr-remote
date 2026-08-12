@@ -1,4 +1,4 @@
-// The main page's three sections, ordered by the user, in a real browser.
+// The main page's sections, ordered by the user, in a real browser.
 //
 // The vm slice in tests/test_sections.js covers the stored order and the rules around it against a
 // stub DOM. What it cannot see is the only thing that matters to a reader: whether the page is
@@ -14,7 +14,7 @@ const AGENT = 'Architect 1';
 // Where each section's box actually sits on screen, top first. Empty sections are absent, which is
 // what makes this readable as "what the user sees" rather than "what the DOM holds".
 async function painted(page) {
-  return page.evaluate(() => ['agents', 'terminals', 'recents']
+  return page.evaluate(() => ['agents', 'terminals', 'pairs', 'recents']
     .map(id => document.getElementById(id))
     .filter(el => el.offsetParent !== null && el.getBoundingClientRect().height > 0)
     .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
@@ -39,7 +39,7 @@ test.afterEach(async ({page}) => {
 });
 
 test('out of the box the page is laid out the way it always was', async ({page}) => {
-  // Agents then Terminals then Recents, and Recents is empty until a pane has been opened.
+  // Agents then Terminals. Pairs and Recents are empty until the user creates one or opens a pane.
   expect(await painted(page)).toEqual(['agents', 'terminals']);
   await expect(page.locator('#terminals .section-header')).toHaveText('Terminals');
 });
@@ -54,7 +54,7 @@ test('a stored order is what the page is painted in', async ({page}) => {
   // innerHTML rewrites from fighting the layout.
   const domOrder = await page.evaluate(() =>
     [...document.getElementById('agentListView').children].map(el => el.id));
-  expect(domOrder).toEqual(['agents', 'terminals', 'recents']);
+  expect(domOrder).toEqual(['agents', 'terminals', 'pairs', 'recents']);
 });
 
 // Settings is a panel over the list, not beside it, so the list is display:none while it is open
@@ -89,8 +89,74 @@ test('the last section on cannot be switched off', async ({page}) => {
   await expect(page.locator('#sectionTerminals')).not.toBeDisabled();
 });
 
+// Pairs the first two local agents and reloads into it. The relay's fake herdr reports no pair, so
+// this is stored the way the pane menu would have stored it rather than driven through the dialog —
+// what is under test here is the landing section, not the dialog that fills it.
+async function addPair(page) {
+  await page.evaluate(() => {
+    const [left, right] = agents.filter(a => (a.host || 'local') === 'local').slice(0, 2);
+    localStorage.setItem('herdr_pairs', JSON.stringify({version: 1, pairs: [{
+      id: 'p_landing', name: 'Landing pair', members: [fingerprint(left, paneLabel(left)), fingerprint(right, paneLabel(right))],
+    }]}));
+  });
+  await page.reload();
+  await expect(page.locator('#pairs .pair-row')).toBeVisible();
+}
+
+test('a healthy pair gets two cards and a link, never card-level Pair buttons', async ({page}) => {
+  await addPair(page);
+  await expect(page.locator('#pairs')).toBeVisible();
+  await expect(page.locator('#pairs .pair-row')).toHaveCount(1);
+  await expect(page.locator('#pairs .pair-row .agent')).toHaveCount(2);
+  await expect(page.locator('#pairs .pair-link')).toHaveText('↔');
+  await expect(page.locator('.pair-btn')).toHaveCount(0);
+  await page.locator('#navSettings').click();
+  const pairs = page.locator('#sectionPairs');
+  await expect(pairs).toBeChecked();
+  await pairs.uncheck();
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#pairs')).toBeHidden();
+  await page.locator('#navSettings').click();
+  await pairs.check();
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#pairs')).toBeVisible();
+});
+
+test('a pair sits side by side only where two whole cards fit', async ({page}) => {
+  // A pair is two agent cards, not one — on a phone that leaves each about 160px, which wraps the
+  // name off its badges. Stacked is the default and side by side is what the width buys.
+  await addPair(page);
+  const boxes = () => page.locator('#pairs .pair-row .agent')
+    .evaluateAll(cards => cards.map(c => c.getBoundingClientRect()));
+
+  await page.setViewportSize({width: 390, height: 900});
+  const [top, bottom] = await boxes();
+  expect(bottom.top, 'stacked, one clear of the other').toBeGreaterThanOrEqual(top.bottom);
+
+  await page.setViewportSize({width: 1024, height: 900});
+  const [left, right] = await boxes();
+  expect(right.left).toBeGreaterThanOrEqual(left.right);
+  // Same height, because the two are one unit — ragged heights read as two separate lists.
+  expect(Math.round(left.height)).toBe(Math.round(right.height));
+});
+
+test('moving an agent also moves its pane tab', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT})
+    .locator('button[aria-label="Move Architect 1 later"]').click();
+
+  const cardPanes = await page.locator('#agents .agent').evaluateAll(cards => cards.map(card =>
+    card.getAttribute('onclick').match(/'([^']+)'/)[1]));
+  expect(cardPanes.indexOf('w1:p2')).toBeLessThan(cardPanes.indexOf('w1:p1'));
+
+  await page.evaluate(() => setTabScope('all'));
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  const tabPanes = await page.locator('#agentTabs .agent-tab').evaluateAll(tabs =>
+    tabs.map(tab => tab.dataset.pane));
+  expect(tabPanes.indexOf('w1:p2')).toBeLessThan(tabPanes.indexOf('w1:p1'));
+});
+
 test('every section lays its cards out the same way', async ({page}) => {
-  // The three are interchangeable in the column, so the page must not change shape depending on
+  // They are interchangeable in the column, so the page must not change shape depending on
   // which one is read first. Terminals used to be a child of .agents and inherited its responsive
   // grid for free; pulling it out into its own orderable node dropped that, and it went full-width
   // beside a two-column grid of agent cards without a single test noticing.

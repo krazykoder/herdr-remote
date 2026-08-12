@@ -1,7 +1,7 @@
 // Which sections the main page shows, and in what order.
 //
 // The order *is* the setting — switching a section on appends it, so there is no separate ranking
-// to fall out of step with the three checkboxes. That makes the stored value the thing worth
+// to fall out of step with the checkboxes. That makes the stored value the thing worth
 // pinning: what a hand-edited or older value does, what the last remaining section does when you
 // try to switch it off, and that a section with nothing in it leaves no bare separator behind.
 //
@@ -37,14 +37,15 @@ function sectionNode(id, html) {
   };
 }
 
-// The three section nodes and the three checkboxes, as the block reaches for them.
+// The four section nodes and checkboxes, as the block reaches for them.
 function sectionsCtx({stored, content = {}} = {}) {
   const store = stored === undefined ? {} : {herdr_sections: stored};
   const el = id => sectionNode(id, content[id]);
-  const nodes = {agents: el('agents'), terminals: el('terminals'), recents: el('recents')};
+  const nodes = {agents: el('agents'), terminals: el('terminals'), pairs: el('pairs'), recents: el('recents')};
   const boxes = {
     sectionAgents: {checked: false, disabled: false},
     sectionTerminals: {checked: false, disabled: false},
+    sectionPairs: {checked: false, disabled: false},
     sectionRecents: {checked: false, disabled: false},
   };
   const ctx = vm.createContext({
@@ -68,9 +69,9 @@ const painted = nodes => Object.values(nodes)
 
 test('an install that never opens Settings sees today’s layout', () => {
   const {run, nodes} = sectionsCtx();
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'recents']);
+  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents']);
   run('applySections()');
-  assert.deepEqual(painted(nodes), ['agents', 'terminals', 'recents']);
+  assert.deepEqual(painted(nodes), ['agents', 'terminals', 'pairs', 'recents']);
 });
 
 test('a stored order is honoured, and the checkboxes agree with it', () => {
@@ -80,6 +81,7 @@ test('a stored order is honoured, and the checkboxes agree with it', () => {
   assert.equal(boxes.sectionRecents.checked, true);
   assert.equal(boxes.sectionAgents.checked, true);
   assert.equal(boxes.sectionTerminals.checked, false, 'left out of the stored order');
+  assert.equal(boxes.sectionPairs.checked, false, 'left out of the stored order');
 });
 
 test('switching a section on puts it at the bottom', () => {
@@ -95,15 +97,15 @@ test('off and on again is how a section is moved', () => {
   // replaces it. Documented in the settings hint, so it is worth a test that would catch a change.
   const {run} = sectionsCtx();
   run("toggleSection('agents', false)");
-  assert.deepEqual(run('sectionOrder'), ['terminals', 'recents']);
+  assert.deepEqual(run('sectionOrder'), ['terminals', 'pairs', 'recents']);
   run("toggleSection('agents', true)");
-  assert.deepEqual(run('sectionOrder'), ['terminals', 'recents', 'agents']);
+  assert.deepEqual(run('sectionOrder'), ['terminals', 'pairs', 'recents', 'agents']);
 });
 
 test('switching on something already on changes nothing', () => {
   const {run} = sectionsCtx();
   run("toggleSection('terminals', true)");
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'recents'], 'not moved, not doubled');
+  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents'], 'not moved, not doubled');
 });
 
 test('the last section on cannot be switched off', () => {
@@ -132,7 +134,7 @@ test('a section switched on with nothing in it draws no separator', () => {
   // shells. Showing the node anyway is a heading with nothing under it.
   const {run, nodes} = sectionsCtx({content: {terminals: ''}});
   run('applySections()');
-  assert.deepEqual(painted(nodes), ['agents', 'recents']);
+  assert.deepEqual(painted(nodes), ['agents', 'pairs', 'recents']);
   assert.equal(nodes.terminals.style.display, 'none');
 });
 
@@ -165,7 +167,7 @@ test('the gap moves when the order does', () => {
 test('a stored value that is not a list is ignored', () => {
   for (const bad of ['null', '"agents"', '{}', '7', 'not json at all']) {
     const {run} = sectionsCtx({stored: bad});
-    assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'recents'], `stored ${bad}`);
+    assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents'], `stored ${bad}`);
   }
 });
 
@@ -176,26 +178,26 @@ test('unknown and repeated names are dropped rather than trusted', () => {
 
 test('a stored list with nothing usable in it falls back rather than blanking the page', () => {
   const {run} = sectionsCtx({stored: JSON.stringify(['nope', 'gone'])});
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'recents']);
+  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents']);
 });
 
 test('an unknown section name is refused', () => {
   const {run} = sectionsCtx();
   run("toggleSection('timeline', true)");
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'recents']);
+  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents']);
 });
 
 test('a change is written back, and read on the next load', () => {
   const {run, store} = sectionsCtx();
   run("toggleSection('terminals', false)");
-  assert.deepEqual(JSON.parse(store.herdr_sections), ['agents', 'recents']);
+  assert.deepEqual(JSON.parse(store.herdr_sections), ['agents', 'pairs', 'recents']);
   const next = sectionsCtx({stored: store.herdr_sections});
-  assert.deepEqual(next.run('sectionOrder'), ['agents', 'recents']);
+  assert.deepEqual(next.run('sectionOrder'), ['agents', 'pairs', 'recents']);
 });
 
 test('private mode is session-only rather than an error', () => {
   const nodes = {
-    agents: sectionNode('agents'), terminals: sectionNode('terminals'), recents: sectionNode('recents'),
+    agents: sectionNode('agents'), terminals: sectionNode('terminals'), pairs: sectionNode('pairs'), recents: sectionNode('recents'),
   };
   const ctx = vm.createContext({
     console,
@@ -204,5 +206,5 @@ test('private mode is session-only rather than an error', () => {
   });
   vm.runInContext(HTML.slice(from, to), ctx);
   vm.runInContext("toggleSection('agents', false)", ctx);
-  assert.deepEqual(vm.runInContext('sectionOrder', ctx), ['terminals', 'recents']);
+  assert.deepEqual(vm.runInContext('sectionOrder', ctx), ['terminals', 'pairs', 'recents']);
 });
