@@ -25,17 +25,14 @@ const cards = page => page.locator('#agents .agent')
 const backdrop = page => page.locator('#orderSheet > div').first();
 
 async function openSheet(page) {
-  await page.locator('#navSettings').click();
-  await page.getByRole('button', {name: 'Reorder agents…'}).click();
+  await page.getByRole('button', {name: 'Reorder agents'}).click();
   await expect(page.locator('#orderSheet')).toBeVisible();
   await expect(rows(page).first()).toBeVisible();
 }
 
-// Drags row `from` onto row `to`'s slot, the way a finger would: press, several moves, release.
-// From the grip, because that is the only part of the row that drags — the rest is left to the
-// browser so a sheet longer than the screen can still be scrolled by touch.
+// A mouse may grab the whole row. Touch keeps using the grip so a long sheet still scrolls.
 async function drag(page, from, to) {
-  const a = await rows(page).nth(from).locator('.grip').boundingBox();
+  const a = await rows(page).nth(from).boundingBox();
   const b = await rows(page).nth(to).boundingBox();
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
@@ -100,10 +97,7 @@ test('a poll arriving mid-drag does not move the row under the pointer', async (
   expect(await names(page)).toEqual(['scratch', 'amp', 'Architect 1']);
 });
 
-test('only the grip drags, so a sheet longer than the screen can still be scrolled', async ({page}) => {
-  // touch-action: none has to be somewhere or iOS pans the page out from under the gesture. On the
-  // whole row it would mean every finger landing on the list lands on something that refuses to
-  // scroll, and a user with more agents than fit could not reach the rest of them.
+test('a desktop mouse drags the whole row; touch keeps a right-side grip for scrolling', async ({page}) => {
   await openSheet(page);
   const a = await rows(page).nth(2).locator('.name').boundingBox();
   const b = await rows(page).nth(0).boundingBox();
@@ -111,11 +105,15 @@ test('only the grip drags, so a sheet longer than the screen can still be scroll
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, {steps: 6});
   await page.mouse.up();
-  expect(await names(page), 'a drag off the grip moves nothing').toEqual(SNAPSHOT);
+  expect(await names(page), 'a desktop row drag reorders').toEqual(['amp', 'Architect 1', 'scratch']);
 
-  const touch = await rows(page).nth(0).evaluate(el => [
-    getComputedStyle(el).touchAction, getComputedStyle(el.querySelector('.grip')).touchAction]);
-  expect(touch, 'the row scrolls, the grip does not').toEqual(['auto', 'none']);
+  const touch = await rows(page).nth(0).evaluate(el => {
+    const grip = el.querySelector('.grip');
+    const row = el.getBoundingClientRect(), handle = grip.getBoundingClientRect();
+    return [getComputedStyle(el).touchAction, getComputedStyle(grip).touchAction, handle.right, row.right];
+  });
+  expect(touch.slice(0, 2), 'the row scrolls, the grip does not').toEqual(['auto', 'none']);
+  expect(touch[2], 'grip is on the right edge').toBeCloseTo(touch[3], 0);
 });
 
 test('the arrow keys move a focused row, for anyone without a pointer', async ({page}) => {

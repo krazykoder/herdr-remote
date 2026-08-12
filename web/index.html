@@ -779,6 +779,20 @@
       gap: 5px;
     }
 
+    .section-header .section-action {
+      margin-left: auto;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--muted);
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: none;
+      cursor: pointer;
+    }
+
     .agent {
       background: var(--surface);
       border-radius: 12px;
@@ -1067,19 +1081,15 @@
       cursor: grabbing;
     }
 
-    /* The handle, and the only part of the row that drags. touch-action: none has to be somewhere
-       or the page pans out from under the gesture on iOS — but putting it on the whole row means a
-       sheet holding more agents than fit cannot be scrolled by touch at all, because every finger
-       landing on it lands on a row. Confining it to the grip is what the ⠿ was promising anyway.
-       Stretched full height and padded out to 40px, because 16px of glyph is not a thumb target. */
+    /* The handle stays touch-only: putting touch-action:none on a whole row would make a sheet
+       longer than the screen impossible to scroll. It lives on the right for the thumb; a mouse
+       can drag anywhere on the row. */
     .order-row .grip {
       display: flex;
       align-items: center;
       align-self: stretch;
-      margin-left: -16px;
-      /* Asymmetric so the glyph still lands on the 16px gutter the sheet's header sits on, while
-         the target grows to the right where there is nothing to line up with. */
-      padding: 0 8px 0 16px;
+      margin-right: -16px;
+      padding: 0 16px 0 8px;
       color: var(--muted);
       font-size: 0.95rem;
       flex-shrink: 0;
@@ -2248,12 +2258,6 @@
     </div>
 
     <div class="setting-group">
-      <label>Agent order</label>
-      <button class="nav-key" onclick="toggleSettings();openOrder()">Reorder agents…</button>
-      <div class="hint">Drag the agents into the order you want them listed. Kept in this browser.</div>
-    </div>
-
-    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2696,9 +2700,9 @@
       </div>
       <div id="orderRows" role="listbox" aria-label="Agent order"></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
-        <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row by its handle, or focus
-          one and use the arrow keys. The main page still groups by status, so this is the order
-          inside each group.</p>
+        <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row with a mouse; on touch,
+          use its right-side handle. Or focus one and use arrow keys. The main page still groups by
+          status, so this is the order inside each group.</p>
         <button class="nav-key" onclick="resetOrder()">Reset to default order</button>
       </div>
     </div>
@@ -3923,6 +3927,7 @@
       let html = hoistHtml(agents) + layoutHtml(agents);
       if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
+      addOrderButton();
     }
 
     // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
@@ -3959,6 +3964,7 @@
         html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
+      addOrderButton();
     }
 
     function projectCard(p) {
@@ -4063,6 +4069,7 @@
       if (idle.length) html += section('Idle', idle);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
+      addOrderButton();
     }
 
     // A workspace ID from one Project means nothing under another, and leaving it set
@@ -5513,9 +5520,9 @@
         agents.filter(x => x.pane_id === a.pane_id).length === 1));
       box.innerHTML = live.length
         ? live.map(a => `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
-      <span class="grip" aria-hidden="true">⠿</span>
       <span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>
       <span class="name">${escapeHtml(paneLabel(a))}</span>
+      <span class="grip" aria-hidden="true">⠿</span>
     </div>`).join('')
         : '<div class="empty">No agents to order.</div>';
       document.getElementById('orderSheet').style.display = 'block';
@@ -5580,9 +5587,9 @@
       }
 
       box.addEventListener('pointerdown', e => {
-        // The grip and nothing else — see the CSS. A press anywhere else on the row is left to the
-        // browser so the sheet can still be scrolled by touch.
-        if (!e.target.closest('.grip') || box.children.length < 2) return;
+        // A mouse has no sheet-scroll conflict, so the whole row drags. Touch needs the grip: a
+        // finger on the rest of the row must still scroll a long sheet.
+        if ((e.pointerType !== 'mouse' && !e.target.closest('.grip')) || box.children.length < 2) return;
         // Or the page pans out from under the drag, and the row keeps a text selection with it.
         e.preventDefault();
         row = e.target.closest('.order-row');
@@ -6028,6 +6035,15 @@
       return `<div class="section-header">${title}` +
         (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
         agentCards(list);
+    }
+
+    // This action belongs with the live-agent list, not Settings. First heading is whichever
+    // agent group is currently on top (Needs you, Working, or Idle), so it stays visible without
+    // inventing a second heading above the status groups.
+    function addOrderButton() {
+      const header = document.querySelector('#agents .section-header');
+      if (header) header.insertAdjacentHTML('beforeend',
+        '<button class="section-action" onclick="openOrder()" aria-label="Reorder agents">Reorder</button>');
     }
 
     function terminalCard(s) {
