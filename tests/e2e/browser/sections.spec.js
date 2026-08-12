@@ -103,13 +103,15 @@ async function addPair(page) {
   await expect(page.locator('#pairs .pair-row')).toBeVisible();
 }
 
-test('a healthy pair gets two cards and a link, never card-level Pair buttons', async ({page}) => {
+test('a healthy pair gets two cards and a link', async ({page}) => {
   await addPair(page);
   await expect(page.locator('#pairs')).toBeVisible();
   await expect(page.locator('#pairs .pair-row')).toHaveCount(1);
   await expect(page.locator('#pairs .pair-row .agent')).toHaveCount(2);
   await expect(page.locator('#pairs .pair-link')).toHaveText('↔');
-  await expect(page.locator('.pair-btn')).toHaveCount(0);
+  // The ordinary cards keep the Pair button that opens the dialog; inside a pair row it is the one
+  // thing the row already says, so it is the width that gets spent on the name instead.
+  await expect(page.locator('#agents .agent .pair-btn').first()).toBeVisible();
   await page.locator('#navSettings').click();
   const pairs = page.locator('#sectionPairs');
   await expect(pairs).toBeChecked();
@@ -122,37 +124,29 @@ test('a healthy pair gets two cards and a link, never card-level Pair buttons', 
   await expect(page.locator('#pairs')).toBeVisible();
 });
 
-test('a pair sits side by side only where two whole cards fit', async ({page}) => {
-  // A pair is two agent cards, not one — on a phone that leaves each about 160px, which wraps the
-  // name off its badges. Stacked is the default and side by side is what the width buys.
+test('a pair sits side by side at every width, phone included', async ({page}) => {
+  // Two agents working together is what a pair is, and a stacked pair says nothing a plain list
+  // does not. A phone leaves each card about 160px, so inside a pair row the card drops what the
+  // row already says — the Pair button, and on the narrowest screens the chevron — and spends the
+  // width on the name and its badges instead.
   await addPair(page);
   const boxes = () => page.locator('#pairs .pair-row .agent')
     .evaluateAll(cards => cards.map(c => c.getBoundingClientRect()));
 
+  for (const width of [390, 1024]) {
+    await page.setViewportSize({width, height: 900});
+    const [left, right] = await boxes();
+    expect(right.left, `side by side at ${width}`).toBeGreaterThanOrEqual(left.right);
+    // Same height, because the two are one unit — ragged heights read as two separate lists.
+    expect(Math.round(left.height), `level at ${width}`).toBe(Math.round(right.height));
+    // And neither is squeezed to the point of wrapping into a third line.
+    expect(left.height, `unwrapped at ${width}`).toBeLessThan(90);
+  }
+
   await page.setViewportSize({width: 390, height: 900});
-  const [top, bottom] = await boxes();
-  expect(bottom.top, 'stacked, one clear of the other').toBeGreaterThanOrEqual(top.bottom);
-
+  await expect(page.locator('#pairs .pair-row .pair-btn').first()).toBeHidden();
   await page.setViewportSize({width: 1024, height: 900});
-  const [left, right] = await boxes();
-  expect(right.left).toBeGreaterThanOrEqual(left.right);
-  // Same height, because the two are one unit — ragged heights read as two separate lists.
-  expect(Math.round(left.height)).toBe(Math.round(right.height));
-});
-
-test('moving an agent also moves its pane tab', async ({page}) => {
-  await page.locator('#agents .agent', {hasText: AGENT})
-    .locator('button[aria-label="Move Architect 1 later"]').click();
-
-  const cardPanes = await page.locator('#agents .agent').evaluateAll(cards => cards.map(card =>
-    card.getAttribute('onclick').match(/'([^']+)'/)[1]));
-  expect(cardPanes.indexOf('w1:p2')).toBeLessThan(cardPanes.indexOf('w1:p1'));
-
-  await page.evaluate(() => setTabScope('all'));
-  await page.locator('#agents .agent', {hasText: AGENT}).click();
-  const tabPanes = await page.locator('#agentTabs .agent-tab').evaluateAll(tabs =>
-    tabs.map(tab => tab.dataset.pane));
-  expect(tabPanes.indexOf('w1:p2')).toBeLessThan(tabPanes.indexOf('w1:p1'));
+  await expect(page.locator('#pairs .pair-row .pair-btn').first()).toBeVisible();
 });
 
 test('every section lays its cards out the same way', async ({page}) => {

@@ -668,26 +668,54 @@
       padding: 0 12px 12px;
     }
 
-    /* Stacked by default. Two agent cards side by side on a phone leaves each about 160px, which
-       wraps the name off its badges and turns a card into three ragged lines — the pair is only
-       readable side by side once there is room for two whole cards. */
+    /* Side by side at every width, phone included: two agents working together is what a pair is,
+       and stacking them says nothing a plain list does not already say. */
     .pair-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 12px;   /* the gap the section grid uses, so the rhythm does not change at the Pairs header */
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 8px;
       /* stretch, not center: the two cards are a unit and unequal heights read as two lists. */
       align-items: stretch;
       margin-bottom: 12px;
     }
 
-    /* Turned upright while the cards are stacked — a sideways arrow between two cards one above
-       the other points at nothing. */
     .pair-link {
       color: var(--blue);
       font-size: 1.25rem;
-      text-align: center;
       align-self: center;
-      transform: rotate(90deg);
+    }
+
+    /* A phone gives each of the two about 160px. What goes is what the row already says: the Pair
+       button, on a card sitting under the Pairs header, and the chevron, when the whole card is
+       the tap target. The name and its badges keep the width instead. */
+    .pair-row .agent {
+      padding: 10px;
+    }
+
+    .pair-row .pair-btn,
+    .pair-row .chev {
+      display: none;
+    }
+
+    /* Two lines, always. "Line 1 is the name and never wraps into two" is the card's rule
+       everywhere; at 165px it needs saying in CSS rather than left to the text happening to fit,
+       or a long name reflows one card to three lines and the pair goes crooked. */
+    .pair-row .agent .info {
+      min-width: 0;
+    }
+
+    .pair-row .agent .project,
+    .pair-row .agent .meta {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (min-width: 560px) {
+
+      .pair-row .chev {
+        display: inline;
+      }
     }
 
     /* Only the section drawn first, which CSS cannot pick out on its own: :first-child follows
@@ -719,6 +747,14 @@
       cursor: pointer;
       border: 1px solid var(--border);
       transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    /* The card's trailing ›. A class rather than an inline style so a pair row can drop it when
+       the two cards are sharing a phone's width. */
+    .chev {
+      color: var(--muted);
+      font-size: 1.2rem;
+      flex-shrink: 0;
     }
 
     .agent:hover {
@@ -956,32 +992,6 @@
 
     .agent .info {
       flex: 1;
-    }
-
-    .agent-order {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      flex-shrink: 0;
-    }
-
-    /* 28px square rather than 28x24: two of these stack inside a card that is already only about
-       70px tall, and the shorter one falls under the 24px minimum once the border is counted. */
-    .agent-order button {
-      width: 28px;
-      height: 28px;
-      padding: 0;
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      background: transparent;
-      color: var(--muted);
-      cursor: pointer;
-      line-height: 1;
-    }
-
-    .agent-order button:disabled {
-      opacity: 0.35;
-      cursor: default;
     }
 
     .agent .project {
@@ -1800,6 +1810,22 @@
       white-space: nowrap;
     }
 
+    .pair-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.65rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .pair-btn.paired {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
     .term-input button:last-child {
       padding: 10px 14px;
       border-radius: 6px;
@@ -1972,13 +1998,17 @@
         gap: 12px;
       }
 
-      /* Room for two whole cards, so the pair can say what it is in one glance. */
+      /* Room to spare, so a pair card is an ordinary card again. */
       .pair-row {
-        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 12px;
       }
 
-      .pair-link {
-        transform: none;
+      .pair-row .agent {
+        padding: 14px 16px;   /* the ordinary card padding again */
+      }
+
+      .pair-row .pair-btn {
+        display: inline;
       }
 
       .section-header {
@@ -3091,46 +3121,6 @@
     // selection separately — switching panes then never touches the markup.
     let tabsSig = '', tabsActive = null;
 
-    // --- Agent order ---
-    // Browser-local, like pins: relay snapshots own membership and status, while this only says
-    // which live cards come first. The same order feeds both the landing cards and the pane tabs.
-    const AGENT_ORDER_KEY = 'herdr_agent_order';
-    let agentOrder = [];
-
-    function loadAgentOrder() {
-      try {
-        const v = JSON.parse(localStorage.getItem(AGENT_ORDER_KEY) || '[]');
-        agentOrder = Array.isArray(v) ? v.filter((id, i) => typeof id === 'string' && v.indexOf(id) === i) : [];
-      } catch (e) { agentOrder = []; }
-    }
-
-    function saveAgentOrder() {
-      try { localStorage.setItem(AGENT_ORDER_KEY, JSON.stringify(agentOrder)); }
-      catch (e) { /* private mode: session-only */ }
-    }
-
-    function orderedAgents(list) {
-      const rank = new Map(agentOrder.map((id, i) => [id, i]));
-      return list.map((agent, index) => ({agent, index})).sort((a, b) =>
-        (rank.get(a.agent.pane_id) ?? agentOrder.length + a.index)
-        - (rank.get(b.agent.pane_id) ?? agentOrder.length + b.index))
-        .map(x => x.agent);
-    }
-
-    function moveAgent(paneId, swapId) {
-      if (!paneId || !swapId || paneId === swapId
-          || agents.filter(a => a.pane_id === paneId).length !== 1
-          || agents.filter(a => a.pane_id === swapId).length !== 1) return;
-      const next = orderedAgents(agents);
-      const from = next.findIndex(a => a.pane_id === paneId);
-      const to = next.findIndex(a => a.pane_id === swapId);
-      if (from < 0 || to < 0) return;
-      [next[from], next[to]] = [next[to], next[from]];
-      agentOrder = next.map(a => a.pane_id);
-      saveAgentOrder();
-      render();
-    }
-
     // Pinned tabs, newest pin first: pinning is "put this one at the front", so a second pin has
     // to land ahead of the first. Order only, and local to this browser — a pane_id herdr later
     // reuses costs nothing worse than one tab sitting in the wrong place.
@@ -3195,7 +3185,7 @@
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
-      const all = orderedAgents(agents).concat(shells);
+      const all = agents.concat(shells);
       let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
@@ -3801,7 +3791,7 @@
     // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
     // where it already sits, so this header means one thing and the eye can trust it.
     function hoistHtml(list) {
-      const waiting = orderedAgents(list).filter(hoisted);
+      const waiting = list.filter(hoisted);
       if (!waiting.length) return '';
       return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
         + agentCards(waiting);
@@ -3809,7 +3799,6 @@
 
     // Native workspace/tab navigation over `list` — all agents, or one Project's.
     function layoutHtml(list) {
-      list = orderedAgents(list);
       const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
       let html = '';
       visibleTabs = [];
@@ -3858,7 +3847,6 @@
     }
 
     function renderAgentList(list) {
-      list = orderedAgents(list);
       // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
       // sections below get everything else. Blocked still keeps a section for the acked ones —
       // a pane you have seen is blocked is not news, but it is still stuck.
@@ -5665,7 +5653,7 @@
       if (window.cue) cue('error');
     }
 
-    function agentCard(a, previousId, nextId) {
+    function agentCard(a) {
       const color = statusColor(a);
       const pulseClass = a.status === 'working' ? ' pulse' : '';
       const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
@@ -5681,22 +5669,17 @@
       // Said apart to a screen reader too: "needs you" on a finished pane is a false alarm that
       // costs more when the colour and the blink are not there to correct it.
       const note = kind === 'blocked' ? ', needs you' : kind === 'done' ? ', finished' : '';
-      const order = previousId || nextId
-        ? `<span class="agent-order" role="group" aria-label="Move ${label}">` +
-          `<button aria-label="Move ${label} earlier" ${previousId ? `onclick="event.stopPropagation();moveAgent('${a.pane_id}','${previousId}')"` : 'disabled'}>↑</button>` +
-          `<button aria-label="Move ${label} later" ${nextId ? `onclick="event.stopPropagation();moveAgent('${a.pane_id}','${nextId}')"` : 'disabled'}>↓</button></span>`
-        : '';
+      const paired = pairFor(pairs, a.pane_id);
       return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
-    ${order}
-    <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
+    <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
+    <span class="chev" aria-hidden="true">›</span>
   </div>`;
     }
 
     function agentCards(list) {
-      const ordered = orderedAgents(list);
-      return ordered.map((a, i) => agentCard(a, ordered[i - 1]?.pane_id, ordered[i + 1]?.pane_id)).join('');
+      return list.map(agentCard).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -6747,7 +6730,6 @@
     initPush();
 
     loadPairs();
-    loadAgentOrder();
     loadPins();
     loadSeen();
     measureCellRatio();  // before applyWrapMode, which divides by it
