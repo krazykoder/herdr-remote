@@ -7,6 +7,7 @@
 import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, subprocess, tempfile, time
 
 from agent_state import complete_agent_update_message
+from pane_summary import summary_body
 from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
@@ -96,6 +97,11 @@ SEND_SETTLE = 0.15
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
 VAPID_PRIVATE_KEY = os.environ.get("HERDR_VAPID_PRIVATE", "")
 VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
+# What a "finished" push says: the agent's closing message, or the bottom of the pane. On by
+# default because the closing message is the thing the user wanted to be told, and `0` is here
+# because a harness can change its gutter glyphs in a release and the pane's last three lines are
+# never wrong, only vaguer. Falls back on its own for any pane it cannot read a message off.
+PUSH_SUMMARY = os.environ.get("HERDR_PUSH_SUMMARY", "") != "0"
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 
@@ -295,6 +301,16 @@ def notify_body(content: str, limit: int = 140) -> str:
             break
     text = " ".join(reversed(kept))
     return text[:limit - 1] + "…" if len(text) > limit else text
+
+
+def finished_body(content: str, agent: str) -> str:
+    """What a "finished" push says: the agent's closing message, or the bottom of the pane.
+
+    summary_body returns None for a harness it has no profile for and for a pane that stopped on a
+    command rather than on words, so the fallback is reached on its own as often as it is by the
+    setting.
+    """
+    return (PUSH_SUMMARY and summary_body(content, agent)) or notify_body(content)
 
 
 async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False,
@@ -884,9 +900,12 @@ async def _poll_once():
             # under it, which is why it is also the clear for the approve-then-finish path.
             elif status == "done" and last_statuses.get(pid) in ("working", "blocked"):
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
+                # Only the finished push reads the closing message. A blocked pane's news is the
+                # question in the box at its foot, which is what notify_body already reads; the
+                # closing message above it is what the agent said before it stopped to ask.
                 await send_web_push(
                     title=f"🐑 {a['project']} finished",
-                    body=notify_body(content),
+                    body=finished_body(content, a["agent"]),
                     url=f"/?pane={pid}",
                     tag=push_tag(pid),
                 )

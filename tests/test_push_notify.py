@@ -7,11 +7,13 @@ pane wanting you appears at all, or silently overwrites the first.
 """
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
+import herdr_relay
 from herdr_relay import STATIC_FILES, notify_body, push_tag
 
 WEB = ROOT / "web"
@@ -77,6 +79,28 @@ class NotifyBodyTests(unittest.TestCase):
     def test_an_empty_pane_says_nothing_rather_than_failing(self):
         self.assertEqual(notify_body(""), "")
         self.assertEqual(notify_body("\n\n   \n"), "")
+
+
+class FinishedBodyTests(unittest.TestCase):
+    """Which of the two readings a finished pane's push carries.
+
+    The detector lives in relay/pane_summary.py and is tested against the browser's fixtures in
+    tests/test_pane_summary.py. What is pinned here is the choice: the closing message when there
+    is one, the bottom of the pane when there is not, and the setting that forces the latter.
+    """
+
+    def test_it_says_what_the_agent_concluded(self):
+        body = herdr_relay.finished_body(DONE, "claude")
+        self.assertEqual(body, "Ready. Name the change.")
+        # Which is the difference: the pane's last three lines start with the command it ran.
+        self.assertIn("git status --short", notify_body(DONE))
+
+    def test_a_harness_with_no_profile_falls_back_on_its_own(self):
+        self.assertEqual(herdr_relay.finished_body(DONE, "amp"), notify_body(DONE))
+
+    def test_the_setting_puts_the_old_reading_back(self):
+        with unittest.mock.patch.object(herdr_relay, "PUSH_SUMMARY", False):
+            self.assertEqual(herdr_relay.finished_body(DONE, "claude"), notify_body(DONE))
 
 
 class PushTagTests(unittest.TestCase):

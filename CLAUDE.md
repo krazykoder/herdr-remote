@@ -151,6 +151,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_ENABLE_TERMINAL` | `1` lists shell panes (panes with no agent) as Terminals and makes them readable and writable. Off means they are never parsed, so the wire is unchanged. Creating one also needs `HERDR_ENABLE_WRITE_EXT` |
 | `HERDR_VAPID_PUBLIC` / `HERDR_VAPID_PRIVATE` | Web Push keypair, from `relay/make-vapid.py`. Unset = no push is ever sent |
 | `HERDR_VAPID_SUBJECT` | Contact URI in the VAPID claim (default: `mailto:herdr@localhost`) |
+| `HERDR_PUSH_SUMMARY` | A "finished" push carries the agent's closing message, read out of the pane by `relay/pane_summary.py`. On by default; `0` falls back to the last few lines of the pane, which is also what any pane with no readable message gets |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 | `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |
