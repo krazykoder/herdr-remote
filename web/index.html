@@ -3225,8 +3225,8 @@
           // wanted.
           pendingStart = msg.pane_id || null;
         }
-        else setStartError(msg.error ||
-          (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
+        else setStartError(withRetryHint(msg.error ||
+          (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed')));
       }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
@@ -3695,10 +3695,27 @@
       if (want && [...el.options].some(o => o.value === want)) el.value = want;
     }
 
-    function setStartError(text) {
+    // One line under the fields carries both halves of what happens after Start is pressed:
+    // that it is running, and how it ended. A start blocks for as long as the agent takes to
+    // reach a prompt — up to 30s, and longer over SSH — and until this said so the dialog sat
+    // with a greyed button and no sign it had heard the press.
+    function setStartStatus(text, busy) {
       const el = document.getElementById('startError');
       el.textContent = text || '';
       el.style.display = text ? 'block' : 'none';
+      el.style.color = busy ? 'var(--muted)' : 'var(--red)';
+    }
+
+    function setStartError(text) { setStartStatus(text, false); }
+
+    // herdr refuses a pane that has not reached its shell prompt yet, and the relay already
+    // retries that for 20s before giving up. What is left is a race the user can win by pressing
+    // the button again — and nothing in the dialog to change first, so say that rather than
+    // leaving them to guess which field was wrong.
+    const START_RETRYABLE = /busy|not ready|not an available shell|timed? ?out|timeout|exited|malformed|no pane_id/i;
+
+    function withRetryHint(text) {
+      return START_RETRYABLE.test(text) && !/try again/i.test(text) ? text + ' — try again.' : text;
     }
 
     function openStartDialog(projectId, ev, mode) {
@@ -3811,7 +3828,7 @@
         if (!target || !target.value) { setStartError('Select a target first'); return; }
         msg[placement === 'new_tab' ? 'workspace_id' : 'split_from'] = target.value;
       }
-      setStartError('');
+      setStartStatus(terminal ? 'Opening terminal…' : 'Starting session… this can take up to 30s.', true);
       document.getElementById('startSubmit').disabled = true;
       // Remembered on send rather than on change: what the user actually spawned is the choice
       // worth reopening on, not one they scrolled past.
