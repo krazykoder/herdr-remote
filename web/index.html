@@ -115,6 +115,7 @@
       --dot-red: var(--red);
       --dot-orange: var(--orange);
       --dot-shell: var(--shell);
+      --dot-blue: var(--blue);
     }
 
     /* Light holds two things the first cut got wrong. First, a card is *lighter* than the page in
@@ -153,6 +154,7 @@
       --dot-red: #f7768e;
       --dot-orange: #e0af68;
       --dot-shell: #7dcfff;
+      --dot-blue: #7aa2f7;
     }
 
     * {
@@ -702,11 +704,17 @@
       height: 10px;
     }
 
-    /* Blocked and done read the same here on purpose: both are a pane waiting on you, and the
-       card's own dot and section header already say which. */
+    /* Red is reserved for blocked, which is the only status that cannot proceed without you. */
     .agent.attention {
       border-color: var(--red);
       background: color-mix(in srgb, var(--red) 5%, var(--surface));
+    }
+
+    /* Done is news rather than a request, so it gets the same shape in blue. Tinted at all — and
+       not left plain — because the card still has to say it has not been looked at yet. */
+    .agent.attention.alert-done {
+      border-color: var(--blue);
+      background: color-mix(in srgb, var(--blue) 5%, var(--surface));
     }
 
     /* Occupies the same box as .agent .dot so a terminal card and an agent card align down the
@@ -839,6 +847,17 @@
       background: var(--red);
       border: 2px solid var(--bg);
       animation: attention 1.6s ease-in-out infinite;
+    }
+
+    /* Blinking is what blocked has and done does not. Motion is the loudest thing on the screen
+       and it is spent on the one status that cannot proceed without you; a finished agent that
+       blinks alongside it makes both mean "something, somewhere". Colour still carries done, so
+       nothing is lost by holding it still — and a badge that never stops moving is what a user
+       learns to stop seeing. */
+    .chip.alert.alert-done::after,
+    .agent-tab.alert.alert-done::after {
+      background: var(--blue);
+      animation: none;
     }
 
     @keyframes attention {
@@ -2505,6 +2524,37 @@
     function needsAttention(a) {
       return !!a && ATTENTION.includes(a.status) && acked[a.pane_id] !== a.status;
     }
+
+    // Which of the two an unacked pane is, or null.
+    //
+    // Both are worth a badge and both clear on a look, so they share needsAttention above — but
+    // only one of them is an interruption. Blocked cannot proceed without you and is the thing
+    // the product exists to surface: it blinks, it is red, and it is what "Needs you" hoists.
+    // Done is news, not a request. Same badge in blue, sitting still, left in the Done section it
+    // was always going to be listed in. Reading them as one is why a finished agent used to shout
+    // in red from the top of the list as loudly as one actually waiting on an answer.
+    function attentionKind(a) {
+      return needsAttention(a) ? (a.status === 'blocked' ? 'blocked' : 'done') : null;
+    }
+
+    // The strongest kind in a group, for a chip that stands in for several panes. Blocked wins:
+    // a chip holding one blocked pane behind four finished ones must not read as "all finished".
+    function groupKind(list) {
+      let kind = null;
+      for (const a of list) {
+        const k = attentionKind(a);
+        if (k === 'blocked') return 'blocked';
+        if (k) kind = k;
+      }
+      return kind;
+    }
+
+    const alertClass = kind => (kind ? (kind === 'blocked' ? ' alert' : ' alert alert-done') : '');
+
+    // What the top of the list lifts out. Blocked only — that is what makes "Needs you" mean it.
+    // Everything the sections below exclude is keyed on this and not on needsAttention, so a done
+    // pane is listed once, under Done, still carrying its badge.
+    function hoisted(a) { return attentionKind(a) === 'blocked'; }
     // Whether a pane arriving at `status` should be heard as well as seen. Not the pane you are
     // watching with the tab in front of you — you can see it finish, and a sound for it is noise.
     // Hidden is the distinction and not merely "is it open": a phone with the app backgrounded on
@@ -2974,7 +3024,7 @@
           // merely green there says "recent" just as loudly as it says "running now".
           const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
           const pulse = a.status === 'working' ? ' pulse' : '';
-          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${needsAttention(a) ? ' alert' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
+          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${alertClass(attentionKind(a))}" data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
@@ -3448,7 +3498,11 @@
       const el = document.getElementById('favicon');
       // Hex and not var(--red): this is an SVG in a data: URI, which resolves no custom property
       // from the page. The two are the dark theme's --red and --blue.
-      const href = favicon(n ? '#f7768e' : '#7aa2f7');
+      //
+      // Red is blocked alone, matching everything else. Done shares the resting blue rather than
+      // getting a third colour: a 16px dot cannot carry three states apart at tab size, and the
+      // count already in the title is what says a finished pane is waiting to be read.
+      const href = favicon(agents.some(a => attentionKind(a) === 'blocked') ? '#f7768e' : '#7aa2f7');
       if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 
@@ -3488,8 +3542,7 @@
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
-        const waiting = list.some(needsAttention);
-        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${alertClass(groupKind(list))}" onclick="selectProject('${p.id}')">${p.label}</button>`;
       }
       html += `</div>`;
       if (activeProject === null) {
@@ -3497,7 +3550,7 @@
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
-        const rest = agents.filter(a => !needsAttention(a));
+        const rest = agents.filter(a => !hoisted(a));
         if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
@@ -3519,11 +3572,19 @@
 
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
-      const waiting = list.filter(needsAttention).length;
-      const color = waiting ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
+      // Counted apart and said apart. One number covering both read as "N needs you" over a
+      // Project whose sessions had all finished and were waiting on nobody.
+      const blocked = list.filter(a => attentionKind(a) === 'blocked').length;
+      const finished = list.filter(a => attentionKind(a) === 'done').length;
+      const color = blocked ? 'var(--dot-red)'
+        : finished ? 'var(--dot-blue)'
+          : list.length ? 'var(--dot-green)' : 'var(--muted)';
       const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
+      const notes = [];
+      if (blocked) notes.push(`${blocked} needs you`);
+      if (finished) notes.push(`${finished} finished`);
       const meta = list.length
-        ? `${list.length} session${list.length > 1 ? 's' : ''}${waiting ? ` · ${waiting} needs you` : ''}`
+        ? `${list.length} session${list.length > 1 ? 's' : ''}${notes.length ? ` · ${notes.join(' · ')}` : ''}`
         : 'No sessions';
       // Available on every Project card, including one with zero live sessions.
       const start = startOptions
@@ -3537,8 +3598,10 @@
   </div>`;
     }
 
+    // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
+    // where it already sits, so this header means one thing and the eye can trust it.
     function hoistHtml(list) {
-      const waiting = list.filter(needsAttention);
+      const waiting = list.filter(hoisted);
       if (!waiting.length) return '';
       return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
         + waiting.map(a => agentCard(a)).join('');
@@ -3558,9 +3621,8 @@
         html += `<button class="chip${activeWorkspace === null ? ' active' : ''}" onclick="backToWorkspaces()">All</button>`;
         for (const wsId of workspaces) {
           const wsAgents = list.filter(a => a.workspace_id === wsId);
-          const waiting = wsAgents.some(needsAttention);
           const name = wsAgents[0]?.project || wsId.slice(0, 8);
-          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${alertClass(groupKind(wsAgents))}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
         }
         html += `</div>`;
         // Tab chip strip (always show when workspace selected)
@@ -3573,17 +3635,16 @@
           }
           wsTabs.forEach((tid, i) => {
             const tabAgents = list.filter(a => a.tab_id === tid);
-            const waiting = tabAgents.some(needsAttention);
             const tabLabel = tabAgents[0]?.label || 'Tab ' + (i + 1);
-            html += `<button class="chip${activeTab === tid ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+            html += `<button class="chip${activeTab === tid ? ' active' : ''}${alertClass(groupKind(tabAgents))}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
           });
           html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
           html += `</div>`;
         }
       }
-      // Agent list (filtered). Whatever needs you is already hoisted above, so it is dropped here
-      // rather than repeated — a done agent would otherwise appear in Needs you and in Done.
-      let filtered = list.filter(a => !needsAttention(a));
+      // Agent list (filtered). Only what the hoist took is dropped here, so a done pane appears
+      // exactly once — under Done, where it belongs — instead of being lifted into Needs you.
+      let filtered = list.filter(a => !hoisted(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
@@ -3596,10 +3657,10 @@
     }
 
     function renderAgentList(list) {
-      // Same rule as layoutHtml: the hoist owns whatever needs you, and the sections below get
-      // what is left. Blocked no longer needs a section of its own — an unacked blocked pane is
-      // in the hoist, and an acked one is one you have already looked at.
-      const rest = list.filter(a => !needsAttention(a));
+      // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
+      // sections below get everything else. Blocked still keeps a section for the acked ones —
+      // a pane you have seen is blocked is not news, but it is still stuck.
+      const rest = list.filter(a => !hoisted(a));
       const blocked = rest.filter(a => a.status === 'blocked');
       const working = rest.filter(a => a.status === 'working');
       const done = rest.filter(a => a.status === 'done');
@@ -5410,7 +5471,11 @@
       // the path, where it is the same width every time and the list reads as a column. The dot
       // to the left is untouched — it is the live status, and the emoji only says what kind of
       // pane this is, which is why the two do not share a column.
-      return `<div class="agent${needsAttention(a) ? ' attention' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${needsAttention(a) ? ', needs you' : ''}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+      const kind = attentionKind(a);
+      // Said apart to a screen reader too: "needs you" on a finished pane is a false alarm that
+      // costs more when the colour and the blink are not there to correct it.
+      const note = kind === 'blocked' ? ', needs you' : kind === 'done' ? ', finished' : '';
+      return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
     <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>

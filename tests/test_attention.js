@@ -128,6 +128,59 @@ test('a sync that drops nothing does not rewrite storage', () => {
   assert.equal(store.herdr_acked, 'sentinel');
 });
 
+// Both still ask for you, above. What follows is the difference between the two asks: only one
+// of them is an interruption, and only one of them gets the top of the list and the motion.
+test('blocked and done are told apart, and nothing else is either', () => {
+  const {run} = attentionCtx({
+    agents: [pane('a', 'blocked'), pane('b', 'done'), pane('c', 'working'), pane('d', 'idle')],
+  });
+  const kind = id => run(`attentionKind(agents.find(a => a.pane_id === '${id}'))`);
+  assert.equal(kind('a'), 'blocked');
+  assert.equal(kind('b'), 'done');
+  assert.equal(kind('c'), null, 'working');
+  assert.equal(kind('d'), null, 'idle');
+  assert.equal(run('attentionKind(null)'), null, 'a pane that is not there');
+});
+
+test('a pane you have looked at is neither kind any more', () => {
+  const {run} = attentionCtx({agents: [pane('a', 'blocked')], stored: {a: 'blocked'}});
+  assert.equal(run("attentionKind(agents[0])"), null);
+  assert.equal(run('hoisted(agents[0])'), false, 'and so it is not hoisted');
+});
+
+test('only blocked is hoisted — a finished pane stays in its section', () => {
+  // The complaint this whole split answers: every finished agent was shouting "Needs you" in red
+  // from the top of the list, alongside the ones actually waiting on an answer.
+  const {run} = attentionCtx({agents: [pane('a', 'blocked'), pane('b', 'done')]});
+  assert.equal(run("hoisted(agents.find(a => a.pane_id === 'a'))"), true);
+  assert.equal(run("hoisted(agents.find(a => a.pane_id === 'b'))"), false);
+  // Still counted, though: the badge and the browser tab's number are the whole reason a finished
+  // pane is tracked at all. Dropping it from the hoist must not drop it from the count.
+  assert.equal(run('attentionCount()'), 2);
+});
+
+test('a chip takes the loudest kind under it', () => {
+  const {run} = attentionCtx({
+    agents: [pane('a', 'done'), pane('b', 'blocked'), pane('c', 'idle')],
+  });
+  // Order-independent: blocked wins from either end, or one blocked pane behind four finished
+  // ones would leave the chip reading "all finished".
+  assert.equal(run('groupKind(agents)'), 'blocked');
+  assert.equal(run('groupKind([...agents].reverse())'), 'blocked');
+  assert.equal(run("groupKind(agents.filter(a => a.status !== 'blocked'))"), 'done');
+  assert.equal(run("groupKind(agents.filter(a => a.status === 'idle'))"), null);
+  assert.equal(run('groupKind([])'), null, 'a Project with no sessions');
+});
+
+test('done carries the badge without the blink', () => {
+  // alertClass is what puts the motion on the page: `alert` alone animates, `alert-done` stops it
+  // and turns it blue. A done pane emitting a bare `alert` is the regression to catch.
+  const {run} = attentionCtx();
+  assert.equal(run("alertClass('blocked')"), ' alert');
+  assert.equal(run("alertClass('done')"), ' alert alert-done');
+  assert.equal(run('alertClass(null)'), '', 'nothing to say');
+});
+
 test('only a pane that needs you makes a sound', () => {
   const {run} = attentionCtx();
   assert.equal(run("shouldSound('a', 'done')"), true);

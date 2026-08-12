@@ -46,21 +46,57 @@ test.afterEach(async ({page}) => {
   expect(page.__errors, 'the page logged errors').toEqual([]);
 });
 
-for (const status of ['done', 'blocked']) {
-  test(`a ${status} pane is hoisted, highlighted, and listed once`, async ({page}) => {
-    await freezeWith(page, status);
+test('a blocked pane is hoisted, highlighted, and listed once', async ({page}) => {
+  await freezeWith(page, 'blocked');
 
-    const hoist = page.locator('#agents .section-header', {hasText: 'Needs you'});
-    await expect(hoist).toBeVisible();
-    await expect(hoist).toContainText('(1)');
-    // Highlighted, and the same class whichever of the two statuses it is — that is the point of
-    // one attention state rather than two.
-    await expect(page.locator('#agents .agent.attention')).toHaveCount(1);
-    await expect(page.locator('#agents .agent.attention')).toContainText(AGENT);
-    // Hoisted means moved, not copied. Repeating it below is the bug this guards.
-    await expect(page.locator('#agents .agent', {hasText: AGENT})).toHaveCount(1);
+  const hoist = page.locator('#agents .section-header', {hasText: 'Needs you'});
+  await expect(hoist).toBeVisible();
+  await expect(hoist).toContainText('(1)');
+  await expect(page.locator('#agents .agent.attention')).toHaveCount(1);
+  await expect(page.locator('#agents .agent.attention')).toContainText(AGENT);
+  // Red, not the done variant: the two are told apart by class, and that class is what carries
+  // both the colour and the blink.
+  await expect(page.locator('#agents .agent.attention.alert-done')).toHaveCount(0);
+  // Hoisted means moved, not copied. Repeating it below is the bug this guards.
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toHaveCount(1);
+});
+
+test('a done pane is marked where it sits, and never claims to need you', async ({page}) => {
+  // The other half of the split. A finished agent is worth a badge and worth reading, but it is
+  // not waiting on an answer — hoisting it into "Needs you" in red is what made that header stop
+  // meaning anything, because on a busy herd almost everything is finished.
+  await freezeWith(page, 'done');
+
+  await expect(page.locator('#agents .section-header', {hasText: 'Needs you'})).toHaveCount(0);
+  await expect(page.locator('#agents .section-header', {hasText: 'Done'})).toBeVisible();
+  // Still marked, still unacked — in blue, and holding still.
+  const card = page.locator('#agents .agent.attention');
+  await expect(card).toHaveCount(1);
+  await expect(card).toHaveClass(/alert-done/);
+  await expect(card).toContainText(AGENT);
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toHaveCount(1);
+});
+
+// The badge itself lives on the pane strip and the chips, not on the card — the card says it with
+// its border. Both are read computed rather than off the class, so a stylesheet that stops
+// honouring the modifier fails here instead of shipping.
+test('the blink belongs to blocked, and blue belongs to done', async ({page}) => {
+  const badge = page.locator('#agentTabs .agent-tab.alert');
+  const after = () => badge.evaluate(el => {
+    const s = getComputedStyle(el, '::after');
+    return {animation: s.animationName, background: s.backgroundColor};
   });
-}
+
+  await freezeWith(page, 'blocked');
+  const red = await after();
+  expect(red.animation, 'a blocked pane sits still').toBe('attention');
+  expect(red.background).toBe('rgb(247, 118, 142)');      // --red
+
+  await freezeWith(page, 'done');
+  const blue = await after();
+  expect(blue.animation, 'a finished pane is blinking at you').toBe('none');
+  expect(blue.background).toBe('rgb(122, 162, 247)');      // --blue
+});
 
 test('the Space chip and the pane strip carry the same badge', async ({page}) => {
   await expect(page.locator('.chip.alert')).toHaveCount(0);
@@ -75,20 +111,24 @@ test('the Space chip and the pane strip carry the same badge', async ({page}) =>
   await expect(page.locator('#agentTabs .agent-tab.alert')).toHaveAttribute('data-pane', PANE);
 });
 
-test('the browser tab carries the count and turns red', async ({page}) => {
+test('the browser tab counts both, and turns red only for blocked', async ({page}) => {
   await expect(page).toHaveTitle('herdr-remote');
   expect(await faviconFill(page)).toBe('#7aa2f7');
 
+  // A finished pane is counted — it is still something you have not read — but it does not turn
+  // the icon red. Red is the tab saying an agent cannot go on without you, and spending it on
+  // "one of your agents finished" is what leaves it ignored when it matters.
   await freezeWith(page, 'done');
   await expect(page).toHaveTitle('(1) herdr-remote');
-  expect(await faviconFill(page), 'the favicon is the half that survives a truncated title')
-    .toBe('#f7768e');
+  expect(await faviconFill(page)).toBe('#7aa2f7');
 
   await page.evaluate(() => {
     agents.find(a => a.pane_id === 'w8:p1').status = 'blocked';
     render();
   });
   await expect(page).toHaveTitle('(2) herdr-remote');
+  expect(await faviconFill(page), 'the favicon is the half that survives a truncated title')
+    .toBe('#f7768e');
 });
 
 test('opening the pane clears it everywhere at once', async ({page}) => {
