@@ -651,6 +651,17 @@
       cursor: pointer;
     }
 
+    /* A settings button that opens something rather than does something. The group's default is
+       the green primary, which is right for Enable Push and too loud for a door — two of them in
+       one panel and neither reads as the one that matters. Full width like the selects above it. */
+    .setting-group button.nav-key {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 500;
+    }
+
 
     /* The sections are ordered by the user, so the column is a flex box and each one carries
        its own `order`. Reordering by moving nodes would fight renderBody, which rewrites their
@@ -992,6 +1003,65 @@
 
     .agent .info {
       flex: 1;
+    }
+
+    /* Reorder sheet. Every row is the same fixed height on purpose: the drag turns a Y into an
+       index by dividing, the same arithmetic the line ruler uses, and that only holds while the
+       rows are uniform. Nothing here may grow to two lines. */
+    .order-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 44px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      user-select: none;
+    }
+
+    .order-row:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: -2px;
+    }
+
+    /* Left where it was and faded, rather than lifted and following the finger. The rows below it
+       shuffle live, so the gap it leaves is already the answer to "where will this land" — a
+       second copy under the thumb would say the same thing twice and cover the row it is over. */
+    .order-row.dragging {
+      opacity: 0.4;
+    }
+
+    .order-row.dragging .grip {
+      cursor: grabbing;
+    }
+
+    /* The handle, and the only part of the row that drags. touch-action: none has to be somewhere
+       or the page pans out from under the gesture on iOS — but putting it on the whole row means a
+       sheet holding more agents than fit cannot be scrolled by touch at all, because every finger
+       landing on it lands on a row. Confining it to the grip is what the ⠿ was promising anyway.
+       Stretched full height and padded out to 40px, because 16px of glyph is not a thumb target. */
+    .order-row .grip {
+      display: flex;
+      align-items: center;
+      align-self: stretch;
+      margin-left: -16px;
+      /* Asymmetric so the glyph still lands on the 16px gutter the sheet's header sits on, while
+         the target grows to the right where there is nothing to line up with. */
+      padding: 0 8px 0 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      flex-shrink: 0;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    .order-row .name {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .agent .project {
@@ -2152,6 +2222,12 @@
     </div>
 
     <div class="setting-group">
+      <label>Agent order</label>
+      <button class="nav-key" onclick="toggleSettings();openOrder()">Reorder agents…</button>
+      <div class="hint">Drag the agents into the order you want them listed. Kept in this browser.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2575,6 +2651,28 @@
           Nothing is sent.</p>
         <pre id="transferPreview"
           style="margin:0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);font-size:0.65rem;max-height:22vh;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent order — drag the rows. A sheet and not the list itself, because the list's innerHTML
+       is rewritten on every poll and would take a live drag with it. This is built once on open
+       and left alone until it closes, so the only thing that can move a row is a finger. -->
+  <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeOrder()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div id="orderPanel"
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Agent order</span>
+        <button onclick="closeOrder()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="orderRows" role="listbox" aria-label="Agent order"></div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+        <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row by its handle, or focus
+          one and use the arrow keys. The main page still groups by status, so this is the order
+          inside each group.</p>
+        <button class="nav-key" onclick="resetOrder()">Reset to default order</button>
       </div>
     </div>
   </div>
@@ -3121,6 +3219,36 @@
     // selection separately — switching panes then never touches the markup.
     let tabsSig = '', tabsActive = null;
 
+    // --- Agent order ---
+    // Browser-local, like pins: the relay's snapshots own membership and status, while this only
+    // says which live cards come first. The same order feeds the landing cards and the pane tabs,
+    // where it sits behind the pins — a pin is "put this one at the front" and outranks it.
+    const AGENT_ORDER_KEY = 'herdr_agent_order';
+    let agentOrder = [];
+
+    function loadAgentOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem(AGENT_ORDER_KEY) || '[]');
+        agentOrder = Array.isArray(v) ? v.filter((id, i) => typeof id === 'string' && v.indexOf(id) === i) : [];
+      } catch (e) { agentOrder = []; }
+    }
+
+    function saveAgentOrder() {
+      try { localStorage.setItem(AGENT_ORDER_KEY, JSON.stringify(agentOrder)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // Ordered panes first, then everything the order has never heard of in the order it arrived.
+    // A decorate-sort-undecorate rather than a plain comparator, because Array#sort is only
+    // stable within equal keys and every unranked pane would otherwise share one key.
+    function orderedAgents(list) {
+      const rank = new Map(agentOrder.map((id, i) => [id, i]));
+      return list.map((agent, index) => ({agent, index})).sort((a, b) =>
+        (rank.get(a.agent.pane_id) ?? agentOrder.length + a.index)
+        - (rank.get(b.agent.pane_id) ?? agentOrder.length + b.index))
+        .map(x => x.agent);
+    }
+
     // Pinned tabs, newest pin first: pinning is "put this one at the front", so a second pin has
     // to land ahead of the first. Order only, and local to this browser — a pane_id herdr later
     // reuses costs nothing worse than one tab sitting in the wrong place.
@@ -3185,7 +3313,9 @@
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
-      const all = agents.concat(shells);
+      // Agents in the user's order, shells behind them. The pin sort below is stable, so this is
+      // what decides the strip wherever two panes are pinned alike — which is to say, unpinned.
+      const all = orderedAgents(agents).concat(shells);
       let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
@@ -5290,6 +5420,134 @@
       return parts.join(' · ') || a.pane_id;
     }
 
+    // --- Reorder sheet ---
+    // A sheet rather than handles on the cards themselves. The card is the one thing on this page
+    // read on a phone all day and it has no room to spare; more to the point, #agents has its
+    // innerHTML rewritten on every poll, and a drag on those nodes would be destroyed mid-gesture
+    // by a snapshot arriving. These rows are built once on open and nothing rewrites them, so the
+    // only thing that can move one is a finger.
+    function openOrder() {
+      const box = document.getElementById('orderRows');
+      // Live and unambiguous only. A pane_id that two hosts both claim cannot be ordered — there
+      // is no one pane to order — and it is the same guard the tab strip already applies.
+      const live = orderedAgents(agents.filter(a =>
+        agents.filter(x => x.pane_id === a.pane_id).length === 1));
+      box.innerHTML = live.length
+        ? live.map(a => `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
+      <span class="grip" aria-hidden="true">⠿</span>
+      <span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>
+      <span class="name">${escapeHtml(paneLabel(a))}</span>
+    </div>`).join('')
+        : '<div class="empty">No agents to order.</div>';
+      document.getElementById('orderSheet').style.display = 'block';
+    }
+
+    function closeOrder() {
+      document.getElementById('orderSheet').style.display = 'none';
+    }
+
+    // The DOM is the model while the sheet is open: a drag moves nodes, and this reads back what
+    // they now say. One source of truth, rather than an array kept in step with what is on screen.
+    function commitOrder() {
+      agentOrder = [...document.querySelectorAll('#orderRows .order-row')].map(r => r.dataset.pane);
+      saveAgentOrder();
+      render();
+    }
+
+    // Empty is the default, not a separate flag: orderedAgents falls through to snapshot order the
+    // moment nothing is ranked. Reopened so the rows show what was just restored.
+    function resetOrder() {
+      agentOrder = [];
+      saveAgentOrder();
+      render();
+      openOrder();
+    }
+
+    // Drag, mirroring the line ruler: pointer events so one path serves finger and mouse alike,
+    // setPointerCapture so the gesture survives leaving the row, and pointercancel treated as an
+    // end so an interrupted drag cannot leave a row stuck to the pointer.
+    (function () {
+      const box = document.getElementById('orderRows');
+      const panel = document.getElementById('orderPanel');
+      let row = null, rowH = 0, lastY = 0, autoTimer = null;
+
+      // Which slot the pointer is over. The rows are one fixed height, so this is a division
+      // rather than a hit test — the same arithmetic as the ruler's lineAt. getBoundingClientRect
+      // is read live, so a scrolled sheet needs no separate term.
+      function slotAt(clientY) {
+        const top = box.getBoundingClientRect().top;
+        return Math.max(0, Math.min(box.children.length - 1, Math.floor((clientY - top) / rowH)));
+      }
+
+      // Moved as the finger passes, not on release. The gap the row leaves behind is the preview —
+      // which is why the dragged row stays put and fades rather than following the pointer.
+      function moveTo(clientY) {
+        const at = slotAt(clientY);
+        const kids = [...box.children];
+        if (kids[at] === row) return;
+        box.insertBefore(row, at < kids.indexOf(row) ? kids[at] : kids[at].nextSibling);
+      }
+
+      // A drag held at the edge of a scrolled sheet keeps going, or a row cannot be moved past the
+      // last one that happens to be on screen. Straight off the ruler's edgeScroll, including the
+      // reason for the interval: a finger parked at the edge sends no more pointermoves.
+      function edgeScroll() {
+        const r = panel.getBoundingClientRect();
+        const d = lastY < r.top + rowH ? -rowH : lastY > r.bottom - rowH ? rowH : 0;
+        if (!d) return;
+        const was = panel.scrollTop;
+        panel.scrollTop += d;
+        if (panel.scrollTop !== was) moveTo(lastY);
+      }
+
+      box.addEventListener('pointerdown', e => {
+        // The grip and nothing else — see the CSS. A press anywhere else on the row is left to the
+        // browser so the sheet can still be scrolled by touch.
+        if (!e.target.closest('.grip') || box.children.length < 2) return;
+        // Or the page pans out from under the drag, and the row keeps a text selection with it.
+        e.preventDefault();
+        row = e.target.closest('.order-row');
+        rowH = row.offsetHeight;
+        lastY = e.clientY;
+        row.setPointerCapture(e.pointerId);
+        row.classList.add('dragging');
+        // preventDefault took the focus a click would have given it. Put it back, or a row moved
+        // with the mouse cannot then be nudged with the arrow keys.
+        row.focus();
+        autoTimer = setInterval(edgeScroll, 60);
+      });
+
+      box.addEventListener('pointermove', e => {
+        if (!row) return;
+        lastY = e.clientY;
+        moveTo(e.clientY);
+      });
+
+      function end() {
+        if (!row) return;
+        clearInterval(autoTimer);
+        row.classList.remove('dragging');
+        row = null;
+        commitOrder();
+      }
+      box.addEventListener('pointerup', end);
+      box.addEventListener('pointercancel', end);
+
+      // The same reorder without a pointer. A drag-only control is unusable by keyboard, and the
+      // rows are already focusable for it.
+      box.addEventListener('keydown', e => {
+        const up = e.key === 'ArrowUp';
+        if (!up && e.key !== 'ArrowDown') return;
+        const target = e.target.closest('.order-row');
+        const swap = target && (up ? target.previousElementSibling : target.nextElementSibling);
+        if (!swap) return;
+        e.preventDefault();
+        box.insertBefore(target, up ? swap : swap.nextSibling);
+        target.focus();   // insertBefore moves the node, and a moved node loses focus
+        commitOrder();
+      });
+    })();
+
     // warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
     // a failure teaches the user to ignore the colour.
     function setPairError(text, warn) {
@@ -5678,8 +5936,11 @@
   </div>`;
     }
 
+    // The one place the user's order is applied to cards. Every list on the main page — the hoist,
+    // each status section, a Project's panes — ends here, so ordering once at the bottom covers
+    // all of them and cannot fall out of step between two of them.
     function agentCards(list) {
-      return list.map(agentCard).join('');
+      return orderedAgents(list).map(agentCard).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -6731,6 +6992,7 @@
 
     loadPairs();
     loadPins();
+    loadAgentOrder();
     loadSeen();
     measureCellRatio();  // before applyWrapMode, which divides by it
     setFont(currentFont());
