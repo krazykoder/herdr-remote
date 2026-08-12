@@ -13,12 +13,20 @@
 // Source of truth is `extensions/pi/herdr-gutter.ts` in the herdr-remote repo. See the README
 // beside it for the install and for what the app has to know to read the result.
 
-// Chosen by scanning 400 lines of a live pi pane for collisions: `›` and `⏺` appear zero times,
-// while `•` and the box-drawing set `└ │ ├ ┌` do — pi renders markdown tables and lists, so those
-// land in exactly the column a marker would. Do not reuse codex's glyphs here.
+// Chosen by scanning 400 lines of live claude, codex and pi panes for collisions: `›`, `⏺` and
+// `⋯` appear zero times, while `•`, `⋮` and the box-drawing set `└ │ ├ ┌` do — pi renders markdown
+// tables and lists, so those land in exactly the column a marker would. Do not reuse codex's
+// glyphs here.
+//
+// Reasoning is marked too, and deliberately not with the assistant's glyph. It sits between the
+// user's message and the reply, and left bare it is the one gap in the transcript with no marker
+// at all — which makes a user turn look like it runs on until the agent answers. `⋯` says "not
+// prose, boundary here" without ever being mistaken for something the agent said; the app lists
+// it beside `$` as a line that ends a block rather than starting one.
 const GLYPH: Record<string, string> = {
-  user: "›",        // ›
-  assistant: "⏺",   // ⏺
+  user: "›",                    // ›
+  assistant: "⏺",               // ⏺
+  "assistant-thinking": "⋯",    // ⋯
 };
 
 // Markdown constructs that have to own the start of their line: indented code, ATX headings,
@@ -34,8 +42,7 @@ export default function (pi) {
   pi.registerMarkdownTransformer((markdown: string, { messageType, isStreaming }) => {
     const glyph = GLYPH[messageType];
     // Streaming updates are partial, and re-marking each one flickers the glyph while the agent
-    // is still writing. `assistant-thinking` gets no glyph at all: it is not a turn, and marking
-    // it would make the parser treat reasoning as a closing message.
+    // is still writing.
     if (!glyph || isStreaming) return markdown;
     // Inline, so the glyph reads as a gutter on the same line as the text it marks. A message
     // that opens with a construct owning its line falls back to a paragraph of its own, which

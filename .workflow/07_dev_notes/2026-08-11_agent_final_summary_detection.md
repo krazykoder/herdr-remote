@@ -139,11 +139,43 @@ outvoted by the tally, which is why that one does not.
 A shipped profile still needs a real pane sample containing both a tool block and a closing prose
 block; add it to `GUTTERS` and that harness gets suggestions like the other two.
 
-`pi` was sampled on `2026-08-11` and cannot get one: it indents its whole transcript by a space,
-so column 0 is empty, and user and agent text are the same shape — there is no glyph to ship.
-The evidence, and the three ways out (leave it, ANSI role tags from the relay, or a pi extension
-that prefixes the markdown), are in `2026-08-11_pi_has_no_gutter.md`. Nothing has been decided or
-applied.
+`pi` was sampled on `2026-08-11` and had no glyph to ship: it indents its whole transcript by a
+space, so column 0 is empty, and user and agent text are the same shape. The evidence and the three
+ways out are in `2026-08-11_pi_has_no_gutter.md`; option C was taken.
+
+## pi — a gutter the harness does not have
+
+`extensions/pi/herdr-gutter.ts` is a pi package that registers a markdown transformer and writes
+the missing distinction into the render: `›` for the user, `⏺` for the agent, `⋯` for reasoning.
+It is display-only — the session file and the model's context never see it — and it costs the relay
+nothing, so the wire is unchanged and the whole feature stays in the frontend. Its README carries
+the install and the glyph collision scan.
+
+Three things about pi then had to reach the parser, and each is a field on the profile rather than
+a branch in the code:
+
+| field | why |
+|-------|-----|
+| `indent: 1` | pi indents everything, so its gutter is column 1. Not "first non-space character", which would let indented Claude prose pass as a marker |
+| `ends: ['⋯']` | pi does **not** hang-indent a wrapped line — a continuation sits in the same column a glyph does, so column 0 alone cannot end a block and the glyph set has to |
+| `composer: false` | Claude and Codex draw their composer with the prompt glyph, so it is the foot of every live pane and the closing message is the block above it. pi's composer is a box the extension cannot reach, so pi's last `›` is the newest *request* and the answer is below it |
+
+`result: ['$']` is pi's tool marker, which makes the harness a complete shipped profile rather than
+a learned half one: a reply followed by a command is correctly no closing message.
+
+Two helpers, `gutterOf` and `endsBlock`, are where all of this lives; every column-0 read in the
+parser now goes through them. For a harness with no `indent` both collapse to what was there
+before, so Claude and Codex are byte-identical.
+
+Marking reasoning was not cosmetic. pi's thinking sits between the request and the reply with
+nothing in front of it, and without a marker the blue user-turn rule ran straight down through it.
+
+**Streaming.** The transformer skips partial updates, so a glyph appears when its message finishes
+rather than as it is written. Nothing downstream minds — a suggestion is only offered on a pane
+herdr reports as `done`.
+
+**Per host.** Every machine running pi needs the extension. One without it parses exactly as it did
+before, so the failure is soft.
 
 ## Detection trigger
 

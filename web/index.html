@@ -3986,10 +3986,41 @@
     // the speaker glyph, but never at the result gutter, which sits outside the block they
     // selected. tests/fixtures/pane_*_done.txt are those reads, so a harness that changes its
     // glyphs breaks a test rather than a user.
+    //
+    // `indent` is which column the gutter lives in. pi has none of its own — its glyphs come from
+    // the herdr-gutter extension in extensions/pi, and pi indents its whole transcript by one
+    // space, so they land in column 1. `ends` are glyphs that close the block above them without
+    // making it a tool execution: pi's reasoning marker is not something the agent said, but it is
+    // where a message stops.
+    //
+    // `composer: false` says the prompt gutter marks sent messages only. claude and codex draw the
+    // composer with the same glyph, so it sits at the foot of every live pane and the closing
+    // message is the block above it. pi's composer is a box the extension cannot reach, so pi's
+    // last `›` is the newest request and the reply to it is *below*.
     const GUTTERS = {
       claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
+      pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
     };
+
+    // The character in a harness's gutter column, which is column 0 everywhere but pi.
+    function gutterOf(row, g) { return (row || '')[g.indent || 0]; }
+
+    // Does this row close the block above it? Anything in column 0 does — the next glyph, the turn
+    // footer, a rule, the prompt.
+    //
+    // An indented harness needs the second clause, and only an indented harness has it. claude and
+    // codex hang-indent a wrapped line past their gutter, so column 0 alone separates a
+    // continuation from a marker. pi does not: its continuation lines sit in the same column its
+    // glyphs do, and the glyph set is the only thing telling them apart. Applying that rule to
+    // claude would cut a block at the first wrapped line beginning with `⏺`.
+    function endsBlock(row, g) {
+      if (/^\S/.test(row || '')) return true;
+      if (!g.indent) return false;
+      const ch = gutterOf(row, g);
+      return ch === g.speaker || (g.user || []).includes(ch) ||
+        g.result.includes(ch) || (g.ends || []).includes(ch);
+    }
 
     // A harness the user taught by selecting one of its messages. The first character of the line
     // they started on is its speaker glyph — the one thing a selection can reveal. It cannot
@@ -4025,19 +4056,20 @@
     // ending on the first blank would take only the last one.
     function blockSpan(rows, g, start) {
       let end = start;
-      for (let j = start + 1; j < rows.length && !/^\S/.test(rows[j]); j++) {
-        const line = rows[j].trimStart();
-        if (!line) continue;
-        // A result glyph means this block ran something rather than said something.
-        if (g.result.includes(line[0])) return null;
-        end = j;
+      for (let j = start + 1; j < rows.length; j++) {
+        const line = (rows[j] || '').trimStart();
+        // A result glyph means this block ran something rather than said something. Tested before
+        // the end check, because on an indented harness a result glyph is itself an end.
+        if (line && g.result.includes(line[0])) return null;
+        if (endsBlock(rows[j], g)) break;
+        if (line) end = j;
       }
       return [start, end];
     }
 
     function isUserInput(row, agent) {
       const g = profileFor(agent);
-      return !!g && g.user && g.user.includes((row || '')[0]);
+      return !!g && !!g.user && g.user.includes(gutterOf(row, g));
     }
 
     function lastUserInput(rows, agent) {
@@ -4049,13 +4081,17 @@
 
     // A user turn is its gutter plus every continuation line until the next agent utterance.
     // That is the one contiguous region that should be visually distinct in the terminal.
+    //
+    // "Agent utterance" has to include reasoning, which on pi sits between the prompt and the
+    // reply. Left out, the blue rule would run down the agent's thinking as though the user had
+    // typed it — which is why the extension marks thinking at all.
     function userInputLines(rows, agent) {
       const g = profileFor(agent), lines = new Set();
       if (!g || !rows) return lines;
       let inTurn = false, pending = [];
       rows.forEach((row, i) => {
-        if ((row || '')[0] === g.speaker) inTurn = false;
         if (isUserInput(row, agent)) { inTurn = true; pending = []; }
+        else if (endsBlock(row, g)) inTurn = false;
         if (!inTurn) return;
         // A blank line inside the turn is part of it only if more of the turn follows. Trailing
         // blanks are the gap before the agent answers, and a rule running down empty rows reads
@@ -4074,10 +4110,10 @@
     function findFinalMessage(rows, agent) {
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
-      const lastInput = lastUserInput(rows, agent);
+      const lastInput = g.composer === false ? -1 : lastUserInput(rows, agent);
       const before = lastInput < 0 ? rows.length : lastInput;
       for (let i = before - 1; i >= 0; i--) {
-        if (rows[i][0] === g.speaker) return blockSpan(rows, g, i);
+        if (gutterOf(rows[i], g) === g.speaker) return blockSpan(rows, g, i);
       }
       return null;
     }
@@ -4090,7 +4126,7 @@
       const g = profileFor(agent);
       if (!g || !rows) return null;
       for (let i = Math.min(before, rows.length) - 1; i >= 0; i--) {
-        if (rows[i][0] !== g.speaker) continue;
+        if (gutterOf(rows[i], g) !== g.speaker) continue;
         const at = blockSpan(rows, g, i);
         if (at) return at;
       }
@@ -4101,7 +4137,7 @@
       const g = profileFor(agent);
       if (!g || !rows) return null;
       for (let i = Math.max(0, after); i < rows.length; i++) {
-        if (rows[i][0] !== g.speaker) continue;
+        if (gutterOf(rows[i], g) !== g.speaker) continue;
         const at = blockSpan(rows, g, i);
         if (at) return at;
       }
@@ -4114,14 +4150,19 @@
     // ↑ is for. Falls back to nothing on a harness with no prompt gutter, and stepBlock then walks
     // messages the old way.
     function turnSummaries(rows, agent) {
-      const out = [];
-      if (!profileFor(agent) || !rows) return out;
-      for (let i = 0; i < rows.length; i++) {
-        if (!isUserInput(rows[i], agent)) continue;
-        const at = blockBefore(rows, agent, i);
+      const g = profileFor(agent), out = [];
+      if (!g || !rows) return out;
+      const at = i => {
+        const r = blockBefore(rows, agent, i);
         // Two prompts in a row share the block above them; one entry, not two.
-        if (at && (!out.length || at[0] > out[out.length - 1][0])) out.push(at);
-      }
+        if (r && (!out.length || r[0] > out[out.length - 1][0])) out.push(r);
+      };
+      let prompts = 0;
+      for (let i = 0; i < rows.length; i++) if (isUserInput(rows[i], agent)) { prompts++; at(i); }
+      // A harness whose composer carries no glyph has one more turn than it has prompt lines: the
+      // newest reply sits below the last request, where the others sit above the next one. Counted
+      // rather than read off `out`, because the first request has nothing above it to summarize.
+      if (g.composer === false && prompts) at(rows.length);
       return out;
     }
 
@@ -4148,8 +4189,8 @@
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
       for (let s = Math.min(i, rows.length - 1); s >= 0; s--) {
-        if (rows[s][0] === g.speaker) return blockSpan(rows, g, s);
-        if (/^\S/.test(rows[s])) return null;
+        if (gutterOf(rows[s], g) === g.speaker) return blockSpan(rows, g, s);
+        if (endsBlock(rows[s], g)) return null;
       }
       return null;
     }

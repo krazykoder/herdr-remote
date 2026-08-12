@@ -200,9 +200,9 @@ test('the pill steps between messages and passes over tool blocks', async ({page
   expect(await sel(page)).toEqual([5, 6]);
 });
 
-// The fake herdr reports this one as `pi`, which the app ships no gutter profile for.
-const UNKNOWN = 'pi';
-const PI_PANE = '◆ Ran the build\n  compiled\n\n◆ All finished.\n  and here is why\n';
+// The fake herdr reports this one as `amp`, which the app ships no gutter profile for.
+const UNKNOWN = 'amp';
+const UNKNOWN_PANE = '◆ Ran the build\n  compiled\n\n◆ All finished.\n  and here is why\n';
 
 const openUnknown = async page => {
   await page.locator('.back').first().click();
@@ -212,7 +212,7 @@ const openUnknown = async page => {
 
 test('the pill stays away from a harness the app has never seen', async ({page}) => {
   await openUnknown(page);
-  await feed(page, PI_PANE, 'working');
+  await feed(page, UNKNOWN_PANE, 'working');
   await expect(page.locator('#blockNav')).toBeHidden();
   await expect(page.locator('#quickActions .qa-summary')).toHaveCount(0);
 });
@@ -229,7 +229,7 @@ test('Learn teaches an unknown harness its marker, once confirmed', async ({page
     setPaneText = t => { if (!t.startsWith('x')) set(t); };
   });
   const select = async (a, b) => {
-    await feed(page, PI_PANE, 'working');
+    await feed(page, UNKNOWN_PANE, 'working');
     await page.evaluate(([a, b]) => { selA = a; selB = b; drawSel(); }, [a, b]);
   };
 
@@ -249,12 +249,12 @@ test('Learn teaches an unknown harness its marker, once confirmed', async ({page
 
   // Navigation, yes. A silent guess on the next read, no — without a result glyph it cannot tell
   // a command from a sentence.
-  await feed(page, PI_PANE, 'working');
+  await feed(page, UNKNOWN_PANE, 'working');
   await page.evaluate(() => clearSel());
   await page.locator('#blockNav button', {hasText: '↑'}).click();
   expect(await sel(page)).toEqual([3, 4]);
   await page.evaluate(() => clearSel());
-  await feed(page, PI_PANE);              // a finished pane, and still no suggestion
+  await feed(page, UNKNOWN_PANE);              // a finished pane, and still no suggestion
   expect(await sel(page)).toBeNull();
 });
 

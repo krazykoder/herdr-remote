@@ -101,6 +101,51 @@ test('the composer at the foot of a real pane is a prompt line', () => {
   assert.equal(codex.filter(r => ctx.isUserInput(r, 'codex')).length, 1);
 });
 
+// pi is the one harness whose gutter is not its own: extensions/pi/herdr-gutter.ts puts the
+// glyphs there, and pi indents its whole transcript by one space, so they land in column 1. Its
+// wrapped lines are *not* hang-indented — a continuation sits in the same column as a glyph — so
+// the block-end rule has to be the glyph set rather than the indent.
+test('pi: the closing message, read through the extension gutter', () => {
+  const rows = fixture('pane_pi_done.txt');
+  const at = find(rows, 'pi');
+  assert.ok(at, 'expected a range');
+  const [a, b] = at;
+  assert.match(rows[a], /^ ⏺ Here's a breakdown/);
+  assert.match(rows[b], /^ Nothing else changed\./);
+  const picked = rows.slice(a, b + 1);
+  assert.ok(picked.some(l => l.startsWith(' ### ')), 'a heading in column 1 ended the block early');
+  assert.ok(picked.some(l => l.startsWith(' │ File')), 'a table row in column 1 ended the block early');
+  assert.ok(!picked.some(l => l.startsWith('~/')), 'the status line leaked into the range');
+});
+
+test('pi: the request is a prompt, the reasoning above the reply is not', () => {
+  const rows = fixture('pane_pi_done.txt');
+  assert.equal(ctx.isUserInput(rows[0], 'pi'), true, rows[0]);
+  assert.equal(rows.filter(r => ctx.isUserInput(r, 'pi')).length, 1);
+  // The blue rule covers the request alone. Without the reasoning glyph it would run on down
+  // through pi's thinking, which is the whole reason the extension marks it.
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'pi')), [0]);
+});
+
+// pi's composer is a box the extension cannot reach, so unlike claude and codex there is no prompt
+// glyph below the newest reply to bound it.
+test('pi: the newest turn is the one below the last request', () => {
+  const rows = fixture('pane_pi_done.txt');
+  assert.deepEqual(ctx.turnSummaries(rows, 'pi'), [find(rows, 'pi')]);
+});
+
+test('pi: a reply followed by a command is not the closing message', () => {
+  const rows = [
+    ' ⏺ Checking the tree first.',
+    '',
+    ' $ git status --short',
+    ' M web/index.html',
+    '',
+    ' Took 0.0s',
+  ];
+  assert.equal(find(rows, 'pi'), null);
+});
+
 test('a pane whose last block ran a tool has nothing to offer', () => {
   const rows = [
     '⏺ Committed as dd51cea.',
@@ -116,7 +161,7 @@ test('a pane whose last block ran a tool has nothing to offer', () => {
 
 test('an unknown harness is never guessed at', () => {
   const rows = ['◆ All finished.', '  and here is why'];
-  assert.equal(find(rows, 'pi'), null);
+  assert.equal(find(rows, 'amp'), null);
   assert.equal(find(rows, undefined), null);
   assert.equal(find(rows, 'claude'), null);   // right harness named, wrong glyphs present
 });
@@ -311,37 +356,37 @@ test('the block a line sits in, and the lines that sit in none', () => {
 const OTHER = ['◆ Ran the build', '  compiled', '', '◆ All finished.', '  and here is why'];
 
 test('an unknown harness is inert until it is taught', () => {
-  open(OTHER, 'pi');
+  open(OTHER, 'amp');
   assert.equal(scan(), null);
-  assert.equal(ctx.blockBefore(OTHER, 'pi', OTHER.length), null);
+  assert.equal(ctx.blockBefore(OTHER, 'amp', OTHER.length), null);
 });
 
 test('Learn takes the marker off the line the selection starts on', () => {
-  open(OTHER, 'pi', 3, 4);
-  assert.equal(ctx.learnGutter('pi'), true);
-  assert.deepEqual(ctx.profileFor('pi'), { speaker: '◆', result: [] });
+  open(OTHER, 'amp', 3, 4);
+  assert.equal(ctx.learnGutter('amp'), true);
+  assert.deepEqual(ctx.profileFor('amp'), { speaker: '◆', result: [] });
   assert.deepEqual(scan(), [3, 4]);
-  assert.deepEqual(ctx.blockBefore(OTHER, 'pi', 3), [0, 1], 'and navigation works from then on');
+  assert.deepEqual(ctx.blockBefore(OTHER, 'amp', 3), [0, 1], 'and navigation works from then on');
 });
 
 test('a declined confirmation stores nothing', () => {
-  open(OTHER, 'pi', 3, 4);
+  open(OTHER, 'amp', 3, 4);
   answer = false;
-  assert.equal(ctx.learnGutter('pi'), false);
+  assert.equal(ctx.learnGutter('amp'), false);
   assert.equal(scan(), null);
 });
 
 test('a letter in column 0 is prose and is refused', () => {
-  open(['Summary of the work', '  and the rest'], 'pi', 0, 1);
-  assert.equal(ctx.learnGutter('pi'), false);
+  open(['Summary of the work', '  and the rest'], 'amp', 0, 1);
+  assert.equal(ctx.learnGutter('amp'), false);
   assert.match(toasts[0], /marker/);
-  open(['  indented, so no marker at all'], 'pi', 0, 0);
-  assert.equal(ctx.learnGutter('pi'), false);
+  open(['  indented, so no marker at all'], 'amp', 0, 0);
+  assert.equal(ctx.learnGutter('amp'), false);
 });
 
 test('a learned harness never suggests on its own', () => {
-  open(OTHER, 'pi', 3, 4);
-  ctx.learnGutter('pi');
+  open(OTHER, 'amp', 3, 4);
+  ctx.learnGutter('amp');
   ctx.selA = ctx.selB = null;
   vm.runInContext('suggestedKey = ""', ctx);
   ctx.scanFinalMessage();
