@@ -94,6 +94,16 @@ test('a pin cannot split a pair, and selection still outranks the tint', async (
   await expect.poll(() => bg('.active'), {message: 'the selection is opaque'}).not.toMatch(/rgba/);
   await expect.poll(() => bg(':not(.active)'), {message: 'the tint is a wash'})
     .toMatch(/rgba\(.+0\.14\)/);
+
+  // The wash is what selection takes away; the ring is not. A selected tab is a filled blue pill,
+  // and dropping the tint from it made the one tab being looked at the one tab that stopped
+  // saying which pair it belongs to.
+  const ring = sel => page.locator(`#agentTabs .agent-tab${sel} .pill`).first()
+    .evaluate(e => [getComputedStyle(e).outlineWidth, getComputedStyle(e).outlineColor]);
+  const [width, colour] = await ring('.active');
+  expect(width, 'the selected half keeps a thick tint ring').toBe('2px');
+  expect(await ring(':not(.active)'), 'and both halves wear the same one')
+    .toEqual([width, colour]);
 });
 
 test('the setting says what it is hiding, and counts the pairs', async ({page}) => {
