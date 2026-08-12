@@ -139,6 +139,12 @@ outvoted by the tally, which is why that one does not.
 A shipped profile still needs a real pane sample containing both a tool block and a closing prose
 block; add it to `GUTTERS` and that harness gets suggestions like the other two.
 
+`pi` was sampled on `2026-08-11` and cannot get one: it indents its whole transcript by a space,
+so column 0 is empty, and user and agent text are the same shape — there is no glyph to ship.
+The evidence, and the three ways out (leave it, ANSI role tags from the relay, or a pi extension
+that prefixes the markdown), are in `2026-08-11_pi_has_no_gutter.md`. Nothing has been decided or
+applied.
+
 ## Detection trigger
 
 Runs after a `pane_content` update when `status === 'done'`, `selA === null`, and this pane-content
