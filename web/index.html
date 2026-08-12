@@ -1073,7 +1073,7 @@
        learn about panes. What differs is the right edge — the reorder sheet spends it on a drag
        handle, and this one has no ordering to do, so it carries the pair the pane is already in. */
     .order-row,
-    .pair-row {
+    .pair-pick {
       display: flex;
       align-items: center;
       gap: 10px;
@@ -1117,21 +1117,21 @@
     }
 
     .order-row .kind,
-    .pair-row .kind {
+    .pair-pick .kind {
       flex-shrink: 0;
       font-size: 0.75rem;
     }
 
     .order-row .info,
-    .pair-row .info {
+    .pair-pick .info {
       flex: 1;
       min-width: 0;
     }
 
     .order-row .name,
     .order-row .meta,
-    .pair-row .name,
-    .pair-row .meta {
+    .pair-pick .name,
+    .pair-pick .meta {
       display: block;
       white-space: nowrap;
       overflow: hidden;
@@ -1139,13 +1139,13 @@
     }
 
     .order-row .name,
-    .pair-row .name {
+    .pair-pick .name {
       font-size: 0.85rem;
       line-height: 1.25;
     }
 
     .order-row .meta,
-    .pair-row .meta {
+    .pair-pick .meta {
       min-height: 16px;
       margin-top: 2px;
       color: var(--muted);
@@ -1154,12 +1154,12 @@
     }
 
     .order-row .meta .badge,
-    .pair-row .meta .badge {
+    .pair-pick .meta .badge {
       font-size: 0.58rem;
     }
 
     /* A button, so it is reachable and pressable without the row having to reinvent either. */
-    .pair-row {
+    .pair-pick {
       width: 100%;
       border-left: none;
       border-right: none;
@@ -1173,12 +1173,12 @@
     /* The chosen partner. A left bar rather than a fill: the row below it may be carrying an orange
        "already in a pair" note, and a tinted background behind that reads as a warning about the
        selection instead of about the row. */
-    .pair-row.on {
+    .pair-pick.on {
       background: var(--bg);
       box-shadow: inset 3px 0 0 var(--blue);
     }
 
-    .pair-row .pair-tick {
+    .pair-pick .pair-tick {
       width: 12px;
       flex-shrink: 0;
       color: var(--blue);
@@ -1188,7 +1188,7 @@
     /* Which pair already holds this pane — the one thing that makes choosing it destructive, so it
        travels with the row rather than waiting for the warning under the fields. Clipped, because a
        long pair name must not push the tick off the row. */
-    .pair-row .pair-note {
+    .pair-pick .pair-note {
       flex-shrink: 1;
       min-width: 0;
       max-width: 40%;
@@ -1200,7 +1200,7 @@
     }
 
     /* The way out of "there is nobody to pair with". No dot and no status: it is not a pane yet. */
-    .pair-row.pair-add .name {
+    .pair-pick.pair-add .name {
       color: var(--blue);
     }
 
@@ -5825,7 +5825,7 @@
       // Gated on the dialog being usable at all, not on this pane's agent: which agent the new
       // session runs is answered in that dialog, not inherited from here.
       const spawn = (startOptions && pairSource.project_id)
-        ? `<button class="pair-row pair-add" onclick="startAndPair()">
+        ? `<button class="pair-pick pair-add" onclick="startAndPair()">
       <span class="kind" aria-hidden="true">＋</span>
       <span class="info"><span class="name">Start a session and pair with it</span><span class="meta">A new session in this project, paired the moment it lands</span></span>
     </button>`
@@ -5845,7 +5845,7 @@
           const on = pairPartner && pairPartner.pane_id === a.pane_id;
           const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
           const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
-          return `<button class="pair-row${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="choosePartner('${escapeHtml(a.pane_id)}')">
+          return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="choosePartner('${escapeHtml(a.pane_id)}')">
       <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
       <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
       <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>

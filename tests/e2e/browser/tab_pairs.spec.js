@@ -162,7 +162,7 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
   await setup(page);          // seeds "Tab pair" over Architect 1 and amp
   await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
 
-  const rows = page.locator('#pairCandidates .pair-row');
+  const rows = page.locator('#pairCandidates .pair-pick');
   await expect(rows).toHaveCount(2);
   const first = rows.first();
   await expect(first.locator('.name')).toHaveText('Architect 1');
@@ -174,7 +174,7 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
   // Literally the same row: one height for both sheets, or the two lists read as two kinds of thing.
   const [pairBox, orderBox] = await page.evaluate(() => {
     const h = el => el.getBoundingClientRect().height;
-    const pair = h(document.querySelector('#pairCandidates .pair-row'));
+    const pair = h(document.querySelector('#pairCandidates .pair-pick'));
     closePair();
     openOrder();
     return [pair, h(document.querySelector('#orderRows .order-row'))];
@@ -185,7 +185,7 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
 test('choosing a partner marks its row, not just the fields below', async ({page}) => {
   await setup(page);
   await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
-  const rows = page.locator('#pairCandidates .pair-row');
+  const rows = page.locator('#pairCandidates .pair-pick');
   await rows.nth(1).click();
 
   await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true');
