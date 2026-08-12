@@ -590,7 +590,7 @@ async def terminal_run():
             _, snap = await drain_to_agents(ws)
             check("T1 terminal mode off sends no shells key", "shells" not in snap, snap.keys())
             check("T1 terminal mode off leaves the agent list untouched",
-                  len(snap["agents"]) == 4, [a["pane_id"] for a in snap["agents"]])
+                  len(snap["agents"]) == 5, [a["pane_id"] for a in snap["agents"]])
             r = await rpc(ws, {"type": "read_pane", "pane_id": "w9:p3", "lines": 5})
             check("T1 a shell is not addressable with the flag off",
                   r.get("message") == "unknown pane_id", r)
@@ -612,7 +612,7 @@ async def terminal_run():
             check("T1 an unlabelled shell is still a shell",
                   shells.get("w9:p3", {}).get("label") == "", shells.get("w9:p3"))
             check("T1 the agent list is unchanged by terminal mode",
-                  len(snap["agents"]) == 4, [a["pane_id"] for a in snap["agents"]])
+                  len(snap["agents"]) == 5, [a["pane_id"] for a in snap["agents"]])
 
             # Reading is the whole of T1's value, and it goes through the same path agents use.
             open(LOG, "w").close()

@@ -1,0 +1,12 @@
+⏺ Bash(git status --short)
+  ⎿  M web/index.html
+
+⏺ Ready. Name the change.
+
+  Useful to know:
+  - Simple settings are faster through the built-in /config menu.
+  - Hooks, permission rules, env vars, and plugins need an explicit request.
+
+✻ Baked for 22s
+
+❯ allow the test commands without prompting

@@ -515,6 +515,74 @@ test('a terminal is offered as a split source, and named rather than "undefined"
   assert.deepEqual(els.startTargetOptions, [['w1:p1', 'w1:p1 · w1:p1']]);
 });
 
+// --- Start status line ---
+// One element says both "this is running" and "this is how it ended", so what is pinned here is
+// that the two states are distinguishable and that a refusal the user can only answer by pressing
+// again says so.
+
+function runStartStatus(body) {
+  const start = HTML.indexOf('function setStartStatus');
+  const end = HTML.indexOf('function openStartDialog', start);
+  assert.ok(start !== -1 && end > start, 'start status block not found');
+  const el = {textContent: '', style: {}};
+  const ctx = vm.createContext({document: {getElementById: () => el}});
+  vm.runInContext(HTML.slice(start, end) + '\n;' + body, ctx);
+  return el;
+}
+
+test('the running state is muted and the failed one is not', () => {
+  const busy = runStartStatus('setStartStatus("Starting session…", true)');
+  assert.match(busy.textContent, /Starting session/);
+  assert.equal(busy.style.display, 'block');
+  assert.equal(busy.style.color, 'var(--muted)');
+
+  const failed = runStartStatus('setStartError("herdr agent start: agent_pane_busy")');
+  assert.equal(failed.style.color, 'var(--red)');
+
+  assert.equal(runStartStatus('setStartStatus("", true)').style.display, 'none');
+});
+
+test('a refusal the user can only answer by pressing again says try again', () => {
+  const hint = body => runStartStatus(`setStartError(withRetryHint(${JSON.stringify(body)}))`).textContent;
+  assert.match(hint('herdr agent start: agent_pane_busy'), /try again\.$/);
+  assert.match(hint('herdr agent start: not an available shell'), /try again\.$/);
+  assert.match(hint('herdr pane split failed: timed out'), /try again\.$/);
+  // Something to fix in the dialog is not something to press through, and a message that already
+  // says it does not say it twice.
+  assert.equal(hint('project is not configured'), 'project is not configured');
+  assert.equal(hint('Select a target first'), 'Select a target first');
+  assert.equal(hint('pane is busy — try again.'), 'pane is busy — try again.');
+});
+
+function runSpawnStatus(body) {
+  const start = HTML.indexOf('let spawnStatusTimer');
+  const end = HTML.indexOf('function setStartStatus', start);
+  assert.ok(start !== -1 && end > start, 'floating start status block not found');
+  const els = {
+    spawnStatus: {style: {}}, spawnSpinner: {hidden: false}, spawnStatusText: {textContent: ''},
+  };
+  const ctx = vm.createContext({
+    document: {getElementById: id => els[id]}, clearTimeout: () => {}, setTimeout: () => 1,
+  });
+  vm.runInContext(HTML.slice(start, end) + '\n;' + body, ctx);
+  return els;
+}
+
+test('the floating start card carries progress, warnings, and errors', () => {
+  const busy = runSpawnStatus('showSpawnStatus("Duplicating Architect 1…", "busy")');
+  assert.equal(busy.spawnStatus.style.display, 'flex');
+  assert.equal(busy.spawnSpinner.hidden, false);
+  assert.equal(busy.spawnStatus.style.borderColor, 'var(--blue)');
+
+  const warning = runSpawnStatus('showSpawnStatus("Name taken", "warning")');
+  assert.equal(warning.spawnSpinner.hidden, true);
+  assert.equal(warning.spawnStatus.style.borderColor, 'var(--orange)');
+
+  const error = runSpawnStatus('showSpawnStatus("start failed", "error")');
+  assert.equal(error.spawnStatus.style.borderColor, 'var(--red)');
+  assert.equal(error.spawnStatusText.textContent, 'start failed');
+});
+
 // --- Enter in the composer ---
 
 const key = (over) => Object.assign({key: 'Enter', metaKey: false, ctrlKey: false, shiftKey: false}, over);

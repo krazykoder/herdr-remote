@@ -122,6 +122,37 @@ test('the fold and Last sit on opposite edges of the nav row', async ({page}) =>
   }
 });
 
+test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
+  // The fake herdr's w1 is the one Space with two tabs in it.
+  await page.locator('.chip-strip', {hasText: 'Spaces'}).locator('.chip').nth(1).click();
+  const tabs = page.locator('.chip-strip', {hasText: 'Tabs'}).locator('.chip:not(.chip-add)');
+  await expect(tabs).toHaveCount(3);                 // All, and the two tabs
+  await expect(tabs.nth(0)).toHaveClass(/active/);
+
+  await page.keyboard.press('Alt+Tab');
+  await expect(tabs.nth(1)).toHaveClass(/active/);
+  await page.keyboard.press('Alt+Tab');
+  await expect(tabs.nth(2)).toHaveClass(/active/);
+  await page.keyboard.press('Alt+Tab');              // round the ring, back to All
+  await expect(tabs.nth(0)).toHaveClass(/active/);
+  await page.keyboard.press('Alt+Shift+Tab');
+  await expect(tabs.nth(2)).toHaveClass(/active/);
+
+  // Safari may provide the physical key code but no printable key value for Option+Tab.
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', {
+    bubbles: true, cancelable: true, altKey: true, code: 'Tab',
+  })));
+  await expect(tabs.nth(0)).toHaveClass(/active/);
+
+  // Not while a pane is open: the strip is not on screen, and Tab there belongs to the composer.
+  // The ring is on All from the press above, and coming back it is still on All.
+  await page.locator('#agents .agent').first().click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await page.keyboard.press('Alt+Tab');
+  await page.locator('.back').first().click();
+  await expect(tabs.nth(0)).toHaveClass(/active/);
+});
+
 test('Last returns a scrolled-up pane to the newest line, and to following it', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');

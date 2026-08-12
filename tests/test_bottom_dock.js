@@ -33,6 +33,8 @@ function dockCtx({status = 'idle', store = {}} = {}) {
     window: {}, console,
     activePane: 'p1',
     paneTextPrimed: false,
+    finalAt: null,               // no closing message found, so no Summary button in the row
+
     agents: [{pane_id: 'p1', status}],
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},

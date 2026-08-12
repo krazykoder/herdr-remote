@@ -174,5 +174,80 @@ class StartIntoASpacerTests(unittest.TestCase):
         self.assertIn(("tab", "create"), [c[:2] for c in calls])
 
 
+class PaneNotAtItsPromptYetTests(unittest.TestCase):
+    """A tab is born before its shell reaches a prompt, and `agent start` refuses until it does.
+
+    This is what made Duplicate look broken: the tab opened, the start was refused about a second
+    later, the rollback closed the tab again, and nothing appeared to have happened. The same
+    start succeeded when it was made by hand a few seconds afterwards.
+    """
+
+    def start(self, refusals, refusal, wait=5.0):
+        """Refuse `refusals` starts with `refusal`, then let one through. Returns (pane_id, err)."""
+        starts = []
+        slept = []
+
+        def fake(*args, remote=None, timeout=15):
+            if args[:2] == ("agent", "list"):
+                return FakeResult(json.dumps({"result": {"agents": []}}))
+            if args[:2] == ("tab", "create"):
+                return FakeResult(json.dumps(
+                    {"result": {"tab": {"tab_id": "w1:t9"}, "root_pane": {"pane_id": "w1:pN"}}}))
+            if args[:2] == ("agent", "start"):
+                starts.append(args)
+                if len(starts) <= refusals:
+                    return FakeResult(**refusal)
+                return FakeResult(json.dumps(
+                    {"result": {"agent": {"pane_id": args[args.index("--pane") + 1]}}}))
+            return FakeResult()
+
+        plan = {"name": "codex", "role": "agent", "project_id": "charts",
+                "project_label": "Charts", "cwd": "/work", "remote": None,
+                "placement": "new_tab", "label": "Agent 1", "slot": None,
+                "workspace_id": "w1"}
+        with patch.object(herdr_relay, "run_herdr_result", side_effect=fake), \
+                patch.object(herdr_relay.time, "sleep", slept.append), \
+                patch.object(herdr_relay, "PANE_READY_WAIT", wait), \
+                patch.object(herdr_relay, "_rollback_layout") as rollback:
+            pane_id, err = herdr_relay.start_agent_exec(plan)
+        return pane_id, err, starts, slept, rollback
+
+    # herdr puts its error body on stdout on one route and stderr on the other, so the refusal
+    # arrives as the message alone or as the whole JSON blob. Both have to be recognised.
+    ON_STDOUT = {"returncode": 1, "stdout": json.dumps(
+        {"error": {"code": "agent_pane_busy",
+                   "message": "agent target pane w1:pN is not an available shell"}})}
+    ON_STDERR = {"returncode": 1, "stderr": json.dumps(
+        {"error": {"code": "agent_pane_busy",
+                   "message": "agent target pane w1:pN is not an available shell"}})}
+
+    def test_the_start_is_offered_again_until_the_shell_arrives(self):
+        for name, refusal in (("stdout", self.ON_STDOUT), ("stderr", self.ON_STDERR)):
+            with self.subTest(name):
+                pane_id, err, starts, slept, rollback = self.start(2, refusal)
+                self.assertIsNone(err)
+                self.assertEqual(pane_id, "w1:pN")
+                self.assertEqual(len(starts), 3)
+                self.assertEqual(len(slept), 2)
+                # The tab it opened has to survive the retries — rolling it back would leave the
+                # next attempt offering a pane that no longer exists.
+                rollback.assert_not_called()
+
+    def test_a_shell_that_never_arrives_still_fails_and_rolls_back(self):
+        pane_id, err, starts, _, rollback = self.start(99, self.ON_STDOUT, wait=0)
+        self.assertIsNone(pane_id)
+        self.assertIn("not an available shell", err)
+        self.assertEqual(len(starts), 1)      # nothing to wait for: the deadline is already past
+        rollback.assert_called_once()
+
+    def test_any_other_refusal_is_not_retried(self):
+        taken = {"returncode": 1, "stdout": json.dumps(
+            {"error": {"code": "agent_name_taken", "message": "agent name is already used"}})}
+        _, err, starts, slept, _ = self.start(1, taken)
+        self.assertIn("already used", err)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(slept, [])
+
+
 if __name__ == "__main__":
     unittest.main()

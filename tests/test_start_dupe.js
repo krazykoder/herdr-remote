@@ -38,6 +38,7 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     document: {getElementById: el},
     localStorage: {getItem: () => null, setItem() {}},
     window: {}, console,
+    clearTimeout() {}, setTimeout: () => 1,
     ws: {send: s => sent.push(JSON.parse(s))},
     agents: live,
     shells: [],

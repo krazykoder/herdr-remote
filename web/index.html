@@ -99,6 +99,9 @@
       /* Agent kinds, in the badge only. --orange doubles as the pi yellow; claude needs its own
          because the two sit side by side in a list and #e0af68 twice reads as one colour. */
       --agent-claude: #ff9e64;
+      /* agy needs a hue no status and no other kind owns. Purple is the one left: orange is a
+         shade off claude's, cyan means a shell, and red/green/blue are taken. */
+      --agent-agy: #bb9af7;
       /* Terminal panes. Deliberately not red/green/muted: those three mean agent status, and a
          shell has none. Named --shell rather than --term because --term-bg/--term-text already
          mean the pane's *content* — those two follow the theme, this one does not need to. */
@@ -138,6 +141,7 @@
       --blue: #2461da;
       --orange: #965904;
       --agent-claude: #b74208;
+      --agent-agy: #6a3ec4;
       --shell: #046fa0;
       /* Brightest surface in the theme, still a shade off white: the pane is what is being read,
          and it should sit forward of the shell around it without glaring. */
@@ -221,6 +225,10 @@
 
     ::-webkit-scrollbar-corner {
       background: transparent;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     body {
@@ -597,6 +605,21 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
+    }
+
+    .setting-group .toggle-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 0;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .setting-group .toggle-option input {
+      width: auto;
+      padding: 0;
+      accent-color: var(--blue);
     }
 
     .setting-group select {
@@ -1170,6 +1193,30 @@
       flex: 1;
     }
 
+    /* Lines are DOM rows rather than a scrolling overlay, so prompt treatment stays attached to
+       its text in every wrap mode. `min-height` keeps an empty terminal line real, and matches
+       the container's line-height so the ruler's arithmetic row geometry stays true. */
+    .term-line {
+      display: block;
+      min-height: 1.5em;
+    }
+
+    /* Colour and a rule, no fill: a terminal is already a wall of colour, and a highlight block
+       behind monospace text is the thing that reads as broken rather than as structure. The rule
+       is pulled into the pane's own left padding so it never sits on the first character cell. */
+    .term-line.user-prompt,
+    .term-line.summary-highlight {
+      font-weight: 600;
+      border-left: 3px solid;
+      margin-left: -7px;
+      padding-left: 4px;
+    }
+
+    /* Blue for what you said, orange for what the agent closed with — the same orange the ruler
+       paints a found range in, because it marks the same lines. */
+    .term-line.user-prompt { color: var(--blue); border-left-color: var(--blue); }
+    .term-line.summary-highlight { color: var(--orange); border-left-color: var(--orange); }
+
     /* Centred over the pane and out of its flow, so nothing below it moves when it comes and goes.
        pointer-events:none because the text underneath stays scrollable while it shows. */
     .term-loading {
@@ -1193,6 +1240,36 @@
        Opacity only, so it costs a composite and not a repaint. */
     .term-wrap.loading>.term-content {
       opacity: 0.3;
+    }
+
+    /* Stepping between the agent's messages. Beside the ruler rather than on it: the handles
+       travel that track from top to bottom, and a tap target sitting on a drag target is how a
+       drag becomes a jump. Out of flow, so the pane keeps its full height. */
+    .block-nav {
+      position: absolute;
+      top: 6px;
+      right: 36px;
+      display: flex;
+      gap: 4px;
+      z-index: 4;
+    }
+
+    /* display:flex outranks the user agent's [hidden] rule, so hiding it needs saying twice —
+       the same guard .sel-bar[hidden] carries for the same reason. */
+    .block-nav[hidden] {
+      display: none;
+    }
+
+    .block-nav button {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1;
     }
 
     .ruler {
@@ -1261,6 +1338,19 @@
       border-top: 1px solid var(--blue);
       border-bottom: 1px solid var(--blue);
       z-index: 1;
+    }
+
+    /* Orange while the range is one the app found rather than one a finger drew. The colour is
+       the whole claim: this is a guess at where the agent's closing message starts and ends.
+       Touching either handle repaints it blue, because from that moment it is not a guess. */
+    .sel-band.auto {
+      background: color-mix(in srgb, var(--orange) 20%, transparent);
+      border-top-color: var(--orange);
+      border-bottom-color: var(--orange);
+    }
+
+    .ruler-handle.auto::before {
+      background: var(--orange);
     }
 
     /* At 9px the user cannot read the row they are landing on. This is how they confirm the
@@ -1387,6 +1477,12 @@
       font-size: 0.9rem;
     }
 
+    /* Summary roughly doubles what sits at the right edge, so the arrows have to give up the
+       width or they end up underneath it. Only while the button is there. */
+    .quick-actions .qa-nav.has-summary button.nav {
+      max-width: calc(50% - 120px);
+    }
+
     .quick-actions .qa-nav button.nav:disabled {
       opacity: 0.35;
       cursor: default;
@@ -1412,14 +1508,24 @@
       font-weight: 400;
     }
 
-    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
-       pair pressed constantly. Sized to its word instead of to a circle, which is the only reason
-       the two rules are not one. */
-    .quick-actions .qa-nav button.qa-last {
+    /* The right edge of the nav row. Last is always there; Summary joins it only when the pane
+       has a closing message to offer. Pinned as a group rather than each button to the edge, so
+       the two cannot land on top of each other the moment both are present. */
+    .quick-actions .qa-nav .qa-right {
       position: absolute;
       right: 0;
       top: 50%;
       transform: translateY(-50%);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
+       pair pressed constantly. Sized to their word instead of to a circle, which is the only
+       reason these are not one rule with the fold. */
+    .quick-actions .qa-nav button.qa-last,
+    .quick-actions .qa-nav button.qa-summary {
       flex: 0 0 auto;
       min-width: 0;
       height: 22px;
@@ -1430,6 +1536,13 @@
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 400;
+    }
+
+    /* Wearing the colour of the band it draws, so the connection between pressing this and the
+       orange range that appears needs no explaining. */
+    .quick-actions .qa-nav button.qa-summary {
+      border-color: var(--orange);
+      color: var(--orange);
     }
 
     /* The v folds the whole composer stack away — the button rail, the text area, and whichever
@@ -1907,6 +2020,13 @@
     </div>
 
     <div class="setting-group">
+      <label>Highlights</label>
+      <label class="toggle-option"><input type="checkbox" id="userHighlight" onchange="setUserHighlight(this.checked)"> Auto highlight user input</label>
+      <label class="toggle-option"><input type="checkbox" id="summaryHighlight" onchange="setSummaryHighlight(this.checked)"> Auto highlight agent summary</label>
+      <div class="hint">Prompt turns are blue; detected summaries are orange.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2064,10 +2184,15 @@
         <div class="ruler-handle" id="rulerBot" hidden></div>
       </div>
       <div class="sel-bubble" id="selBubble" hidden></div>
+      <div class="block-nav" id="blockNav" hidden>
+        <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
+        <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
+      </div>
     </div>
     <div class="sel-bar" id="selBar" hidden>
       <span class="count" id="selCount"></span>
       <span class="spacer"></span>
+      <button onclick="learnSelection()" id="selLearn">Learn</button>
       <button onclick="copySel()" id="selCopy">Copy</button>
       <button class="primary" onclick="openTransfer()" id="selTransfer" hidden>Transfer ›</button>
       <button onclick="clearSel()" aria-label="Clear selection">✕</button>
@@ -2262,6 +2387,13 @@
           session</button>
       </div>
     </div>
+  </div>
+
+  <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
+  <div id="spawnStatus" role="status" aria-live="polite"
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:201;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
+    <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
+    <span id="spawnStatusText"></span>
   </div>
 
   <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
@@ -2681,6 +2813,28 @@
     }
 
     setTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+
+    // Both defaults preserve the existing prompt treatment and make a detected summary useful the
+    // first time a pane opens. The parser still runs when a colour is off; only row classes stop.
+    const USER_HIGHLIGHT_KEY = 'herdr_highlight_user', SUMMARY_HIGHLIGHT_KEY = 'herdr_highlight_summary';
+    function highlightOn(key) {
+      try { return localStorage.getItem(key) !== 'off'; } catch (e) { return true; }
+    }
+    function repaintHighlights() {
+      // The band is drawn against row geometry, so it is re-placed whether or not there are rows
+      // to rebuild — a pane with no text still has a ruler to clear.
+      if (paneRows.length) { renderPaneRows(); invalidateRows(); }
+      drawSel();
+    }
+    function setHighlight(key, id, on) {
+      try { localStorage.setItem(key, on ? 'on' : 'off'); } catch (e) { /* session-only */ }
+      document.getElementById(id).checked = on;
+      repaintHighlights();
+    }
+    function setUserHighlight(on) { setHighlight(USER_HIGHLIGHT_KEY, 'userHighlight', on); }
+    function setSummaryHighlight(on) { setHighlight(SUMMARY_HIGHLIGHT_KEY, 'summaryHighlight', on); }
+    document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
+    document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
 
 
 
@@ -3102,7 +3256,10 @@
           // Say so when the relay had to rename around a collision — otherwise the pane shows up
           // under a name the user never typed and reads as the wrong session.
           const asked = document.getElementById('startName').value.trim();
-          if (asked && msg.label && msg.label !== asked) showToast(`Name taken — started as "${msg.label}"`);
+          const renamed = asked && msg.label && msg.label !== asked;
+          showSpawnStatus(renamed ? `Name taken — started as "${msg.label}" — opening…`
+            : `${msg.command === 'open_terminal' ? 'Terminal opened' : 'Session started'} — opening…`,
+            renamed ? 'warning' : 'busy');
           closeStart();
           // Open it once the poll has seen it. Not here: the session is not in `agents` yet, and
           // openTerminal reads the snapshot for the pane's title and its pair. Starting a session
@@ -3110,8 +3267,12 @@
           // wanted.
           pendingStart = msg.pane_id || null;
         }
-        else setStartError(msg.error ||
-          (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
+        else {
+          const error = withRetryHint(msg.error ||
+            (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
+          setStartError(error);
+          showSpawnStatus(error, 'error');
+        }
       }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
@@ -3232,12 +3393,12 @@
         if (!paneTextPrimed) {
           paneTextPrimed = true;
           syncPaneLoading();  // this read is the one the pill was waiting for
-        } else if (next !== el.textContent) {
+        } else if (next !== paneText) {
           paneStampAt = new Date();
           noteActivity(activePane);
           renderStatusBar();
         }
-        el.textContent = next;
+        setPaneText(next);
         if (userScrolledUp) {
           // Keep scroll position relative to bottom (content may have grown at top)
           const growth = el.scrollHeight - prevHeight;
@@ -3245,8 +3406,8 @@
         } else {
           el.scrollTop = el.scrollHeight;
         }
-        // After the scroll settles, not before: the band is drawn against scrollTop.
-        setPaneText(next);
+        // setPaneText drew against the old scroll position; the band lives outside the scroller.
+        drawSel();
       }
     }
 
@@ -3387,6 +3548,7 @@
     function layoutHtml(list) {
       const workspaces = [...new Set(list.map(a => a.workspace_id).filter(Boolean))];
       let html = '';
+      visibleTabs = [];
       if (workspaces.length <= 1) {
         activeWorkspace = null;
         activeTab = null;
@@ -3404,6 +3566,7 @@
         // Tab chip strip (always show when workspace selected)
         if (activeWorkspace) {
           const wsTabs = [...new Set(list.filter(a => a.workspace_id === activeWorkspace).map(a => a.tab_id).filter(Boolean))];
+          visibleTabs = wsTabs;
           html += `<div class="chip-strip"><span class="chip-label">Tabs</span>`;
           if (wsTabs.length > 1) {
             html += `<button class="chip${!activeTab ? ' active' : ''}" onclick="selectTab(null)">All</button>`;
@@ -3457,6 +3620,20 @@
     function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
     function selectTab(id) { activeTab = id; render(); }
 
+    // The tab strip as last rendered. Read rather than recomputed, so the keyboard shortcut and
+    // the chips can never disagree about what the next tab is.
+    let visibleTabs = [];
+
+    // One step along that strip, wrapping. "All" is a real position in it, and — as in the strip
+    // itself — only offered once there is more than one tab to be "all" of.
+    function stepTab(dir) {
+      if (!visibleTabs.length) return false;
+      const ring = visibleTabs.length > 1 ? [null, ...visibleTabs] : visibleTabs;
+      const at = ring.indexOf(activeTab);
+      selectTab(ring[(at + dir + ring.length) % ring.length]);
+      return true;
+    }
+
     function createTab(workspaceId) {
       if (!ws) return;
       if (window.cue) cue('sparkle');
@@ -3502,6 +3679,7 @@
       // Only while the pane that asked is still live — a pair cannot be made against a pane that
       // has since exited, and the new session is better opened than left nowhere.
       if (intent && intent.pair && agents.some(x => x.pane_id === intent.pair)) {
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started — ready to pair.`, 'success');
         openPairDialog(intent.pair);
         choosePartner(a.pane_id);
         return;
@@ -3510,6 +3688,7 @@
       // phone terms, and yanking them out of what they are reading is worse than not landing.
       // Unless the start was a Duplicate, which is a request made from that very pane.
       if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+      showSpawnStatus(`${a.label || a.agent || 'Session'} started.`, 'success');
     }
 
     // A pane does not carry the role it was started with — herdr reports labels — so it is read
@@ -3545,6 +3724,7 @@
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
       // "Architect 2" rather than as a second pane with the same name.
       startIntent = 'open';
+      showSpawnStatus(`Duplicating ${a.label || a.agent || 'session'}…`, 'busy');
       ws.send(JSON.stringify(msg));
     }
 
@@ -3565,10 +3745,44 @@
       if (want && [...el.options].some(o => o.value === want)) el.value = want;
     }
 
-    function setStartError(text) {
+    // A start can outlive its sheet (Duplicate has none), so its result also has one global card.
+    // Success and warnings clear shortly; errors stay long enough to be read and retried.
+    let spawnStatusTimer = null;
+    function showSpawnStatus(text, state) {
+      const el = document.getElementById('spawnStatus');
+      const spinner = document.getElementById('spawnSpinner');
+      document.getElementById('spawnStatusText').textContent = text || '';
+      el.style.display = text ? 'flex' : 'none';
+      const color = state === 'error' ? 'var(--red)' : state === 'warning' ? 'var(--orange)'
+        : state === 'success' ? 'var(--green)' : 'var(--blue)';
+      el.style.borderColor = color;
+      spinner.hidden = state !== 'busy';
+      clearTimeout(spawnStatusTimer);
+      if (state !== 'busy') spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
+        state === 'error' ? 10000 : 5000);
+    }
+
+    // One line under the fields carries both halves of what happens after Start is pressed:
+    // that it is running, and how it ended. A start blocks for as long as the agent takes to
+    // reach a prompt — up to 30s, and longer over SSH — and until this said so the dialog sat
+    // with a greyed button and no sign it had heard the press.
+    function setStartStatus(text, busy) {
       const el = document.getElementById('startError');
       el.textContent = text || '';
       el.style.display = text ? 'block' : 'none';
+      el.style.color = busy ? 'var(--muted)' : 'var(--red)';
+    }
+
+    function setStartError(text) { setStartStatus(text, false); }
+
+    // herdr refuses a pane that has not reached its shell prompt yet, and the relay already
+    // retries that for 20s before giving up. What is left is a race the user can win by pressing
+    // the button again — and nothing in the dialog to change first, so say that rather than
+    // leaving them to guess which field was wrong.
+    const START_RETRYABLE = /busy|not ready|not an available shell|timed? ?out|timeout|exited|malformed|no pane_id/i;
+
+    function withRetryHint(text) {
+      return START_RETRYABLE.test(text) && !/try again/i.test(text) ? text + ' — try again.' : text;
     }
 
     function openStartDialog(projectId, ev, mode) {
@@ -3681,7 +3895,8 @@
         if (!target || !target.value) { setStartError('Select a target first'); return; }
         msg[placement === 'new_tab' ? 'workspace_id' : 'split_from'] = target.value;
       }
-      setStartError('');
+      setStartStatus(terminal ? 'Opening terminal…' : 'Starting session… this can take up to 30s.', true);
+      showSpawnStatus(terminal ? 'Opening terminal…' : 'Starting session…', 'busy');
       document.getElementById('startSubmit').disabled = true;
       // Remembered on send rather than on change: what the user actually spawned is the choice
       // worth reopening on, not one they scrolled past.
@@ -3841,14 +4056,474 @@
       applyWrapMode();
     }
 
+    // --- Final message detection ---
+    // A finished pane is mostly tool output — command runs, diffs, test logs — with the agent's
+    // closing message a handful of lines at the end of it. Both harnesses already separate the
+    // two in column 0: every block opens on a speaker glyph, and a tool call hangs its results
+    // off a second one. So a block is an execution exactly when a result glyph appears under it,
+    // and the closing message is the last block where none does.
+    //
+    // That reads one character per line and never a word of the content, which is what keeps the
+    // whole feature in the browser — nothing stored, nothing asked of the relay, no second
+    // opinion from a model about text a model just wrote.
+    //
+    // Headings were the obvious idea and are the wrong one. Neither sampled pane had one: Claude
+    // closed with "Sound half committed on main as dd51cea", Codex with "S2b review clean."
+    //
+    // Profiles are literal and only cover harnesses whose panes have actually been read. An
+    // unknown harness gets no suggestion rather than a guess — a user's selection could hint at
+    // the speaker glyph, but never at the result gutter, which sits outside the block they
+    // selected. tests/fixtures/pane_*_done.txt are those reads, so a harness that changes its
+    // glyphs breaks a test rather than a user.
+    //
+    // `indent` is which column the gutter lives in. pi has none of its own — its glyphs come from
+    // the herdr-gutter extension in extensions/pi, and pi indents its whole transcript by one
+    // space, so they land in column 1. `ends` are glyphs that close the block above them without
+    // making it a tool execution: pi's reasoning marker is not something the agent said, but it is
+    // where a message stops.
+    //
+    // `composer: false` says the prompt gutter marks sent messages only. claude and codex draw the
+    // composer with the same glyph, so it sits at the foot of every live pane and the closing
+    // message is the block above it. pi's composer is a box the extension cannot reach, so pi's
+    // last `›` is the newest request and the reply to it is *below*.
+    const GUTTERS = {
+      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
+      codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
+      pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
+      // agy marks the user, its tool calls, its reasoning and its turn rules in column 0, and its
+      // own reply not at all: that is plain prose two columns in. `speaker: null` is what makes a
+      // block start positional rather than a glyph match, and `opens` says which column-0 lines a
+      // message may follow. `result` is empty because a column-0 tool call is already an end.
+      agy: { speaker: null, result: [], user: ['>'], opens: ['>', '●', '▸', '─'] },
+    };
+
+    // The character in a harness's gutter column, which is column 0 everywhere but pi.
+    function gutterOf(row, g) { return (row || '')[g.indent || 0]; }
+
+    // Does this row close the block above it? Anything in column 0 does — the next glyph, the turn
+    // footer, a rule, the prompt.
+    //
+    // An indented harness needs the second clause, and only an indented harness has it. claude and
+    // codex hang-indent a wrapped line past their gutter, so column 0 alone separates a
+    // continuation from a marker. pi does not: its continuation lines sit in the same column its
+    // glyphs do, and the glyph set is the only thing telling them apart. Applying that rule to
+    // claude would cut a block at the first wrapped line beginning with `⏺`.
+    function endsBlock(row, g) {
+      if (/^\S/.test(row || '')) return true;
+      if (!g.indent) return false;
+      const ch = gutterOf(row, g);
+      return ch === g.speaker || (g.user || []).includes(ch) ||
+        g.result.includes(ch) || (g.ends || []).includes(ch);
+    }
+
+    // A harness the user taught by selecting one of its messages. The first character of the line
+    // they started on is its speaker glyph — the one thing a selection can reveal. It cannot
+    // reveal the result glyph, which by definition sits in the tool blocks they did *not* select,
+    // so a learned profile carries no result list. It supports explicit trim learning only;
+    // Summary and message navigation require a complete shipped profile. With no result glyph it
+    // cannot tell a command from a sentence, and a wrong tool-output selection is worse than no shortcut.
+    const GUTTER_KEY = 'herdr_gutters', GUTTER_VERSION = 1;
+
+    // Memoized: profileFor sits under drawSel, which runs on every scroll event, and parsing JSON
+    // out of localStorage at that rate is a cost for nothing. Only learnGutter writes it.
+    let gutterCache = null;
+
+    function loadGutters() {
+      if (gutterCache) return gutterCache;
+      try {
+        const d = JSON.parse(localStorage.getItem(GUTTER_KEY) || '');
+        gutterCache = d && d.version === GUTTER_VERSION && d.byAgent ? d.byAgent : {};
+      } catch (e) { gutterCache = {}; }
+      return gutterCache;
+    }
+
+    function profileFor(agent) {
+      if (GUTTERS[agent]) return GUTTERS[agent];
+      const ch = loadGutters()[agent];
+      return ch ? { speaker: ch, result: [] } : null;
+    }
+
+    // How far a block starting on `start` runs, or null when it turns out to be a tool execution.
+    //
+    // It ends at the next line with anything at all in column 0 — the next glyph, the turn footer,
+    // a rule, the prompt. Blank lines stay inside it: Codex closes with three paragraphs, and
+    // ending on the first blank would take only the last one.
+    function blockSpan(rows, g, start) {
+      let end = start;
+      for (let j = start + 1; j < rows.length; j++) {
+        const line = (rows[j] || '').trimStart();
+        // A result glyph means this block ran something rather than said something. Tested before
+        // the end check, because on an indented harness a result glyph is itself an end.
+        if (line && g.result.includes(line[0])) return null;
+        if (endsBlock(rows[j], g)) break;
+        if (line) end = j;
+      }
+      return [start, end];
+    }
+
+    // Does a block start here? On every harness but agy that is one character in the gutter. agy
+    // has no speaker glyph, so its answer is positional: the first indented line under a column-0
+    // line that agy itself printed. `opens` is that last clause and it is load-bearing — without
+    // it the shell command line that launched agy opens a block and its startup banner is read as
+    // the pane's first message.
+    function startsBlock(rows, g, i) {
+      const row = rows[i] || '';
+      if (g.speaker) return gutterOf(row, g) === g.speaker;
+      if (!row.trim() || /^\S/.test(row)) return false;
+      for (let j = i - 1; j >= 0; j--) {
+        const above = rows[j] || '';
+        if (!above.trim()) continue;
+        return /^\S/.test(above) && (!g.opens || g.opens.includes(above[0]));
+      }
+      return false;     // nothing above it, so nothing opened it
+    }
+
+    function isUserInput(row, agent) {
+      const g = profileFor(agent);
+      return !!g && !!g.user && g.user.includes(gutterOf(row, g));
+    }
+
+    function lastUserInput(rows, agent) {
+      for (let i = (rows || []).length - 1; i >= 0; i--) {
+        if (isUserInput(rows[i], agent)) return i;
+      }
+      return -1;
+    }
+
+    // A user turn is its gutter plus every continuation line until the next agent utterance.
+    // That is the one contiguous region that should be visually distinct in the terminal.
+    //
+    // "Agent utterance" has to include reasoning, which on pi sits between the prompt and the
+    // reply. Left out, the blue rule would run down the agent's thinking as though the user had
+    // typed it — which is why the extension marks thinking at all.
+    function userInputLines(rows, agent) {
+      const g = profileFor(agent), lines = new Set();
+      if (!g || !rows) return lines;
+      let inTurn = false, pending = [];
+      rows.forEach((row, i) => {
+        if (isUserInput(row, agent)) { inTurn = true; pending = []; }
+        // The agent's reply ends the turn as surely as its glyph would. On agy that reply carries
+        // no glyph and is not in column 0, so without this the blue rule runs on into it.
+        else if (endsBlock(row, g) || startsBlock(rows, g, i)) inTurn = false;
+        if (!inTurn) return;
+        // A blank line inside the turn is part of it only if more of the turn follows. Trailing
+        // blanks are the gap before the agent answers, and a rule running down empty rows reads
+        // as the turn never ending.
+        if ((row || '').trim()) { pending.forEach(j => lines.add(j)); pending = []; lines.add(i); }
+        else pending.push(i);
+      });
+      return lines;
+    }
+
+    // The last block above the latest user prompt, and null if it ran a tool. A `>` line closes
+    // the completed turn the user is about to transfer; without one this remains the last block
+    // in the pane. Deliberately not "the last block that didn't": an agent that stopped after a
+    // command has no closing message, and walking further up would offer something it said before
+    // doing work it has not reported on.
+    function findFinalMessage(rows, agent) {
+      const g = profileFor(agent);
+      if (!g || !rows || !rows.length) return null;
+      const lastInput = g.composer === false ? -1 : lastUserInput(rows, agent);
+      const before = lastInput < 0 ? rows.length : lastInput;
+      for (let i = before - 1; i >= 0; i--) {
+        if (startsBlock(rows, g, i)) return blockSpan(rows, g, i);
+      }
+      return null;
+    }
+
+    // Stepping between messages, which is a different question: here tool blocks are passed over
+    // rather than stopped on, because the user is walking the conversation and a command is not
+    // part of it. `before` and `after` are line indices, exclusive and inclusive respectively, so
+    // a returned range's own start feeds straight back in to get the next one.
+    function blockBefore(rows, agent, before) {
+      const g = profileFor(agent);
+      if (!g || !rows) return null;
+      for (let i = Math.min(before, rows.length) - 1; i >= 0; i--) {
+        if (!startsBlock(rows, g, i)) continue;
+        const at = blockSpan(rows, g, i);
+        if (at) return at;
+      }
+      return null;
+    }
+
+    function blockAfter(rows, agent, after) {
+      const g = profileFor(agent);
+      if (!g || !rows) return null;
+      for (let i = Math.max(0, after); i < rows.length; i++) {
+        if (!startsBlock(rows, g, i)) continue;
+        const at = blockSpan(rows, g, i);
+        if (at) return at;
+      }
+      return null;
+    }
+
+    // One range per turn: the agent's closing message, which is the last thing it said before the
+    // user typed again. Stepping walks these rather than every block, because between two prompts
+    // an agent says a dozen things and only the last of them answers the question — that is what
+    // ↑ is for. Falls back to nothing on a harness with no prompt gutter, and stepBlock then walks
+    // messages the old way.
+    function turnSummaries(rows, agent) {
+      const g = profileFor(agent), out = [];
+      if (!g || !rows) return out;
+      const at = i => {
+        const r = blockBefore(rows, agent, i);
+        // Two prompts in a row share the block above them; one entry, not two.
+        if (r && (!out.length || r[0] > out[out.length - 1][0])) out.push(r);
+      };
+      let prompts = 0;
+      for (let i = 0; i < rows.length; i++) if (isUserInput(rows[i], agent)) { prompts++; at(i); }
+      // A harness whose composer carries no glyph has one more turn than it has prompt lines: the
+      // newest reply sits below the last request, where the others sit above the next one. Counted
+      // rather than read off `out`, because the first request has nothing above it to summarize.
+      if (g.composer === false && prompts) at(rows.length);
+      return out;
+    }
+
+    // Every turn's closing message, as line numbers, trimmed the way this user trims. Scrolling
+    // back is exactly when the marks earn their keep: the newest summary is on screen anyway, and
+    // the one being hunted for is four screens up. Falls back to the pane's final message on a
+    // harness with no prompt gutter, which is the only range there is to mark there.
+    function summaryRows(rows, agent) {
+      const out = new Set();
+      const turns = turnSummaries(rows, agent);
+      const ranges = turns.length ? turns : (finalAt ? [finalAt] : []);
+      for (const at of ranges) {
+        const [s, e] = trimRange(at, agent);
+        for (let i = s; i <= e; i++) out.add(i);
+      }
+      return out;
+    }
+
+    // The block a line falls inside, or null. Walking up from the line is what lets teaching work
+    // anywhere in the pane: a range is measured against its own block rather than against whichever
+    // one happened to be last read. Hitting a footer, rule or prompt on the way up means the line
+    // is not inside a block at all.
+    function blockContaining(rows, agent, i) {
+      const g = profileFor(agent);
+      if (!g || !rows || !rows.length) return null;
+      for (let s = Math.min(i, rows.length - 1); s >= 0; s--) {
+        if (startsBlock(rows, g, s)) return blockSpan(rows, g, s);
+        if (endsBlock(rows[s], g)) return null;
+      }
+      return null;
+    }
+
+    // Set while a range is one this found rather than one the user dragged. It is what paints the
+    // band orange and what the footer names, and it is the whole difference between a suggestion
+    // and a selection.
+    let selSuggested = false;
+
+    // What the user trims off a suggestion, remembered per harness.
+    //
+    // The gutter parse gets the block right; what it cannot know is how much of that block a
+    // given person actually wants. Some always drop the opening sentence, some always drop the
+    // trailing next-steps paragraph. Either way it is a pair of small line offsets measured from
+    // the block's own edges, it is stable per harness, and a tally of the pairs already confirmed
+    // is the entire model. No content is stored — two integers and a count.
+    const TRIM_KEY = 'herdr_summary_trim', TRIM_VERSION = 2;
+
+    function loadTrims() {
+      try {
+        const d = JSON.parse(localStorage.getItem(TRIM_KEY) || '');
+        return d && (d.version === 1 || d.version === TRIM_VERSION) && d.byAgent ? d.byAgent : {};
+      } catch (e) { return {}; }   // a corrupt blob is no trims, never a broken pane
+    }
+
+    // The pair confirmed most often. Ties go to the most recent explicit trim.
+    function learnedTrim(agent) {
+      const tally = loadTrims()[agent];
+      let best = [0, 0], top = 0, newest = -1;
+      for (const k in tally || {}) {
+        const [h, t] = k.split(',').map(Number);
+        const vote = tally[k], count = Array.isArray(vote) ? vote[0] : vote;
+        const last = Array.isArray(vote) ? vote[1] : 0;
+        if (!(h >= 0 && t >= 0)) continue;
+        if (count > top || (count === top && last > newest)) {
+          top = count;
+          newest = last;
+          best = [h, t];
+        }
+      }
+      return best;
+    }
+
+    function noteTrim(agent, head, tail) {
+      if (!agent || head < 0 || tail < 0) return;
+      const all = loadTrims();
+      const tally = all[agent] || (all[agent] = {});
+      const k = head + ',' + tail;
+      const old = tally[k], count = Array.isArray(old) ? old[0] : old || 0;
+      const last = Math.max(0, ...Object.values(tally).map(v => Array.isArray(v) ? v[1] : 0));
+      tally[k] = [count + 1, last + 1];
+      try { localStorage.setItem(TRIM_KEY, JSON.stringify({ version: TRIM_VERSION, byAgent: all })); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // Computed once per read rather than per render: the Summary button and the ↓↑ pill depend on
+    // these, renderQuickActions and drawSel both run constantly, and a pane can be tens of
+    // thousands of lines long.
+    let paneProfile = null, finalAt = null;
+
+    function scanFinalMessage() {
+      const a = activePane ? paneOf(activePane) : null;
+      paneProfile = a ? profileFor(a.agent) : null;
+      const raw = a ? findFinalMessage(paneRows, a.agent) : null;
+      // Trimmed, because that is the whole point of learning one: the range arrives the way this
+      // user selects it rather than the way the parser found it. Only an explicit act votes for a
+      // trim now (learnFromSelection ignores an untouched suggestion), so what comes off here is
+      // something the user asked for at least once.
+      finalAt = raw ? trimRange(raw, a.agent) : null;
+    }
+
+    // Redundant lines come off both ends: the ones this user has trimmed before, and then any
+    // blank ones on the edges — the trim can expose them, and a block can carry one from the
+    // start. A trim that would leave nothing is discarded and the block kept whole; a learned
+    // offset is a preference, not a licence to select no lines at all.
+    function trimRange([a, b], agent) {
+      const [head, tail] = learnedTrim(agent);
+      let s = a + head, e = b - tail;
+      if (s > e) { s = a; e = b; }
+      while (s < e && !(paneRows[s] || '').trim()) s++;
+      while (e > s && !(paneRows[e] || '').trim()) e--;
+      return [s, e];
+    }
+
+    // A range the user has committed to — sent, copied, or explicitly taught — measured against
+    // the block it sits in. Returns the offsets learned, or null when the range is not inside a
+    // block: that is a different intent and says nothing about how much of a block to keep.
+    function learnFromSelection() {
+      const a = activePane ? paneOf(activePane) : null;
+      // An untouched suggestion says nothing about the user's trim. Its accidental 0/0 vote
+      // would otherwise eventually drown out every real correction.
+      if (!a || selA === null || selSuggested) return null;
+      const s = Math.min(selA, selB), e = Math.max(selA, selB);
+      const raw = blockContaining(paneRows, a.agent, s);
+      if (!raw || s < raw[0] || e > raw[1]) return null;
+      const at = [s - raw[0], raw[1] - e];
+      noteTrim(a.agent, at[0], at[1]);
+      return at;
+    }
+
+    // The Learn button, which does one of two quite different jobs.
+    //
+    // On a harness with no profile it teaches the speaker glyph, and that is confirmed before it
+    // is stored — a wrong glyph misplaces *every* block boundary in the pane, and there is no
+    // tally to outvote it. The confirmation shows the character itself, because pressing a button
+    // twice confirms nothing: the second press carries no information the first did not.
+    //
+    // On a known harness it records the trim, which is a two-line offset against a tally that
+    // already outvotes a stray press. So it is a single press, and what it learned is shown after
+    // the fact rather than gated before it.
+    function learnSelection() {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a || selA === null) return;
+      const btn = document.getElementById('selLearn');
+      const said = t => {
+        btn.textContent = t;
+        setTimeout(() => { if (btn.textContent === t) btn.textContent = 'Learn'; }, 1600);
+      };
+      if (!profileFor(a.agent)) { if (learnGutter(a.agent)) said('Learned ✓'); return; }
+      if (selSuggested) { said('Trim it first'); return; }
+      const at = learnFromSelection();
+      said(at ? `Learned ${at[0]}/${at[1]} ✓` : 'Not a message');
+      // The trim it just learned moves the summary, and the orange rows are drawn from it. Without
+      // this they stay where they were until the pane's text happens to change.
+      if (at) { scanFinalMessage(); repaintHighlights(); }
+    }
+
+    function learnGutter(agent) {
+      const ch = (paneRows[Math.min(selA, selB)] || '')[0];
+      // A letter or digit in column 0 is prose, not a gutter. Learning one would make every
+      // unindented sentence a block boundary and the feature worse than absent.
+      if (!ch || /[\s\w]/.test(ch)) {
+        showToast('Start the selection on the line with the agent\'s marker.');
+        return false;
+      }
+      if (!confirm(`Learn "${ch}" as ${agent}'s message marker?`)) return false;
+      const all = Object.assign({}, loadGutters(), { [agent]: ch });
+      gutterCache = all;
+      try { localStorage.setItem(GUTTER_KEY, JSON.stringify({ version: GUTTER_VERSION, byAgent: all })); }
+      catch (e) { /* private mode: session-only */ }
+      scanFinalMessage();
+      renderQuickActions();
+      repaintHighlights();   // draws the ruler too
+      return true;
+    }
+
+    // Walking the conversation. With no range on screen this starts from the end of the pane going
+    // up, or the beginning coming down, so it works before anything has been selected.
+    function stepBlock(dir) {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a) return;
+      // Where to step from, in block coordinates. What is on screen is *trimmed*, and a trim of
+      // even one line puts the selection's start inside the block it came from — compare that
+      // against block starts and `previous` finds the block it is already on while `next` finds
+      // nothing past it, which wedges stepping entirely. So the anchor is the block the selection
+      // sits in. A range the user dragged themselves may sit in no block, and then it is its own
+      // anchor, exactly as before.
+      const sel = selA === null ? null : Math.min(selA, selB);
+      const here = sel === null ? null : blockContaining(paneRows, a.agent, sel);
+      const from = here ? here[0] : sel;
+      const turns = turnSummaries(paneRows, a.agent);
+      const at = turns.length
+        ? (dir < 0
+          ? [...turns].reverse().find(t => t[0] < (from === null ? paneRows.length : from))
+          : turns.find(t => t[0] > (from === null ? -1 : from))) || null
+        : (dir < 0
+          ? blockBefore(paneRows, a.agent, from === null ? paneRows.length : from)
+          : blockAfter(paneRows, a.agent, from === null ? 0 : from + 1));
+      if (!at) {
+        // Off the top of what has been read. The pane opens on 200 lines and two long tool blocks
+        // eat that, so running out here means asking for more history rather than dead-ending.
+        if (dir < 0 && paneLines < paneHistoryMax()) { loadMore(); showToast('Loading more history…'); }
+        else showToast(dir < 0 ? 'No earlier message' : 'No later message');
+        return;
+      }
+      [selA, selB] = trimRange(at, a.agent);
+      selSuggested = true;
+      drawSel();
+      scrollPaneToLine(Math.min(selA, selB));
+    }
+
+    // At most one suggestion per pane per snapshot. The 3s poll re-delivers identical text, and
+    // re-selecting a range the user just cleared would make it impossible to clear.
+    let suggestedKey = '';
+
+    function suggestFinalMessage() {
+      const a = activePane ? paneOf(activePane) : null;
+      // Shipped profiles only. A learned one has no result glyph, so it cannot tell a command from
+      // a sentence — it answers when asked and never volunteers.
+      if (!a || !GUTTERS[a.agent] || a.status !== 'done' || selA !== null) return;
+      const key = activePane + ' ' + paneRows.length + ' ' + (paneRows[paneRows.length - 1] || '');
+      if (key === suggestedKey) return;
+      suggestedKey = key;   // set before the check, so a pane with nothing to find stays quiet
+      if (finalAt) selectFinalMessage();
+    }
+
+    // The Summary button, and the automatic suggestion, land on the same range through here.
+    // Unlike the suggestion it has no status gate: pressing it is the user asking, and an agent
+    // that is mid-turn still has a previous message worth lifting out.
+    // `scroll` is what separates the two: pressing the button is a request to go and look at the
+    // message, and on a long pane it is usually far above the foot. The automatic suggestion does
+    // not scroll — it arrives with a poll, and moving the pane under someone reading scrollback
+    // would be the poll stealing their place.
+    function selectFinalMessage(scroll) {
+      if (!finalAt) return;
+      [selA, selB] = finalAt;
+      selSuggested = true;
+      drawSel();
+      if (scroll) scrollPaneToLine(Math.min(selA, selB));
+    }
+
     // --- Line ruler ---
-    // Two integers and one band element. No per-line DOM, nothing rebuilt on the 3s poll — which
-    // is what keeps it cheap in every wrap mode, including the one that has to measure.
-    let selA = null, selB = null, selText = '', paneText = '', paneRows = [], lineStarts = [];
+    // Two integers and one band element — the selection itself is never per-line DOM, and nothing
+    // here is rebuilt on the 3s poll. The rows it measures against are spans (renderPaneRows), so
+    // the reflow mode reads geometry off a box rather than measuring a Range.
+    let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
 
     function rulerOn() { return !!activePane; }
 
-    function clearSel() { selA = selB = null; selText = ''; drawSel(); }
+    function clearSel() { selA = selB = null; selText = ''; selSuggested = false; drawSel(); }
 
     function lineGeom() {
       const el = document.getElementById('termContent'), cs = getComputedStyle(el);
@@ -3870,22 +4545,13 @@
     function rowGeom(i) {
       const { el, lh, pad } = lineGeom();
       if (currentWrapMode() !== 'reflow') return { top: pad + i * lh, height: lh };
-      const node = el.firstChild;
-      // Only ever a single text node in practice; anything else means the pane is not rendered
-      // yet, and the arithmetic is a better answer than a thrown range.
-      if (!node || node.nodeType !== 3) return { top: pad + i * lh, height: lh };
+      const row = el.children[i];
+      if (!row) return { top: pad + i * lh, height: lh };
       if (!rowCache) rowCache = new Map();
       const hit = rowCache.get(i);
       if (hit) return hit;
-      const start = lineStarts[i];
-      if (start === undefined) return { top: pad + i * lh, height: lh };
-      const r = document.createRange();
-      // Through the newline, not just the text: a blank line is a zero-length range, and a
-      // zero-length range has no rect to read a height off.
-      r.setStart(node, start);
-      r.setEnd(node, Math.min(node.length, start + (paneRows[i] || '').length + 1));
-      const box = r.getBoundingClientRect();
       const base = el.getBoundingClientRect().top - el.scrollTop;
+      const box = row.getBoundingClientRect();
       const geom = { top: box.top - base, height: box.height || lh };
       rowCache.set(i, geom);
       return geom;
@@ -3906,12 +4572,25 @@
       return Math.min(last, Math.max(0, lo));
     }
 
+    // Bring a line into view with a couple of rows of room above it, so a range that was jumped to
+    // reads as a block in its context rather than as something pinned to the top edge.
+    function scrollPaneToLine(i) {
+      const { el, lh } = lineGeom();
+      el.scrollTop = Math.max(0, rowGeom(i).top - lh * 2);
+      drawSel();   // the band lives outside the scroller, so it is re-placed by hand
+    }
+
     function drawSel() {
       const ruler = document.getElementById('ruler');
       const band = document.getElementById('selBand');
       const top = document.getElementById('rulerTop'), bot = document.getElementById('rulerBot');
       const bar = document.getElementById('selBar');
       ruler.hidden = !rulerOn();
+      // Nothing to step through without a profile, and an unknown harness gets one by the user
+      // selecting a message by hand and pressing Learn — so the pill appears once that has
+      // happened. A learned marker has no result gutter, so stepping on one can land on a tool
+      // block; pressing again passes it, which is a smaller cost than having no pill at all.
+      document.getElementById('blockNav').hidden = !rulerOn() || !paneProfile || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
       if (!on) return;
@@ -3925,7 +4604,20 @@
       const h = document.getElementById('termWrap').clientHeight;
       park(top, y0, h);
       park(bot, y1, h);
-      document.getElementById('selCount').textContent = (b - a + 1) + (b === a ? ' line' : ' lines');
+      band.classList.toggle('auto', selSuggested);
+      top.classList.toggle('auto', selSuggested);
+      bot.classList.toggle('auto', selSuggested);
+      // "final message" is a claim about *which* message, so it is only made about the last one.
+      // Stepping back through the conversation lands on earlier ones, still found rather than
+      // drawn, and they are named for what they are.
+      const found = !selSuggested ? ''
+        : (finalAt && a === finalAt[0] && b === finalAt[1]) ? ' · final message' : ' · agent message';
+      document.getElementById('selCount').textContent =
+        (b - a + 1) + (b === a ? ' line' : ' lines') + found;
+      // Learn is only meaningful where there is something to teach: a harness with no profile yet,
+      // or a range sitting inside a block whose trim it can record.
+      document.getElementById('selLearn').hidden =
+        !!paneProfile && !blockContaining(paneRows, agentOf(activePane), a);
       // Transfer is the reason this feature exists, but the button only means something while
       // this pane is half of a live pair.
       document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
@@ -3941,27 +4633,54 @@
     // Called with every read. The selection follows its text; reanchorSel decides whether it
     // survived at all.
     function setPaneText(next) {
+      const same = next === paneText;
       paneText = next;
       paneRows = next.split('\n');
-      // Character offset of each line, which is what a Range needs. Built here because this is
-      // the one place the text changes.
-      lineStarts = [];
-      for (let i = 0, at = 0; i < paneRows.length; i++) {
-        lineStarts.push(at);
-        at += paneRows[i].length + 1;
+      scanFinalMessage();   // rows below need the current summary range; parse once per read
+      // Rebuilt only when the text actually changed. The pane is re-read every 3s and is usually
+      // identical; rebuilding thousands of rows on each of those reads is the one thing per-line
+      // DOM could plausibly cost, and this is what keeps it off the poll.
+      if (!same || document.getElementById('termContent').childElementCount !== paneRows.length) {
+        renderPaneRows();
+        invalidateRows();
       }
-      invalidateRows();
-      if (selA !== null) {
+      const had = selA !== null;
+      if (had) {
         const at = reanchorSel(next, selText, Math.min(selA, selB), Math.max(selA, selB));
-        if (!at) { clearSel(); return; }
-        [selA, selB] = at;
+        if (at) [selA, selB] = at;
+        else clearSel();   // the text it was anchored to is gone, so the range is meaningless
       }
       drawSel();
+      // Only ever fills a ruler that was already empty when the read arrived. A read that just
+      // destroyed someone's range is the last moment to replace it with a guess.
+      if (!had) suggestFinalMessage();
+      renderQuickActions();   // Summary appears and goes with the message it selects
+    }
+
+    // One row per line. Costs a span per line and buys the prompt rule staying attached to its
+    // text in every wrap mode — and row geometry the ruler can read off the box instead of
+    // measuring a Range through a single text node.
+    function renderPaneRows() {
+      const a = activePane ? paneOf(activePane) : null;
+      const userLines = a && highlightOn(USER_HIGHLIGHT_KEY) ? userInputLines(paneRows, a.agent) : new Set();
+      const summaryLines = a && highlightOn(SUMMARY_HIGHLIGHT_KEY) ? summaryRows(paneRows, a.agent) : new Set();
+      const frag = document.createDocumentFragment();
+      paneRows.forEach((row, i) => {
+        const line = document.createElement('span');
+        line.className = 'term-line' + (userLines.has(i) ? ' user-prompt' : '') +
+          (summaryLines.has(i) ? ' summary-highlight' : '');
+        line.textContent = row;
+        frag.append(line);
+      });
+      document.getElementById('termContent').replaceChildren(frag);
     }
 
     function copySel() {
       const btn = document.getElementById('selCopy'), text = selText;
       if (!text) return;
+      // Copying is a commit too. Without a pair configured the Transfer button never appears
+      // (:4095), so this is the only thing most panes will ever teach from.
+      learnFromSelection();
       const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
       // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way
       // this app is reached. The textarea path is the one that actually runs at home.
@@ -3986,6 +4705,7 @@
       function moveTo(clientY) {
         const i = lineAt(clientY);
         if (drag === 'top') selA = i; else selB = i;
+        selSuggested = false;   // touched by hand, so it is the user's range now
         drawSel();
         const wrapTop = document.getElementById('termWrap').getBoundingClientRect().top;
         bubble.textContent = (paneRows[i] || '').trim().slice(0, 40) || '(blank)';
@@ -4232,6 +4952,7 @@
       if (k.startsWith('claude')) return 'var(--agent-claude)';
       if (k.startsWith('codex')) return 'var(--blue)';
       if (k.startsWith('pi') || k === 'kiro') return 'var(--green)';
+      if (k.startsWith('agy')) return 'var(--agent-agy)';
       return '';
     }
 
@@ -4512,6 +5233,9 @@
         ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
       const out = composeTransfer(instruction, mine.role, transferSelection);
       if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+      // Before openTerminal moves activePane to the partner: the range being transferred belongs
+      // to this pane, and this is the point at which the user has committed to it.
+      learnFromSelection();
       closeTransfer();
       openTerminal(partner.pane_id);
       const input = document.getElementById('termInput');
@@ -4910,14 +5634,22 @@
         `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
         `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
       const open = bottomDockOpen();
-      const navRow = `<div class="qa-nav">${nav(-1, '‹', 'Previous session')}` +
+      // Offered only when there is one to select. A button that does nothing on most panes would
+      // teach people to stop pressing it on the panes where it works.
+      const summary = finalAt
+        ? `<button class="qa-summary" onclick="selectFinalMessage(true)" ` +
+        `title="Select the agent's closing message" ` +
+        `aria-label="Select the agent's closing message">Summary</button>`
+        : '';
+      const navRow = `<div class="qa-nav${summary ? ' has-summary' : ''}">${nav(-1, '‹', 'Previous session')}` +
         `${nav(1, '›', 'Next session')}` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>` +
+        `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
-        `aria-label="Jump to the newest line">Last</button></div>`;
+        `aria-label="Jump to the newest line">Last</button></div></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
@@ -5375,7 +6107,17 @@
         e.preventDefault();
         switchToPartner();
       }
-    });
+      // ⌥Tab / ⌥⇧Tab step the tab strip, on a screen wide enough to be showing one and only while
+      // the list is what is on screen — stepping a strip hidden behind an open pane is a keypress
+      // with no visible effect. Phones keep plain Tab, which is how a touch keyboard moves between
+      // fields. Windows never sees this: Alt+Tab belongs to the OS there.
+      // Safari can report Option+Tab by physical code with an empty key value. Capture also keeps
+      // a focused filter or chip from consuming the browser shortcut before the tab strip sees it.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && (e.key === 'Tab' || e.code === 'Tab')) {
+        if (activePane || window.innerWidth < 768) return;
+        if (stepTab(e.shiftKey ? -1 : 1)) { e.preventDefault(); e.stopPropagation(); }
+      }
+    }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
       userScrolledUp = (el.scrollHeight - el.scrollTop - el.clientHeight) > 50;
@@ -5412,6 +6154,22 @@
         { cmd: '/mention', desc: 'Attach files to context', common: false },
         { cmd: '/plan', desc: 'Enter plan mode', common: false },
       ],
+      // agy lists 57 commands; these are the ones worth a tap on a phone. Read off the live
+      // menu, not from docs — `/clear` and `/rewind` carry agy's own aliases in that menu.
+      agy: [
+        { cmd: '/context', desc: 'Visualize context usage', common: true },
+        { cmd: '/clear', desc: 'Clear conversation and start a new one', common: true, danger: true },
+        { cmd: '/model', desc: 'Set a model', common: true },
+        { cmd: '/effort', desc: 'Set the reasoning effort', common: true },
+        { cmd: '/diff', desc: 'View uncommitted changes and per-turn diffs', common: true },
+        { cmd: '/plan', desc: 'Plan carefully before executing', common: true },
+        { cmd: '/usage', desc: 'View model quota usage', common: false },
+        { cmd: '/rewind', desc: 'Rewind to a previous message', common: false, danger: true },
+        { cmd: '/tasks', desc: 'View background tasks', common: false },
+        { cmd: '/permissions', desc: 'Manage tool permissions', common: false },
+        { cmd: '/copy', desc: 'Copy the last response', common: false },
+        { cmd: '/help', desc: 'Show all commands and keybindings', common: false },
+      ],
       pi: [
         { cmd: '/compact', desc: 'Compact context', common: true },
         { cmd: '/new', desc: 'Start new session', common: true, danger: true },
@@ -5440,6 +6198,7 @@
       if (COMMANDS[key]) return COMMANDS[key];
       if (key.startsWith('claude')) return COMMANDS.claude;
       if (key.startsWith('codex')) return COMMANDS.codex;
+      if (key.startsWith('agy')) return COMMANDS.agy;
       if (key.startsWith('pi') || key === 'kiro') return COMMANDS.pi;
       if (key.startsWith('opencode')) return COMMANDS.opencode;
       return COMMANDS.claude; // fallback

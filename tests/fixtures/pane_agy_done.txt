@@ -1,0 +1,43 @@
+ herdr-remote > agy --dangerously-skip-permissions                                    ~/co
+
+     ▄▀▀▄        Antigravity CLI 1.1.12
+    ▀▀▀▀▀▀       someone@example.com (Google AI Pro)
+   ▀▀▀▀▀▀▀▀      Gemini 3.6 Flash (Medium)
+  ▄▀▀    ▀▀▄     ~/code/python/herdr-remote
+
+────────────────────────────────────────────────────────────
+> summarize the last 5 commits
+
+● Bash(git log -n 5 --stat) (ctrl+o to expand)
+
+  Here is a summary of the last 5 commits in the repository:
+
+  1. 3ff17e5 — fix(web): step from the block, not from the trimmed selection
+      • Stepping is now anchored to the block containing the selection.
+  2. dacdba7 — feat(web): teach the parser pi's gutter, which is not in column 0
+      • Adds indent, ends and composer to the profile table.
+
+
+────────────────────────────────────────────────────────────
+> and explain the pi extension
+
+● Search(Grep search for 'registerMarkdownTransformer')
+
+▸ Thought for 4s, 876 tokens
+  Formulating The Response
+  The pi extension writes the speaker into pi's own render.
+  ──────
+  ### Why it exists
+
+  • pi indents its whole transcript and prints no speaker glyph.
+  • The extension marks the user, the agent and its reasoning.
+
+────────────────────────────────────────────────────────────
+> say only the word OK
+
+  OK
+
+──────────────────────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────────────────────
+? for shortcuts

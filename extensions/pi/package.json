@@ -1,0 +1,10 @@
+{
+  "name": "herdr-gutter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Marks who is speaking in a pi transcript so herdr-remote can cut a pane into turns",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./herdr-gutter.ts"]
+  }
+}
