@@ -115,6 +115,7 @@
       --dot-red: var(--red);
       --dot-orange: var(--orange);
       --dot-shell: var(--shell);
+      --dot-blue: var(--blue);
     }
 
     /* Light holds two things the first cut got wrong. First, a card is *lighter* than the page in
@@ -153,6 +154,7 @@
       --dot-red: #f7768e;
       --dot-orange: #e0af68;
       --dot-shell: #7dcfff;
+      --dot-blue: #7aa2f7;
     }
 
     * {
@@ -480,6 +482,38 @@
       background: color-mix(in srgb, var(--blue) 8%, transparent);
     }
 
+    /* Both halves of a pair wear the same tint, and that is the whole of "these two are a pair" —
+       at 0.72rem in a 44px bar there is no room for a link glyph between two tabs, so adjacency
+       and colour have to carry it. --tint is a hue and not a colour, mixed at low alpha over
+       whatever the pill already sits on, so one value works across all eleven themes and both
+       schemes instead of being pinned to one palette.
+
+       The ring is an outline and not the pill's inset shadow, which is the whole reason it can be
+       unguarded: selection, hover and pinning all write box-shadow, and a tint drawn there would
+       have to win a specificity argument against each of them — or lose, which is what left the
+       one tab being looked at as the one tab not saying which pair it is in. On its own property
+       it simply survives all three. Inset by its own width so it lands on the pill's edge rather
+       than outside it, where 2px each side would close the strip's 4px gap and weld neighbouring
+       tabs together. 2px because a hairline over a saturated fill reads as an artefact. */
+    .agent-tab.tinted .pill {
+      outline: 2px solid hsl(var(--tint) 70% 55%);
+      outline-offset: -2px;
+    }
+
+    /* The wash underneath it, which selection does have to outrank — a filled blue pill repainted
+       at 14% tint is no longer legible as the selected one. Same :not(.active) load-bearing guard
+       the pinned rule above carries, and for the same reason. */
+    .agent-tab.tinted:not(.active) .pill {
+      background: hsl(var(--tint) 70% 55% / 0.14);
+      color: var(--text);
+    }
+
+    /* The second half of each pair. One gap in the strip is what separates one pair from the next
+       — without it six tinted tabs read as a gradient rather than as three pairs. */
+    .agent-tab.pair-end {
+      margin-right: 14px;
+    }
+
     /* The dot sits on a saturated fill once selected, and at 8px a green disc on --blue is two
        mid-tones touching. A translucent white ring used to separate them, but white sits between
        the two hues and washed the dot out rather than isolating it. --bg is the furthest thing
@@ -649,16 +683,88 @@
       cursor: pointer;
     }
 
-
-    /* Agent list */
-    .agents {
-      padding: 12px;
+    /* A settings button that opens something rather than does something. The group's default is
+       the green primary, which is right for Enable Push and too loud for a door — two of them in
+       one panel and neither reads as the one that matters. Full width like the selects above it. */
+    .setting-group button.nav-key {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 500;
     }
 
-    /* Recents sit below the list and share its card styling; the section header supplies the
-       top gap, so only the sides and bottom are padded here. */
+
+    /* The sections are ordered by the user, so the column is a flex box and each one carries
+       its own `order`. Reordering by moving nodes would fight renderBody, which rewrites their
+       innerHTML on every snapshot; `order` is a paint concern and stays out of its way. */
+    #agentListView {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Landing-page sections share the same outer spacing. Pairs owns its inner two-card layout. */
+    .agents,
+    .terminals,
+    .pairs,
     .recents {
       padding: 0 12px 12px;
+    }
+
+    /* Side by side at every width, phone included: two agents working together is what a pair is,
+       and stacking them says nothing a plain list does not already say. */
+    .pair-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 8px;
+      /* stretch, not center: the two cards are a unit and unequal heights read as two lists. */
+      align-items: stretch;
+      margin-bottom: 12px;
+    }
+
+    .pair-link {
+      color: var(--blue);
+      font-size: 1.25rem;
+      align-self: center;
+    }
+
+    /* A phone gives each of the two about 160px. What goes is what the row already says: the Pair
+       button, on a card sitting under the Pairs header, and the chevron, when the whole card is
+       the tap target. The name and its badges keep the width instead. */
+    .pair-row .agent {
+      padding: 10px;
+    }
+
+    .pair-row .pair-btn,
+    .pair-row .chev {
+      display: none;
+    }
+
+    /* Two lines, always. "Line 1 is the name and never wraps into two" is the card's rule
+       everywhere; at 165px it needs saying in CSS rather than left to the text happening to fit,
+       or a long name reflows one card to three lines and the pair goes crooked. */
+    .pair-row .agent .info {
+      min-width: 0;
+    }
+
+    .pair-row .agent .project,
+    .pair-row .agent .meta {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (min-width: 560px) {
+
+      .pair-row .chev {
+        display: inline;
+      }
+    }
+
+    /* Only the section drawn first, which CSS cannot pick out on its own: :first-child follows
+       source order and these are ordered by flex. applySections sets it. */
+    #agentListView>.section-first {
+      padding-top: 12px;
     }
 
     .section-header {
@@ -673,6 +779,20 @@
       gap: 5px;
     }
 
+    .section-header .section-action {
+      margin-left: auto;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--muted);
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: none;
+      cursor: pointer;
+    }
+
     .agent {
       background: var(--surface);
       border-radius: 12px;
@@ -684,6 +804,14 @@
       cursor: pointer;
       border: 1px solid var(--border);
       transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    /* The card's trailing ›. A class rather than an inline style so a pair row can drop it when
+       the two cards are sharing a phone's width. */
+    .chev {
+      color: var(--muted);
+      font-size: 1.2rem;
+      flex-shrink: 0;
     }
 
     .agent:hover {
@@ -702,11 +830,17 @@
       height: 10px;
     }
 
-    /* Blocked and done read the same here on purpose: both are a pane waiting on you, and the
-       card's own dot and section header already say which. */
+    /* Red is reserved for blocked, which is the only status that cannot proceed without you. */
     .agent.attention {
       border-color: var(--red);
       background: color-mix(in srgb, var(--red) 5%, var(--surface));
+    }
+
+    /* Done is news rather than a request, so it gets the same shape in blue. Tinted at all — and
+       not left plain — because the card still has to say it has not been looked at yet. */
+    .agent.attention.alert-done {
+      border-color: var(--blue);
+      background: color-mix(in srgb, var(--blue) 5%, var(--surface));
     }
 
     /* Occupies the same box as .agent .dot so a terminal card and an agent card align down the
@@ -841,6 +975,17 @@
       animation: attention 1.6s ease-in-out infinite;
     }
 
+    /* Blinking is what blocked has and done does not. Motion is the loudest thing on the screen
+       and it is spent on the one status that cannot proceed without you; a finished agent that
+       blinks alongside it makes both mean "something, somewhere". Colour still carries done, so
+       nothing is lost by holding it still — and a badge that never stops moving is what a user
+       learns to stop seeing. */
+    .chip.alert.alert-done::after,
+    .agent-tab.alert.alert-done::after {
+      background: var(--blue);
+      animation: none;
+    }
+
     @keyframes attention {
 
       0%,
@@ -904,6 +1049,89 @@
 
     .agent .info {
       flex: 1;
+    }
+
+    /* Reorder sheet. Every row is the same fixed height on purpose: the drag turns a Y into an
+       index by dividing, the same arithmetic the line ruler uses, and that only holds while the
+       rows are uniform. Two lines is the ceiling, and both of them are clipped to one line each —
+       a row that wrapped would be taller than its neighbours and every slot below it would be
+       computed from the wrong stride. */
+    .order-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 52px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      user-select: none;
+    }
+
+    .order-row:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: -2px;
+    }
+
+    /* Left where it was and faded, rather than lifted and following the finger. The rows below it
+       shuffle live, so the gap it leaves is already the answer to "where will this land" — a
+       second copy under the thumb would say the same thing twice and cover the row it is over. */
+    .order-row.dragging {
+      opacity: 0.4;
+    }
+
+    .order-row.dragging .grip {
+      cursor: grabbing;
+    }
+
+    /* The handle stays touch-only: putting touch-action:none on a whole row would make a sheet
+       longer than the screen impossible to scroll. It lives on the right for the thumb; a mouse
+       can drag anywhere on the row. */
+    .order-row .grip {
+      display: flex;
+      align-items: center;
+      align-self: stretch;
+      margin-right: -16px;
+      padding: 0 16px 0 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      flex-shrink: 0;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    .order-row .kind {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+    }
+
+    .order-row .info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .order-row .name,
+    .order-row .meta {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .order-row .name {
+      font-size: 0.85rem;
+      line-height: 1.25;
+    }
+
+    .order-row .meta {
+      min-height: 16px;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.67rem;
+      line-height: 1.2;
+    }
+
+    .order-row .meta .badge {
+      font-size: 0.58rem;
     }
 
     .agent .project {
@@ -1447,12 +1675,22 @@
     }
 
     /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. The row is a positioning context for the fold button and
-       for Last, which sit over its left and right edges rather than in the flow — otherwise they
-       would count as extra items and pull the pair off centre. */
+       never compete for the same line. Three columns: the fold, the arrows, and the right-edge
+       group. The edges size to their content and the middle takes the rest, which is what keeps
+       the arrows off them — a track cannot be overrun by its neighbour. These used to be absolute
+       with the arrows reserving width for them by hand, and the hand-written reserve was wrong the
+       moment Summary appeared and made the right edge twice as wide. */
     .qa-nav {
       flex: 1 0 100%;
-      position: relative;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* The arrows, centred in whatever the edges leave rather than in the row. Off-centre by the
+       difference between the two edges, which is the price of never sitting under either. */
+    .qa-nav .qa-mid {
       display: flex;
       justify-content: center;
       gap: 8px;
@@ -1463,24 +1701,17 @@
        this row is always on screen, and a permanent 52px band cost more than a mis-tap on a
        control whose worst outcome is opening the wrong session. */
     .quick-actions .qa-nav button.nav {
+      /* Shrinks with the middle track. No floor: on a 320px screen with Summary showing there is
+         about 160px to share, and an arrow that refused to go under 96 would be pushed out of its
+         own column rather than getting narrower. */
       flex: 0 1 140px;
-      min-width: 96px;
-      /* Clear of the fold button at the left edge and Last at the right, so a wide thumb aimed
-         at either arrow cannot land on the small control beyond it. Last carries a word rather
-         than a glyph, so the reserve is wider than the 24px a pair of circles wanted. */
-      max-width: calc(50% - 52px);
+      min-width: 0;
       padding: 2px 10px;
       line-height: 1.3;
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       font-size: 0.9rem;
-    }
-
-    /* Summary roughly doubles what sits at the right edge, so the arrows have to give up the
-       width or they end up underneath it. Only while the button is there. */
-    .quick-actions .qa-nav.has-summary button.nav {
-      max-width: calc(50% - 120px);
     }
 
     .quick-actions .qa-nav button.nav:disabled {
@@ -1491,11 +1722,6 @@
     /* Deliberately small and quiet. Folding the composer away is a one-off, and the control for
        it sits next to two buttons meant to be pressed constantly. */
     .quick-actions .qa-nav button.qa-fold {
-      position: absolute;
-      left: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      flex: 0 0 auto;
       min-width: 0;
       width: 22px;
       height: 22px;
@@ -1509,13 +1735,9 @@
     }
 
     /* The right edge of the nav row. Last is always there; Summary joins it only when the pane
-       has a closing message to offer. Pinned as a group rather than each button to the edge, so
-       the two cannot land on top of each other the moment both are present. */
+       has a closing message to offer. One column holding both, so the width the pair needs is
+       measured rather than guessed and the middle track gives up exactly that much. */
     .quick-actions .qa-nav .qa-right {
-      position: absolute;
-      right: 0;
-      top: 50%;
-      transform: translateY(-50%);
       display: flex;
       align-items: center;
       gap: 6px;
@@ -1900,10 +2122,27 @@
         padding: 0 16px;
       }
 
-      .agents {
+      /* Sections made of independent cards share a responsive grid. Pairs is left out on purpose:
+         its cards are not independent, and auto-fill would let a pair be split across two rows. */
+      .agents,
+      .terminals,
+      .recents {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
         gap: 12px;
+      }
+
+      /* Room to spare, so a pair card is an ordinary card again. */
+      .pair-row {
+        gap: 12px;
+      }
+
+      .pair-row .agent {
+        padding: 14px 16px;   /* the ordinary card padding again */
+      }
+
+      .pair-row .pair-btn {
+        display: inline;
       }
 
       .section-header {
@@ -1920,7 +2159,9 @@
         max-width: 1100px;
       }
 
-      .agents {
+      .agents,
+      .terminals,
+      .recents {
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       }
     }
@@ -1931,8 +2172,15 @@
         font-size: 0.9rem;
       }
 
-      .agents {
-        padding: 8px;
+      .agents,
+      .terminals,
+      .pairs,
+      .recents {
+        padding: 0 8px 8px;
+      }
+
+      #agentListView>.section-first {
+        padding-top: 8px;
       }
 
       .agent {
@@ -2027,6 +2275,17 @@
     </div>
 
     <div class="setting-group">
+      <label>Main page sections</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionAgents" onchange="toggleSection('agents', this.checked)"> Agents</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionPairs" onchange="toggleSection('pairs', this.checked)"> Pairs</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionRecents" onchange="toggleSection('recents', this.checked)"> Recents</label>
+      <div class="hint">Each section keeps its own separator on the main page. They are shown in the
+        order you switch them on, so turning one off and on again moves it to the bottom. One has
+        to stay on.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="historyPick">Pane history</label>
       <select id="historyPick" onchange="setPaneHistoryMax(this.value)">
         <option value="2000">2,000 lines</option>
@@ -2055,10 +2314,15 @@
     </div>
   </div>
 
+  <!-- Three sections the user orders themselves — see applySections. Siblings and not nested:
+       each is rewritten wholesale on its own schedule, and each needs to be movable past the
+       others without the one above it owning where it lands. -->
   <div class="view" id="agentListView">
     <div class="agents" id="agents"></div>
-    <!-- Up to five recently opened panes, below the list and rendered with the same cards. A
-       sibling of #agents, not a child: renderBody rewrites that node's innerHTML every snapshot. -->
+    <!-- Shell panes. Was appended inside #agents; it is its own node now so it can be ordered. -->
+    <div class="terminals" id="terminals" style="display:none"></div>
+    <div class="pairs" id="pairs" style="display:none"></div>
+    <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
   </div>
 
@@ -2156,6 +2420,7 @@
             style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
             <option value="project">This project only</option>
             <option value="all">Every live pane</option>
+            <option value="pairs">Every pair</option>
           </select>
           <div id="tabScopeHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
@@ -2449,6 +2714,28 @@
     </div>
   </div>
 
+  <!-- Tab order — drag the rows. A sheet and not the list itself, because the list's innerHTML
+       is rewritten on every poll and would take a live drag with it. This is built once on open
+       and left alone until it closes, so the only thing that can move a row is a finger. -->
+  <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeOrder()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div id="orderPanel"
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Tab order</span>
+        <button onclick="closeOrder()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="orderRows" role="listbox" aria-label="Tab order"></div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+        <p style="font-size:0.7rem;color:var(--muted);margin:0">Drag a row with a mouse; on touch,
+          use its right-side handle. Or focus one and use arrow keys. The main page still groups by
+          status, so this is the order inside each group.</p>
+        <button class="nav-key" onclick="resetOrder()">Reset to default tab order</button>
+      </div>
+    </div>
+  </div>
+
   <script>
 
     let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
@@ -2505,6 +2792,37 @@
     function needsAttention(a) {
       return !!a && ATTENTION.includes(a.status) && acked[a.pane_id] !== a.status;
     }
+
+    // Which of the two an unacked pane is, or null.
+    //
+    // Both are worth a badge and both clear on a look, so they share needsAttention above — but
+    // only one of them is an interruption. Blocked cannot proceed without you and is the thing
+    // the product exists to surface: it blinks, it is red, and it is what "Needs you" hoists.
+    // Done is news, not a request. Same badge in blue, sitting still, left in the Done section it
+    // was always going to be listed in. Reading them as one is why a finished agent used to shout
+    // in red from the top of the list as loudly as one actually waiting on an answer.
+    function attentionKind(a) {
+      return needsAttention(a) ? (a.status === 'blocked' ? 'blocked' : 'done') : null;
+    }
+
+    // The strongest kind in a group, for a chip that stands in for several panes. Blocked wins:
+    // a chip holding one blocked pane behind four finished ones must not read as "all finished".
+    function groupKind(list) {
+      let kind = null;
+      for (const a of list) {
+        const k = attentionKind(a);
+        if (k === 'blocked') return 'blocked';
+        if (k) kind = k;
+      }
+      return kind;
+    }
+
+    const alertClass = kind => (kind ? (kind === 'blocked' ? ' alert' : ' alert alert-done') : '');
+
+    // What the top of the list lifts out. Blocked only — that is what makes "Needs you" mean it.
+    // Everything the sections below exclude is keyed on this and not on needsAttention, so a done
+    // pane is listed once, under Done, still carrying its badge.
+    function hoisted(a) { return attentionKind(a) === 'blocked'; }
     // Whether a pane arriving at `status` should be heard as well as seen. Not the pane you are
     // watching with the tab in front of you — you can see it finish, and a sound for it is noise.
     // Hidden is the distinction and not merely "is it open": a phone with the app backgrounded on
@@ -2836,6 +3154,84 @@
     document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
     document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
 
+    // --- Main page sections ---
+    // Which of the four the main page shows, and in what order. Stored as the order itself rather
+    // than as booleans plus a separate ranking: switching one on means "put it after what is
+    // already there", so the list *is* the setting and there is no second thing to keep in step.
+    //
+    // Order is applied with CSS `order` and never by moving nodes. renderBody, renderRecents and
+    // the terminals write rewrites each section's innerHTML on their own schedule, and a reorder
+    // that moved DOM nodes would race all three.
+    const SECTIONS_KEY = 'herdr_sections';
+    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents'};
+    const SECTION_KEYS = Object.keys(SECTION_IDS);
+    // Today's layout, so an install that never opens Settings sees no change at all.
+    const SECTION_DEFAULT = ['agents', 'terminals', 'pairs', 'recents'];
+    let sectionOrder = SECTION_DEFAULT.slice();
+
+    // Anything unrecognised, duplicated or empty falls back to the default. This is a display
+    // preference read from storage a user can edit, and a bad value must not blank the page.
+    function loadSections() {
+      let v = null;
+      try { v = JSON.parse(localStorage.getItem(SECTIONS_KEY)); } catch (e) { v = null; }
+      if (!Array.isArray(v)) return SECTION_DEFAULT.slice();
+      const seen = v.filter((k, i) => SECTION_KEYS.includes(k) && v.indexOf(k) === i);
+      return seen.length ? seen : SECTION_DEFAULT.slice();
+    }
+
+    function saveSections() {
+      try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(sectionOrder)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // A section is on screen only if it is switched on *and* has something to say. Emptiness is
+    // still each renderer's own business — this reads what they wrote rather than second-guessing
+    // it, so a section that renders nothing does not leave a bare separator behind.
+    function applySections() {
+      SECTION_KEYS.forEach(key => {
+        const el = document.getElementById(SECTION_IDS[key]);
+        if (!el) return;
+        const at = sectionOrder.indexOf(key);
+        const on = at >= 0 && !!el.innerHTML;
+        el.style.order = at >= 0 ? String(at) : '';
+        el.style.display = on ? '' : 'none';
+        // Whichever section is drawn first needs the gap the header margin alone does not give it,
+        // and CSS cannot ask for it: :first-child follows source order, not flex order. A class and
+        // not an inline padding, so the size stays in the stylesheet where the narrow-screen media
+        // query can shrink it along with the sides.
+        el.classList.toggle('section-first', on && !sectionOrder.some((k, i) => i < at
+          && document.getElementById(SECTION_IDS[k])?.innerHTML));
+      });
+    }
+
+    function syncSectionBoxes() {
+      SECTION_KEYS.forEach(key => {
+        const box = document.getElementById('section' + key[0].toUpperCase() + key.slice(1));
+        if (!box) return;
+        box.checked = sectionOrder.includes(key);
+        // The last one on cannot be switched off — an empty main page is not a state worth being
+        // able to reach by accident, and the alternative is a screen whose only content explains
+        // how to get its content back.
+        box.disabled = box.checked && sectionOrder.length === 1;
+      });
+    }
+
+    function toggleSection(key, on) {
+      if (!SECTION_KEYS.includes(key)) return;
+      if (on) {
+        if (!sectionOrder.includes(key)) sectionOrder.push(key);
+      } else {
+        if (sectionOrder.length === 1) { syncSectionBoxes(); return; }
+        sectionOrder = sectionOrder.filter(k => k !== key);
+      }
+      saveSections();
+      syncSectionBoxes();
+      applySections();
+    }
+
+    sectionOrder = loadSections();
+    syncSectionBoxes();
+
 
 
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
@@ -2882,6 +3278,37 @@
     // selection separately — switching panes then never touches the markup.
     let tabsSig = '', tabsActive = null;
 
+    // --- Agent order ---
+    // Browser-local, like pins: the relay's snapshots own membership and status, while this only
+    // says which live panes come first. The existing key keeps prior agent orders; terminals join
+    // it when they appear. Landing cards read their agent subset from it, and tabs read every pane
+    // from it, behind pins — a pin is "put this one at the front" and outranks it.
+    const AGENT_ORDER_KEY = 'herdr_agent_order';
+    let agentOrder = [];
+
+    function loadAgentOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem(AGENT_ORDER_KEY) || '[]');
+        agentOrder = Array.isArray(v) ? v.filter((id, i) => typeof id === 'string' && v.indexOf(id) === i) : [];
+      } catch (e) { agentOrder = []; }
+    }
+
+    function saveAgentOrder() {
+      try { localStorage.setItem(AGENT_ORDER_KEY, JSON.stringify(agentOrder)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    // Ordered panes first, then everything the order has never heard of in the order it arrived.
+    // A decorate-sort-undecorate rather than a plain comparator, because Array#sort is only
+    // stable within equal keys and every unranked pane would otherwise share one key.
+    function orderedAgents(list) {
+      const rank = new Map(agentOrder.map((id, i) => [id, i]));
+      return list.map((agent, index) => ({agent, index})).sort((a, b) =>
+        (rank.get(a.agent.pane_id) ?? agentOrder.length + a.index)
+        - (rank.get(b.agent.pane_id) ?? agentOrder.length + b.index))
+        .map(x => x.agent);
+    }
+
     // Pinned tabs, newest pin first: pinning is "put this one at the front", so a second pin has
     // to land ahead of the first. Order only, and local to this browser — a pane_id herdr later
     // reuses costs nothing worse than one tab sitting in the wrong place.
@@ -2901,8 +3328,13 @@
     // What the bottom strip lists. Scoped to the open pane's Project by default: the strip is for
     // moving between the panes of the thing being worked on, and a machine hosting four projects
     // turns it into a row to scroll rather than one to tap. 'all' is the old behaviour, kept.
+    // 'pairs' is the third: the strip becomes the pairs themselves.
     const TAB_SCOPE_KEY = 'herdr_tab_scope';
-    function tabScope() { return localStorage.getItem(TAB_SCOPE_KEY) === 'all' ? 'all' : 'project'; }
+    const TAB_SCOPES = ['project', 'all', 'pairs'];
+    function tabScope() {
+      const v = localStorage.getItem(TAB_SCOPE_KEY);
+      return TAB_SCOPES.includes(v) ? v : 'project';
+    }
 
     // Two panes are in the same project when the relay resolved them to the same one. project_id
     // is the relay's answer and the label is only its display form, so the id wins where both
@@ -2910,7 +3342,7 @@
     function projectKey(a) { return a.project_id || a.project || ''; }
 
     function setTabScope(v) {
-      try { localStorage.setItem(TAB_SCOPE_KEY, v === 'all' ? 'all' : 'project'); }
+      try { localStorage.setItem(TAB_SCOPE_KEY, TAB_SCOPES.includes(v) ? v : 'project'); }
       catch (e) { /* private mode: session-only */ }
       renderAgentTabs();
       renderTabScopeHint();
@@ -2942,29 +3374,68 @@
       savePins();
     }
 
+    // Hues, not colours. A pair's tint has to read as a tint against eleven themes and both
+    // schemes, so it is mixed at low alpha over whatever the pill already sits on rather than
+    // picked from one palette. Six is enough to tell neighbours apart; past that it wraps, which
+    // is no worse than the strip today where every tab looks alike.
+    //
+    // Nothing near hue 220. That is --blue, which is the selected tab's fill in every theme — a
+    // pair washed in it sitting beside the selection is two blues an arm's length apart.
+    const PAIR_TINTS = [150, 35, 280, 350, 100, 15];
+
+    // The live members of every healthy pair, each pair's two panes adjacent and in the order the
+    // pair stores them. Adjacency and a shared tint are the whole of "side by side" — the strip
+    // has no room for a link glyph between two tabs.
+    function pairedTabs(list) {
+      const out = [];
+      pairs.forEach((pair, i) => {
+        if (pairHealth(pair, agents).state !== 'healthy') return;
+        const both = pair.members.map(m => list.find(a => memberMatches(m, a))).filter(Boolean);
+        both.forEach((a, half) => out.push({...a, pairTint: PAIR_TINTS[i % PAIR_TINTS.length],
+          pairEnd: half === both.length - 1}));
+      });
+      // The open pane, when it is in no pair. Same rule the project scope already follows: a strip
+      // that cannot show the pane on screen is worse than one carrying an extra tab. Untinted, so
+      // it reads as the exception it is.
+      const openPane = activePane && !out.some(a => a.pane_id === activePane) ? paneOf(activePane) : null;
+      if (openPane) out.push(openPane);
+      return out;
+    }
+
     function renderAgentTabs() {
       const el = document.getElementById('agentTabs');
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
-      const all = agents.concat(shells);
+      // One order for agents and terminals, not an agent block followed by a terminal block. The
+      // pin sort below is stable, so this decides every unpinned tab's place.
+      const all = orderedAgents(agents.concat(shells));
       let live = all.filter(a => all.filter(x => x.pane_id === a.pane_id).length === 1);
       // Scoped to the open pane's Project, when that is the setting and something is open. The
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
       // worse than a long one. On the list screen nothing is open, so the strip stays complete.
-      const open = tabScope() === 'project' && activePane ? paneOf(activePane) : null;
+      const scope = tabScope();
+      const open = scope === 'project' && activePane ? paneOf(activePane) : null;
       if (open) live = live.filter(a => projectKey(a) === projectKey(open) || a.pane_id === activePane);
-      // Pinned first, in pin order; everything else keeps snapshot order behind them, because
-      // Array#sort is stable. That is the whole ordering rule — see togglePin.
-      const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
-      live.sort((x, y) => rank(x) - rank(y));
+      if (scope === 'pairs') {
+        live = pairedTabs(live);
+      } else {
+        // Pinned first, in pin order; everything else keeps snapshot order behind them, because
+        // Array#sort is stable. That is the whole ordering rule — see togglePin. Not in pairs
+        // mode: there, the two halves of a pair have to stay next to each other, and a pin that
+        // pulled one of them to the front would split the thing the mode exists to show.
+        const rank = a => { const i = pinnedTabs.indexOf(a.pane_id); return i === -1 ? MAX_PINS : i; };
+        live.sort((x, y) => rank(x) - rank(y));
+      }
       // Recency is in the signature too, or a tab whose colour has aged out keeps the one it was
       // built with until something else happens to rebuild the strip. The band and not a boolean:
       // there are two thresholds now, and a boolean would sit still across the first of them.
       // The badge is in the signature too, or acking a pane leaves its dot on the strip until
       // something else happens to rebuild it.
+      // The tint is in the signature too, or editing a pair leaves the strip wearing the colours
+      // it was built with until something else happens to rebuild it.
       const sig = live.map(a =>
         `${a.pane_id} | ${paneLabel(a)} | ${a.status || '$'} | ${activityBucket(a.pane_id)}` +
-        ` | ${needsAttention(a) ? '!' : '-'}`).join(' /// ');
+        ` | ${needsAttention(a) ? '!' : '-'} | ${a.pairTint ?? '-'}${a.pairEnd ? '.' : ''}`).join(' /// ');
       if (sig !== tabsSig) {
         tabsSig = sig;
         el.innerHTML = live.map(a => {
@@ -2974,7 +3445,9 @@
           // merely green there says "recent" just as loudly as it says "running now".
           const color = a.agent ? statusColor(a) : shellColor(a.pane_id);
           const pulse = a.status === 'working' ? ' pulse' : '';
-          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${needsAttention(a) ? ' alert' : ''}" data-pane="${escapeHtml(a.pane_id)}" ` +
+          const tinted = a.pairTint === undefined ? '' : ` tinted${a.pairEnd ? ' pair-end' : ''}`;
+          const tint = a.pairTint === undefined ? '' : ` style="--tint:${a.pairTint}"`;
+          return `<button class="agent-tab${isPinned(a.pane_id) ? ' pinned' : ''}${alertClass(attentionKind(a))}${tinted}"${tint} data-pane="${escapeHtml(a.pane_id)}" ` +
             `onclick="jumpToPane('${a.pane_id}')" ondblclick="pinFirst('${a.pane_id}')" ` +
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
@@ -3448,22 +3921,31 @@
       const el = document.getElementById('favicon');
       // Hex and not var(--red): this is an SVG in a data: URI, which resolves no custom property
       // from the page. The two are the dark theme's --red and --blue.
-      const href = favicon(n ? '#f7768e' : '#7aa2f7');
+      //
+      // Red is blocked alone, matching everything else. Done shares the resting blue rather than
+      // getting a third colour: a 16px dot cannot carry three states apart at tab size, and the
+      // count already in the title is what says a finished pane is waiting to be read.
+      const href = favicon(agents.some(a => attentionKind(a) === 'blocked') ? '#f7768e' : '#7aa2f7');
       if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 
-    // One insertion point for all three paths below: each writes #agents itself, and a Terminals
-    // section appended in each is three places to forget one.
+    // One insertion point for the independently rendered landing-page sections.
     function renderBody() {
       renderBodyMain();
+      // Once, here, rather than at each of the three places that write #agents: every one of them
+      // is reached through renderBodyMain, and a fourth added later would otherwise be a list that
+      // silently lost its Reorder button.
+      addOrderButton();
       const html = terminalsHtml();
-      if (!html) return;
-      const el = document.getElementById('agents');
+      document.getElementById('terminals').innerHTML = html;
+      document.getElementById('pairs').innerHTML = pairsHtml();
       // "Waiting for agents…" is true of the agents and false of the box: a machine with
       // terminals and no agents is not waiting for anything. Only that placeholder goes — wiping
       // the node took the Projects strip and its cards with it.
-      if (!agents.length) el.querySelectorAll('.empty').forEach(n => n.remove());
-      el.insertAdjacentHTML('beforeend', html);
+      if (html && !agents.length) {
+        document.getElementById('agents').querySelectorAll('.empty').forEach(n => n.remove());
+      }
+      applySections();
     }
 
     function renderBodyMain() {
@@ -3488,8 +3970,7 @@
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
         const list = agents.filter(a => a.project_id === p.id);
-        const waiting = list.some(needsAttention);
-        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectProject('${p.id}')">${p.label}</button>`;
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${alertClass(groupKind(list))}" onclick="selectProject('${p.id}')">${p.label}</button>`;
       }
       html += `</div>`;
       if (activeProject === null) {
@@ -3497,7 +3978,7 @@
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
-        const rest = agents.filter(a => !needsAttention(a));
+        const rest = agents.filter(a => !hoisted(a));
         if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
@@ -3519,11 +4000,19 @@
 
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
-      const waiting = list.filter(needsAttention).length;
-      const color = waiting ? 'var(--dot-red)' : list.length ? 'var(--dot-green)' : 'var(--muted)';
+      // Counted apart and said apart. One number covering both read as "N needs you" over a
+      // Project whose sessions had all finished and were waiting on nobody.
+      const blocked = list.filter(a => attentionKind(a) === 'blocked').length;
+      const finished = list.filter(a => attentionKind(a) === 'done').length;
+      const color = blocked ? 'var(--dot-red)'
+        : finished ? 'var(--dot-blue)'
+          : list.length ? 'var(--dot-green)' : 'var(--muted)';
       const host = p.host && p.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${p.host}</span>` : '';
+      const notes = [];
+      if (blocked) notes.push(`${blocked} needs you`);
+      if (finished) notes.push(`${finished} finished`);
       const meta = list.length
-        ? `${list.length} session${list.length > 1 ? 's' : ''}${waiting ? ` · ${waiting} needs you` : ''}`
+        ? `${list.length} session${list.length > 1 ? 's' : ''}${notes.length ? ` · ${notes.join(' · ')}` : ''}`
         : 'No sessions';
       // Available on every Project card, including one with zero live sessions.
       const start = startOptions
@@ -3537,11 +4026,13 @@
   </div>`;
     }
 
+    // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
+    // where it already sits, so this header means one thing and the eye can trust it.
     function hoistHtml(list) {
-      const waiting = list.filter(needsAttention);
+      const waiting = list.filter(hoisted);
       if (!waiting.length) return '';
       return `<div class="section-header" style="color:var(--red)">Needs you <span style="opacity:0.6">(${waiting.length})</span></div>`
-        + waiting.map(a => agentCard(a)).join('');
+        + agentCards(waiting);
     }
 
     // Native workspace/tab navigation over `list` — all agents, or one Project's.
@@ -3558,9 +4049,8 @@
         html += `<button class="chip${activeWorkspace === null ? ' active' : ''}" onclick="backToWorkspaces()">All</button>`;
         for (const wsId of workspaces) {
           const wsAgents = list.filter(a => a.workspace_id === wsId);
-          const waiting = wsAgents.some(needsAttention);
           const name = wsAgents[0]?.project || wsId.slice(0, 8);
-          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+          html += `<button class="chip${activeWorkspace === wsId ? ' active' : ''}${alertClass(groupKind(wsAgents))}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
         }
         html += `</div>`;
         // Tab chip strip (always show when workspace selected)
@@ -3573,17 +4063,16 @@
           }
           wsTabs.forEach((tid, i) => {
             const tabAgents = list.filter(a => a.tab_id === tid);
-            const waiting = tabAgents.some(needsAttention);
             const tabLabel = tabAgents[0]?.label || 'Tab ' + (i + 1);
-            html += `<button class="chip${activeTab === tid ? ' active' : ''}${waiting ? ' alert' : ''}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
+            html += `<button class="chip${activeTab === tid ? ' active' : ''}${alertClass(groupKind(tabAgents))}" onclick="selectTab('${tid}')">${tabLabel}</button>`;
           });
           html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
           html += `</div>`;
         }
       }
-      // Agent list (filtered). Whatever needs you is already hoisted above, so it is dropped here
-      // rather than repeated — a done agent would otherwise appear in Needs you and in Done.
-      let filtered = list.filter(a => !needsAttention(a));
+      // Agent list (filtered). Only what the hoist took is dropped here, so a done pane appears
+      // exactly once — under Done, where it belongs — instead of being lifted into Needs you.
+      let filtered = list.filter(a => !hoisted(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
@@ -3596,10 +4085,10 @@
     }
 
     function renderAgentList(list) {
-      // Same rule as layoutHtml: the hoist owns whatever needs you, and the sections below get
-      // what is left. Blocked no longer needs a section of its own — an unacked blocked pane is
-      // in the hoist, and an acked one is one you have already looked at.
-      const rest = list.filter(a => !needsAttention(a));
+      // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
+      // sections below get everything else. Blocked still keeps a section for the acked ones —
+      // a pane you have seen is blocked is not news, but it is still stuck.
+      const rest = list.filter(a => !hoisted(a));
       const blocked = rest.filter(a => a.status === 'blocked');
       const working = rest.filter(a => a.status === 'working');
       const done = rest.filter(a => a.status === 'done');
@@ -3963,12 +4452,14 @@
         .filter(p => p && agents.filter(x => x.pane_id === p.pane_id).length
           + shells.filter(x => x.pane_id === p.pane_id).length === 1)
         .slice(0, MAX_RECENTS);
-      if (!live.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
       // Same section header and same cards as the list above, so a recent reads as the session it
-      // is rather than as a second kind of thing.
-      el.innerHTML = `<div class="section-header">Recents</div>`
-        + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('');
-      el.style.display = '';
+      // is rather than as a second kind of thing. Whether the node is on screen is applySections'
+      // to decide — this only says whether there is anything to show.
+      el.innerHTML = live.length
+        ? `<div class="section-header">Recents</div>`
+          + live.map(p => isShell(p.pane_id) ? terminalCard(p) : agentCard(p)).join('')
+        : '';
+      applySections();
     }
 
     // --- Pairs (storage and UI) ---
@@ -4915,7 +5406,15 @@
     // not say why reads as the pane having gone.
     function renderTabScopeHint() {
       const el = document.getElementById('tabScopeHint');
-      if (tabScope() === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      const scope = tabScope();
+      if (scope === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      if (scope === 'pairs') {
+        const n = pairs.filter(p => pairHealth(p, agents).state === 'healthy').length;
+        el.textContent = n
+          ? `Paired panes only, two to a colour. ${n} pair${n > 1 ? 's' : ''} running.`
+          : 'Paired panes only — nothing is paired right now, so the strip holds just this pane.';
+        return;
+      }
       const open = activePane ? paneOf(activePane) : null;
       const name = open ? (open.project || open.project_id) : '';
       el.textContent = name
@@ -5036,6 +5535,140 @@
       if (a.label && a.label !== a.project) parts.push(a.label);
       return parts.join(' · ') || a.pane_id;
     }
+
+    // --- Reorder sheet ---
+    // A sheet rather than handles on the cards themselves. The card is the one thing on this page
+    // read on a phone all day and it has no room to spare; more to the point, #agents has its
+    // innerHTML rewritten on every poll, and a drag on those nodes would be destroyed mid-gesture
+    // by a snapshot arriving. These rows are built once on open and nothing rewrites them, so the
+    // only thing that can move one is a finger.
+    function openOrder() {
+      const box = document.getElementById('orderRows');
+      // Live and unambiguous only. A pane_id that two hosts both claim cannot be ordered — there
+      // is no one pane to order — and it is the same guard the tab strip already applies.
+      const all = agents.concat(shells);
+      const live = orderedAgents(all.filter(a =>
+        all.filter(x => x.pane_id === a.pane_id).length === 1));
+      box.innerHTML = live.length
+        ? live.map(a => {
+          const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
+          const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
+          return `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
+      <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
+      <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
+      <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
+      <span class="grip" aria-hidden="true">⠿</span>
+    </div>`;
+        }).join('')
+        : '<div class="empty">No panes to order.</div>';
+      document.getElementById('orderSheet').style.display = 'block';
+    }
+
+    function closeOrder() {
+      document.getElementById('orderSheet').style.display = 'none';
+    }
+
+    // The DOM is the model while the sheet is open: a drag moves nodes, and this reads back what
+    // they now say. One source of truth, rather than an array kept in step with what is on screen.
+    function commitOrder() {
+      agentOrder = [...document.querySelectorAll('#orderRows .order-row')].map(r => r.dataset.pane);
+      saveAgentOrder();
+      render();
+    }
+
+    // Empty is the default, not a separate flag: orderedAgents falls through to snapshot order the
+    // moment nothing is ranked. Reopened so the rows show what was just restored.
+    function resetOrder() {
+      agentOrder = [];
+      saveAgentOrder();
+      render();
+      openOrder();
+    }
+
+    // Drag, mirroring the line ruler: pointer events so one path serves finger and mouse alike,
+    // setPointerCapture so the gesture survives leaving the row, and pointercancel treated as an
+    // end so an interrupted drag cannot leave a row stuck to the pointer.
+    (function () {
+      const box = document.getElementById('orderRows');
+      const panel = document.getElementById('orderPanel');
+      let row = null, rowH = 0, lastY = 0, autoTimer = null;
+
+      // Which slot the pointer is over. The rows are one fixed height, so this is a division
+      // rather than a hit test — the same arithmetic as the ruler's lineAt. getBoundingClientRect
+      // is read live, so a scrolled sheet needs no separate term.
+      function slotAt(clientY) {
+        const top = box.getBoundingClientRect().top;
+        return Math.max(0, Math.min(box.children.length - 1, Math.floor((clientY - top) / rowH)));
+      }
+
+      // Moved as the finger passes, not on release. The gap the row leaves behind is the preview —
+      // which is why the dragged row stays put and fades rather than following the pointer.
+      function moveTo(clientY) {
+        const at = slotAt(clientY);
+        const kids = [...box.children];
+        if (kids[at] === row) return;
+        box.insertBefore(row, at < kids.indexOf(row) ? kids[at] : kids[at].nextSibling);
+      }
+
+      // A drag held at the edge of a scrolled sheet keeps going, or a row cannot be moved past the
+      // last one that happens to be on screen. Straight off the ruler's edgeScroll, including the
+      // reason for the interval: a finger parked at the edge sends no more pointermoves.
+      function edgeScroll() {
+        const r = panel.getBoundingClientRect();
+        const d = lastY < r.top + rowH ? -rowH : lastY > r.bottom - rowH ? rowH : 0;
+        if (!d) return;
+        const was = panel.scrollTop;
+        panel.scrollTop += d;
+        if (panel.scrollTop !== was) moveTo(lastY);
+      }
+
+      box.addEventListener('pointerdown', e => {
+        // A mouse has no sheet-scroll conflict, so the whole row drags. Touch needs the grip: a
+        // finger on the rest of the row must still scroll a long sheet.
+        if ((e.pointerType !== 'mouse' && !e.target.closest('.grip')) || box.children.length < 2) return;
+        // Or the page pans out from under the drag, and the row keeps a text selection with it.
+        e.preventDefault();
+        row = e.target.closest('.order-row');
+        rowH = row.offsetHeight;
+        lastY = e.clientY;
+        row.setPointerCapture(e.pointerId);
+        row.classList.add('dragging');
+        // preventDefault took the focus a click would have given it. Put it back, or a row moved
+        // with the mouse cannot then be nudged with the arrow keys.
+        row.focus();
+        autoTimer = setInterval(edgeScroll, 60);
+      });
+
+      box.addEventListener('pointermove', e => {
+        if (!row) return;
+        lastY = e.clientY;
+        moveTo(e.clientY);
+      });
+
+      function end() {
+        if (!row) return;
+        clearInterval(autoTimer);
+        row.classList.remove('dragging');
+        row = null;
+        commitOrder();
+      }
+      box.addEventListener('pointerup', end);
+      box.addEventListener('pointercancel', end);
+
+      // The same reorder without a pointer. A drag-only control is unusable by keyboard, and the
+      // rows are already focusable for it.
+      box.addEventListener('keydown', e => {
+        const up = e.key === 'ArrowUp';
+        if (!up && e.key !== 'ArrowDown') return;
+        const target = e.target.closest('.order-row');
+        const swap = target && (up ? target.previousElementSibling : target.nextElementSibling);
+        if (!swap) return;
+        e.preventDefault();
+        box.insertBefore(target, up ? swap : swap.nextSibling);
+        target.focus();   // insertBefore moves the node, and a moved node loses focus
+        commitOrder();
+      });
+    })();
 
     // warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
     // a failure teaches the user to ignore the colour.
@@ -5405,17 +6038,31 @@
       const pulseClass = a.status === 'working' ? ' pulse' : '';
       const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
       const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
-      const label = paneLabel(a);
+      // Escaped once here rather than at each aria-label: a pane can be renamed to anything with a
+      // quote in it, and an attribute that breaks out of itself is not a cosmetic bug.
+      const label = escapeHtml(paneLabel(a));
       // Line 1 is the name and never wraps into two; the agent badge rides down to line 2 with
       // the path, where it is the same width every time and the list reads as a column. The dot
       // to the left is untouched — it is the live status, and the emoji only says what kind of
       // pane this is, which is why the two do not share a column.
-      return `<div class="agent${needsAttention(a) ? ' attention' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${needsAttention(a) ? ', needs you' : ''}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+      const kind = attentionKind(a);
+      // Said apart to a screen reader too: "needs you" on a finished pane is a false alarm that
+      // costs more when the colour and the blink are not there to correct it.
+      const note = kind === 'blocked' ? ', needs you' : kind === 'done' ? ', finished' : '';
+      const paired = pairFor(pairs, a.pane_id);
+      return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
-    <button class="pair-btn${pairFor(pairs, a.pane_id) ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${pairFor(pairs, a.pane_id) ? 'Paired' : 'Pair'}</button>
-    <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
+    <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
+    <span class="chev" aria-hidden="true">›</span>
   </div>`;
+    }
+
+    // The one place the user's order is applied to cards. Every list on the main page — the hoist,
+    // each status section, a Project's panes — ends here, so ordering once at the bottom covers
+    // all of them and cannot fall out of step between two of them.
+    function agentCards(list) {
+      return orderedAgents(list).map(agentCard).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -5423,7 +6070,17 @@
     function section(title, list, note) {
       return `<div class="section-header">${title}` +
         (note ? ` <span style="opacity:0.6">${note}</span>` : '') + `</div>` +
-        list.map(a => agentCard(a)).join('');
+        agentCards(list);
+    }
+
+    // This action belongs with the live-pane list, not Settings. First heading is whichever agent
+    // group is currently on top, so it stays visible without a second heading above status groups.
+    // Appended after the list is written rather than built into section(), which has no way of
+    // knowing which of its calls came first.
+    function addOrderButton() {
+      const header = document.querySelector('#agents .section-header');
+      if (header) header.insertAdjacentHTML('beforeend',
+        '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
     }
 
     function terminalCard(s) {
@@ -5445,7 +6102,17 @@
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
       if (!list.length) return '';
       return `<div class="section-header">Terminals</div>`
-        + list.map(terminalCard).join('');
+        + orderedAgents(list).map(terminalCard).join('');
+    }
+
+    function pairsHtml() {
+      const rows = pairs.map(pair => {
+        if (pairHealth(pair, agents).state !== 'healthy') return '';
+        const [left, right] = pair.members.map(member => agents.find(a => memberMatches(member, a)));
+        return `<div class="pair-row" role="group" aria-label="${escapeHtml(pair.name)}">` +
+          agentCard(left) + `<span class="pair-link" aria-label="paired with">↔</span>` + agentCard(right) + `</div>`;
+      }).filter(Boolean);
+      return rows.length ? `<div class="section-header">Pairs</div>` + rows.join('') : '';
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
@@ -5675,12 +6342,14 @@
         `title="Select the agent's closing message" ` +
         `aria-label="Select the agent's closing message">Summary</button>`
         : '';
-      const navRow = `<div class="qa-nav${summary ? ' has-summary' : ''}">${nav(-1, '‹', 'Previous session')}` +
-        `${nav(1, '›', 'Next session')}` +
+      // Source order is the column order now that the edges are grid tracks rather than absolute:
+      // fold, arrows, right group.
+      const navRow = `<div class="qa-nav">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>` +
+        `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;
@@ -6457,6 +7126,7 @@
 
     loadPairs();
     loadPins();
+    loadAgentOrder();
     loadSeen();
     measureCellRatio();  // before applyWrapMode, which divides by it
     setFont(currentFont());

@@ -36,7 +36,9 @@ test('the agent list shows what the relay is polling', async ({page}) => {
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
   // Terminals are agents' equals in this list when the relay has terminal mode on, which the
   // harness turns on — a shell missing here is the wire, not the CSS.
-  await expect(page.locator('#agents .agent', {hasText: TERMINAL})).toBeVisible();
+  // Scoped to the whole list view and not to #agents: Terminals is its own section node so the
+  // user can order it, and this test is about the wire, not about which node it landed in.
+  await expect(page.locator('#agentListView .agent', {hasText: TERMINAL})).toBeVisible();
 });
 
 test('opening a pane reads it, and going back leaves the list', async ({page}) => {
@@ -72,7 +74,7 @@ test('switching panes does not leave the first pane’s text behind', async ({pa
   await expect(page.locator(R('termContent'))).toContainText('pane w1:p1');
 
   await page.locator('.term-header .back').click();
-  await page.locator('#agents .agent', {hasText: TERMINAL}).click();
+  await page.locator('#agentListView .agent', {hasText: TERMINAL}).click();
   await expect(page.locator(R('termContent'))).toContainText('pane w9:p1');
   await expect(page.locator(R('termContent'))).not.toContainText('pane w1:p1');
 });

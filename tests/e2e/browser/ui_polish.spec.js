@@ -8,8 +8,13 @@
 //
 //   npx playwright test
 const {test, expect} = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const AGENT = 'Architect 1';
+// A finished Claude pane, which is what puts Summary next to Last and doubles the right edge.
+const DONE_PANE = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'fixtures', 'pane_claude_done.txt'), 'utf8');
 const WORKING = 'scratch';   // the fake herdr reports this one as working, so its dot pulses
 
 test.beforeEach(async ({page}) => {
@@ -95,30 +100,57 @@ test('the fold survives a reload', async ({page}) => {
   await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
 });
 
+// One DOM turn: renderQuickActions replaces this whole row, so separate locator measurements can
+// straddle a poll and leave one detached even though all of them were visible on screen.
+const navBoxes = page => page.locator('#quickActions .qa-nav').evaluate(el => {
+  const box = node => {
+    const {x, width} = node.getBoundingClientRect();
+    return {x, width};
+  };
+  return {
+    row: box(el), fold: box(el.querySelector('.qa-fold')),
+    right: box(el.querySelector('.qa-right')),
+    arrows: [...el.querySelectorAll('button.nav')].map(box),
+  };
+});
+
 test('the fold and Last sit on opposite edges of the nav row', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   // Settled before it is measured. renderQuickActions re-runs on every 2s snapshot, so measuring
   // straight off the click can catch the row mid-rebuild and read a stale width for one of three
   // boxes — which is what made this fail about one run in three.
   await expect(page.locator('#termContent')).toContainText('done.');
-  // One DOM turn: renderQuickActions replaces this whole row, so separate locator measurements
-  // can straddle a poll and leave one detached even though all three were visible on screen.
-  const {row, fold, last, arrows} = await page.locator('#quickActions .qa-nav').evaluate(el => {
-    const box = node => {
-      const {x, width} = node.getBoundingClientRect();
-      return {x, width};
-    };
-    return {
-      row: box(el), fold: box(el.querySelector('.qa-fold')), last: box(el.querySelector('.qa-last')),
-      arrows: [...el.querySelectorAll('button.nav')].map(box),
-    };
-  });
+  const {row, fold, right} = await navBoxes(page);
   expect(fold.x).toBeCloseTo(row.x, 0);
-  expect(last.x + last.width).toBeCloseTo(row.x + row.width, 0);
-  // And neither overlaps an arrow, which is what the widened max-width reserve is for.
-  for (const b of arrows) {
-    expect(b.x, 'an arrow runs under the fold').toBeGreaterThanOrEqual(fold.x + fold.width);
-    expect(b.x + b.width, 'an arrow runs under Last').toBeLessThanOrEqual(last.x);
+  expect(right.x + right.width).toBeCloseTo(row.x + row.width, 0);
+});
+
+test('Summary never lands on an arrow, at any phone width', async ({page}) => {
+  // The right edge roughly doubles when a pane has a closing message to offer. The arrows used to
+  // reserve room for it by hand, with a min-width under the reserve that silently outranked it —
+  // so on every phone width Summary was drawn straight over the ›.
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  // The poll re-reads the pane every few seconds and would put the fake herdr's rows of x back,
+  // taking Summary with them. The reads are not what this measures.
+  await page.evaluate(pane => {
+    refreshPane = () => {};
+    const set = setPaneText;
+    setPaneText = t => { if (!t.startsWith('x')) set(t); };
+    paneOf(activePane).status = 'done';
+    setPaneText(pane);
+  }, DONE_PANE);
+  await expect(page.locator('#quickActions .qa-summary')).toBeVisible();
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({width, height: 844});
+    const {fold, right, arrows} = await navBoxes(page);
+    expect(arrows.length, `both arrows are there at ${width}`).toBe(2);
+    for (const b of arrows) {
+      expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThan(24);
+      expect(b.x, `an arrow runs under the fold at ${width}`).toBeGreaterThanOrEqual(fold.x + fold.width);
+      expect(b.x + b.width, `an arrow runs under Summary at ${width}`).toBeLessThanOrEqual(right.x);
+    }
   }
 });
 
