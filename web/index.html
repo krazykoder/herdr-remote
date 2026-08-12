@@ -1068,7 +1068,12 @@
        rows are uniform. Two lines is the ceiling, and both of them are clipped to one line each —
        a row that wrapped would be taller than its neighbours and every slot below it would be
        computed from the wrong stride. */
-    .order-row {
+    /* The pair sheet lists the same object, so it is the same row: same height, same dot, same
+       glyph, same two-line block. A second look for "a pane in a list" would be a second thing to
+       learn about panes. What differs is the right edge — the reorder sheet spends it on a drag
+       handle, and this one has no ordering to do, so it carries the pair the pane is already in. */
+    .order-row,
+    .pair-row {
       display: flex;
       align-items: center;
       gap: 10px;
@@ -1111,30 +1116,36 @@
       cursor: grab;
     }
 
-    .order-row .kind {
+    .order-row .kind,
+    .pair-row .kind {
       flex-shrink: 0;
       font-size: 0.75rem;
     }
 
-    .order-row .info {
+    .order-row .info,
+    .pair-row .info {
       flex: 1;
       min-width: 0;
     }
 
     .order-row .name,
-    .order-row .meta {
+    .order-row .meta,
+    .pair-row .name,
+    .pair-row .meta {
       display: block;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    .order-row .name {
+    .order-row .name,
+    .pair-row .name {
       font-size: 0.85rem;
       line-height: 1.25;
     }
 
-    .order-row .meta {
+    .order-row .meta,
+    .pair-row .meta {
       min-height: 16px;
       margin-top: 2px;
       color: var(--muted);
@@ -1142,8 +1153,70 @@
       line-height: 1.2;
     }
 
-    .order-row .meta .badge {
+    .order-row .meta .badge,
+    .pair-row .meta .badge {
       font-size: 0.58rem;
+    }
+
+    /* A button, so it is reachable and pressable without the row having to reinvent either. */
+    .pair-row {
+      width: 100%;
+      border-left: none;
+      border-right: none;
+      border-top: none;
+      color: var(--text);
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    /* The chosen partner. A left bar rather than a fill: the row below it may be carrying an orange
+       "already in a pair" note, and a tinted background behind that reads as a warning about the
+       selection instead of about the row. */
+    .pair-row.on {
+      background: var(--bg);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+
+    .pair-row .pair-tick {
+      width: 12px;
+      flex-shrink: 0;
+      color: var(--blue);
+      font-size: 0.8rem;
+    }
+
+    /* Which pair already holds this pane — the one thing that makes choosing it destructive, so it
+       travels with the row rather than waiting for the warning under the fields. Clipped, because a
+       long pair name must not push the tick off the row. */
+    .pair-row .pair-note {
+      flex-shrink: 1;
+      min-width: 0;
+      max-width: 40%;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      color: var(--orange);
+      font-size: 0.62rem;
+    }
+
+    /* The way out of "there is nobody to pair with". No dot and no status: it is not a pane yet. */
+    .pair-row.pair-add .name {
+      color: var(--blue);
+    }
+
+    .pair-head {
+      padding: 12px 16px 6px;
+      color: var(--muted);
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pair-empty {
+      margin: 0;
+      padding: 12px 16px;
+      color: var(--muted);
+      font-size: 0.75rem;
     }
 
     .agent .project {
@@ -2698,8 +2771,10 @@
         <button onclick="closePair()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
+      <!-- Edge to edge and outside the padding, the same as the reorder sheet's rows: a list of
+           panes reads as a list when the rows run the full width of the sheet. -->
+      <div id="pairCandidates"></div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
-        <div id="pairCandidates"></div>
         <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
           <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
           <label class="start-field">This pane's name<input id="pairRoleA" maxlength="32" type="text" /></label>
@@ -5750,21 +5825,32 @@
       // Gated on the dialog being usable at all, not on this pane's agent: which agent the new
       // session runs is answered in that dialog, not inherited from here.
       const spawn = (startOptions && pairSource.project_id)
-        ? `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-top:6px" onclick="startAndPair()">+ Start a session and pair with it</button>`
+        ? `<button class="pair-row pair-add" onclick="startAndPair()">
+      <span class="kind" aria-hidden="true">＋</span>
+      <span class="info"><span class="name">Start a session and pair with it</span><span class="meta">A new session in this project, paired the moment it lands</span></span>
+    </button>`
         : '';
       if (!candidates.length) {
-        box.innerHTML = `<p style="font-size:0.75rem;color:var(--muted);margin:0">No other live session on ${pairSource.host || 'local'}. A pair needs two live panes on one host.</p>` + spawn;
+        box.innerHTML = `<p class="pair-empty">No other live session on ${escapeHtml(pairSource.host || 'local')}. A pair needs two live panes on one host.</p>` + spawn;
         submit.disabled = true;
         return;
       }
-      box.innerHTML = `<p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0 0 6px">Partner</p>` +
+      // The reorder sheet's row, without the handle: same dot, same kind glyph, same name over a
+      // badge and a short path. The right edge carries what only matters here — the pair this pane
+      // is already in, which is what makes choosing it a replacement rather than an addition.
+      box.innerHTML = '<div class="pair-head">Partner</div>' +
         candidates.map(a => {
           const existing = pairFor(pairs, a.pane_id);
-          // &nbsp; not a plain space: the button is a flex container, so whitespace between its
-          // children collapses and the note would butt straight against the name.
-          const note = existing ? `<span style="color:var(--orange)">&nbsp;· in "${escapeHtml(existing.name)}"</span>` : '';
+          const note = existing ? `<span class="pair-note">in "${escapeHtml(existing.name)}"</span>` : '';
           const on = pairPartner && pairPartner.pane_id === a.pane_id;
-          return `<button class="nav-key" style="width:100%;justify-content:flex-start;margin-bottom:6px;${on ? 'border-color:var(--blue);color:var(--blue)' : ''}" onclick="choosePartner('${a.pane_id}')">${escapeHtml(paneTitle(a))}${note}</button>`;
+          const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
+          const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
+          return `<button class="pair-row${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="choosePartner('${escapeHtml(a.pane_id)}')">
+      <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
+      <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
+      <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
+      ${note}<span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
+    </button>`;
         }).join('') + spawn;
       submit.disabled = !pairPartner;
     }

@@ -155,6 +155,47 @@ test('a pane already paired is not re-paired behind the user', async ({page}) =>
   expect(after.warning).toContain('Tab pair');
 });
 
+test('the partner list is the reorder sheet row, carrying the pair instead of the handle', async ({page}) => {
+  // Two lists of the same object, so one row. What the reorder sheet spends its right edge on is a
+  // drag handle; here there is no ordering to do and the slot carries the pair the pane is already
+  // in — which is what makes choosing it a replacement rather than an addition.
+  await setup(page);          // seeds "Tab pair" over Architect 1 and amp
+  await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
+
+  const rows = page.locator('#pairCandidates .pair-row');
+  await expect(rows).toHaveCount(2);
+  const first = rows.first();
+  await expect(first.locator('.name')).toHaveText('Architect 1');
+  await expect(first.locator('.meta')).toContainText('claude');
+  await expect(first.locator('.meta')).toContainText('charts/relay');
+  await expect(first.locator('.pair-note'), 'the pair a partner is already in').toHaveText('in "Tab pair"');
+  await expect(first.locator('.dot')).toBeVisible();
+
+  // Literally the same row: one height for both sheets, or the two lists read as two kinds of thing.
+  const [pairBox, orderBox] = await page.evaluate(() => {
+    const h = el => el.getBoundingClientRect().height;
+    const pair = h(document.querySelector('#pairCandidates .pair-row'));
+    closePair();
+    openOrder();
+    return [pair, h(document.querySelector('#orderRows .order-row'))];
+  });
+  expect(pairBox).toBe(orderBox);
+});
+
+test('choosing a partner marks its row, not just the fields below', async ({page}) => {
+  await setup(page);
+  await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
+  const rows = page.locator('#pairCandidates .pair-row');
+  await rows.nth(1).click();
+
+  await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(rows.nth(1).locator('.pair-tick')).toHaveText('✓');
+  await expect(rows.first()).toHaveAttribute('aria-pressed', 'false');
+  await expect(rows.first().locator('.pair-tick')).toBeEmpty();
+  await expect(page.locator('#pairFields')).toBeVisible();
+  await expect(page.locator('#pairName')).toHaveValue('scratch ↔ amp');
+});
+
 test('the setting says what it is hiding, and counts the pairs', async ({page}) => {
   await setup(page);
   await page.locator('#termMenuBtn').click();
