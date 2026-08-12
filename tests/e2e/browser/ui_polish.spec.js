@@ -101,14 +101,22 @@ test('the fold and Last sit on opposite edges of the nav row', async ({page}) =>
   // straight off the click can catch the row mid-rebuild and read a stale width for one of three
   // boxes — which is what made this fail about one run in three.
   await expect(page.locator('#termContent')).toContainText('done.');
-  const row = await page.locator('#quickActions .qa-nav').boundingBox();
-  const fold = await page.locator('#quickActions .qa-fold').boundingBox();
-  const last = await page.locator('#quickActions .qa-last').boundingBox();
+  // One DOM turn: renderQuickActions replaces this whole row, so separate locator measurements
+  // can straddle a poll and leave one detached even though all three were visible on screen.
+  const {row, fold, last, arrows} = await page.locator('#quickActions .qa-nav').evaluate(el => {
+    const box = node => {
+      const {x, width} = node.getBoundingClientRect();
+      return {x, width};
+    };
+    return {
+      row: box(el), fold: box(el.querySelector('.qa-fold')), last: box(el.querySelector('.qa-last')),
+      arrows: [...el.querySelectorAll('button.nav')].map(box),
+    };
+  });
   expect(fold.x).toBeCloseTo(row.x, 0);
   expect(last.x + last.width).toBeCloseTo(row.x + row.width, 0);
   // And neither overlaps an arrow, which is what the widened max-width reserve is for.
-  for (const arrow of await page.locator('#quickActions .qa-nav button.nav').all()) {
-    const b = await arrow.boundingBox();
+  for (const b of arrows) {
     expect(b.x, 'an arrow runs under the fold').toBeGreaterThanOrEqual(fold.x + fold.width);
     expect(b.x + b.width, 'an arrow runs under Last').toBeLessThanOrEqual(last.x);
   }
