@@ -284,6 +284,18 @@ _load_push_subs()
 # reported as a failure while the agent is in fact coming up. Every other call keeps the
 # 15s default so the poll loop still fails fast on a dead SSH host.
 START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
+# `agent start` wants a pane already sitting at its shell prompt, and a pane created a moment
+# earlier is not there yet — a login shell that sources a real profile takes a second or several
+# to arrive. herdr refuses with agent_pane_busy and has no "wait for the prompt" primitive to ask
+# for instead, so the precondition is retried rather than raced. Measured against the failures
+# this fixes: the refusal came back in about a second and the same start succeeded on a retry
+# seven seconds later. A pane that never reaches a prompt still fails, just later.
+# Two spellings because the refusal reaches here by two routes: _herdr_reason keeps only the
+# message when herdr puts its error body on stdout, and the whole JSON blob when it lands on
+# stderr. Matching either survives that, and neither is a substring of any other refusal.
+PANE_NOT_READY = ("agent_pane_busy", "not an available shell")
+PANE_READY_WAIT = 20     # seconds to keep offering the pane before giving up
+PANE_READY_POLL = 1.0
 
 
 # %r@%h:%p — one socket per user@host:port, in the user's own runtime dir. Not LOG_DIR: the path
@@ -700,8 +712,14 @@ def start_agent_exec(plan):
     if err:
         return None, err
 
-    data, err = _herdr_json(*agent_start_args(plan["name"], plan["agent_name"], target_pane),
-                            remote=remote, timeout=START_EXEC_TIMEOUT)
+    args = agent_start_args(plan["name"], plan["agent_name"], target_pane)
+    deadline = time.monotonic() + PANE_READY_WAIT
+    while True:
+        data, err = _herdr_json(*args, remote=remote, timeout=START_EXEC_TIMEOUT)
+        if not err or not any(s in err for s in PANE_NOT_READY) or time.monotonic() >= deadline:
+            break
+        log.info("Pane %s is not at a shell prompt yet; offering it again", target_pane)
+        time.sleep(PANE_READY_POLL)
     if err:
         _rollback_layout(rollback, remote)
         return None, err
