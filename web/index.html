@@ -40,28 +40,40 @@
        bug to route around. Almost every cue below is already inside a click. -->
   <script>
     window.cue = (() => {
-      // name: [wave, notes in Hz played in order, seconds per note, peak gain]
+      // name: [group, wave, notes in Hz played in order, seconds per note, peak gain]
+      //
+      // The group is what Settings switches. Three and not nine: what a listener wants off is a
+      // kind of moment — every tap, every outcome, or the one that calls them back to the phone —
+      // and a checkbox per oscillator would be a mixing desk for a decision with three answers.
       const VOICES = {
-        tick: ['square', [1200], 0.03, 0.05],
-        toggle: ['square', [800, 1200], 0.05, 0.05],
-        page: ['sine', [520, 780], 0.06, 0.05],
-        droplet: ['sine', [1480, 990], 0.07, 0.05],
-        success: ['sine', [880, 1320], 0.09, 0.06],
-        ready: ['sine', [660, 880, 1320], 0.09, 0.06],
-        sparkle: ['triangle', [1320, 1760, 2640], 0.05, 0.04],
-        error: ['sawtooth', [220, 165], 0.10, 0.05],
+        tick: ['ui', 'square', [1200], 0.03, 0.05],
+        toggle: ['ui', 'square', [800, 1200], 0.05, 0.05],
+        page: ['ui', 'sine', [520, 780], 0.06, 0.05],
+        droplet: ['ui', 'sine', [1480, 990], 0.07, 0.05],
+        success: ['result', 'sine', [880, 1320], 0.09, 0.06],
+        ready: ['result', 'sine', [660, 880, 1320], 0.09, 0.06],
+        sparkle: ['result', 'triangle', [1320, 1760, 2640], 0.05, 0.04],
+        error: ['result', 'sawtooth', [220, 165], 0.10, 0.05],
         // The one that means "a pane is waiting on you", and the only one that has to carry across
-        // a room — so it is the longest and the loudest of them.
-        chime: ['sine', [880, 1174, 1568], 0.13, 0.08],
+        // a room — so it is the longest and the loudest of them. Its own group for the same reason:
+        // someone silencing the interface in an office still wants to be told their agent stopped.
+        chime: ['alert', 'sine', [880, 1174, 1568], 0.13, 0.08],
+      };
+      // Read per cue rather than cached: a checkbox has to take effect on the next tap, not the
+      // next reload. Unset is on, so a browser that never stored anything sounds as it always did,
+      // and one that refuses storage is audible rather than silently muted.
+      window.cueOn = group => {
+        try { return localStorage.getItem('herdr_sound_' + group) !== 'off'; }
+        catch (e) { return true; }
       };
       let ctx;
       return name => {
         const voice = VOICES[name];
-        if (!voice) return;
+        if (!voice || !window.cueOn(voice[0])) return;
         try {
           ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
           if (ctx.state === 'suspended') ctx.resume();
-          const [wave, notes, dur, peak] = voice;
+          const [, wave, notes, dur, peak] = voice;
           notes.forEach((hz, i) => {
             const at = ctx.currentTime + i * dur;
             const osc = ctx.createOscillator(), gain = ctx.createGain();
@@ -2259,6 +2271,15 @@
     </div>
 
     <div class="setting-group">
+      <label>Sounds</label>
+      <label class="toggle-option"><input type="checkbox" id="soundAlert" onchange="setSound('alert', this.checked)"> Agent needs you or finishes</label>
+      <label class="toggle-option"><input type="checkbox" id="soundResult" onchange="setSound('result', this.checked)"> Sent, connected, failed</label>
+      <label class="toggle-option"><input type="checkbox" id="soundUi" onchange="setSound('ui', this.checked)"> Taps and navigation</label>
+      <div class="hint">Each one plays as you switch it on, so you can hear what you are keeping.
+        Push notifications make their own sound — that one is your phone's to silence.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="themePick">Appearance</label>
       <select id="themePick" onchange="setTheme(this.value)">
         <option value="dark">Dark</option>
@@ -3153,6 +3174,22 @@
     function setSummaryHighlight(on) { setHighlight(SUMMARY_HIGHLIGHT_KEY, 'summaryHighlight', on); }
     document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
     document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
+
+    // --- Sounds ---
+    // The store is read inside window.cue, in the head, so nothing here has to reach the call
+    // sites — all twenty-odd of them route through that one function and are already guarded.
+    const SOUND_GROUPS = {alert: 'soundAlert', result: 'soundResult', ui: 'soundUi'};
+    function setSound(group, on) {
+      try { localStorage.setItem('herdr_sound_' + group, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: session-only */ }
+      document.getElementById(SOUND_GROUPS[group]).checked = on;
+      // A demo of the thing being switched, and the gesture that unlocks the AudioContext in the
+      // same tap. Only on the way on: playing a sound to confirm silence is a joke at the user.
+      if (on && window.cue) cue(group === 'alert' ? 'chime' : group === 'result' ? 'success' : 'tick');
+    }
+    for (const [group, id] of Object.entries(SOUND_GROUPS)) {
+      document.getElementById(id).checked = window.cueOn(group);
+    }
 
     // --- Main page sections ---
     // Which of the four the main page shows, and in what order. Stored as the order itself rather
