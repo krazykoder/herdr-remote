@@ -40,7 +40,8 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'recordMessages', 'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
+const NAMES = ['paneMessages', 'backfillEntries', 'turnMessages', 'newTurnMessages', 'turnEntries',
+               'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
@@ -50,7 +51,8 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, recordMessages, convAt, convKey, convText, convHash, convMemberKey, classifyVia,
+const {paneMessages, backfillEntries, turnMessages, newTurnMessages, turnEntries,
+       convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
@@ -75,7 +77,10 @@ const TWO_TURNS = [
 // difference. Copying them into this realm compares the contents, which is what is being asserted.
 const texts = ms => Array.from(ms, m => m.text);
 const whos = ms => Array.from(ms, m => m.who);
-const record = (stored, rows, now, clock) => recordMessages(stored, paneMessages(rows, 'claude'), now, clock);
+// The two writes a transcript ever takes, as the recorder makes them: the first read of a pane,
+// and the end of one of its turns.
+const backfill = (rows, now) => backfillEntries(paneMessages(rows, 'claude'), now);
+const turn = (stored, rows, now, end) => turnEntries(paneMessages(rows, 'claude'), stored, now, end);
 
 test('a window is the user and the agent in the order they spoke', () => {
   const ms = paneMessages(TWO_TURNS, 'claude');
@@ -122,50 +127,63 @@ test('a long message is cut to TEXT_MAX and says so', () => {
   assert.ok(text.endsWith('…'));
 });
 
-test('the first read stores the window whole, and is not a gap', () => {
-  const out = record([], TWO_TURNS, NOW);
-  assert.strictEqual(out.gap, false);
-  assert.strictEqual(out.added, 4);
-  assert.ok(out.entries.every(e => e.seen === NOW));
+// --- The two writes ---
+//
+// Nothing below compares one read against another, because nothing in the recorder does. A
+// transcript is written when a pane is first read, when one of its turns ends, and when this app
+// sends a prompt — three events, each happening once.
+
+test('the first read of a pane is its history, ordered and marked as such', () => {
+  const out = backfill(TWO_TURNS, NOW);
+  assert.deepStrictEqual(texts(out),
+    ['first question', 'First answer.', 'second question', 'Second answer.']);
+  assert.ok(out.every(e => e.at_src === 'backfill'), 'nobody watched any of it happen');
+  // Ordered against each other and placed before now, which is the whole of what can be said.
+  assert.ok(out.every((e, i) => i === 0 || convAt(out[i - 1]) < convAt(e)));
+  assert.ok(out.every(e => convAt(e) < NOW));
 });
 
-test('the first unread frame is ordered as backfill, except a known closing turn', () => {
-  const out = record([], TWO_TURNS, NOW, {end: NOW - 100});
-  assert.deepStrictEqual(Array.from(out.entries, e => e.at_src), ['backfill', 'backfill', 'backfill', 'state']);
-  assert.ok(out.entries.slice(0, -1).every(e => convAt(e) < NOW));
-  assert.strictEqual(convAt(out.entries[3]), NOW - 100);
+test('a turn is the closing message and the prompt that opened it', () => {
+  assert.deepStrictEqual(texts(turnMessages(paneMessages(TWO_TURNS, 'claude'))),
+    ['second question', 'Second answer.']);
 });
 
-test('re-reading an unchanged pane adds nothing', () => {
-  // The 3s poll re-delivers the identical window. Anything but zero here is a transcript that
-  // doubles in size every three seconds.
-  const first = record([], TWO_TURNS, NOW);
-  const again = record(first.entries, TWO_TURNS, NOW + 3000);
-  assert.strictEqual(again.added, 0);
-  assert.deepStrictEqual(texts(again.entries), texts(first.entries));
+test('an agent that answers one prompt twice records the prompt once', () => {
+  // Both turns have the same prompt above them in the window — it is the newest one either way.
+  const rows = ['❯ go', '', '⏺ First pass.', '', '❯'];
+  const stored = backfill(rows, NOW);
+  const again = ['❯ go', '', '⏺ First pass.', '', '⏺ Second pass.', '', '❯'];
+  assert.deepStrictEqual(texts(turn(stored, again, NOW + 1000, NOW + 900)), ['Second pass.']);
 });
 
-test('a scrolled window appends only what is new', () => {
-  const first = record([], TWO_TURNS, NOW);
-  // The pane has scrolled: the first turn is off the top, and a third has arrived.
-  const later = TWO_TURNS.slice(4).concat(
-    [' ', '❯ third question', '', '⏺ Third answer.', '', '❯']);
-  const out = record(first.entries, later, NOW + 60000);
-  assert.strictEqual(out.gap, false);
-  assert.deepStrictEqual(texts(out.entries), [
-    'first question', 'First answer.', 'second question', 'Second answer.',
-    'third question', 'Third answer.',
-  ]);
-  assert.strictEqual(out.entries[4].seen, NOW + 60000);
+test('a prompt already committed at the send is not read back off the pane', () => {
+  // The transcript ends on a user entry, which is what "this app sent it" looks like from here.
+  const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
+  const out = turn(stored, TWO_TURNS, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(out), ['Second answer.'], 'the prompt is already in the transcript');
+});
+
+test('a prompt typed at the keyboard is read back, because nothing else will', () => {
+  const stored = [{who: 'agent', text: 'First answer.', at: NOW - 100, at_src: 'state'}];
+  assert.deepStrictEqual(texts(turn(stored, TWO_TURNS, NOW, NOW - 1)),
+    ['second question', 'Second answer.']);
+});
+
+test('the transition dates the closing message, and only that one', () => {
+  const stored = [{who: 'agent', text: 'First answer.', at: NOW - 100, at_src: 'state'}];
+  const out = turn(stored, TWO_TURNS, NOW, NOW - 50);
+  assert.deepStrictEqual(Array.from(out, e => e.at_src), ['read', 'state']);
+  assert.strictEqual(convAt(out[1]), NOW - 50, 'the turn ended when the pane said it did');
 });
 
 test('the same message said twice is two messages', () => {
-  // The case a text-hash dedupe gets wrong, silently. Agents say "Done." constantly.
-  const rows = ['❯ a', '', '⏺ Done.', '', '❯ b', '', '⏺ Done.', '', '❯'];
-  const out = record([], rows, NOW);
-  assert.deepStrictEqual(texts(out.entries), ['a', 'Done.', 'b', 'Done.']);
-  // And the next read of the same pane still does not think one of them is new.
-  assert.strictEqual(record(out.entries, rows, NOW + 3000).added, 0);
+  // The case a text-hash dedupe gets wrong, silently. Agents say "Done." constantly — and with
+  // nothing matching text, two turns that both closed on "Done." simply are two entries.
+  const one = ['❯ a', '', '⏺ Done.', '', '❯'];
+  const two = ['❯ a', '', '⏺ Done.', '', '❯ b', '', '⏺ Done.', '', '❯'];
+  const stored = backfill(one, NOW);
+  const out = stored.concat(turn(stored, two, NOW + 1000, NOW + 900));
+  assert.deepStrictEqual(texts(out), ['a', 'Done.', 'b', 'Done.']);
 });
 
 test('duplicate repair keeps the first text and timestamp', () => {
@@ -176,71 +194,13 @@ test('duplicate repair keeps the first text and timestamp', () => {
   assert.deepStrictEqual(Array.from(out.entries), [first]);
 });
 
-test('a message still being written is extended, not duplicated', () => {
-  // Every poll during a reply reads a longer version of the same paragraph.
-  // The composer stays at the foot while the agent writes, so the half-written reply is the block
-  // above it exactly as the finished one will be.
-  const half = ['❯ explain', '', '⏺ The relay polls herdr and', '', '❯'];
-  const whole = ['❯ explain', '', '⏺ The relay polls herdr and broadcasts to clients.', '', '❯'];
-  const first = record([], half, NOW);
-  assert.deepStrictEqual(texts(first.entries), ['explain', 'The relay polls herdr and']);
-  const out = record(first.entries, whole, NOW + 3000);
-  assert.strictEqual(out.grew, true);
-  assert.strictEqual(out.added, 0);
-  assert.deepStrictEqual(texts(out.entries), ['explain', 'The relay polls herdr and broadcasts to clients.']);
-  // It is the same message, so it keeps when it was first seen.
-  assert.strictEqual(out.entries[1].seen, NOW);
-});
-
-test('a completed agent turn upgrades its read stamp but never rewrites a sent prompt', () => {
-  const half = ['❯ explain', '', '⏺ The relay polls', '', '❯'];
-  const whole = ['❯ explain', '', '⏺ The relay polls herdr.', '', '❯'];
-  const first = record([{who: 'user', text: 'explain', seen: NOW - 10, at: NOW - 10, at_src: 'sent'},
-    {who: 'agent', text: 'The relay polls', seen: NOW, at: NOW, at_src: 'read'}], half, NOW);
-  const out = record(first.entries, whole, NOW + 100, {end: NOW + 50});
-  assert.strictEqual(out.entries[0].at_src, 'sent');
-  assert.strictEqual(convAt(out.entries[0]), NOW - 10);
-  assert.strictEqual(out.entries[1].at_src, 'state');
-  assert.strictEqual(convAt(out.entries[1]), NOW + 50);
-});
-
-test('Load more prepends the older turns and does not restamp the thread', () => {
-  const later = TWO_TURNS.slice(4);
-  const first = record([], later, NOW + 60000);
-  assert.deepStrictEqual(texts(first.entries), ['second question', 'Second answer.']);
-  const out = record(first.entries, TWO_TURNS, NOW + 90000);
-  assert.strictEqual(out.gap, false);
-  assert.strictEqual(out.added, 2);
-  assert.deepStrictEqual(texts(out.entries),
-    ['first question', 'First answer.', 'second question', 'Second answer.']);
-  // Older than what follows them, and marked as arriving late — never stamped with now, which
-  // would file an hour-old message as the newest thing in the thread.
-  assert.ok(out.entries.slice(0, 2).every(e => e.backfill === true));
-  assert.ok(out.entries.slice(0, 2).every(e => e.seen === NOW + 60000));
-});
-
-test('a pane that scrolled past a whole window is a gap, not a silent join', () => {
-  const first = record([], TWO_TURNS, NOW);
-  const far = ['❯ much later question', '', '⏺ Much later answer.', '', '❯'];
-  const out = record(first.entries, far, NOW + 3600000);
-  assert.strictEqual(out.gap, true);
-  assert.strictEqual(out.entries[4].gap, true);
-  assert.deepStrictEqual(texts(out.entries).slice(4), ['much later question', 'Much later answer.']);
-});
-
-test('a window re-read at a different wrap width is not new content', () => {
-  // The relay reports the pane's width and the harness rewraps; the words are the same.
-  const wide = ['❯ go', '', '⏺ One long sentence that fits on a single line here.', '', '❯'];
-  const narrow = ['❯ go', '', '⏺ One long sentence that fits', '  on a single line here.', '', '❯'];
-  const first = record([], wide, NOW);
-  const out = record(first.entries, narrow, NOW + 3000);
-  assert.strictEqual(out.added, 0);
-  assert.strictEqual(out.gap, false);
+test('a window with nothing an agent said in it writes no turn', () => {
+  assert.deepStrictEqual(texts(turnMessages(paneMessages(['❯ just asked', '', '❯'], 'claude'))), []);
 });
 
 test('the comparison key is not the stored text', () => {
-  // Collapsing whitespace is what makes the rewrap above compare equal; storing the collapsed
-  // form would run Codex's three closing paragraphs together.
+  // Collapsing whitespace is what the duplicate repair compares on; storing the collapsed form
+  // would run Codex's three closing paragraphs together.
   const rows = ['❯ go', '', '⏺ First paragraph.', '', '  Second paragraph.', '', '❯'];
   const text = paneMessages(rows, 'claude')[1].text;
   assert.ok(text.includes('\n'), text);
@@ -248,12 +208,10 @@ test('the comparison key is not the stored text', () => {
 });
 
 test('recording never mutates what it was given', () => {
-  // The caller holds the stored array and writes it only when something was added; a recorder
-  // that edits it in place would make that decision meaningless.
-  const first = record([], TWO_TURNS, NOW);
-  const before = JSON.stringify(first.entries);
-  record(first.entries, TWO_TURNS.concat(['⏺ More.', '', '❯']), NOW + 3000);
-  assert.strictEqual(JSON.stringify(first.entries), before);
+  const stored = backfill(TWO_TURNS, NOW);
+  const before = JSON.stringify(stored);
+  turn(stored, TWO_TURNS, NOW + 3000, NOW + 2000);
+  assert.strictEqual(JSON.stringify(stored), before);
 });
 
 test('a real pane reads as one turn: the request, then what it concluded', () => {
@@ -356,8 +314,7 @@ test('the recorder tags the prompt when it reads it back off the pane', () => {
   const box = outboxAdd([], convHash(PAYLOAD), classifyVia(pending(), PAYLOAD, NOW), NOW);
   const rows = ('❯ ' + PAYLOAD.split('\n').join('\n❯ ')).split('\n')
     .concat(['', '⏺ Looking now.', '', '❯']);
-  const out = record([], rows, NOW + 5000);
-  const tagged = tagUserEntries(out.entries, box, NOW + 5000).entries;
+  const tagged = tagUserEntries(backfill(rows, NOW + 5000), box, NOW + 5000).entries;
   assert.strictEqual(tagged[0].via, 'transfer');
   assert.strictEqual(tagged[0].from.label, 'Architect 1');
   // And what the agent said is never given a provenance: everything an agent says is its own.
@@ -367,7 +324,7 @@ test('the recorder tags the prompt when it reads it back off the pane', () => {
 test('an unmatched prompt is typed, which is the honest failure', () => {
   // Provenance is only knowable where the send happened. A transfer made on the desktop and
   // recorded on the phone reads as typed there, because the phone never saw the transfer.
-  const tagged = tagUserEntries(record([], TWO_TURNS, NOW).entries, [], NOW).entries;
+  const tagged = tagUserEntries(backfill(TWO_TURNS, NOW), [], NOW).entries;
   assert.deepStrictEqual(Array.from(tagged, e => e.via), ['typed', undefined, 'typed', undefined]);
 });
 
@@ -496,61 +453,4 @@ test('a member with nothing recorded yet contributes nothing and breaks nothing'
   ];
   assert.deepStrictEqual(texts(mergeEntries(recs)), ['b1']);
   assert.deepStrictEqual(texts(mergeEntries([])), []);
-});
-
-// --- The draft, and the duplicate it used to make ---
-//
-// While an agent works there is no closing message yet, and what the detector reports in its place
-// moves: the block above the live composer is whatever the agent last printed, so a new block
-// replaces the previous one rather than extending it. Before drafts, that stored tail agreed with
-// no offset in the next window, the alignment failed, and the failure path appended every message
-// on screen a second time — one moving message duplicating a whole conversation.
-const WORKING = {working: true};
-const TURN = [{who: 'user', text: 'fix the auth bug'}, {who: 'agent', text: 'I will look at auth.ts'}];
-const MOVED = [{who: 'user', text: 'fix the auth bug'}, {who: 'agent', text: 'Found it on line 42'}];
-
-test('a mid-turn message that moves replaces the draft instead of duplicating the window', () => {
-  const one = recordMessages([], TURN, NOW, WORKING);
-  assert.deepStrictEqual(texts(one.entries), ['fix the auth bug', 'I will look at auth.ts']);
-  assert.ok(one.entries[1].draft, 'the agent has not finished, so its newest block is a draft');
-  assert.ok(!one.entries[0].draft, 'a prompt is real the moment it is on screen');
-  const two = recordMessages(one.entries, MOVED, NOW + 3000, WORKING);
-  assert.deepStrictEqual(texts(two.entries), ['fix the auth bug', 'Found it on line 42']);
-  assert.equal(two.gap, false, 'nothing was missed, so nothing draws a break');
-});
-
-test('the turn ending freezes the draft, and dates it by the transition', () => {
-  const one = recordMessages([], TURN, NOW, WORKING);
-  const done = recordMessages(one.entries, MOVED, NOW + 6000, {end: NOW + 5000});
-  assert.deepStrictEqual(texts(done.entries), ['fix the auth bug', 'Found it on line 42']);
-  assert.ok(!done.entries[1].draft, 'the turn is over, so this is a record rather than a draft');
-  assert.equal(done.entries[1].at, NOW + 5000);
-  assert.equal(done.entries[1].at_src, 'state');
-});
-
-test('an unchanged draft still freezes when its turn ends', () => {
-  const one = recordMessages([], TURN, NOW, WORKING);
-  const done = recordMessages(one.entries, TURN, NOW + 6000, {end: NOW + 5000});
-  assert.ok(!done.entries[1].draft);
-  assert.equal(done.entries[1].at, NOW + 5000);
-  assert.equal(done.entries[1].at_src, 'state');
-});
-
-test('a draft that came back unchanged is not news', () => {
-  // The caller renders the thread and writes the record on what this reports, and a turn where the
-  // agent is thinking is most of a turn.
-  const one = recordMessages([], TURN, NOW, WORKING);
-  const again = recordMessages(one.entries, TURN, NOW + 3000, WORKING);
-  assert.equal(again.added, 0);
-  assert.equal(again.grew, false);
-  assert.deepStrictEqual(again.entries, one.entries, 'and the entry keeps when it was first seen');
-});
-
-test('a committed entry is still never replaced, draft or no draft', () => {
-  // The rule the drafts sit inside (§5.1): what a finished turn committed may only be extended.
-  const done = recordMessages([], TURN, NOW, {end: NOW - 1000});
-  const rewritten = recordMessages(done.entries, [TURN[0], {who: 'agent', text: 'Something else'}],
-    NOW + 3000, WORKING);
-  assert.ok(texts(rewritten.entries).includes('I will look at auth.ts'),
-    'the finished message stays, whatever the frame says now');
 });

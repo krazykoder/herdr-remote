@@ -3341,9 +3341,15 @@
     // stored one would date a message by a session that saw a different turn.
     const statusAt = {};
 
+    // One transition, one timestamp. The same change is announced twice — a `blocked` push and the
+    // snapshot carrying it — and the recorder appends a turn when this clock moves past what it
+    // last wrote, so a second stamp for a state the pane is already in would append the turn twice.
     function noteStatus(paneId, status) {
       if (!paneId || !status) return;
-      (statusAt[paneId] || (statusAt[paneId] = {}))[status] = Date.now();
+      const at = statusAt[paneId] || (statusAt[paneId] = {});
+      if (at.last === status) return;
+      at.last = status;
+      at[status] = Date.now();
     }
 
     // The end of the pane's most recent turn, or 0 while it is still writing one — then the fold's
@@ -4458,8 +4464,8 @@
         renderQuickActions();  // the approval buttons belong on screen the moment it blocks
         syncConvBadge();
       } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {
-        // Another member of the thread on screen, read by convPollMembers. Recorded, never drawn:
-        // recordPane ignores any pane that is not in a conversation, so a stray read is harmless.
+        // A pane that is in a conversation, read because its turn just ended. Recorded, never
+        // drawn: recordPane ignores any pane no conversation names, so a stray read is harmless.
         if (convRecordable(msg)) recordPane(msg.pane_id, (msg.content || '').split('\n'));
       } else if (msg.type === 'pane_content') {
         const el = document.getElementById('termContent');
@@ -4518,13 +4524,7 @@
 
     // Coming back to the tab is looking at it: a pane that finished while you were away has been
     // seen the moment you return to it, and the title has to drop the count with it.
-    // Going away is where a transcript is at risk: a backgrounded phone tab is the one a browser
-    // kills without warning, and a turn still being written has folds that have not been put yet.
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) convFlushDirty(); else render();
-    });
-    // pagehide rather than unload: it is the one that fires on iOS, which is where this app lives.
-    window.addEventListener('pagehide', () => convFlushDirty());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
     // The browser tab, which is the only surface that reaches you when the app is not on screen —
     // another tab, another window, a phone with the PWA in the background. Everything else in this
@@ -5673,14 +5673,15 @@
     // is already stored) — no storage, no DOM, no clock of its own. Storing is §4.4's job and the
     // views are §7's; both sit on top of this.
     //
-    // The whole problem is that consecutive reads overlap. The pane scrolls between them, `Load
-    // more` shifts the other way, the newest message is still being written, and the same words
-    // therefore arrive over and over at different line numbers. Deduping on "have I ever seen this
-    // text" would fix that and silently lose the second time an agent says "Done." — which is a
-    // real message, on a pane where saying "Done." twice is the normal case. So identity here is
-    // *where the windows overlap*, never the text alone.
+    // Nothing here reconciles one read against another, and that is the point (§5.2). A transcript
+    // is written by events that happen once — the pane's first read, a turn ending, a prompt this
+    // app sent — so "have I already recorded this" is answered by the event, never by comparing
+    // text. That matters because comparing text cannot be made correct: an agent that says "Done."
+    // twice said it twice, and no amount of matching can tell that from the same "Done." read
+    // twice. The one place text is still compared is the menu's duplicate repair, on records
+    // written by the version that did fold windows together.
 
-    const CONV_TEXT_MAX = 4000, CONV_OVERLAP_MAX = 200;
+    const CONV_TEXT_MAX = 4000, CONV_DEDUPE_WINDOW = 200;
     const CONV_OUTBOX_MAX = 50, CONV_OUTBOX_TTL = 30 * 60 * 1000;
 
     // Gutter glyph, the box side it may sit inside, and the leading space. Same characters as
@@ -5741,36 +5742,6 @@
         .filter(m => m.text);
     }
 
-    // Where the fresh window sits against what is stored: the offset `d` at which fresh[0] lines up
-    // with stored[d], picked for the longest agreeing overlap. A negative `d` means the window
-    // reaches above what is stored, which is what `Load more` produces.
-    //
-    // Two matches are allowed to be inexact, and both are the same read cut in half by its own
-    // edges rather than two different messages:
-    //
-    //   the window's first message — its opener can be above the top of the read, so a stored
-    //   message that *ends with* it is it (agy starts blocks positionally, so this is reachable).
-    //   the transcript's last message — it was read while the agent was still writing it, so a
-    //   fresh message that *starts with* it is that same message, longer. Without this every poll
-    //   during a reply appends another copy of the growing paragraph.
-    function convAlign(stored, fresh, minD) {
-      let best = null;
-      for (let d = stored.length - 1; d >= minD; d--) {
-        const from = Math.max(0, d), to = Math.min(stored.length, d + fresh.length);
-        if (to - from <= 0) continue;
-        let ok = true;
-        for (let i = from; i < to && ok; i++) {
-          const f = fresh[i - d];
-          if (f === stored[i]) continue;
-          if (i - d === 0 && stored[i].endsWith(f)) continue;
-          if (i === stored.length - 1 && f.startsWith(stored[i])) continue;
-          ok = false;
-        }
-        if (ok && (!best || to - from > best.len)) best = { d: d, len: to - from };
-      }
-      return best;
-    }
-
     function convEntry(m, seen, extra) {
       return Object.assign({ who: m.who, seen: seen, text: m.text }, extra || {});
     }
@@ -5798,107 +5769,63 @@
       return r === undefined ? 0 : r;
     }
 
-    // One read, folded into a transcript. Returns a new entries array — the caller stores it — and
-    // says what happened, because the view draws a gap and the store only writes when something
-    // was added.
-    // `clock.end` is when the pane last finished a turn — its own done/blocked transition, which
-    // the relay pushes for every pane whether or not anyone is reading it. Zero while the turn is
-    // still being written, because then the fold's clock is already the right answer.
-    function recordMessages(stored, fresh, now, clock) {
-      const entries = (stored || []).slice();
-      if (!fresh || !fresh.length) return { entries: entries, added: 0, grew: false, gap: false };
-      const end = (clock && clock.end) || 0;
-      const working = !!(clock && clock.working);
-      // Everything a pane already has on screen the first time it is read was said before this
-      // browser was watching. Stamping it `now` files an hour of history as the newest thing in
-      // the thread — and in a joint view it buries the other member's live messages under it.
-      // Ordered, marked, and placed just before now is all that can honestly be said.
-      const cold = !entries.length;
-      // A turn in progress has no closing message yet, and what stands in for one moves. The
-      // detector reports the block above the live composer, so every new block the agent prints
-      // *replaces* what the last read called the pane's newest message — the one before it is not
-      // extended, it stops being reported at all.
-      //
-      // That entry is a draft: what the thread shows while the agent works, and not a record of
-      // anything until the turn ends. Peeling drafts off before the alignment is the load-bearing
-      // part. A stored tail that is nowhere in the window agrees with no offset, convAlign returns
-      // null, and the null path appends *the whole window* — so one moving message was duplicating
-      // every message on screen along with it.
-      let drafts = 0;
-      while (drafts < entries.length && entries[entries.length - 1 - drafts].draft) drafts++;
-      const peeled = drafts ? entries.splice(entries.length - drafts, drafts) : [];
-      // Only the last, and only the agent's: a prompt is real the moment it is on screen, and a
-      // turn that has ended is a record rather than a draft.
-      const draftMark = (m, i, n) =>
-        working && !end && i === n - 1 && m.who === 'agent' ? { draft: true } : null;
-      const stamp = (m, i, n, base) => {
-        // The turn's closing message is the one the transition dated. Only the last, and only
-        // when it is the agent's: a prompt is dated by the send, not by the answer to it.
-        if (i === n - 1 && m.who === 'agent' && end && end <= base) return { at: end, at_src: 'state' };
-        if (cold) return { at: base - (n - i), at_src: 'backfill' };
-        return { at: base, at_src: 'read' };
-      };
-      // Bounded by OVERLAP_MAX so the cost is the window's, not the transcript's. A read window
-      // holds far fewer messages than this, so a miss inside it is a real gap and not a short look.
-      const from = Math.max(0, entries.length - CONV_OVERLAP_MAX);
-      const keys = entries.slice(from).map(e => convKey(e.text));
-      const fkeys = fresh.map(m => convKey(m.text));
-      // Only a transcript whose beginning is in view can be prepended to. Further back than that,
-      // an apparent backfill is an alignment there is nothing left to check against.
-      const hit = keys.length
-        ? convAlign(keys, fkeys, from === 0 ? -(fresh.length - 1) : 0)
-        : { d: 0, len: 0 };
-
-      if (!hit) {
-        const add = fresh.map((m, i) => convEntry(m, now,
-          Object.assign(stamp(m, i, fresh.length, now), i === 0 ? { gap: true } : null,
-            draftMark(m, i, fresh.length))));
-        return { entries: entries.concat(add), added: add.length, grew: false, gap: true };
-      }
-
-      const d = hit.d, cut = keys.length - d;
-      let grew = false;
-      // The message that was still being written when it was last read, now read whole. Growth
-      // only, and only where the stored words are still the start of the new ones: a longer text
-      // that does not begin with what was committed is not this message finished, it is a
-      // misalignment, and taking it would rewrite history to match the current frame.
-      const last = entries.length - 1;
-      if (last >= 0 && cut - 1 >= 0 && cut - 1 < fresh.length
-          && fresh[cut - 1].text.length > entries[last].text.length
-          && convKey(fresh[cut - 1].text).startsWith(convKey(entries[last].text))) {
-        const was = entries[last];
-        // The turn ended after this entry was first written, so its closing time is known now and
-        // was not then. Upgrades only — a stamp never gets vaguer than the one already committed.
-        const better = was.who === 'agent' && end && end <= now
-          && convAtRank({ at_src: 'state' }) > convAtRank(was);
-        entries[last] = Object.assign({}, was, { text: fresh[cut - 1].text },
-          better ? { at: end, at_src: 'state' } : null);
-        grew = true;
-      }
-      // Older turns, revealed by Load more. They take the `seen` of the entry they precede: they
-      // were said before it, and stamping them now would file an hour-old message as the newest
-      // thing in the thread.
-      const head = d < 0 ? fresh.slice(0, -d) : [];
-      const before = head.length ? convAt(entries[0]) || now : now;
-      const seenBefore = head.length ? (entries[0].seen || now) : now;
-      const tail = cut < fresh.length ? fresh.slice(cut) : [];
-      // A draft that came back word for word is not news. The caller renders and writes on what
-      // this reports, so a quiet poll in the middle of a turn has to report nothing — and the
-      // entry it keeps is the stored one, which still knows when it was first seen.
-      if (working && !end && !grew && !head.length && drafts === 1 && tail.length === 1
-          && tail[0].who === peeled[0].who && convKey(tail[0].text) === convKey(peeled[0].text)) {
-        return { entries: (stored || []).slice(), added: 0, grew: false, gap: false };
-      }
-      return {
-        entries: head.map((m, i) => convEntry(m, seenBefore,
-            { backfill: true, at: before - (head.length - i), at_src: 'backfill' }))
-          .concat(entries, tail.map((m, i) => convEntry(m, now,
-            Object.assign(stamp(m, i, tail.length, now), draftMark(m, i, tail.length))))),
-        added: head.length + tail.length,
-        grew: grew,
-        gap: false,
-      };
+    // The first read of a pane, as a first transcript. There is nothing to compare it against, so
+    // nothing is compared: everything on screen was said before this browser was watching, and the
+    // order plus "older than now" is all that can honestly be said about it. This is the one write
+    // that is not an event, and it happens once per pane (§5.2).
+    function backfillEntries(fresh, now) {
+      const ms = fresh || [];
+      return ms.map((m, i) => convEntry(m, now, { at: now - (ms.length - i), at_src: 'backfill' }));
     }
+
+    // The turn that just ended, out of the window read when it ended: the agent's closing message,
+    // and the prompt that opened it if that prompt is directly above it. Walks back from the end —
+    // an agent that ran twice on one prompt has no prompt of its own above the second reply, and
+    // correctly contributes only the reply.
+    function turnMessages(fresh) {
+      const ms = fresh || [];
+      let end = ms.length - 1;
+      while (end >= 0 && ms[end].who !== 'agent') end--;
+      if (end < 0) return [];
+      let start = end;
+      while (start - 1 >= 0 && ms[start - 1].who === 'user') start--;
+      return ms.slice(start, end + 1);
+    }
+
+    // What of that turn is not already recorded, which is a question about *shape* and never about
+    // text. A prompt this app sent was committed at the send, so the transcript already ends with a
+    // user entry — and then the pane's echo of it is the same prompt, whatever it looks like after
+    // the composer wrapped it. A prompt typed at the keyboard leaves the tail on an agent entry,
+    // and is the one that has to be read back.
+    //
+    // Nothing here compares message text, so two turns that said the same words are two entries.
+    // That is the whole reason the recorder no longer needs to align anything.
+    // The second rule is for an agent that answers one prompt twice: at its second done the prompt
+    // is still the newest thing above the reply in the window, and the transcript recorded it at
+    // the first. Here the text is compared, because there is nothing else left to compare — and
+    // the cost is stated rather than hidden: the same prompt typed at the keyboard twice running,
+    // with nothing else said between, records once. A prompt this app sent is exempt, because rule
+    // one has already dropped it.
+    function newTurnMessages(stored, turn) {
+      const entries = stored || [];
+      const last = entries[entries.length - 1];
+      if (last && last.who === 'user') return (turn || []).filter(m => m.who !== 'user');
+      let said = '';
+      for (let i = entries.length - 1; i >= 0 && !said; i--) {
+        if (entries[i].who === 'user') said = convKey(entries[i].text);
+      }
+      return (turn || []).filter(m => !(m.who === 'user' && said && convKey(m.text) === said));
+    }
+
+    // One turn appended. `end` is the transition that ended it, which is also what dates the
+    // closing message — the relay pushes done/blocked for every pane, so this is a real clock and
+    // not the fold's own.
+    function turnEntries(fresh, stored, now, end) {
+      const add = newTurnMessages(stored, turnMessages(fresh));
+      return add.map((m, i) => convEntry(m, now, m.who === 'agent' && i === add.length - 1 && end
+        ? { at: end, at_src: 'state' } : { at: now, at_src: 'read' }));
+    }
+
     // Which pane a transcript belongs to. Not the pane_id alone: herdr recycles those, and a
     // recycled id landing on a dead session's transcript would inherit words that pane never said,
     // which is the worst failure this feature has.
@@ -6038,7 +5965,7 @@
       let removed = 0;
       for (const e of entries || []) {
         const k = convDupKey(e), prev = at.get(k);
-        if (prev !== undefined && out.length - prev <= CONV_OVERLAP_MAX) {
+        if (prev !== undefined && out.length - prev <= CONV_DEDUPE_WINDOW) {
           // Earliest copy is the transcript's chronology. Later duplicates are repair debris,
           // and must not rewrite its words or its timestamp.
           removed++;
@@ -6070,10 +5997,12 @@
 
     // Called on the way out of every composer send. A prefill answers for one send: whether it was
     // used, edited or deleted, the next send starts from nothing.
-    function noteSent(text) {
+    function noteSent(text, paneId) {
       const now = Date.now();
       const note = classifyVia(pendingTransfer, text, now);
       pendingTransfer = null;
+      // The prompt itself, straight into the transcript. Exact text, exact time, no reading back.
+      convRecordSend(paneId, text, note.via === 'typed' ? null : note, now);
       // `typed` is the default the recorder applies on its own, so there is nothing to leave.
       if (note.via === 'typed') return;
       saveOutbox(outboxAdd(loadOutbox(), convHash(text), note, now));
@@ -6151,11 +6080,14 @@
     function convMergeRecord(stored, fallback) {
       if (!stored) return fallback;
       const now = Math.max(stored.touched || 0, fallback.touched || 0, Date.now());
-      const out = recordMessages(stored.entries || [], fallback.entries || [], now);
+      // Both were written by the same append-only recorder, so the join is a concatenation and
+      // the only thing that can be wrong with it is a message written to both. convDedupe is what
+      // the menu action uses on exactly that.
+      const joined = convDedupe((stored.entries || []).concat(fallback.entries || [])).entries;
       return Object.assign({}, stored, fallback, {
         first: Math.min(stored.first || now, fallback.first || now),
         touched: now,
-        entries: capEntries(out.entries),
+        entries: capEntries(joined),
         spawn: fallback.spawn || stored.spawn,
       });
     }
@@ -6290,68 +6222,111 @@
       return queued;
     }
 
-    async function recordPaneNow(a, key, rows) {
-      const now = Date.now();
+    async function convHold(key, now) {
       let held = convHeld.get(key);
       if (!held) {
         held = (await convGet([key]))[0] || { key: key, first: now, entries: [] };
         convHeld.set(key, held);
       }
-      // Read from the live list rather than from the pane this fold was queued for: the record
-      // handed in was captured before the read went out, and a turn can end while it is in flight.
-      const working = isWorking(paneOf(a.pane_id));
-      const out = recordMessages(held.entries, paneMessages(rows, a.agent), now,
-        { end: turnEnd(a.pane_id), working: working });
-      if (!out.added && !out.grew) return;
-      const tagged = tagUserEntries(out.entries, loadOutbox(), now);
-      saveOutbox(tagged.outbox);
+      return held;
+    }
+
+    // An entry keeps the name and the harness the pane had when it was recorded, because that is
+    // what the transcript said at the time (§8). It is also what lets the joint thread label three
+    // members, and badge one that has since exited, without holding three snapshots.
+    function convStamped(entries, label, agent) {
+      return entries.map(e => e.label ? e : Object.assign({}, e, { label: label, agent: agent }));
+    }
+
+    // One read, recorded. Every durable write here is an event that happens once — the pane's first
+    // read, or the end of one of its turns — so nothing is ever matched against a previous window
+    // (§5.2). What a poll in between produces is the live draft, which is not history and is not
+    // stored.
+    async function recordPaneNow(a, key, rows) {
+      const now = Date.now();
+      const held = await convHold(key, now);
+      const fresh = paneMessages(rows, a.agent);
+      const live = paneOf(a.pane_id) || a;
+      const working = live.status === 'working';
       const label = paneLabel(a) || held.label || '';
-      // Stamped once, on the entries this fold added: an entry keeps the name and the harness the
-      // pane had when it was recorded, because that is what the transcript said at the time (§8).
-      // It is also what lets the joint thread label three members, and badge a member that has
-      // since exited, without holding three snapshots.
-      held.entries = capEntries(tagged.entries)
-        .map(e => e.label ? e : Object.assign({}, e, { label: label, agent: a.agent || '' }));
-      held.label = label;
-      held.touched = now;
-      held.spawn = convSpawn(a, now);
-      // A reply still being written folds again every POLL_MS, and each fold used to put the whole
-      // record to IndexedDB and rewrite the index — the same paragraph to disk twenty times over
-      // one turn. The record in memory is already the transcript; the durable write is what waits
-      // for the turn to end. convFlushConv is the safety net behind that, so a browser killed
-      // mid-turn loses seconds rather than the turn.
-      if (working) convMarkDirty(key);
-      else await convCommit(key);
-      // The thread is a render of what was just folded, so it follows the same read.
+      // The turn's own clock. Zero until this browser has seen the pane end a turn, which is what
+      // makes a first read a backfill and not an append.
+      const end = turnEnd(a.pane_id);
+      // Once per transcript, and not once per *empty* transcript: a prompt committed at the send
+      // can reach a new record before its pane has ever been read, and that must not cost the pane
+      // its history. Records written before this flag existed were all written from reads.
+      if (held.backfilled === undefined) {
+        held.backfilled = held.entries.some(e => e.at_src !== 'sent');
+      }
+      let add = [], older = false;
+      if (!held.backfilled) {
+        // The first read. A pane mid-turn has an unfinished block at the end of it, and that is a
+        // draft rather than history — it goes to the draft slot below with everything else live.
+        const body = working && fresh.length && fresh[fresh.length - 1].who === 'agent'
+          ? fresh.slice(0, -1) : fresh;
+        add = backfillEntries(body, now);
+        // Everything on screen at the first read was said before anything this browser watched,
+        // including a prompt sent seconds ago while the read was in flight.
+        older = true;
+        if (add.length) held.backfilled = true;
+      } else if (end > (held.lastTurn || 0)) {
+        // A turn ended since the last one this transcript recorded. Reads of the same turn after
+        // this one find `lastTurn` already at `end` and append nothing, so the turn-end read and
+        // the poll that follows it cannot both write it.
+        add = turnEntries(fresh, held.entries, now, end);
+        held.lastTurn = end;
+      }
+      convNoteDraft(key, working ? fresh[fresh.length - 1] : null, a, now);
+      if (add.length) {
+        const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), loadOutbox(), now);
+        saveOutbox(tagged.outbox);
+        held.entries = capEntries(older
+          ? tagged.entries.concat(held.entries) : held.entries.concat(tagged.entries));
+        held.label = label;
+        held.touched = now;
+        held.spawn = convSpawn(a, now);
+        await convCommit(key);
+      }
+      // The thread draws the draft as well as the record, so a poll that added nothing can still
+      // have changed what is on screen.
       if (convThreadShows(key)) renderConvView();
     }
 
-    // Working means the turn is still open, so the tail entry is still growing and any write of it
-    // is provisional. A pane whose status this browser has not seen is not assumed to be working:
-    // an unknown state commits, because the cost of that is one extra write and the cost of the
-    // other guess is a record that never lands.
-    function isWorking(a) { return !!a && a.status === 'working'; }
+    // What the pane is saying right now, held per member and never written down. It is the block
+    // above a working composer, and it is replaced whole on every read — which is why it costs no
+    // matching at all: the transcript is what has to be reconciled, and this is not in it.
+    const convDrafts = new Map();
 
-    // How long a still-writing turn may go unwritten. Long enough that a turn writes once rather
-    // than per poll; short enough that a killed tab loses one paragraph's tail at worst.
-    const CONV_FLUSH_MS = 30000;
-    const convDirty = new Set();
-    let convFlushTimer = null;
-
-    function convMarkDirty(key) {
-      convDirty.add(key);
-      if (convFlushTimer) return;
-      convFlushTimer = setTimeout(() => { convFlushTimer = null; convFlushDirty(); }, CONV_FLUSH_MS);
+    function convNoteDraft(key, m, a, now) {
+      if (!m || m.who !== 'agent') { convDrafts.delete(key); return; }
+      convDrafts.set(key, convEntry(m, now, { at: now, at_src: 'read', draft: true,
+        label: paneLabel(a) || '', agent: a.agent || '', pane_id: a.pane_id }));
     }
 
-    // Through the same per-transcript queue every other write goes through, so a flush cannot land
-    // on top of a fold in flight.
-    function convFlushDirty() {
-      for (const key of [...convDirty]) convQueue(key, () => convCommit(key));
+    // A prompt this app sent needs no reading back: the text is exact, the time is exact, and its
+    // provenance was classified at the send. Committed here so that it is in the thread the moment
+    // it is sent rather than when the agent finishes answering it — and so that the turn-end read
+    // knows the prompt is already recorded without comparing a word of it.
+    function convRecordSend(paneId, text, note, now) {
+      const a = paneId ? paneOf(paneId) : null;
+      if (!a || !profileFor(a.agent) || !text) return;
+      const key = convMemberKey(a);
+      if (!convReferenced().has(key)) return;
+      return convQueue(key, async () => {
+        const held = await convHold(key, now);
+        const label = paneLabel(a) || held.label || '';
+        const entry = convEntry({ who: 'user', text: text }, now,
+          Object.assign({ at: now, at_src: 'sent' }, note));
+        held.entries = capEntries(held.entries.concat(convStamped([entry], label, a.agent || '')));
+        held.label = label;
+        held.touched = now;
+        held.spawn = convSpawn(a, now);
+        await convCommit(key);
+        if (convThreadShows(key)) renderConvView();
+      });
     }
 
     async function convCommit(key) {
-      convDirty.delete(key);
       const held = convHeld.get(key);
       if (!held) return;
       await convPut(held);
@@ -6390,46 +6365,22 @@
       return out.removed;
     }
 
-    // Recording is bound to a read, and only the open pane is ever read — so a joint thread would
-    // otherwise show one member talking to itself until you opened the other pane yourself. Read
-    // the conversation's other live members on the same tick, and record what comes back without
-    // ever drawing it.
+    // The end of a turn is announced: the relay polls herdr itself and pushes done/blocked for
+    // every pane, whether or not anyone is reading it. That is what the recorder writes on, so this
+    // is the read behind every append — one per turn, for every pane in a conversation, wherever
+    // the app happens to be looking.
     //
-    // ponytail: only while the thread is on screen, so a conversation you are not looking at costs
-    // nothing. A member that was quiet all that time is backfilled no further than its pane still
-    // reaches — recording in the background would need the relay to push, not the client to poll.
-    const CONV_POLL_MAX = 3;      // a read is real work on the host; a thread of four is not a wall
-
-    function convPollMembers() {
-      if (!convThreadOn() || !convJointOn()) return;
-      const a = paneOf(activePane);
-      const conv = a && convsForPane(a)[0];
-      if (!conv) return;
-      const keys = pairedConvMembers(a, conv).map(m => m.key);
-      let sent = 0;
-      for (const other of agents) {
-        if (sent >= CONV_POLL_MAX) break;
-        if (other.pane_id === activePane || !keys.includes(convMemberKey(other))) continue;
-        // Fixed source and length: the transcript is folded out of consecutive reads, and a member
-        // read one way here and another way when it is the open pane would not overlap.
-        ws.send(JSON.stringify(
-          { type: 'read_pane', pane_id: other.pane_id, lines: 200, source: 'recent-unwrapped' }));
-        sent++;
-      }
-    }
-
-    // The end of a turn is the moment the closing message is whole, and it is announced — the relay
-    // pushes the transition whether or not anyone is reading that pane. The open pane is re-read on
-    // its own transition already and polled besides; a thread member is only read on the poll tick,
-    // so its last message would be committed as it stood mid-sentence and extended a poll later.
-    // One read on the transition closes that window.
+    // It is cheaper than what it replaced. Reading a conversation's other members every three
+    // seconds could only be afforded while their thread was on screen; a read per turn can be
+    // afforded always, which is why a partner's half of a conversation is now recorded whether or
+    // not you were watching it.
     function convReadTurnEnd(paneId, status) {
-      if (!ws || !paneId || paneId === activePane) return;
+      if (!ws || !paneId) return;
       if (status !== 'done' && status !== 'blocked') return;
       const a = paneOf(paneId);
-      // Same predicate as the render: a member of the thread on screen. A conversation nobody is
-      // looking at is not read on its transitions, for the same reason it is not polled.
-      if (!a || !convThreadShows(convMemberKey(a))) return;
+      if (!a || !profileFor(a.agent) || !convReferenced().has(convMemberKey(a))) return;
+      // Fixed source and length. `visible` is the live frame with the terminal's own breaks left in
+      // and they land mid-word, so a turn read that way records a message no reader would recognise.
       ws.send(JSON.stringify(
         { type: 'read_pane', pane_id: paneId, lines: 200, source: 'recent-unwrapped' }));
     }
@@ -6736,7 +6687,15 @@
       // Following the newest message is the default, and a reader who has scrolled up keeps their
       // place: the same rule the pane rows follow.
       const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
-      const all = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      const stored = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      // The live draft is drawn, never stored: it is what a working pane is saying right now, and
+      // the turn it belongs to has not ended, so there is nothing to record yet. Always last —
+      // whatever is still being written is newer than everything that has been.
+      const all = stored.concat(want.map((k, i) => {
+        const d = convDrafts.get(k), live = agents.find(x => convMemberKey(x) === k);
+        return d && live && live.status === 'working'
+          ? Object.assign({}, d, { key: k, member: joint ? i : 0 }) : null;
+      }).filter(Boolean));
       // Filtered here rather than in the renderer: picks, Summary and the count are all positions
       // in the list that was drawn, so the list that was drawn has to be the list they index.
       const entries = convFinalOnly() ? all.filter(e => !convProvisional(e)) : all;
@@ -8518,7 +8477,6 @@
         lastPaneRead = Date.now();
         ws.send(JSON.stringify(
           { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
-        convPollMembers();
       }
     }
 
@@ -8618,7 +8576,7 @@
       const paneId = activePane;
       // Before the send, while the composer still holds what is being sent: a transcript that
       // cannot tell a transfer from typing claims the user said what another agent said.
-      noteSent(i.value);
+      noteSent(i.value, paneId);
       ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: i.value }));
       ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
       i.value = ''; autoGrow(i);

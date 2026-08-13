@@ -136,18 +136,22 @@ test('a visible frame is drawn but never folded; unwrapped scrollback is', async
   await expect.poll(() => held(page, key)).not.toBeNull();
 });
 
-test('two reads arriving together keep both transcript updates', async ({page}) => {
+test('two writes arriving together keep both', async ({page}) => {
+  // A send and a read of the same transcript race: both load the stored record, and without the
+  // per-transcript queue the second put is built on a record that predates the first.
   await open(page);
   const key = await join(page);
   await page.evaluate(async text => {
-    const rows = text.split('\n');
+    paneOf(activePane).status = 'done';
+    setPaneText(text);
     await Promise.all([
-      recordPane(activePane, rows),
-      recordPane(activePane, rows.concat(['', '❯ follow up', '', '⏺ Followed up.', '', '❯'])),
+      convRecordSend(activePane, 'sent while reading', null, Date.now()),
+      recordPane(activePane, paneRows),
     ]);
   }, PANE);
   const rec = await held(page, key);
-  expect(rec.entries.map(e => e.text)).toContain('Followed up.');
+  expect(rec.entries.map(e => e.text)).toContain('sent while reading');
+  expect(rec.entries.some(e => /^Ready\. Name the change\./.test(e.text))).toBe(true);
 });
 
 test('with no database, recording still works and says history will be short', async ({page}) => {
@@ -333,15 +337,23 @@ test('a conversation of two opens on the joint thread, both members in it', asyn
   await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
 });
 
-test('a joint thread reads each live partner with unwrapped scrollback', async ({page}) => {
+test('a turn ending reads that pane, wherever the app is looking', async ({page}) => {
+  // The read behind every append. It follows the transition rather than the view, which is what
+  // records a partner's half of a conversation while you are reading the other half.
   await open(page);
   await joinBoth(page);
   await read(page);
-  await page.locator('#quickActions .qa-conv').click();
   await tapWire(page);
-  await page.evaluate(() => convPollMembers());
+  await page.evaluate(() => convReadTurnEnd('w8:p1', 'done'));
   const reads = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
   expect(reads).toEqual([{type: 'read_pane', pane_id: 'w8:p1', lines: 200, source: 'recent-unwrapped'}]);
+});
+
+test('a pane no conversation names is not read when its turn ends', async ({page}) => {
+  await open(page);
+  await tapWire(page);
+  await page.evaluate(() => convReadTurnEnd(activePane, 'done'));
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'))).toEqual([]);
 });
 
 test('Show paired conversation joins separately recorded pair threads', async ({page}) => {

@@ -80,9 +80,10 @@ A harness with no profile (`opencode` today, and anything unknown) records **not
 in the view. This is the same answer Summary already gives, and the alternative — guessing at a
 boundary — writes wrong text into a store that outlives the pane it came from.
 
-Recording is bound to the **conversation**, not to the view. A pane in a conversation records while
-it is open no matter which of the two views is on screen; switching to the terminal must not punch
-a hole in the transcript.
+Recording is bound to the **conversation**, not to the view, and not to the pane being open. Every
+durable write is an event that happens once (§5.2): the pane's first read, the end of one of its
+turns, or a prompt this app sent. A turn ending is announced by the relay for every pane, so a
+member records whether or not anyone is looking at it.
 
 ---
 
@@ -154,41 +155,34 @@ operation, never a transcript operation.
 **A dangling reference is a rendered state, not an error.** A member whose transcript has been
 evicted renders as "recording no longer held" in the thread and the conversation opens normally.
 
-**Identity is the overlapping window, not a line number or just its text.** Every read shifts the
-indices — the pane scrolls, `Load more` shifts them the other way — so the recorder matches the
-longest exact suffix/prefix overlap between its previous normalized window and the current one.
-It appends only the non-overlapping tail (or prepends the non-overlapping head on backfill). A
-short hash may find candidates, but exact normalized text confirms every match. This preserves two
-real, separate `Done.` messages in one pane; deduping against every text ever seen would silently
-lose the second. Per transcript, not globally: two agents can both say `Done.` and both are real.
+**Identity is the write event, not the text and not a line number.** An entry is not matched
+against anything: it is written by one of the three events in §5.2, each of which fires once, so
+the question "is this the same message I already have?" never has to be asked. Two real, separate
+`Done.` messages in one pane are therefore two entries — which is the point, and is the one thing
+text-based deduping cannot get right.
 
-Three things the overlap has to be pinned to, or it is not implementable:
+Two things this identity has to be pinned to:
 
-- **The unit is the extracted message, not the row.** Both windows are run through §3's extractors
-  first, and the match is over that list. Rows would make every wrap width change look like a gap.
-  *Normalized* means what `summary_body` already does to a range — gutter and box margin stripped,
-  lines joined, runs of whitespace collapsed to one space — so the same message read at a phone
-  width and a desktop width is one string. It is the comparison key only; `text` is stored as
-  extracted.
-- **Two messages are allowed to match inexactly**, and both are one message cut by the edges of a
-  read rather than two different ones:
-  - *The window's first message* can have its opener above the top of the read (agy starts blocks
-    positionally, so this is reachable), so a stored message that **ends with** it is it. A
-    truncated head is never appended and never rewrites the stored full text.
-  - *The transcript's last message* was read while the agent was still writing it, so a fresh
-    message that **starts with** it is that same message, longer — it is extended in place and
-    keeps its original `seen`. This is the common one: every poll during a reply reads another few
-    sentences of the same paragraph, and without this each poll appends another copy of it.
-- **Only the tail is searched.** The scan compares at most the last `OVERLAP_MAX` (200) stored
-  messages against the window, so the cost is bounded by the window and not by the transcript. No
-  overlap inside that span is a gap (§6), not a reason to search further back.
+- **The unit is the extracted message, not the row.** Rows are run through §3's extractors first.
+  What is stored is the block as extracted; the view applies the trim (§3).
+- **A comparison key exists, but only for prompts.** `newTurnMessages` asks whether the prompt
+  above a closing message is one already recorded, and answers with the *normalized* text — what
+  `summary_body` already does to a range: gutter and box margin stripped, lines joined, runs of
+  whitespace collapsed to one space, so a prompt read at a phone width and a desktop width is one
+  string. It is a comparison key only; `text` is stored as extracted. It is consulted at most one
+  entry deep (the transcript's tail) plus the newest stored prompt, never over the transcript.
+
+**Duplicates are repaired, not prevented, when a record predates this model.** `Remove duplicates`
+in the thread menu collapses entries that agree on `who`, normalized text, and their neighbours,
+within a `CONV_DEDUPE_WINDOW` tail. It exists for records the old fold wrote and for a user who
+wants a stored mistake gone; nothing calls it automatically.
 
 **Ceilings, named.** IndexedDB's budget is a share of free disk, not 5 MB, so these are set by what
 a thread is still readable at rather than by what fits:
 
 | Constant | Value | Why |
 |---|---|---|
-| `OVERLAP_MAX` | 200 messages | how far back the overlap scan looks; a read window holds far fewer, so a miss here is a real gap and not a short search |
+| `CONV_DEDUPE_WINDOW` | 200 entries | how far back `Remove duplicates` looks; bounded so the repair costs the same on a long transcript as on a short one |
 | `TEXT_MAX` | 4000 chars per entry | a closing message longer than this is a document; kept high because the store is no longer the constraint |
 | `ENTRY_MAX` | 5000 entries per transcript | oldest-first eviction past it, per pane — a chatty pane must not evict a quiet one's history. Months of turns, not hours |
 | `MEMBER_MAX` | 8 panes per conversation | past this the joint view stops being a thread; a soft cap the user is told about, not a silent drop |
@@ -359,9 +353,9 @@ layer is logic that leaves the fast suite, so it does not.
 
 ## 5. Timestamps: `seen` is observation, `at` is the best answer available
 
-A pane carries no clock. Nothing in `pane read` says when a line was printed, so the fold can only
-say **when it first saw the text**. That field is `seen`, it is the fold's own clock, and the
-overlap machinery is built on it — it never changes meaning.
+A pane carries no clock. Nothing in `pane read` says when a line was printed, so a read can only
+say **when it saw the text**. That field is `seen`, it is the recorder's own clock, and it never
+changes meaning.
 
 `at` is a second field, added later, and it answers a different question: *when was this said*.
 `at_src` says how good the answer is, and every reader goes through `convAt(e)` (`e.at || e.seen`)
@@ -371,7 +365,7 @@ so records written before the field existed keep working.
 |----------|----------|---------------------|
 | `sent` | Exact | The user pressed send in this browser; the outbox stamped the moment |
 | `state` | Within one relay poll | The pane's own `done`/`blocked` transition ended that turn |
-| `read` | The fold's clock | The turn is still being written, so "now" is the honest answer |
+| `read` | The recorder's clock | No better answer was available when the entry was written |
 | `backfill` | Unknown, but older than everything live | Scrollback that predates this browser's first read of the pane |
 
 The relay pushes a status for **every** pane, open or not, so `state` is available for a member
@@ -379,42 +373,65 @@ nobody is reading — which is the whole reason the joint thread can order two p
 transitions are held in memory only: one this browser was not connected for was never observed, and
 a stored one would date a message by a session that saw a different turn.
 
-### 5.1 A committed entry is append-only
+### 5.2 Three events write a transcript, and nothing else does
 
-Recording is not a view of the pane. Once an entry is written to the store:
+The recorder does not reconcile one read against another. It used to: reads overlap, so each fold
+had to find where the new window sat against the stored one, and that matching is where every
+duplicate this feature ever produced came from — a message that moved, a message that changed after
+it was committed, a frame read at a different wrap width. It cannot be made correct either, because
+an agent that says "Done." twice is indistinguishable from the same "Done." read twice.
 
-- **Its text may only be extended, never replaced.** The one legal edit is the message that was
-  still being written when it was last read, now read whole — and only where the committed words
-  are still the start of the new ones. A longer text that does not begin with what was committed is
-  a misalignment, not a finished message, and taking it would rewrite history to match the current
-  frame.
-- **Its stamp may only improve.** `at_src` is ranked `backfill < read < state < sent`; a later fold
-  may raise it — a turn that ended after the entry was written now has a real closing time — and
-  may never lower it, and never moves a `sent` stamp.
-- **Streaming pane content does not own it.** `pane_content` folds into *new* entries. The
-  conversation view renders the committed record, never the frame.
+So nothing is matched. A transcript is written by three events, each of which happens once:
 
-**An entry becomes committed when the turn ends.** A turn in progress has no closing message yet,
-and what the detector reports in its place moves: it reads the block above the live composer, so
-each new block the agent prints *replaces* the last one rather than extending it. That entry is a
-**draft** — marked `draft: true`, the thing the thread shows while the agent works, and a record of
-nothing until the pane's `done`/`blocked` transition drops the flag and stamps it `state`.
+| Event | What it writes | Stamp |
+|---|---|---|
+| **First read of a pane** | everything on screen, in order — the pane's history before anyone was watching | `backfill` |
+| **A turn ending** (`done`/`blocked`) | the agent's closing message, and the prompt above it if that prompt is not already recorded | `state` |
+| **A prompt this app sent** | the exact text, at the exact moment | `sent` |
 
-Drafts sit outside the append-only rule and nowhere else does. Concretely:
+The guards are about shape, never text:
 
-- Only the newest entry may be a draft, only while the pane's status is `working`, and never a user
-  prompt — a prompt is real the moment it is on screen.
-- A fold peels trailing drafts off *before* aligning the window. This is the load-bearing part: a
-  stored tail that is nowhere in the new window agrees with no offset, the alignment fails, and the
-  failure path appends the whole window. One moving message duplicated every message on screen with
-  it, which is the bug drafts exist to close.
-- A draft that comes back word for word is not news: the fold reports nothing, so a quiet poll
-  mid-turn neither re-renders the thread nor writes the record.
-- The durable write follows the same boundary — §4.4 defers the IndexedDB put while the pane is
-  working, with a 30s flush and a flush on `visibilitychange`/`pagehide` behind it.
+- **Backfill happens once per transcript**, tracked by a flag rather than by the transcript being
+  empty — a prompt committed at a send can reach a new record before its pane is ever read, and
+  that must not cost the pane its history. It is prepended: everything on screen at the first read
+  is older than anything watched.
+- **A turn appends once**, because the transition's own timestamp has to be newer than the last one
+  this transcript wrote. The turn-end read and any poll behind it therefore cannot both write it.
+  This is why `noteStatus` stamps one transition once.
+- **The prompt is skipped when the transcript already ends on a user entry** — that is what "this
+  app sent it" looks like from here, whatever the harness's echo of it looks like on screen.
+
+Two costs, stated rather than hidden:
+
+- **A turn that ends while this browser is not connected is a permanent hole.** There is no later
+  fold to find it. This is a deliberate trade: the app already has to be running to chime, push, or
+  notify, so "it records what it witnesses" is a property users already hold about it.
+- **The same prompt typed at the keyboard twice running, with nothing said between, records once.**
+  A second reply to one prompt would otherwise record the prompt twice, and the only thing left to
+  tell those apart is the text. A prompt sent from this app is exempt — it is committed at the send.
+
+What a poll in between produces is the **live draft**: the block above a working composer, held per
+member in memory, replaced whole on every read, never stored, and drawn last in the thread. It
+needs no matching precisely because it is not in the record.
+
+### 5.1 A committed entry is never edited
+
+Recording is not a view of the pane. Once an entry is written to the store, nothing rewrites it:
+
+- **Its text is what was written.** There is no "the message got longer" path, because a message
+  is only written when its turn has already ended. A partial message is a draft, and a draft is not
+  an entry.
+- **Its stamp is what it was written with.** `at_src` is ranked `backfill < read < state < sent`,
+  and the rank is what the view sorts and explains by (§7.3), not a ladder an entry climbs.
+- **Streaming pane content does not own it.** `pane_content` produces new entries or a draft. The
+  conversation view renders the committed record plus, last, the draft — never the frame.
+
+**An entry is committed the moment it is written**, because every write is an event that already
+happened (§5.2). The live draft is the only provisional thing on screen and it is not an entry: it
+is held in memory, replaced whole on every read, and drawn rather than stored.
 
 The cost is stated plainly: a mid-turn message the agent printed and then printed past is not kept.
-One agent bubble per turn, live while it is being written, frozen when the turn ends.
+One agent bubble per turn, live while it is being written, written down when the turn ends.
 
 Two consequences of the pane having no clock of its own, both worth stating in the UI rather than
 hiding:
@@ -434,16 +451,15 @@ hiding:
 
 ## 6. Ordering, backfill, and gaps
 
-- **Within one read**, entries are appended in window order. That order is the pane's own and is
+- **Within one write**, entries are appended in window order. That order is the pane's own and is
   exact.
-- **Backfill** — a `Load more` that reveals older turns — uses the same overlap and inserts the
-  unmatched head at the front of that pane's run. Those entries take the `seen` of the oldest entry
-  they precede, an `at` just below it, and are flagged `backfill: true`; they are not given the current time, which would
-  put an hour-old message at the end of the thread.
-- **A gap** is detectable and is worth drawing. If the prior and current normalized windows have
-  no exact overlap, something may have scrolled past between reads. The next entry carries
-  `gap: true` and the view draws a thin "…" rule above it. This is the difference between a
-  transcript with a possible hole and a transcript that lies.
+- **Backfill is prepended**, because everything on screen at the first read is older than anything
+  watched. Those entries carry `at_src: 'backfill'` and an `at` stepped back one millisecond per
+  message from the moment of the read: ordered against each other, marked as undated, and never
+  given the current time, which would put an hour-old message at the end of the thread.
+- **A gap rule is still drawn** for any entry carrying `gap: true`. Nothing writes that flag now —
+  it was the fold's way of saying "the windows did not overlap" — but records written before the
+  event model still hold it, and a transcript with a possible hole is better drawn than hidden.
 - **The joint view is a stable merge**, not a sort. Each member's transcript is walked in its own
   order and the merge only chooses *which member goes next*, by `convAt`. A member's own sequence can
   therefore never be reordered by a coarse timestamp — the worst a bad clock can do is interleave
@@ -575,9 +591,9 @@ The record binds pane fingerprints, so:
 
 | Suite | What |
 |---|---|
-| `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: adjacent user rows become one message; overlap dedupe preserves repeated identical messages, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
+| `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: adjacent user rows become one message; the first read is history, ordered and marked `backfill`; a turn is the closing message plus the prompt above it; `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
 | `tests/test_conversation.js` | the `via` classifier (§4.2): the composed payload sent unchanged is `transfer`, the payload with an instruction typed over it is `mixed`, the payload deleted and replaced is `typed`, an expired outbox entry is `typed`. Fed by `composeTransfer` itself, so a change to the payload shape breaks the classifier's test rather than the classifier |
-| `tests/test_conversation.js` | the overlap's pinned cases (§4): a reply still being written is extended rather than appended again; a truncated head neither duplicates nor overwrites the stored message; a pane that scrolled past a whole window is a `gap` and not a search further back; a window re-read at a different wrap width is not a gap |
+| `tests/test_conversation.js` | the write events' pinned cases (§5.2): an agent that answers one prompt twice records the prompt once; a prompt committed at the send is not read back off the pane; a prompt typed at the keyboard is; the transition's own timestamp dates the closing message; the same message said twice is two messages; a window with no agent message writes no turn; the comparison key is never what is stored; recording never mutates its input |
 | `tests/test_conversation.js` | `spawn` is captured only from snapshot fields plus `roleOf()`: it records workspace/tab as observations and never invents placement or slot |
 | `tests/test_conversation.js` | the merge: three members interleave by `seen`, **and no member's own order is ever broken** — the property that lets a member be read alone. Fed by `tests/fixtures/pane_*_done.txt`, the same panes the detector is tested on, so a harness whose glyphs change breaks here too |
 | `tests/e2e/browser/conversation.spec.js` (new) | naming a conversation, the thread rendering, a pair opening on the joint thread, "Show paired conversation" off leaving the pane's own transcript unchanged, adding a third pane, the quick-actions toggle surviving a pane switch, the landing-page section outliving a pane that has gone |
@@ -634,7 +650,7 @@ wire format. That is a different phase.
 
 | Piece | Size |
 |---|---|
-| Recorder + overlap match + merge (pure, vm-testable) | ~170 lines |
+| Recorder (three write events) + merge (pure, vm-testable) | ~120 lines |
 | IndexedDB wrapper — open, `get`/`put`/`getAll`, the age index, eviction | ~60 lines |
 | `localStorage` index + fallback store + self-upgrade | ~50 lines |
 | Views (one member, N members) and CSS | ~140 lines |
