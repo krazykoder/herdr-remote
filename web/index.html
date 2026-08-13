@@ -1368,7 +1368,7 @@
       top: calc(100% + 6px);
       right: 0;
       z-index: 20;
-      min-width: 180px;
+      min-width: 260px;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -1646,7 +1646,8 @@
     }
 
     .conv-msg {
-      max-width: 86%;
+      width: 86%;
+      box-sizing: border-box;
       align-self: flex-start;
       border: 1px solid color-mix(in srgb, var(--conv-agent, var(--border)) 45%, var(--border));
       border-radius: 12px;
@@ -2739,14 +2740,6 @@
           <!-- Shown only while this pane's conversation has someone else in it. -->
           <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
             onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
-          <div id="menuConvFont" hidden>
-            <div class="menu-label" style="margin-top:10px">Conversation text</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <button id="convFontDec" onclick="bumpConvFont(-1)" aria-label="Smaller conversation text">A−</button>
-              <span id="convFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
-              <button id="convFontInc" onclick="bumpConvFont(1)" aria-label="Larger conversation text">A+</button>
-            </div>
-          </div>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -2768,6 +2761,14 @@
               <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
               <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
               <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
+            </div>
+          </div>
+          <div id="menuConvFont" hidden>
+            <div class="menu-label" style="margin-top:10px">Conversation text</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button id="convFontDec" onclick="bumpConvFont(-1)" aria-label="Smaller conversation text">A−</button>
+              <span id="convFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+              <button id="convFontInc" onclick="bumpConvFont(1)" aria-label="Larger conversation text">A+</button>
             </div>
           </div>
           <div class="menu-label" style="margin-top:10px">Line width</div>
@@ -6562,7 +6563,7 @@
     }
 
     const FONT_KEY = 'herdr_font_size', FONT_MIN = 6, FONT_MAX = 24, FONT_DEFAULT = 13;
-    const CONV_FONT_KEY = 'herdr_conv_font_size', CONV_FONT_MIN = 11, CONV_FONT_MAX = 24, CONV_FONT_DEFAULT = 13;
+    const CONV_FONT_KEY = 'herdr_conv_font_size', CONV_FONT_MIN = 6, CONV_FONT_MAX = 24, CONV_FONT_DEFAULT = 9;
 
     function currentConvFont() {
       const v = parseInt(localStorage.getItem(CONV_FONT_KEY), 10);

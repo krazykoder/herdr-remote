@@ -273,10 +273,11 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
     const wrap = document.getElementById('termWrap').getBoundingClientRect();
     return Array.from(document.querySelectorAll('#convThread .conv-msg')).map(m => ({
       right: getComputedStyle(m).alignSelf, color: m.style.getPropertyValue('--conv-agent'),
-      thread: Math.round(thread.width), wrap: Math.round(wrap.width), user: m.classList.contains('user'),
+      thread: Math.round(thread.width), wrap: Math.round(wrap.width), width: Math.round(m.getBoundingClientRect().width), user: m.classList.contains('user'),
     }));
   });
   expect(layout[0].thread).toBe(layout[0].wrap);
+  expect(new Set(layout.map(m => m.width)).size).toBe(1);
   expect(layout[0].color).toBe('var(--blue)');       // scratch is codex
   expect(layout[1].color).toBe('var(--agent-claude)');
   expect(layout[0].right).toBe('flex-end');
@@ -292,10 +293,10 @@ test('conversation text has its own menu font control', async ({page}) => {
   await page.locator('#quickActions .qa-conv').click();
   await page.locator('#termMenuBtn').click();
   await expect(page.locator('#menuConvFont')).toBeVisible();
-  await expect(page.locator('#convFontValue')).toHaveText('13px');
+  await expect(page.locator('#convFontValue')).toHaveText('9px');
   await page.locator('#convFontInc').click();
-  await expect(page.locator('#convFontValue')).toHaveText('14px');
-  await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '14px');
+  await expect(page.locator('#convFontValue')).toHaveText('10px');
+  await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '10px');
 });
 
 test('the members strip names who is in it, and what each session was', async ({page}) => {
