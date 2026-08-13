@@ -108,9 +108,14 @@ fourteen other keys.
     id: 'c_8f3a1c22',
     name: 'new authentication feature',   // the user's identifier, 1–64 chars
     created: 1755000000000,
-    members: [{ key: '["local","w1:p1","claude","/x"]', added: 1755000000000, label: 'Architect 1' }],
+    members: [{
+      key: '["local","w1:p1","claude","/x"]', added: 1755000000000, label: 'Architect 1',
+      // Cached per member, so the landing list and the thread header render unawaited. Per member
+      // rather than per conversation because a member's own record is the only one this browser
+      // can count without opening every other member's; the total is their sum.
+      messages: 24, seen: 1755000900000,
+    }],
     pair_id: 'p_9c1d',                    // provenance: seeded from this pair. Nothing reads it back
-    counts: { messages: 24, seen: 1755000900000 },   // cached, so the landing list renders unawaited
   }],
 }
 
@@ -129,6 +134,7 @@ fourteen other keys.
     who: 'agent' | 'user',
     seen: 1755000012345,                  // when THIS BROWSER first saw the text — see §5
     text: 'Ready. Name the change.',      // joined, margin-stripped, capped at TEXT_MAX
+    label: 'Architect 1',                 // the pane's name when this was recorded — see §8
     gap: true,                            // optional: recording resumed after a break, see §6
     via: 'typed' | 'transfer' | 'mixed',  // user entries only — where the words came from, §4.2
     from: { key: '["local","w1:p2","codex","/x"]', label: 'Reviewer 2', hash: 0x8f3a1c22 },  // via != typed
@@ -471,12 +477,18 @@ pair is not a special case in the view, only the thing that seeds the default.
 
 ### 7.4 Where it is reached
 
-- **A pane menu item, "Start conversation…"**, which asks for the name and nothing else.
-- **When the pane is in a pair**, the same item offers both panes pre-selected, as one tap. The
-  pair is a suggestion, not a constraint — the members are a list the user edits.
-- **"Add this pane to a conversation…"** on any pane, listing existing conversations and "New…".
-  This is the whole of "beyond a pair": membership is the user's list, with no requirement that the
-  panes are paired, on one host, or even still alive at the same time.
+- **One pane menu item, opening one sheet**, because joining an existing conversation and naming a
+  new one are the same act: membership is a list the user edits, and splitting them into two items
+  would ask the user to know which they wanted before seeing what exists. The item names the state
+  it is in — "Start conversation…" with none, "Add to a conversation…" with some, `In "…"` once
+  this pane is in one. The sheet lists every conversation with a tick for membership, tapping is
+  the toggle, and a name field underneath starts a new one.
+- **When the pane is in a healthy pair**, the sheet offers the partner as a second member, checked,
+  as one tap. The pair is a suggestion, not a constraint — the members are a list the user edits.
+  A *stale* pair is not offered: its partner is a pane this browser has not verified, and seeding a
+  member from it would record a fingerprint nothing on the other end matches.
+- This is the whole of "beyond a pair": membership has no requirement that the panes are paired, on
+  one host, or even still alive at the same time.
 - **A "Conversations" section on the landing page**, in the existing `herdr_sections` machinery,
   listing name, member count, message count, last-seen, and which members are still live. A
   conversation whose panes are gone is still readable — that is the point of it.

@@ -227,6 +227,69 @@ test('leaving a conversation takes the switch with it and keeps what was recorde
   expect((await held(page, key)).entries.length).toBe(2);   // still readable, and re-joining resumes
 });
 
+// Two members, one thread. The second member is seeded straight into the store: what is being
+// proved here is the render, and driving a second pane's reads would prove the recorder again.
+const joinBoth = page => page.evaluate(async () => {
+  const mine = convMemberKey(paneOf(activePane));
+  const other = convMemberKey(agents.find(a => a.label === 'scratch'));
+  await convPut({key: other, label: 'scratch', first: 1, touched: 2,
+    spawn: {agent: 'codex', role: 'reviewer', project: 'charts'},
+    entries: [{who: 'agent', text: 'the other pane spoke first', seen: 1, label: 'scratch'},
+      {who: 'agent', text: 'and again, last', seen: 9e12, label: 'scratch'}]});
+  saveConvIndex([{
+    id: 'c1', name: 'new authentication feature', created: Date.now(),
+    members: [{key: mine, added: 1, label: 'Architect 1', messages: 2},
+      {key: other, added: 1, label: 'scratch', messages: 2}],
+  }]);
+  return [mine, other];
+});
+
+test('a conversation of two opens on the joint thread, both members in it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const msgs = page.locator('#convThread .conv-msg');
+  // Merged on `seen`: the other pane's first line predates this pane's read, its last follows it.
+  await expect(msgs).toHaveCount(4);
+  await expect(msgs.nth(0)).toContainText('the other pane spoke first');
+  await expect(msgs.nth(3)).toContainText('and again, last');
+  // Every agent bubble names its member — colour alone stops working past two.
+  await expect(msgs.nth(0)).toContainText('scratch');
+  await expect(msgs.nth(1)).toContainText('Architect 1');
+  await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
+});
+
+test('the members strip names who is in it, and what each session was', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const members = page.locator('#convThread .conv-member');
+  await expect(members).toHaveCount(2);
+  await expect(members.nth(0)).toContainText('Architect 1');
+  // Both panes are live in the fake herdr, so neither is tagged — and the spawn line is what a
+  // conversation whose panes have exited still says about them.
+  await expect(page.locator('#convThread .conv-member .tag')).toHaveCount(0);
+  await expect(members.nth(1).locator('.spawn')).toContainText('codex · reviewer · charts');
+});
+
+test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was', async ({page}) => {
+  await open(page);
+  const [mine] = await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(4);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show this pane alone');
+  await page.locator('#menuConvJoint').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
+  await expect(page.locator('#convThread .conv-members')).toHaveCount(0);
+  // The joint view is only ever a render: nothing was merged on disk.
+  const rec = await held(page, mine);
+  expect(rec.entries.map(e => e.text)).not.toContain('the other pane spoke first');
+});
+
 test('self-upgrade keeps a newer fallback tail beside an existing database record', async ({page}) => {
   await open(page);
   const key = await page.evaluate(async () => {

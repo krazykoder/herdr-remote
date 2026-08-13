@@ -1557,6 +1557,70 @@
       white-space: nowrap;
     }
 
+    /* Who is in this conversation. One row until tapped, because it is reference rather than
+       reading — and the row is where a conversation whose panes have all exited says what it was. */
+    .conv-members {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      width: 100%;
+      padding: 0 0 6px;
+      background: none;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .conv-member {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.65rem;
+      color: var(--muted);
+      min-width: 0;
+    }
+
+    .conv-member .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    .conv-member.gone {
+      opacity: 0.6;
+    }
+
+    .conv-member .who {
+      color: var(--text);
+    }
+
+    .conv-member .tag {
+      color: var(--orange);
+      font-size: 0.6rem;
+    }
+
+    /* The spawn line: what the session was, for a conversation that outlives it. Collapsed by
+       default — one row of members is the glance, and this is the answer to a question. */
+    .conv-member .spawn {
+      display: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      opacity: 0.8;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-members.open {
+      flex-direction: column;
+    }
+
+    .conv-members.open .conv-member .spawn {
+      display: block;
+    }
+
     /* A time rule, and the same element says "there is history missing here" — one shape for
        "when" means a gap is read as a break in the thread rather than as a second kind of thing. */
     .conv-rule {
@@ -2665,6 +2729,9 @@
                text, because "start one" and "you are in one" are different offers. -->
           <button class="menu-item" role="menuitem" id="menuConv"
             onclick="closeTermMenu(); openConvDialog(activePane)">Start conversation…</button>
+          <!-- Shown only while this pane's conversation has someone else in it. -->
+          <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
+            onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -5619,6 +5686,27 @@
         .slice(0, records.length - keep)
         .map(r => r.key);
     }
+    // Several members, one thread. A stable merge on `seen`: each member's own entries keep the
+    // order they were recorded in, exactly, and a tie is broken by member order rather than by
+    // whichever record was read first. That property is what makes the joint view a render — the
+    // per-pane records are never merged on disk, so a member can always be read alone (§4).
+    function mergeEntries(records) {
+      const recs = (records || []).filter(r => r && r.entries && r.entries.length);
+      const heads = recs.map(() => 0), out = [];
+      for (;;) {
+        let pick = -1;
+        for (let i = 0; i < recs.length; i++) {
+          const e = recs[i].entries[heads[i]];
+          if (!e) continue;
+          if (pick < 0 || (e.seen || 0) < (recs[pick].entries[heads[pick]].seen || 0)) pick = i;
+        }
+        if (pick < 0) return out;
+        // `member` is the index the colour comes from, and it is the position in the list handed
+        // in — member order, which is the order the conversation stores.
+        out.push(Object.assign({}, recs[pick].entries[heads[pick]++],
+          { key: recs[pick].key, member: recs[pick].member }));
+      }
+    }
     // --- Conversation recorder (pure) --- end
 
     // The pending transfer, and where a classified send waits for the recorder to find it. Both
@@ -6055,6 +6143,23 @@
       if (window.cue) cue('page');
     }
 
+    // Joint by default, and global rather than per pane: it is a preference about how threads are
+    // read, not a fact about one pane. Off means this pane's own transcript alone, which is always
+    // available — the joint thread is only ever a render, and the records are never merged on disk.
+    const CONV_JOINT_KEY = 'herdr_conv_joint';
+
+    function convJointOn() {
+      try { return localStorage.getItem(CONV_JOINT_KEY) !== 'off'; }
+      catch (e) { return true; }
+    }
+
+    function toggleConvJoint() {
+      try { localStorage.setItem(CONV_JOINT_KEY, convJointOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      renderTermMenuState();
+      renderConvView();
+    }
+
     // Both halves of the switch: the button that offers it and the view it selects.
     function renderConvBar() {
       renderQuickActions();
@@ -6075,29 +6180,67 @@
       if (!on) { box.innerHTML = ''; convViewToken++; return; }
       const token = ++convViewToken;
       const key = convMemberKey(a);
-      // The session's own copy first, so the common case — a thread re-rendered on every read of
-      // an open pane — never waits on IndexedDB at all.
-      const rec = convHeld.get(key) || (await convGet([key]))[0];
+      // Every member, or this pane alone. Joint is the default because that is what a conversation
+      // of several panes says they are: one piece of work.
+      const joint = convJointOn() && (conv.members || []).length > 1;
+      const want = joint ? conv.members.map(m => m.key) : [key];
+      const recs = await convRecords(want);
       if (token !== convViewToken) return;
       // Following the newest message is the default, and a reader who has scrolled up keeps their
       // place: the same rule the pane rows follow.
       const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
-      const entries = (rec && rec.entries) || [];
-      box.innerHTML = convHeadHtml(conv, key, entries.length) + (entries.length
-        ? convEntriesHtml(entries, a)
+      const entries = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      box.innerHTML = convHeadHtml(conv, key, joint ? -1 : entries.length) +
+        (joint ? convMembersHtml(conv, recs) : '') + (entries.length
+        ? convEntriesHtml(entries, a, joint)
         : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
       if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // This session's copies first, so the common case — a thread re-rendered on every read of the
+    // open pane — waits on IndexedDB only for the members that are not this one.
+    async function convRecords(keys) {
+      const missing = keys.filter(k => !convHeld.has(k));
+      const got = missing.length ? await convGet(missing) : [];
+      return keys.map((k, i) => Object.assign(
+        { key: k, entries: [] }, convHeld.get(k) || got.find(r => r.key === k), { member: i }));
     }
 
     // The conversation's total, not this pane's: the other members' counts come from the index,
     // which is what it caches them for, and the rendered member's own count comes from the entries
     // on screen — the index is written after a fold, so it is a message behind for exactly as long
-    // as it takes this to run.
+    // as it takes this to run. A joint thread has every member's entries on screen already and
+    // passes -1 to say so.
     function convHeadHtml(conv, key, count) {
       const n = (conv.members || []).reduce(
-        (t, m) => t + (m.key === key ? count : (m.messages || 0)), 0);
+        (t, m) => t + (count >= 0 && m.key === key ? count : (m.messages || 0)), 0);
       return `<div class="conv-head"><span class="name">${escapeHtml(conv.name)}</span>` +
         `<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+    }
+
+    // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
+    // per member, in member order. The user keeps --blue, which is why nothing here is near it.
+    function convTint(i) {
+      return `hsl(${PAIR_TINTS[i % PAIR_TINTS.length]} 60% 55%)`;
+    }
+
+    // Who is in this conversation, and which of them are still running. Collapsed to one row until
+    // tapped: a conversation whose panes have all exited is still readable, and this is where it
+    // says what it was.
+    function convMembersHtml(conv, recs) {
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      return `<button class="conv-members" onclick="this.classList.toggle('open')"
+        aria-label="Who is in this conversation">` + (conv.members || []).map((m, i) => {
+        const rec = recs.find(r => r.key === m.key);
+        const spawn = (rec && rec.spawn) || {};
+        const on = live.has(m.key);
+        const facts = [spawn.agent, spawn.role, spawn.project || spawn.cwd].filter(Boolean);
+        return `<span class="conv-member${on ? '' : ' gone'}">` +
+          `<span class="dot" style="background:${convTint(i)}"></span>` +
+          `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
+          `${on ? '' : '<span class="tag">no longer live</span>'}` +
+          `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
+      }).join('') + '</button>';
     }
 
     function convSpan(ms) {
@@ -6112,8 +6255,7 @@
     // second kind of furniture.
     const CONV_RULE_GAP = 10 * 60 * 1000;
 
-    function convEntriesHtml(entries, a) {
-      const color = a && a.agent ? statusColor(a) : 'var(--muted)';
+    function convEntriesHtml(entries, a, joint) {
       let last = 0;
       return entries.map(e => {
         const at = e.seen || 0;
@@ -6129,13 +6271,26 @@
         // `transfer` says the source alone; `mixed` adds "edited", because "approved verbatim" and
         // "rewrote it" are different facts about the same bubble.
         const from = user && e.via && e.via !== 'typed' && e.from
-          ? `<span class="conv-who"><span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
-            `${e.via === 'mixed' ? ' · edited' : ''}</span>`
+          ? `<span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
+            `${e.via === 'mixed' ? ' · edited' : ''}`
           : '';
-        const who = user ? from
-          : `<span class="conv-who"><span class="dot" style="background:${color}"></span>` +
-            `${escapeHtml(e.label || paneLabel(a))}</span>`;
-        return rule + `<div class="conv-msg${user ? ' user' : ''}">${who}${escapeHtml(e.text || '')}</div>`;
+        // Every agent bubble carries its label as well as its colour: two washes of one family are
+        // not enough on a phone in sunlight, and past two members colour alone stops working.
+        const tint = convTint(e.member || 0);
+        const name = escapeHtml(e.label || paneLabel(a));
+        // In a joint thread a user bubble also names the pane it was sent to: every prompt in the
+        // thread is the same blue on the same side, and "which colleague was this said to" is the
+        // question the joint view exists to answer.
+        const to = joint ? `<span class="dot" style="background:${tint}"></span>${name}` : '';
+        const bar = user ? [to, from].filter(Boolean).join(' · ')
+          : `<span class="dot" style="background:${tint}"></span>${name}`;
+        const who = bar ? `<span class="conv-who">${bar}</span>` : '';
+        // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
+        // the joint thread: one member needs no telling apart from itself.
+        const wash = joint && !user
+          ? ` style="background:color-mix(in srgb, ${tint} 10%, var(--surface));border-color:color-mix(in srgb, ${tint} 35%, var(--border))"`
+          : '';
+        return rule + `<div class="conv-msg${user ? ' user' : ''}"${wash}>${who}${escapeHtml(e.text || '')}</div>`;
       }).join('');
     }
 
@@ -6507,10 +6662,16 @@
       const conv = document.getElementById('menuConv');
       // Only a pane an agent is running in has messages to record, so a shell is not offered one.
       conv.hidden = !(a && profileFor(a.agent));
+      const joint = document.getElementById('menuConvJoint');
+      joint.hidden = true;
       if (!conv.hidden) {
         const mine = convsForPane(a);
         conv.textContent = mine.length ? `In "${mine[0].name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
+        // A conversation of one has no joint thread to show, so the preference is not offered.
+        joint.hidden = !(mine.length && (mine[0].members || []).length > 1);
+        joint.textContent = convJointOn()
+          ? 'Show this pane alone' : 'Show paired conversation';
       }
     }
 

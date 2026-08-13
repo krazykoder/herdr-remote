@@ -41,7 +41,7 @@ const ctx = vm.createContext({
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
 const NAMES = ['paneMessages', 'recordMessages', 'convKey', 'convText', 'convHash', 'convMemberKey',
-               'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer',
+               'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries',
                'parseConvIndex', 'capEntries', 'evictOrder',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
 vm.runInContext(
@@ -51,7 +51,7 @@ vm.runInContext(
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {paneMessages, recordMessages, convKey, convText, convHash, convMemberKey, classifyVia,
-       outboxAdd, tagUserEntries, composeTransfer,
+       outboxAdd, tagUserEntries, composeTransfer, mergeEntries,
        parseConvIndex, capEntries, evictOrder,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
 
@@ -402,4 +402,49 @@ test('with everything referenced, the oldest touched goes first', () => {
 
 test('nothing is evicted while there is room', () => {
   assert.deepStrictEqual(dropped([{key: 'a', touched: 1}], new Set(), 500), []);
+});
+
+// --- The joint thread ---
+// Several members are one thread on screen and never one record on disk, so the merge is a render
+// and this is the property that lets it be: every member's own order survives it.
+
+test('three members interleave by when each was seen', () => {
+  const at = (who, text, seen) => ({who: who, text: text, seen: seen});
+  const recs = [
+    {key: 'a', member: 0, entries: [at('user', 'a1', 10), at('agent', 'a2', 40)]},
+    {key: 'b', member: 1, entries: [at('agent', 'b1', 20)]},
+    {key: 'c', member: 2, entries: [at('agent', 'c1', 30), at('agent', 'c2', 50)]},
+  ];
+  assert.deepStrictEqual(texts(mergeEntries(recs)), ['a1', 'b1', 'c1', 'a2', 'c2']);
+  // The colour comes from member order, and it travels with the entry.
+  assert.deepStrictEqual(Array.from(mergeEntries(recs), e => e.member), [0, 1, 2, 0, 2]);
+});
+
+test('no member’s own order is ever broken, whatever the clocks say', () => {
+  // Two panes on two hosts have two clocks. A merge that sorted globally would reorder one pane's
+  // own turns against each other, which is the one thing reading a member alone must not lose.
+  const recs = [
+    {key: 'a', member: 0, entries: [
+      {who: 'user', text: 'a1', seen: 100}, {who: 'agent', text: 'a2', seen: 99}]},
+    {key: 'b', member: 1, entries: [{who: 'agent', text: 'b1', seen: 99}]},
+  ];
+  const out = texts(mergeEntries(recs));
+  assert.ok(out.indexOf('a1') < out.indexOf('a2'), 'the pane said a1 before a2');
+});
+
+test('a tie is broken by member order, so the thread is stable between renders', () => {
+  const recs = [
+    {key: 'a', member: 0, entries: [{who: 'agent', text: 'a1', seen: 5}]},
+    {key: 'b', member: 1, entries: [{who: 'agent', text: 'b1', seen: 5}]},
+  ];
+  assert.deepStrictEqual(texts(mergeEntries(recs)), ['a1', 'b1']);
+});
+
+test('a member with nothing recorded yet contributes nothing and breaks nothing', () => {
+  const recs = [
+    {key: 'a', member: 0, entries: []},
+    {key: 'b', member: 1, entries: [{who: 'agent', text: 'b1', seen: 5}]},
+  ];
+  assert.deepStrictEqual(texts(mergeEntries(recs)), ['b1']);
+  assert.deepStrictEqual(texts(mergeEntries([])), []);
 });
