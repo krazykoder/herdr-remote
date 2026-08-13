@@ -365,7 +365,7 @@ test('a corrupt index loads as no conversations, never as half of one', () => {
   assert.deepStrictEqual(ids(JSON.stringify({version: 99, items: [{id: 'c1'}]})), []);
 });
 
-test('an entry with no name or no members is not a conversation', () => {
+test('a named conversation may be empty, but malformed entries are dropped', () => {
   const items = [{id: 'c1', name: 'auth', members: []}, {id: 'c2', members: []}, {name: 'x'}];
   assert.deepStrictEqual(ids(index(items)), ['c1']);
 });
