@@ -5778,6 +5778,20 @@
       return ms.map((m, i) => convEntry(m, now, { at: now - (ms.length - i), at_src: 'backfill' }));
     }
 
+    // A send can win the race to the store before the pane's first read. Its echoed prompt is not
+    // history: keep the older prefix as backfill and let the turn event append its reply after the
+    // exact sent entry. Only the newest stored prompt is consulted.
+    function splitFirstRead(fresh, stored) {
+      const ms = fresh || [], last = (stored || [])[(stored || []).length - 1];
+      if (!last || last.who !== 'user' || last.at_src !== 'sent') return { history: ms, turn: [] };
+      for (let i = ms.length - 1; i >= 0; i--) {
+        if (ms[i].who === 'user' && convKey(ms[i].text) === convKey(last.text)) {
+          return { history: ms.slice(0, i), turn: ms.slice(i) };
+        }
+      }
+      return { history: ms, turn: [] };
+    }
+
     // The turn that just ended, out of the window read when it ended: the agent's closing message,
     // and the prompt that opened it if that prompt is directly above it. Walks back from the end —
     // an agent that ran twice on one prompt has no prompt of its own above the second reply, and
@@ -6258,30 +6272,32 @@
       if (held.backfilled === undefined) {
         held.backfilled = held.entries.some(e => e.at_src !== 'sent');
       }
-      let add = [], older = false;
+      let before = [], add = [];
       if (!held.backfilled) {
         // The first read. A pane mid-turn has an unfinished block at the end of it, and that is a
         // draft rather than history — it goes to the draft slot below with everything else live.
         const body = working && fresh.length && fresh[fresh.length - 1].who === 'agent'
           ? fresh.slice(0, -1) : fresh;
-        add = backfillEntries(body, now);
-        // Everything on screen at the first read was said before anything this browser watched,
-        // including a prompt sent seconds ago while the read was in flight.
-        older = true;
-        if (add.length) held.backfilled = true;
+        const first = splitFirstRead(body, held.entries);
+        before = backfillEntries(first.history, now);
+        // A local send has its own event and timestamp. Its pane echo opens the current turn,
+        // rather than becoming an older copy of the same prompt.
+        if (first.turn.length && end) add = turnEntries(first.turn, held.entries, now, end);
+        if (body.length) held.backfilled = true;
+        if (add.length) held.lastTurn = end;
       } else if (end > (held.lastTurn || 0)) {
         // A turn ended since the last one this transcript recorded. Reads of the same turn after
         // this one find `lastTurn` already at `end` and append nothing, so the turn-end read and
         // the poll that follows it cannot both write it.
         add = turnEntries(fresh, held.entries, now, end);
-        held.lastTurn = end;
+        if (add.length) held.lastTurn = end;
       }
       convNoteDraft(key, working ? fresh[fresh.length - 1] : null, a, now);
-      if (add.length) {
-        const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), loadOutbox(), now);
+      if (before.length || add.length) {
+        const old = tagUserEntries(convStamped(before, label, a.agent || ''), loadOutbox(), now);
+        const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), old.outbox, now);
         saveOutbox(tagged.outbox);
-        held.entries = capEntries(older
-          ? tagged.entries.concat(held.entries) : held.entries.concat(tagged.entries));
+        held.entries = capEntries(old.entries.concat(held.entries, tagged.entries));
         held.label = label;
         held.touched = now;
         held.spawn = convSpawn(a, now);

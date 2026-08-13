@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'backfillEntries', 'turnMessages', 'newTurnMessages', 'turnEntries',
+const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessages', 'newTurnMessages', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
@@ -51,7 +51,7 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, backfillEntries, turnMessages, newTurnMessages, turnEntries,
+const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessages, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
@@ -161,6 +161,18 @@ test('a prompt already committed at the send is not read back off the pane', () 
   const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
   const out = turn(stored, TWO_TURNS, NOW, NOW - 1);
   assert.deepStrictEqual(texts(out), ['Second answer.'], 'the prompt is already in the transcript');
+});
+
+test('a first read keeps a sent prompt in place and appends its completed reply', () => {
+  const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
+  const first = splitFirstRead(paneMessages(TWO_TURNS, 'claude'), stored);
+  const history = backfillEntries(first.history, NOW);
+  const reply = turnEntries(first.turn, stored, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(history), ['first question', 'First answer.']);
+  assert.deepStrictEqual(texts(reply), ['Second answer.']);
+  assert.deepStrictEqual(texts(history.concat(stored, reply)),
+    ['first question', 'First answer.', 'second question', 'Second answer.']);
+  assert.strictEqual(reply[0].at_src, 'state');
 });
 
 test('a prompt typed at the keyboard is read back, because nothing else will', () => {

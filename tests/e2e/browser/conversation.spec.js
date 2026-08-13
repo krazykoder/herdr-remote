@@ -154,6 +154,24 @@ test('two writes arriving together keep both', async ({page}) => {
   expect(rec.entries.some(e => /^Ready\. Name the change\./.test(e.text))).toBe(true);
 });
 
+test('a send before the first pane read is written once, before its reply', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(async () => {
+    const now = Date.now(), pane = activePane;
+    paneOf(pane).status = 'done';
+    statusAt[pane] = {last: 'done', working: now - 2, done: now - 1};
+    await convRecordSend(pane, 'second question', null, now - 3);
+    await recordPane(pane, [
+      '❯ first question', '', '⏺ First answer.', '', '❯ second question', '',
+      '⏺ Second answer.', '', '❯',
+    ]);
+  });
+  expect((await held(page, key)).entries.map(e => e.text)).toEqual([
+    'first question', 'First answer.', 'second question', 'Second answer.',
+  ]);
+});
+
 test('with no database, recording still works and says history will be short', async ({page}) => {
   // Private mode, a policy-blocked store, a blocked upgrade. None of them is a reason to stop
   // rendering a pane, and none of them may lose the session's recording silently.
