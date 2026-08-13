@@ -1756,6 +1756,15 @@
       color: var(--blue);
     }
 
+    /* Lowercased against the header's uppercase, so a clock reads as a clock and not as a label,
+       and tabular figures so a column of them does not wobble. */
+    .conv-time {
+      text-transform: lowercase;
+      letter-spacing: 0;
+      font-variant-numeric: tabular-nums;
+      opacity: 0.75;
+    }
+
     .conv-who .dot {
       width: 0.75em;
       height: 0.75em;
@@ -5976,12 +5985,8 @@
       for (const e of entries || []) {
         const k = convDupKey(e), prev = at.get(k);
         if (prev !== undefined && out.length - prev <= CONV_OVERLAP_MAX) {
-          // The copy that goes keeps nothing back: the longer text wins, since the unwrapped read
-          // is the one with the words whole, and the better-ranked stamp wins (§5.1).
-          const kept = out[prev];
-          out[prev] = Object.assign({}, kept,
-            (e.text || '').length > (kept.text || '').length ? { text: e.text } : null,
-            convAtRank(e) > convAtRank(kept) ? { at: e.at, at_src: e.at_src } : null);
+          // Earliest copy is the transcript's chronology. Later duplicates are repair debris,
+          // and must not rewrite its words or its timestamp.
           removed++;
           continue;
         }
@@ -6696,6 +6701,19 @@
     // second kind of furniture.
     const CONV_RULE_GAP = 10 * 60 * 1000;
 
+    // The stamp on a bubble, as a clock rather than as a date: the rule between sittings carries
+    // how far apart they were, and a bubble only has to answer "when, within this one".
+    //
+    // A backfilled entry was already on screen the first time this browser read the pane, so its
+    // time is an ordering and not a reading — the tilde is the difference between a stamp and a
+    // guess, and the title says which of the four sources it came from (§5).
+    function convClock(e) {
+      const at = convAt(e);
+      if (!at) return '';
+      const t = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return convAtRank(e) ? t : '~' + t;
+    }
+
     function convEntriesHtml(entries, a, joint, paired) {
       const self = convMemberKey(a);
       let last = 0;
@@ -6735,7 +6753,14 @@
         // question the joint view exists to answer.
         const who = `<span class="dot" style="background:${tint}"></span>${name}${badge}`;
         const bar = user ? [joint ? who : '', from].filter(Boolean).join(' · ') : who;
-        const head = bar ? `<span class="conv-who">${bar}</span>` : '';
+        // On every bubble, including a user's own in a single-pane thread, where it is the whole
+        // header: a time you have to switch views to check is not one you can check an entry with.
+        const clock = convClock(e);
+        const time = clock
+          ? `<span class="conv-time" title="${escapeHtml(new Date(at).toLocaleString())} · `
+            + `${escapeHtml(e.at_src || 'unknown')}">${escapeHtml(clock)}</span>`
+          : '';
+        const head = bar || time ? `<span class="conv-who">${bar}${time}</span>` : '';
         // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
         // the joint thread: one member needs no telling apart from itself.
         const side = paired && e.member === 1 ? ' conv-right' : '';

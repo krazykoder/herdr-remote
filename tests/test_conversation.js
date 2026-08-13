@@ -41,7 +41,7 @@ const ctx = vm.createContext({
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
 const NAMES = ['paneMessages', 'recordMessages', 'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
-               'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries',
+               'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
 vm.runInContext(
@@ -51,7 +51,7 @@ vm.runInContext(
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {paneMessages, recordMessages, convAt, convKey, convText, convHash, convMemberKey, classifyVia,
-       outboxAdd, tagUserEntries, composeTransfer, mergeEntries,
+       outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
 
@@ -166,6 +166,14 @@ test('the same message said twice is two messages', () => {
   assert.deepStrictEqual(texts(out.entries), ['a', 'Done.', 'b', 'Done.']);
   // And the next read of the same pane still does not think one of them is new.
   assert.strictEqual(record(out.entries, rows, NOW + 3000).added, 0);
+});
+
+test('duplicate repair keeps the first text and timestamp', () => {
+  const first = {who: 'agent', text: 'our loca\nl database', at: NOW, at_src: 'backfill'};
+  const later = {who: 'agent', text: 'our local database', at: NOW + 3000, at_src: 'read'};
+  const out = convDedupe([first, later]);
+  assert.strictEqual(out.removed, 1);
+  assert.deepStrictEqual(Array.from(out.entries), [first]);
 });
 
 test('a message still being written is extended, not duplicated', () => {
