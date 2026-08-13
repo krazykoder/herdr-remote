@@ -454,6 +454,7 @@ test('Summary ticks the newest agent bubble, and a tick is what a selection is h
   await page.locator('#quickActions .qa-conv').click();
   const msgs = page.locator('#convThread .conv-msg');
   await expect(msgs).toHaveCount(2);
+  await expect(msgs.nth(0).locator('.conv-pick')).toHaveCSS('right', '10px');
   await page.locator('#quickActions .qa-summary').click();
   // The newest *agent* message, not the newest message: the user's prompt is the later of the two.
   await expect(msgs.nth(0)).toHaveClass(/picked/);
