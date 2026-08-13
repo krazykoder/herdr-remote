@@ -6259,6 +6259,18 @@
       renderConvView();
     }
 
+    // A pair can predate conversations, leaving each pane with its own recorded thread. Read
+    // those two records together without changing either conversation's membership on disk.
+    function pairedConvMembers(a, conv) {
+      const members = conv.members || [];
+      const pair = pairFor(pairs, a.pane_id);
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') return members;
+      const partner = agents.find(x => memberMatches(partnerOf(pair, a.pane_id), x));
+      if (!partner || !convsForPane(partner).length) return members;
+      const key = convMemberKey(partner);
+      return members.some(m => m.key === key) ? members : members.concat({key, label: paneLabel(partner)});
+    }
+
     // Both halves of the switch: the button that offers it and the view it selects.
     function renderConvBar() {
       renderQuickActions();
@@ -6287,17 +6299,19 @@
       const key = convMemberKey(a);
       // Every member, or this pane alone. Joint is the default because that is what a conversation
       // of several panes says they are: one piece of work.
-      const joint = convJointOn() && (conv.members || []).length > 1;
-      const want = joint ? conv.members.map(m => m.key) : [key];
+      const members = pairedConvMembers(a, conv);
+      const joint = convJointOn() && members.length > 1;
+      const want = joint ? members.map(m => m.key) : [key];
       const recs = await convRecords(want);
       if (token !== convViewToken) return;
       // Following the newest message is the default, and a reader who has scrolled up keeps their
       // place: the same rule the pane rows follow.
       const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
       const entries = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
-      const paired = joint && conv.pair_id && (conv.members || []).length === 2;
-      box.innerHTML = convHeadHtml(conv, key, joint ? -1 : entries.length) +
-        (joint ? convMembersHtml(conv, recs) : '') + (entries.length
+      const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
+      const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
+      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length) +
+        (joint ? convMembersHtml(thread, recs) : '') + (entries.length
         ? convEntriesHtml(entries, a, joint, paired)
         : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
       // Which bubble Summary means, found once here rather than by the button every render. The
@@ -6911,7 +6925,7 @@
         conv.textContent = mine.length ? `In "${mine[0].name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
         // A conversation of one has no joint thread to show, so the preference is not offered.
-        joint.hidden = !(mine.length && (mine[0].members || []).length > 1);
+        joint.hidden = !(mine.length && pairedConvMembers(a, mine[0]).length > 1);
         joint.textContent = convJointOn()
           ? 'Show this pane alone' : 'Show paired conversation';
         convFont.hidden = !(mine.length && convViewOn(a));

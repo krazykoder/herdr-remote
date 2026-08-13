@@ -272,6 +272,20 @@ const joinBoth = page => page.evaluate(async () => {
   return [mine, other];
 });
 
+// Pairs can be made after each pane already has its own conversation. The paired reader must join
+// those two stored transcripts without rewriting either conversation's membership.
+const joinSeparatePair = page => page.evaluate(async () => {
+  const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
+  const mineKey = convMemberKey(mine), otherKey = convMemberKey(other);
+  pairs = [{id: 'p1', members: [recentFingerprint(mine), recentFingerprint(other)]}];
+  await convPut({key: otherKey, label: 'scratch', first: 1, touched: 2,
+    entries: [{who: 'agent', text: 'the partner kept its own thread', seen: 1, label: 'scratch'}]});
+  saveConvIndex([
+    {id: 'c1', name: 'mine', created: Date.now(), members: [{key: mineKey, added: 1, label: 'Architect 1'}]},
+    {id: 'c2', name: 'theirs', created: Date.now(), members: [{key: otherKey, added: 1, label: 'scratch'}]},
+  ]);
+});
+
 test('a conversation of two opens on the joint thread, both members in it', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -286,6 +300,22 @@ test('a conversation of two opens on the joint thread, both members in it', asyn
   await expect(msgs.nth(0)).toContainText('scratch');
   await expect(msgs.nth(1)).toContainText('Architect 1');
   await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
+});
+
+test('Show paired conversation joins separately recorded pair threads', async ({page}) => {
+  await open(page);
+  await joinSeparatePair(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(3);
+  await expect(page.locator('#convThread')).toContainText('the partner kept its own thread');
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show this pane alone');
+  await page.locator('#menuConvJoint').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConvJoint').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(3);
 });
 
 test('a paired thread fills the pane, keeps agent colors, and keeps prompts beside their agent', async ({page}) => {
@@ -402,6 +432,11 @@ test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was
   // The joint view is only ever a render: nothing was merged on disk.
   const rec = await held(page, mine);
   expect(rec.entries.map(e => e.text)).not.toContain('the other pane spoke first');
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show paired conversation');
+  await page.locator('#menuConvJoint').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(4);
+  await expect(page.locator('#convThread .conv-members')).toHaveCount(1);
 });
 
 test('self-upgrade keeps a newer fallback tail beside an existing database record', async ({page}) => {
