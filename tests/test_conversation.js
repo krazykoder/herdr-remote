@@ -528,6 +528,14 @@ test('the turn ending freezes the draft, and dates it by the transition', () => 
   assert.equal(done.entries[1].at_src, 'state');
 });
 
+test('an unchanged draft still freezes when its turn ends', () => {
+  const one = recordMessages([], TURN, NOW, WORKING);
+  const done = recordMessages(one.entries, TURN, NOW + 6000, {end: NOW + 5000});
+  assert.ok(!done.entries[1].draft);
+  assert.equal(done.entries[1].at, NOW + 5000);
+  assert.equal(done.entries[1].at_src, 'state');
+});
+
 test('a draft that came back unchanged is not news', () => {
   // The caller renders the thread and writes the record on what this reports, and a turn where the
   // agent is thinking is most of a turn.

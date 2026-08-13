@@ -5866,7 +5866,7 @@
       // A draft that came back word for word is not news. The caller renders and writes on what
       // this reports, so a quiet poll in the middle of a turn has to report nothing — and the
       // entry it keeps is the stored one, which still knows when it was first seen.
-      if (!grew && !head.length && drafts === 1 && tail.length === 1
+      if (working && !end && !grew && !head.length && drafts === 1 && tail.length === 1
           && tail[0].who === peeled[0].who && convKey(tail[0].text) === convKey(peeled[0].text)) {
         return { entries: (stored || []).slice(), added: 0, grew: false, gap: false };
       }
