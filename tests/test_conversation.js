@@ -21,11 +21,11 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-// The detector and the recorder together: the recorder is a reader of turnSummaries and
-// userInputLines, and testing it against stubs of those would prove it agrees with the stubs.
-const from = HTML.indexOf('    // --- Final message detection ---');
-const to = HTML.indexOf('    // --- Conversation recorder (pure) --- end', from);
-assert.ok(from !== -1 && to > from, 'conversation recorder block not found in web/index.html');
+const slice = (start, end) => {
+  const from = HTML.indexOf(start), to = HTML.indexOf(end, from);
+  assert.ok(from !== -1 && to > from, `${start} not found in web/index.html`);
+  return HTML.slice(from, to);
+};
 
 // Everything the detector block reaches for and does not declare. The recorder itself needs none
 // of it — that is the property being kept.
@@ -36,11 +36,22 @@ const ctx = vm.createContext({
   paneRows: [], selA: null, selB: null,
   localStorage: {getItem: () => null, setItem: () => {}},
 });
-vm.runInContext(HTML.slice(from, to), ctx);
-const {paneMessages, recordMessages, convKey, convText} = ctx;
-// A const is a lexical binding rather than a property of the context object, so the ceilings are
-// read back by evaluating their names in the context they live in — as the browser specs do.
-const CONV_TEXT_MAX = vm.runInContext('CONV_TEXT_MAX', ctx);
+// The pair block for composeTransfer: the classifier is fed by the real payload builder, so a
+// change to the payload's shape breaks the classifier's test rather than the classifier.
+// Then the detector and the recorder together — the recorder reads turnSummaries and
+// userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
+const NAMES = ['paneMessages', 'recordMessages', 'convKey', 'convText', 'convHash', 'convMemberKey',
+               'classifyVia', 'outboxAdd', 'outboxVia', 'tagUserEntries', 'composeTransfer',
+               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL'];
+vm.runInContext(
+  slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
+  + slice('    // --- Final message detection ---', '    // --- Conversation recorder (pure) --- end')
+  // `const` is a lexical binding and never lands on the context object, so the block exports
+  // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
+  + `\n;__out = {${NAMES.join(', ')}};`, ctx);
+const {paneMessages, recordMessages, convKey, convText, convHash, convMemberKey, classifyVia,
+       outboxAdd, outboxVia, tagUserEntries, composeTransfer,
+       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL} = ctx.__out;
 
 const NOW = 1755000000000;
 
@@ -216,4 +227,100 @@ test('a real pane reads as one turn: the request, then what it concluded', () =>
   assert.ok(!ms[0].text.includes('Baked for'), 'the turn footer leaked into the message');
   assert.strictEqual(ms[1].text, 'allow the test commands without prompting');
   assert.strictEqual(convText(rows, [11, 11]), ms[1].text);
+});
+
+// --- provenance: typed, transferred, or both ---
+//
+// doTransfer prefills the composer and never sends, so what reaches the pane is whatever the user
+// pressed send on. These pin the three outcomes against the real payload builder.
+
+const SELECTION = 'The relay polls herdr every 3s and broadcasts to clients.';
+const PAYLOAD = composeTransfer('Review this.', 'architect', SELECTION).text;
+const pending = (o = {}) => Object.assign({
+  key: 'local|w1:p1|claude|/work', label: 'Architect 1',
+  body: SELECTION, payload: PAYLOAD, hash: convHash(SELECTION), at: NOW,
+}, o);
+
+test('the composed payload sent unchanged is a transfer', () => {
+  const out = classifyVia(pending(), PAYLOAD, NOW + 5000);
+  assert.strictEqual(out.via, 'transfer');
+  assert.strictEqual(out.from.label, 'Architect 1');
+  assert.strictEqual(out.from.key, 'local|w1:p1|claude|/work');
+});
+
+test('an instruction typed over the payload is mixed, which is the common case', () => {
+  // The prefill is a checkpoint, and adding to what it put there is what a checkpoint is for.
+  const out = classifyVia(pending(), 'Also check the tests.\n\n' + PAYLOAD, NOW + 5000);
+  assert.strictEqual(out.via, 'mixed');
+  assert.strictEqual(out.from.hash, convHash(SELECTION));
+});
+
+test('the payload deleted and replaced is typed, with no source attached', () => {
+  const out = classifyVia(pending(), 'never mind, do the other thing', NOW + 5000);
+  assert.strictEqual(out.via, 'typed');
+  assert.strictEqual(out.from, undefined);
+});
+
+test('a prefill the user left for half an hour no longer answers for a send', () => {
+  assert.strictEqual(classifyVia(pending(), PAYLOAD, NOW + CONV_OUTBOX_TTL + 1).via, 'typed');
+});
+
+test('a send with no prefill behind it is typed', () => {
+  assert.strictEqual(classifyVia(null, 'do the thing', NOW).via, 'typed');
+});
+
+test('the payload rewrapped by the composer is still the same transfer', () => {
+  // The textarea soft-wraps and the pane re-wraps again; the words are what identify it.
+  const out = classifyVia(pending(), PAYLOAD.replace(/ /g, '\n'), NOW + 5000);
+  assert.strictEqual(out.via, 'transfer');
+});
+
+test('the outbox keeps the newest classification and forgets the old ones', () => {
+  let box = [];
+  for (let i = 0; i < CONV_OUTBOX_MAX + 10; i++) {
+    box = outboxAdd(box, convHash('prompt ' + i), {via: 'transfer'}, NOW + i);
+  }
+  assert.strictEqual(box.length, CONV_OUTBOX_MAX);
+  assert.strictEqual(outboxVia(box, 'prompt 0', NOW), null, 'an evicted send still answers');
+  assert.ok(outboxVia(box, 'prompt 59', NOW + 60));
+});
+
+test('an expired entry answers nothing, even before it is evicted', () => {
+  const box = outboxAdd([], convHash('do the thing'), {via: 'mixed'}, NOW);
+  assert.strictEqual(outboxVia(box, 'do the thing', NOW + CONV_OUTBOX_TTL + 1), null);
+});
+
+test('the recorder tags the prompt when it reads it back off the pane', () => {
+  // The whole point of the outbox: the send is classified here and the prompt appears in the pane
+  // seconds later, having been through the harness's own rendering.
+  const box = outboxAdd([], convHash(PAYLOAD), classifyVia(pending(), PAYLOAD, NOW), NOW);
+  const rows = ('❯ ' + PAYLOAD.split('\n').join('\n❯ ')).split('\n')
+    .concat(['', '⏺ Looking now.', '', '❯']);
+  const out = record([], rows, NOW + 5000);
+  const tagged = tagUserEntries(out.entries, box, NOW + 5000);
+  assert.strictEqual(tagged[0].via, 'transfer');
+  assert.strictEqual(tagged[0].from.label, 'Architect 1');
+  // And what the agent said is never given a provenance: everything an agent says is its own.
+  assert.strictEqual(tagged[1].via, undefined);
+});
+
+test('an unmatched prompt is typed, which is the honest failure', () => {
+  // Provenance is only knowable where the send happened. A transfer made on the desktop and
+  // recorded on the phone reads as typed there, because the phone never saw the transfer.
+  const tagged = tagUserEntries(record([], TWO_TURNS, NOW).entries, [], NOW);
+  assert.deepStrictEqual(Array.from(tagged, e => e.via), ['typed', undefined, 'typed', undefined]);
+});
+
+test('a tagged entry is never reclassified', () => {
+  // Which is also what keeps it cheap: the hash is computed for new entries only.
+  const already = [{who: 'user', text: 'do the thing', seen: NOW, via: 'transfer', from: {label: 'x'}}];
+  const box = outboxAdd([], convHash('do the thing'), {via: 'mixed'}, NOW);
+  assert.strictEqual(tagUserEntries(already, box, NOW)[0].via, 'transfer');
+});
+
+test('a pane fingerprint is all four fields, so a recycled id cannot inherit a transcript', () => {
+  const a = {host: 'local', pane_id: 'w1:p1', agent: 'claude', cwd: '/work'};
+  assert.strictEqual(convMemberKey(a), 'local|w1:p1|claude|/work');
+  assert.notStrictEqual(convMemberKey(a), convMemberKey({...a, cwd: '/other'}));
+  assert.strictEqual(convMemberKey(null), '');
 });

@@ -5173,6 +5173,7 @@
     // *where the windows overlap*, never the text alone.
 
     const CONV_TEXT_MAX = 4000, CONV_OVERLAP_MAX = 200;
+    const CONV_OUTBOX_MAX = 50, CONV_OUTBOX_TTL = 30 * 60 * 1000;
 
     // Gutter glyph, the box side it may sit inside, and the leading space. Same characters as
     // _MARGIN in relay/pane_summary.py, and for the same reason: what is left is where the text
@@ -5299,7 +5300,98 @@
         gap: false,
       };
     }
+    // Which pane a transcript belongs to. Not the pane_id alone: herdr recycles those, and a
+    // recycled id landing on a dead session's transcript would inherit words that pane never said,
+    // which is the worst failure this feature has.
+    function convMemberKey(a) {
+      return a ? [a.host || '', a.pane_id || '', a.agent || '', a.cwd || ''].join('|') : '';
+    }
+
+    function convHash(text) {
+      const t = convKey(text);
+      let h = 0x811c9dc5;
+      for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+      return (h >>> 0).toString(16);
+    }
+
+    // Where the words in an outgoing prompt came from. Transfer prefills the composer and stops,
+    // so by the time the pane echoes the prompt back there is nothing left in it to tell a
+    // transfer from typing — the answer has to be worked out at the send, against what was
+    // prefilled.
+    //
+    // `mixed` is the ordinary outcome and not an edge case: the payload arrives in the composer
+    // for the user to read, and adding an instruction over it before sending is what the
+    // checkpoint is for.
+    function classifyVia(pending, sent, now) {
+      const text = convKey(sent);
+      if (!pending || !pending.body || now - pending.at > CONV_OUTBOX_TTL) return { via: 'typed' };
+      if (!text.includes(convKey(pending.body))) return { via: 'typed' };
+      return {
+        via: text === convKey(pending.payload) ? 'transfer' : 'mixed',
+        from: { key: pending.key, label: pending.label, hash: pending.hash },
+      };
+    }
+
+    // A send is classified now and read back off the pane seconds later, so the answer waits in a
+    // small keyed list until the recorder comes looking. Short and capped: past the TTL a prompt
+    // that has still not appeared is one this browser is never going to record.
+    function outboxAdd(box, hash, note, now) {
+      const kept = (box || []).filter(e => now - e.at < CONV_OUTBOX_TTL && e.hash !== hash);
+      kept.push(Object.assign({ hash: hash, at: now }, note));
+      return kept.slice(-CONV_OUTBOX_MAX);
+    }
+
+    function outboxVia(box, text, now) {
+      const hash = convHash(text);
+      for (let i = (box || []).length - 1; i >= 0; i--) {
+        const e = box[i];
+        if (e.hash === hash && now - e.at < CONV_OUTBOX_TTL) return e;
+      }
+      return null;
+    }
+
+    // Every user entry gets a `via`, and `typed` is what an unmatched one gets — the honest
+    // failure mode, because provenance is only knowable where the send happened. A transfer made
+    // on the desktop and recorded on the phone reads as typed there; the phone never saw it.
+    //
+    // Once tagged an entry is never re-examined, which is also what keeps this cheap: the hash is
+    // computed for new entries only.
+    function tagUserEntries(entries, box, now) {
+      return (entries || []).map(e => {
+        if (e.who !== 'user' || e.via) return e;
+        const hit = outboxVia(box, e.text, now);
+        return Object.assign({}, e, hit ? { via: hit.via, from: hit.from } : { via: 'typed' });
+      });
+    }
     // --- Conversation recorder (pure) --- end
+
+    // The pending transfer, and where a classified send waits for the recorder to find it. Both
+    // are one browser's knowledge of its own sends; nothing here is shared and nothing is sent.
+    const CONV_OUTBOX_KEY = 'herdr_conv_outbox';
+    let pendingTransfer = null;
+
+    function loadOutbox() {
+      try {
+        const d = JSON.parse(localStorage.getItem(CONV_OUTBOX_KEY) || '');
+        return Array.isArray(d) ? d : [];
+      } catch (e) { return []; }   // a corrupt blob is no provenance, never a broken send
+    }
+
+    function saveOutbox(box) {
+      try { localStorage.setItem(CONV_OUTBOX_KEY, JSON.stringify(box)); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
+    // Called on the way out of every composer send. A prefill answers for one send: whether it was
+    // used, edited or deleted, the next send starts from nothing.
+    function noteSent(text) {
+      const now = Date.now();
+      const note = classifyVia(pendingTransfer, text, now);
+      pendingTransfer = null;
+      // `typed` is the default the recorder applies on its own, so there is nothing to leave.
+      if (note.via === 'typed') return;
+      saveOutbox(outboxAdd(loadOutbox(), convHash(text), note, now));
+    }
 
     // --- Line ruler ---
     // Two integers and one band element — the selection itself is never per-line DOM, and nothing
@@ -6177,6 +6269,15 @@
         ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
       const out = composeTransfer(instruction, mine.role, transferSelection);
       if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+      // What the next send will be measured against. Captured here because this is the last moment
+      // the source pane is the open one — openTerminal below moves to the partner — and because
+      // this function prefills and stops, so the send that classifies against it has not happened.
+      const src = agents.find(x => x.pane_id === activePane);
+      pendingTransfer = {
+        key: convMemberKey(src), label: (src && paneLabel(src)) || mine.role || '',
+        body: transferSelection, payload: out.text,
+        hash: convHash(transferSelection), at: Date.now(),
+      };
       // Before openTerminal moves activePane to the partner: the range being transferred belongs
       // to this pane, and this is the point at which the user has committed to it.
       learnFromSelection();
@@ -6802,6 +6903,9 @@
         showToast(`Text must be ${SEND_TEXT_MAX} characters or fewer.`); return;
       }
       const paneId = activePane;
+      // Before the send, while the composer still holds what is being sent: a transcript that
+      // cannot tell a transfer from typing claims the user said what another agent said.
+      noteSent(i.value);
       ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: i.value }));
       ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
       i.value = ''; autoGrow(i);
