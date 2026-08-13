@@ -335,6 +335,23 @@
       color: var(--red);
     }
 
+    .status-bar .state {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .status-bar .abort {
+      padding: 2px 6px;
+      font: inherit;
+      font-size: 0.65rem;
+      color: var(--red);
+      background: transparent;
+      border: 1px solid var(--red);
+      border-radius: 4px;
+    }
+
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
     body.terminal-open>.status-bar {
       order: 10;
@@ -2836,7 +2853,8 @@
        curve as for what it says. -->
   <div class="status-bar" id="statusBar">
     <span class="left" id="statusBarLeft"></span>
-    <span class="right" id="statusBarRight"></span>
+    <span class="state"><button class="abort" id="abortBtn" onclick="abortWorking()" hidden
+      aria-label="Stop working agent">Esc</button><span class="right" id="statusBarRight"></span></span>
   </div>
 
   <div class="terminal-view" id="terminalView">
@@ -4155,10 +4173,18 @@
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
+      const abort = document.getElementById('abortBtn');
       const [word, tone] = pane ? paneStatusWord() : ['', ''];
       right.textContent = word;  // uppercased by .status-bar .right, not here
       right.classList.toggle('on', tone === 'on');
       right.classList.toggle('alert', tone === 'alert');
+      abort.hidden = !pane || pane.status !== 'working';
+    }
+
+    function abortWorking() {
+      const pane = activePane ? paneOf(activePane) : null;
+      if (!pane || pane.status !== 'working') return;
+      sendKey('Escape');
     }
 
     // Both halves go stale on their own — the left label by the minute, a shell's live/idle at the
@@ -7845,14 +7871,21 @@
 
     // --- Transfer ---
 
+    let transferSource = '';
+
     function openTransfer() {
-      const pair = pairFor(pairs, activePane);
+      const picked = convThreadOn() ? Array.from(document.querySelectorAll('#convThread .conv-msg.picked')) : [];
+      const keys = new Set(picked.map(el => el.dataset.key));
+      if (keys.size > 1) { showToast('Select messages from one agent to transfer.'); return; }
+      const source = keys.size ? agents.find(a => convMemberKey(a) === keys.values().next().value) : paneOf(activePane);
+      const pair = source && pairFor(pairs, source.pane_id);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
       // The ruler's range wins when there is one: it is the deliberate selection, and on a phone
       // the native one is usually empty anyway. Capture before anything can steal it — switching
       // panes clears both.
       transferSelection = selText || String(window.getSelection() || '').trim();
-      const partner = partnerOf(pair, activePane);
+      transferSource = source.pane_id;
+      const partner = partnerOf(pair, transferSource);
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
         (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
@@ -7874,18 +7907,20 @@
     }
 
     function closeTransfer() {
+      transferSource = '';
       document.getElementById('transferSheet').style.display = 'none';
     }
 
     // Prefill and stop. This is the last checkpoint before one agent's output enters another's
     // context, so it must never end in a send.
     function doTransfer(shortcutIndex) {
-      const pair = pairFor(pairs, activePane);
+      const source = paneOf(transferSource || activePane);
+      const pair = source && pairFor(pairs, source.pane_id);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') {
         document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
         return;
       }
-      const mine = memberOf(pair, activePane), partner = partnerOf(pair, activePane);
+      const mine = memberOf(pair, source.pane_id), partner = partnerOf(pair, source.pane_id);
       // The partner's agent, not this pane's: the instruction is about to be typed over there.
       const instruction = shortcutIndex >= 0
         ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
@@ -7894,7 +7929,7 @@
       // What the next send will be measured against. Captured here because this is the last moment
       // the source pane is the open one — openTerminal below moves to the partner — and because
       // this function prefills and stops, so the send that classifies against it has not happened.
-      const src = agents.find(x => x.pane_id === activePane);
+      const src = source;
       pendingTransfer = {
         key: convMemberKey(src), label: (src && paneLabel(src)) || mine.role || '',
         body: transferSelection, payload: out.text,

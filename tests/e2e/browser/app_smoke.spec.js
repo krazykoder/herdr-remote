@@ -103,3 +103,19 @@ test('the composer sends to the pane that is open', async ({page}) => {
   // And the composer is cleared, which is the only sign the user gets that it left.
   await expect(page.locator(R('termInput'))).toHaveValue('');
 });
+
+test('Esc is beside a working pane badge and targets that pane', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  const sent = [];
+  await page.exposeFunction('__noteEsc', d => sent.push(JSON.parse(d)));
+  await page.evaluate(() => {
+    paneOf(activePane).status = 'working';
+    renderStatusBar();
+    const send = ws.send.bind(ws);
+    ws.send = d => { window.__noteEsc(d); return send(d); };
+  });
+  await expect(page.locator('#abortBtn')).toBeVisible();
+  await expect(page.locator('#statusBarRight')).toHaveText('working');
+  await page.locator('#abortBtn').click();
+  await expect.poll(() => sent).toContainEqual({type: 'send_keys', pane_id: 'w1:p1', keys: ['Escape']});
+});

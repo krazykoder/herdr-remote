@@ -417,6 +417,22 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
 
+test('thread Transfer targets selected member’s partner', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+  });
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  // First bubble belongs to scratch, while Architect 1 remains the open pane.
+  await page.locator('#convThread .conv-msg').first().locator('.conv-pick').click();
+  await page.locator('#selTransfer').click();
+  await expect(page.locator('#transferSheet')).toBeVisible();
+  await expect(page.locator('#transferTarget')).toHaveText('Architect 1');
+});
+
 test('conversation text has its own menu font control', async ({page}) => {
   await open(page);
   await join(page);
