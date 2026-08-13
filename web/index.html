@@ -4364,6 +4364,7 @@
             if (timeline.length > 100) timeline.pop();
             noteActivity(a.pane_id);
             noteStatus(a.pane_id, a.status);
+            convReadTurnEnd(a.pane_id, a.status);
             if (shouldSound(a.pane_id, a.status)) ring = true;
           }
           prevStatuses[a.pane_id] = a.status;
@@ -4408,6 +4409,7 @@
           if (timeline.length > 100) timeline.pop();
           noteActivity(update.pane_id);
           noteStatus(update.pane_id, update.status);
+          convReadTurnEnd(update.pane_id, update.status);
           if (shouldSound(update.pane_id, update.status) && window.cue) cue('chime');
           // A status change is the one thing that says the pane's text is about to be worth
           // re-reading, and it arrives here rather than being asked for — the relay polls herdr on
@@ -4430,6 +4432,7 @@
         // into blocked has already been heard — sounding it again was two chimes for one event.
         noteActivity(msg.pane_id);
         noteStatus(msg.pane_id, 'blocked');
+        convReadTurnEnd(msg.pane_id, 'blocked');
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
@@ -4496,7 +4499,13 @@
 
     // Coming back to the tab is looking at it: a pane that finished while you were away has been
     // seen the moment you return to it, and the title has to drop the count with it.
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+    // Going away is where a transcript is at risk: a backgrounded phone tab is the one a browser
+    // kills without warning, and a turn still being written has folds that have not been put yet.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) convFlushDirty(); else render();
+    });
+    // pagehide rather than unload: it is the one that fires on iOS, which is where this app lives.
+    window.addEventListener('pagehide', () => convFlushDirty());
 
     // The browser tab, which is the only surface that reaches you when the app is not on screen —
     // another tab, another window, a phone with the PWA in the background. Everything else in this
@@ -6258,10 +6267,49 @@
       held.label = label;
       held.touched = now;
       held.spawn = convSpawn(a, now);
-      await convPut(held);
-      convNoteCounts(key, held.entries, now);
+      // A reply still being written folds again every POLL_MS, and each fold used to put the whole
+      // record to IndexedDB and rewrite the index — the same paragraph to disk twenty times over
+      // one turn. The record in memory is already the transcript; the durable write is what waits
+      // for the turn to end. convFlushConv is the safety net behind that, so a browser killed
+      // mid-turn loses seconds rather than the turn.
+      // Read from the live list rather than from the pane this fold was queued for: the record
+      // handed in was captured before the read went out, and a turn can end while it is in flight.
+      if (isWorking(paneOf(a.pane_id))) convMarkDirty(key);
+      else await convCommit(key);
       // The thread is a render of what was just folded, so it follows the same read.
       if (convThreadShows(key)) renderConvView();
+    }
+
+    // Working means the turn is still open, so the tail entry is still growing and any write of it
+    // is provisional. A pane whose status this browser has not seen is not assumed to be working:
+    // an unknown state commits, because the cost of that is one extra write and the cost of the
+    // other guess is a record that never lands.
+    function isWorking(a) { return !!a && a.status === 'working'; }
+
+    // How long a still-writing turn may go unwritten. Long enough that a turn writes once rather
+    // than per poll; short enough that a killed tab loses one paragraph's tail at worst.
+    const CONV_FLUSH_MS = 30000;
+    const convDirty = new Set();
+    let convFlushTimer = null;
+
+    function convMarkDirty(key) {
+      convDirty.add(key);
+      if (convFlushTimer) return;
+      convFlushTimer = setTimeout(() => { convFlushTimer = null; convFlushDirty(); }, CONV_FLUSH_MS);
+    }
+
+    // Through the same per-transcript queue every other write goes through, so a flush cannot land
+    // on top of a fold in flight.
+    function convFlushDirty() {
+      for (const key of [...convDirty]) convQueue(key, () => convCommit(key));
+    }
+
+    async function convCommit(key) {
+      convDirty.delete(key);
+      const held = convHeld.get(key);
+      if (!held) return;
+      await convPut(held);
+      convNoteCounts(key, held.entries, Date.now());
     }
 
     // The one place the append-only rule (§5.1) is broken, and it is broken by the user, on a
@@ -6290,8 +6338,8 @@
       held.entries = out.entries;
       held.touched = Date.now();
       convHeld.set(key, held);
-      await convPut(held);
-      convNoteCounts(key, held.entries, Date.now());
+      // Straight to disk, whatever the pane is doing: this one was asked for.
+      await convCommit(key);
       if (convThreadShows(key)) renderConvView();
       return out.removed;
     }
@@ -6322,6 +6370,22 @@
           { type: 'read_pane', pane_id: other.pane_id, lines: 200, source: 'recent-unwrapped' }));
         sent++;
       }
+    }
+
+    // The end of a turn is the moment the closing message is whole, and it is announced — the relay
+    // pushes the transition whether or not anyone is reading that pane. The open pane is re-read on
+    // its own transition already and polled besides; a thread member is only read on the poll tick,
+    // so its last message would be committed as it stood mid-sentence and extended a poll later.
+    // One read on the transition closes that window.
+    function convReadTurnEnd(paneId, status) {
+      if (!ws || !paneId || paneId === activePane) return;
+      if (status !== 'done' && status !== 'blocked') return;
+      const a = paneOf(paneId);
+      // Same predicate as the render: a member of the thread on screen. A conversation nobody is
+      // looking at is not read on its transitions, for the same reason it is not polled.
+      if (!a || !convThreadShows(convMemberKey(a))) return;
+      ws.send(JSON.stringify(
+        { type: 'read_pane', pane_id: paneId, lines: 200, source: 'recent-unwrapped' }));
     }
 
     // Whether a transcript that just changed is one the view on screen is rendering: the open
