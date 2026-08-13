@@ -96,6 +96,14 @@ test('the Codex composer and its status line are not a user message', () => {
   assert.deepStrictEqual(texts(paneMessages(rows, 'codex')), ['S2b review clean. No edit needed.\n\nVerified: 118 Node + 19 Playwright tests pass.\n\nNext: S3. Convert poll/render path to explicit view, then remove S1 accessors under two-view browser coverage.']);
 });
 
+test('a sent Codex prompt stays when its idle composer is removed', () => {
+  const rows = ['› explain this', '', '• It works.', '', '› Write tests for @filename', '',
+    '  gpt-5.6-terra medium · Context 83% used'];
+  const ms = paneMessages(rows, 'codex');
+  assert.deepStrictEqual(whos(ms), ['user', 'agent']);
+  assert.deepStrictEqual(texts(ms), ['explain this', 'It works.']);
+});
+
 test('a multi-line prompt is one message, not one per line', () => {
   const rows = ['❯ do the thing', '❯ and then the other thing', '', '⏺ Done.', '', '❯'];
   const ms = paneMessages(rows, 'claude');

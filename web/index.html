@@ -5679,15 +5679,13 @@
       // Codex's idle composer shares its prompt gutter. Its model/context status immediately
       // follows, unlike a sent prompt, which is followed by the agent reply.
       //
-      // One forward scan rather than a slice per prompt line: a pane read at the 50k ceiling would
-      // otherwise copy its own tail once for every `❯` in it.
-      if (agent === 'codex') for (const i of userLines) {
-        let next = '';
-        for (let j = i + 1; j < rows.length && !next; j++) if ((rows[j] || '').trim()) next = rows[j];
-        if (/^\s*\S+(?:\s+\S+)*\s+· Context \d+% used(?:\s|$)/.test(next)) {
-          for (const j of userLines) if (j >= i) userLines.delete(j);
-          break;
-        }
+      // One forward scan: a pane read at the 50k ceiling must not rescan its tail once per prompt.
+      if (agent === 'codex') for (let i = 0; i < rows.length; i++) {
+        if (!/^\s*\S+(?:\s+\S+)*\s+· Context \d+% used(?:\s|$)/.test(rows[i] || '')) continue;
+        let start = i;
+        while (start >= 0 && userLines.has(start)) start--;
+        for (const j of userLines) if (j > start) userLines.delete(j);
+        break;
       }
       const lines = [...userLines].sort((a, b) => a - b);
       for (let i = 0; i < lines.length;) {
@@ -7897,9 +7895,9 @@
         return { c, count, seen, names, liveNames };
       }).sort((a, b) => b.seen - a.seen || b.count - a.count);
       el.innerHTML = rows.length ? `<div class="section-header">Conversations</div>` + rows.map(r =>
-        `<div class="conversation-card" role="button" tabindex="0"` +
-        ` onclick="openConversation('${escapeHtml(r.c.id)}')"` +
-        ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation('${escapeHtml(r.c.id)}'); }">` +
+        `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
+        ` onclick="openConversation(this.dataset.convId)"` +
+        ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
         `<div class="conversation-title">💬 ${escapeHtml(r.c.name)}` +
         `<span>${r.count} ${r.count === 1 ? 'message' : 'messages'}</span></div>` +
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
