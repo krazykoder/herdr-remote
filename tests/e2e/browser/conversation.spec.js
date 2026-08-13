@@ -589,3 +589,27 @@ test('leaving a thread keeps an existing ruler selection', async ({page}) => {
   expect(await page.evaluate(() => ({selA, selB, selText})))
     .toEqual({selA: 0, selB: 0, selText: kept});
 });
+
+test('a conversation card opens a live member, on its thread', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#terminalView .back').click();
+  const card = page.locator('#conversations .conversation-card');
+  await expect(card).toContainText('new authentication feature');
+  await card.click();
+  // Straight to the thread: the card names a conversation, so the pane it opens shows one.
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
+});
+
+test('a conversation whose panes have all exited says so rather than doing nothing', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#terminalView .back').click();
+  // The pane is gone from the snapshot: what is left is a record with nothing live to open.
+  await page.evaluate(() => { agents = []; renderBody(); });
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#toast')).toContainText('No live pane');
+});
