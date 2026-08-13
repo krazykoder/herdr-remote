@@ -42,7 +42,8 @@ const ctx = vm.createContext({
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
 const NAMES = ['paneMessages', 'recordMessages', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'outboxVia', 'tagUserEntries', 'composeTransfer',
-               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL'];
+               'parseConvIndex', 'capEntries', 'evictOrder',
+               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
 vm.runInContext(
   slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
   + slice('    // --- Final message detection ---', '    // --- Conversation recorder (pure) --- end')
@@ -51,7 +52,8 @@ vm.runInContext(
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {paneMessages, recordMessages, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, outboxVia, tagUserEntries, composeTransfer,
-       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL} = ctx.__out;
+       parseConvIndex, capEntries, evictOrder,
+       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
 
 const NOW = 1755000000000;
 
@@ -323,4 +325,62 @@ test('a pane fingerprint is all four fields, so a recycled id cannot inherit a t
   assert.strictEqual(convMemberKey(a), 'local|w1:p1|claude|/work');
   assert.notStrictEqual(convMemberKey(a), convMemberKey({...a, cwd: '/other'}));
   assert.strictEqual(convMemberKey(null), '');
+});
+
+// --- the index, and what gets evicted ---
+//
+// The store itself is a real IndexedDB and is proved in tests/e2e/browser/conversation.spec.js.
+// What is here is the part that decides *what* is written and what is dropped, which is where a
+// bug loses history rather than a render.
+
+const index = items => JSON.stringify({version: 1, items: items});
+// Same realm caveat as above: what is asserted is the contents, not which Array built them.
+const ids = raw => Array.from(parseConvIndex(raw), c => c.id);
+const dropped = (...args) => Array.from(evictOrder(...args));
+
+test('a corrupt index loads as no conversations, never as half of one', () => {
+  // It outlives the panes it describes, so one day it is read by a version that did not write it.
+  assert.deepStrictEqual(ids('{not json'), []);
+  assert.deepStrictEqual(ids(null), []);
+  assert.deepStrictEqual(ids(index('nope')), []);
+  assert.deepStrictEqual(ids(JSON.stringify({version: 99, items: [{id: 'c1'}]})), []);
+});
+
+test('an entry with no name or no members is not a conversation', () => {
+  const items = [{id: 'c1', name: 'auth', members: []}, {id: 'c2', members: []}, {name: 'x'}];
+  assert.deepStrictEqual(ids(index(items)), ['c1']);
+});
+
+test('membership is capped, and the cap does not drop the conversation', () => {
+  const members = Array.from({length: 20}, (_, i) => ({key: 'local|w1:p' + i + '|claude|/work'}));
+  const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
+  assert.strictEqual(conv.members.length, CONV_MEMBER_MAX);
+  assert.strictEqual(conv.name, 'auth');
+});
+
+test('a transcript past its ceiling loses its oldest entries, not its newest', () => {
+  const entries = Array.from({length: 30}, (_, i) => ({who: 'agent', text: 'm' + i, seen: NOW + i}));
+  const kept = capEntries(entries, 10);
+  assert.strictEqual(kept.length, 10);
+  assert.strictEqual(kept[0].text, 'm20');
+  assert.strictEqual(kept[9].text, 'm29');
+  // Under the ceiling it is the same array, so the common case allocates nothing.
+  assert.strictEqual(capEntries(entries, 100), entries);
+});
+
+test('eviction drops what nobody named before anything anyone did', () => {
+  // Naming a conversation is what protects its history — the promise the name makes.
+  const rec = (key, touched) => ({key: key, touched: touched});
+  const all = [rec('a', 1), rec('b', 2), rec('c', 3), rec('d', 4)];
+  // 'a' is the oldest, but it is in a conversation and 'b' and 'c' are not.
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'd']), 2), ['b', 'c']);
+});
+
+test('with everything referenced, the oldest touched goes first', () => {
+  const all = [{key: 'a', touched: 3}, {key: 'b', touched: 1}, {key: 'c', touched: 2}];
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'b', 'c']), 1), ['b', 'c']);
+});
+
+test('nothing is evicted while there is room', () => {
+  assert.deepStrictEqual(dropped([{key: 'a', touched: 1}], new Set(), 500), []);
 });
