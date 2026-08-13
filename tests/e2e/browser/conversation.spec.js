@@ -173,6 +173,32 @@ test('a pane in no conversation is offered one, and starting it begins the recor
   expect((await held(page, key)).entries.length).toBe(2);
 });
 
+test('on a phone, the menu scrolls and conversation controls keep the nav to one line', async ({page}) => {
+  await open(page);
+  await join(page);
+  await page.evaluate(() => renderQuickActions());
+  await page.setViewportSize({width: 320, height: 400});
+  const nav = await page.locator('#quickActions .qa-nav').evaluate(el => ({
+    children: el.children.length,
+    rows: [...el.children].map(child => {
+      const r = child.getBoundingClientRect();
+      return Math.round(r.y);
+    }),
+  }));
+  expect(nav.children).toBe(3);
+  expect(Math.max(...nav.rows) - Math.min(...nav.rows)).toBeLessThanOrEqual(1);
+
+  await page.locator('#termMenuBtn').click();
+  const scroll = await page.locator('#termMenu').evaluate(el => {
+    const before = el.scrollTop;
+    el.scrollTop = el.scrollHeight;
+    return {before, after: el.scrollTop, client: el.clientHeight, height: el.scrollHeight, overflow: getComputedStyle(el).overflowY};
+  });
+  expect(scroll.overflow).toBe('auto');
+  expect(scroll.height).toBeGreaterThan(scroll.client);
+  expect(scroll.after).toBeGreaterThan(scroll.before);
+});
+
 test('a name is required, and the sheet says so rather than filing an unnamed thread', async ({page}) => {
   await open(page);
   await page.locator('#termMenuBtn').click();

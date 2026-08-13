@@ -1369,6 +1369,9 @@
       right: 0;
       z-index: 20;
       min-width: 260px;
+      max-height: calc(100dvh - 64px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -1997,9 +2000,15 @@
     .qa-nav {
       flex: 1 0 100%;
       display: grid;
-      grid-template-columns: auto 1fr auto;
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
       gap: 8px;
+    }
+
+    .qa-nav .qa-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     /* The arrows, centred in whatever the edges leave rather than in the row. Off-centre by the
@@ -7678,7 +7687,7 @@
         `aria-label="Select the agent's closing message">Summary</button>`
         : '';
       // Source order is the column order now that the edges are grid tracks rather than absolute:
-      // fold, arrows, right group.
+      // left switches, arrows, right group.
       // Offered only on a pane that is in a conversation, for the reason Summary is conditional:
       // a button that does nothing on most panes teaches people to stop pressing it.
       const inConv = a && convsForPane(a).length;
@@ -7689,11 +7698,11 @@
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
         `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">💬</button>`
         : '';
-      const navRow = `<div class="qa-nav">` +
+      const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
-        `${open ? 'v' : '^'}</button>` + conv +
+        `${open ? 'v' : '^'}</button>${conv}</div>` +
         `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
