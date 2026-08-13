@@ -360,6 +360,11 @@
       background: transparent;
       border: 1px solid var(--red);
       border-radius: 4px;
+      /* Wide enough for the armed label, so the chip does not jitter under the thumb between the
+         two taps. The status word beside it never moves either way — the group is right-aligned,
+         so the button grows away from it. */
+      min-width: 38px;
+      text-align: center;
     }
 
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
@@ -1395,8 +1400,10 @@
     }
 
     /* The armed fill drains left to right over the arm window, so the 1.5s the second tap has is
-       something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS. */
-    .term-header .cls-btn[data-armed="1"] {
+       something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS.
+       Not scoped to the header: Esc in the status bar arms the same way and has to look armed the
+       same way, because it is the same two-tap promise. */
+    [data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
       background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
@@ -1411,7 +1418,7 @@
     /* A bar that empties in 1.5s is motion nobody asked for if motion is what they cannot take.
        The colour still says armed; only the countdown goes. */
     @media (prefers-reduced-motion: reduce) {
-      .term-header .cls-btn[data-armed="1"] {
+      [data-armed="1"] {
         background: var(--orange);
         animation: none;
       }
@@ -4198,13 +4205,20 @@
       right.textContent = word;  // uppercased by .status-bar .right, not here
       right.classList.toggle('on', tone === 'on');
       right.classList.toggle('alert', tone === 'alert');
-      abort.hidden = !pane || pane.status !== 'working';
+      // A pane that stops working takes the button off screen, and an arm must not survive that:
+      // it would come back armed the next time the pane got busy, one tap from firing.
+      const away = !pane || pane.status !== 'working';
+      if (away && armedAt.abortBtn) disarmAbort();
+      abort.hidden = away;
     }
 
+    // Two taps, the same as CLS and QUIT beside it in the header. Escape is not undoable either —
+    // it stops work that may have been running for minutes — and this button is the one that sits
+    // under the thumb while the pane is busy, which is exactly when it is easiest to brush.
     function abortWorking() {
       const pane = activePane ? paneOf(activePane) : null;
       if (!pane || pane.status !== 'working') return;
-      sendKey('Escape');
+      armFire('abortBtn', () => { sendKey('Escape'); showToast('Sent Escape'); });
     }
 
     // Both halves go stale on their own — the left label by the minute, a shell's live/idle at the
@@ -8315,6 +8329,7 @@
       renderConvView();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
+      disarmAbort();
       disarmShortcut();
       disarmCtrl();
       refreshPane();
@@ -8326,6 +8341,7 @@
       syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
       disarmClear();
       disarmQuit();
+      disarmAbort();
       disarmShortcut();
       disarmCtrl();
       renderQuickActions();  // reads activePane, so it empties the bar now that there is none
@@ -8604,8 +8620,8 @@
     // The danger shortcuts in the palette keep the longer window — those are picked off a list
     // that has to be read first, not aimed at a button already under the thumb.
     const SHORTCUT_ARM_MS = 8000;
-    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT' };
-    const armedAt = { clsBtn: 0, quitBtn: 0 };
+    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc' };
+    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0 };
 
     // The two-tap arm, once. The label says what the second tap will do, because a button that
     // only changes colour when armed does not say what it is armed to send.
@@ -8634,6 +8650,7 @@
 
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
+    function disarmAbort() { disarmFire('abortBtn'); }
 
     // Sent as a line, not as keys: this is the pane's own command in both cases. No agentSlash
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands

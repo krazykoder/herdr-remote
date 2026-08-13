@@ -104,7 +104,7 @@ test('the composer sends to the pane that is open', async ({page}) => {
   await expect(page.locator(R('termInput'))).toHaveValue('');
 });
 
-test('Esc is beside a working pane badge and targets that pane', async ({page}) => {
+test('Esc is beside a working pane badge, and takes two taps like CLS', async ({page}) => {
   // The codex pane is the one the fake herdr reports as genuinely working, so the chip is on
   // screen because the pane is working — not because the test set a field that the next snapshot,
   // three seconds later, sets back.
@@ -116,8 +116,28 @@ test('Esc is beside a working pane badge and targets that pane', async ({page}) 
     const send = ws.send.bind(ws);
     ws.send = d => { window.__noteEsc(d); return send(d); };
   });
-  await expect(page.locator('#abortBtn')).toBeVisible();
-  await page.locator('#abortBtn').click();
+  const esc = page.locator('#abortBtn');
+  await expect(esc).toBeVisible();
+
+  // The first tap only arms, and says so. Stopping an agent mid-run is not undoable, and this
+  // button sits under the thumb for as long as the pane is busy.
+  await esc.click();
+  await expect(esc).toHaveText('Esc?');
+  await expect(esc).toHaveAttribute('data-armed', '1');
+  expect(sent.filter(m => m.type === 'send_keys')).toEqual([]);
+
+  await esc.click();
   await expect.poll(() => sent).toContainEqual(
     {type: 'send_keys', pane_id: 'w8:p1', keys: ['Escape']});
+  await expect(esc).toHaveText('Esc');
+});
+
+test('an Esc left armed disarms itself rather than waiting', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
+  const esc = page.locator('#abortBtn');
+  await esc.click();
+  await expect(esc).toHaveText('Esc?');
+  // 1.5s is the whole window, and a button left armed across a pocket is the accident the pair
+  // exists to stop.
+  await expect(esc).toHaveText('Esc', {timeout: 4000});
 });
