@@ -108,18 +108,19 @@ fourteen other keys.
     id: 'c_8f3a1c22',
     name: 'new authentication feature',   // the user's identifier, 1–64 chars
     created: 1755000000000,
-    members: [{ key: 'local|w1:p1|claude|/x', added: 1755000000000, label: 'Architect 1' }],
+    members: [{ key: '["local","w1:p1","claude","/x"]', added: 1755000000000, label: 'Architect 1' }],
     pair_id: 'p_9c1d',                    // provenance: seeded from this pair. Nothing reads it back
     counts: { messages: 24, seen: 1755000900000 },   // cached, so the landing list renders unawaited
   }],
 }
 
 // IndexedDB `herdr` → store `transcripts`, keyPath 'key' — the recordings.
-// Keyed by fingerprint: `host|pane_id|agent|cwd`. That key is memberMatches() in string form — a
-// recycled pane_id with a different cwd lands on a different key and cannot inherit the dead
-// session's words, which is the worst failure this feature has.
+// Keyed by the JSON encoding of `[host, pane_id, agent, cwd]`. The explicit encoding, rather
+// than a delimiter join, keeps valid path text from making two fingerprints collide. A recycled
+// pane_id with a different cwd lands on a different key and cannot inherit the dead session's
+// words, which is the worst failure this feature has.
 {
-  key: 'local|w1:p1|claude|/x',
+  key: '["local","w1:p1","claude","/x"]',
   label: 'Architect 1',                   // as of the last read; entries keep their own (§8)
   first: 1755000000000,
   touched: 1755000900000,                 // indexed, so eviction can range-scan by age
@@ -130,7 +131,7 @@ fourteen other keys.
     text: 'Ready. Name the change.',      // joined, margin-stripped, capped at TEXT_MAX
     gap: true,                            // optional: recording resumed after a break, see §6
     via: 'typed' | 'transfer' | 'mixed',  // user entries only — where the words came from, §4.2
-    from: { key: 'local|w1:p2|codex|/x', label: 'Reviewer 2', hash: 0x8f3a1c22 },  // via != typed
+    from: { key: '["local","w1:p2","codex","/x"]', label: 'Reviewer 2', hash: 0x8f3a1c22 },  // via != typed
   }],
 }
 ```
@@ -327,9 +328,10 @@ tail and never a corrupt record.
 **When IndexedDB is not there.** Private mode in some browsers, a blocked-by-policy store, an
 `onblocked` upgrade: the store falls back to `localStorage` under the small ceilings the earlier
 draft of this spec used (400 entries, 1 MB, oldest-first), tells the user once that history is being
-kept short, and upgrades itself the next time IndexedDB opens successfully. **The app must not fail
-to render a pane because a transcript could not be stored.** Recording is the feature; the terminal
-is the product.
+kept short, and upgrades itself the next time IndexedDB opens successfully. A same-key record in
+both places is overlap-merged during that upgrade: the database may predate a temporary failure,
+so either side alone can lose a tail. **The app must not fail to render a pane because a transcript
+could not be stored.** Recording is the feature; the terminal is the product.
 
 **Persistence and quota are best-effort, and secure-context-only.** `navigator.storage.persist()`
 and `.estimate()` do not exist on `http://192.168.x.x`, which is exactly how the relay serves this

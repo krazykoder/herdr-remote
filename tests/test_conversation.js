@@ -277,7 +277,7 @@ test('the payload rewrapped by the composer is still the same transfer', () => {
   assert.strictEqual(out.via, 'transfer');
 });
 
-test('the outbox keeps the newest classification and forgets the old ones', () => {
+test('the outbox keeps queued classifications in send order and forgets the old ones', () => {
   let box = [];
   for (let i = 0; i < CONV_OUTBOX_MAX + 10; i++) {
     box = outboxAdd(box, convHash('prompt ' + i), {via: 'transfer'}, NOW + i);
@@ -285,6 +285,18 @@ test('the outbox keeps the newest classification and forgets the old ones', () =
   assert.strictEqual(box.length, CONV_OUTBOX_MAX);
   assert.strictEqual(outboxVia(box, 'prompt 0', NOW), null, 'an evicted send still answers');
   assert.ok(outboxVia(box, 'prompt 59', NOW + 60));
+});
+
+test('two identical transferred prompts each consume one outbox entry', () => {
+  const note = classifyVia(pending(), PAYLOAD, NOW);
+  let box = outboxAdd([], convHash(PAYLOAD), note, NOW);
+  box = outboxAdd(box, convHash(PAYLOAD), note, NOW + 1);
+  const first = tagUserEntries([{who: 'user', text: PAYLOAD, seen: NOW + 2}], box, NOW + 2);
+  assert.strictEqual(first.entries[0].via, 'transfer');
+  assert.strictEqual(first.outbox.length, 1);
+  const second = tagUserEntries([{who: 'user', text: PAYLOAD, seen: NOW + 3}], first.outbox, NOW + 3);
+  assert.strictEqual(second.entries[0].via, 'transfer');
+  assert.strictEqual(second.outbox.length, 0);
 });
 
 test('an expired entry answers nothing, even before it is evicted', () => {
@@ -299,7 +311,7 @@ test('the recorder tags the prompt when it reads it back off the pane', () => {
   const rows = ('❯ ' + PAYLOAD.split('\n').join('\n❯ ')).split('\n')
     .concat(['', '⏺ Looking now.', '', '❯']);
   const out = record([], rows, NOW + 5000);
-  const tagged = tagUserEntries(out.entries, box, NOW + 5000);
+  const tagged = tagUserEntries(out.entries, box, NOW + 5000).entries;
   assert.strictEqual(tagged[0].via, 'transfer');
   assert.strictEqual(tagged[0].from.label, 'Architect 1');
   // And what the agent said is never given a provenance: everything an agent says is its own.
@@ -309,7 +321,7 @@ test('the recorder tags the prompt when it reads it back off the pane', () => {
 test('an unmatched prompt is typed, which is the honest failure', () => {
   // Provenance is only knowable where the send happened. A transfer made on the desktop and
   // recorded on the phone reads as typed there, because the phone never saw the transfer.
-  const tagged = tagUserEntries(record([], TWO_TURNS, NOW).entries, [], NOW);
+  const tagged = tagUserEntries(record([], TWO_TURNS, NOW).entries, [], NOW).entries;
   assert.deepStrictEqual(Array.from(tagged, e => e.via), ['typed', undefined, 'typed', undefined]);
 });
 
@@ -317,13 +329,15 @@ test('a tagged entry is never reclassified', () => {
   // Which is also what keeps it cheap: the hash is computed for new entries only.
   const already = [{who: 'user', text: 'do the thing', seen: NOW, via: 'transfer', from: {label: 'x'}}];
   const box = outboxAdd([], convHash('do the thing'), {via: 'mixed'}, NOW);
-  assert.strictEqual(tagUserEntries(already, box, NOW)[0].via, 'transfer');
+  assert.strictEqual(tagUserEntries(already, box, NOW).entries[0].via, 'transfer');
 });
 
 test('a pane fingerprint is all four fields, so a recycled id cannot inherit a transcript', () => {
   const a = {host: 'local', pane_id: 'w1:p1', agent: 'claude', cwd: '/work'};
-  assert.strictEqual(convMemberKey(a), 'local|w1:p1|claude|/work');
+  assert.strictEqual(convMemberKey(a), '["local","w1:p1","claude","/work"]');
   assert.notStrictEqual(convMemberKey(a), convMemberKey({...a, cwd: '/other'}));
+  assert.notStrictEqual(convMemberKey({...a, cwd: '/one|two'}),
+    convMemberKey({...a, cwd: '/one', agent: 'two|claude'}));
   assert.strictEqual(convMemberKey(null), '');
 });
 

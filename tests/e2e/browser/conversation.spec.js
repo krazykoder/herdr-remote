@@ -105,6 +105,20 @@ test('re-reading an unchanged pane does not write again', async ({page}) => {
   expect(second.entries.length).toBe(first.entries.length);
 });
 
+test('two reads arriving together keep both transcript updates', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(async text => {
+    const rows = text.split('\n');
+    await Promise.all([
+      recordPane(activePane, rows),
+      recordPane(activePane, rows.concat(['', '❯ follow up', '', '⏺ Followed up.', '', '❯'])),
+    ]);
+  }, PANE);
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toContain('Followed up.');
+});
+
 test('with no database, recording still works and says history will be short', async ({page}) => {
   // Private mode, a policy-blocked store, a blocked upgrade. None of them is a reason to stop
   // rendering a pane, and none of them may lose the session's recording silently.
@@ -139,4 +153,24 @@ test('what the fallback kept moves into the database when one appears', async ({
   expect(rec.entries[0].text).toBe('said while there was nowhere to put it');
   // And cleared behind it, so the same words are not read a second time.
   expect(await page.evaluate(() => localStorage.getItem('herdr_transcripts'))).toBeNull();
+});
+
+test('self-upgrade keeps a newer fallback tail beside an existing database record', async ({page}) => {
+  await open(page);
+  const key = await page.evaluate(async () => {
+    const k = convMemberKey(paneOf(activePane));
+    await convPut({key: k, label: 'Architect 1', first: 1, touched: 2,
+      entries: [{who: 'agent', text: 'kept in the database', seen: 1}]});
+    localStorage.setItem('herdr_transcripts', JSON.stringify({
+      [k]: {key: k, label: 'Architect 1', first: 1, touched: 3,
+        entries: [{who: 'agent', text: 'kept in the database', seen: 1},
+          {who: 'agent', text: 'written while IndexedDB was away', seen: 3}]},
+    }));
+    await convUpgradeFallback(convDB);
+    return k;
+  });
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toEqual([
+    'kept in the database', 'written while IndexedDB was away',
+  ]);
 });

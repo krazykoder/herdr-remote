@@ -5307,7 +5307,7 @@
     // recycled id landing on a dead session's transcript would inherit words that pane never said,
     // which is the worst failure this feature has.
     function convMemberKey(a) {
-      return a ? [a.host || '', a.pane_id || '', a.agent || '', a.cwd || ''].join('|') : '';
+      return a ? JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']) : '';
     }
 
     function convHash(text) {
@@ -5339,14 +5339,14 @@
     // small keyed list until the recorder comes looking. Short and capped: past the TTL a prompt
     // that has still not appeared is one this browser is never going to record.
     function outboxAdd(box, hash, note, now) {
-      const kept = (box || []).filter(e => now - e.at < CONV_OUTBOX_TTL && e.hash !== hash);
+      const kept = (box || []).filter(e => now - e.at < CONV_OUTBOX_TTL);
       kept.push(Object.assign({ hash: hash, at: now }, note));
       return kept.slice(-CONV_OUTBOX_MAX);
     }
 
     function outboxVia(box, text, now) {
       const hash = convHash(text);
-      for (let i = (box || []).length - 1; i >= 0; i--) {
+      for (let i = 0; i < (box || []).length; i++) {
         const e = box[i];
         if (e.hash === hash && now - e.at < CONV_OUTBOX_TTL) return e;
       }
@@ -5360,11 +5360,14 @@
     // Once tagged an entry is never re-examined, which is also what keeps this cheap: the hash is
     // computed for new entries only.
     function tagUserEntries(entries, box, now) {
-      return (entries || []).map(e => {
+      const left = (box || []).filter(e => now - e.at < CONV_OUTBOX_TTL);
+      const tagged = (entries || []).map(e => {
         if (e.who !== 'user' || e.via) return e;
-        const hit = outboxVia(box, e.text, now);
+        const at = left.findIndex(x => x.hash === convHash(e.text));
+        const hit = at < 0 ? null : left.splice(at, 1)[0];
         return Object.assign({}, e, hit ? { via: hit.via, from: hit.from } : { via: 'typed' });
       });
+      return { entries: tagged, outbox: left };
     }
     // The ceilings. IndexedDB's budget is a share of free disk rather than 5 MB, so these are set
     // by what a thread is still readable at rather than by what fits.
@@ -5491,13 +5494,28 @@
       if (!keys.length) return;
       try {
         const read = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
-        const have = new Set(await idbReq(read.getAllKeys()));
+        const existing = await Promise.all(keys.map(k => idbReq(read.get(k))));
         // Issued in one tick: an IndexedDB transaction commits as soon as the microtask queue
         // drains, so awaiting between two of its own operations is how it goes inactive.
         const write = db.transaction(CONV_DB_STORE, 'readwrite').objectStore(CONV_DB_STORE);
-        await Promise.all(keys.filter(k => !have.has(k)).map(k => idbReq(write.put(all[k]))));
+        await Promise.all(keys.map((k, i) => idbReq(write.put(convMergeRecord(existing[i], all[k])))));
         localStorage.removeItem(CONV_FALLBACK_KEY);
       } catch (e) { /* left where it is, and tried again on the next load */ }
+    }
+
+    // A database record may predate a brief IndexedDB failure, so a same-key fallback is not
+    // safely disposable. Fold its entries onto the stored run; overlap keeps the common history
+    // once and a disjoint fallback tail remains visibly gapped rather than being lost.
+    function convMergeRecord(stored, fallback) {
+      if (!stored) return fallback;
+      const now = Math.max(stored.touched || 0, fallback.touched || 0, Date.now());
+      const out = recordMessages(stored.entries || [], fallback.entries || [], now);
+      return Object.assign({}, stored, fallback, {
+        first: Math.min(stored.first || now, fallback.first || now),
+        touched: now,
+        entries: capEntries(out.entries),
+        spawn: fallback.spawn || stored.spawn,
+      });
     }
 
     function convFallbackAll() {
@@ -5593,16 +5611,27 @@
 
     // The transcripts of panes read this session, so a 3s poll folds into memory and touches the
     // database only when the fold produced something.
-    const convHeld = new Map();
+    const convHeld = new Map(), convQueues = new Map();
 
     // One read, recorded. Bound to the conversation and not to the view: a pane in a conversation
     // records while it is open no matter which of the two views is on screen, because switching to
     // the terminal must not punch a hole in the transcript.
-    async function recordPane(paneId, rows) {
+    function recordPane(paneId, rows) {
       const a = paneId ? paneOf(paneId) : null;
       if (!a || !profileFor(a.agent)) return;
       const key = convMemberKey(a);
       if (!convReferenced().has(key)) return;
+      // pane_content can arrive again before IndexedDB answers the first read. One queue per
+      // transcript keeps the second fold based on the first result, rather than two stale puts
+      // racing and dropping whichever message wrote first.
+      const previous = convQueues.get(key) || Promise.resolve();
+      const queued = previous.catch(() => {}).then(() => recordPaneNow(a, key, rows));
+      convQueues.set(key, queued);
+      queued.finally(() => { if (convQueues.get(key) === queued) convQueues.delete(key); });
+      return queued;
+    }
+
+    async function recordPaneNow(a, key, rows) {
       const now = Date.now();
       let held = convHeld.get(key);
       if (!held) {
@@ -5611,7 +5640,9 @@
       }
       const out = recordMessages(held.entries, paneMessages(rows, a.agent), now);
       if (!out.added && !out.grew) return;
-      held.entries = capEntries(tagUserEntries(out.entries, loadOutbox(), now));
+      const tagged = tagUserEntries(out.entries, loadOutbox(), now);
+      held.entries = capEntries(tagged.entries);
+      saveOutbox(tagged.outbox);
       held.label = paneLabel(a) || held.label || '';
       held.touched = now;
       held.spawn = convSpawn(a, now);
