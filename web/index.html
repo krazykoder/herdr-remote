@@ -1401,9 +1401,12 @@
 
     /* The armed fill drains left to right over the arm window, so the 1.5s the second tap has is
        something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS.
-       Not scoped to the header: Esc in the status bar arms the same way and has to look armed the
-       same way, because it is the same two-tap promise. */
-    [data-armed="1"] {
+       Esc in the status bar arms the same way and has to look armed the same way, because it is
+       the same two-tap promise — so it is a second selector rather than a broader one. Both parents
+       style their own button two classes deep, and a bare [data-armed] loses to every one of them:
+       the drain still runs, over a fill that was never painted. */
+    .term-header .cls-btn[data-armed="1"],
+    .status-bar .abort[data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
       background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
@@ -1418,7 +1421,8 @@
     /* A bar that empties in 1.5s is motion nobody asked for if motion is what they cannot take.
        The colour still says armed; only the countdown goes. */
     @media (prefers-reduced-motion: reduce) {
-      [data-armed="1"] {
+      .term-header .cls-btn[data-armed="1"],
+      .status-bar .abort[data-armed="1"] {
         background: var(--orange);
         animation: none;
       }

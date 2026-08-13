@@ -141,3 +141,20 @@ test('an Esc left armed disarms itself rather than waiting', async ({page}) => {
   // exists to stop.
   await expect(esc).toHaveText('Esc', {timeout: 4000});
 });
+
+test('an armed button is painted armed, not just labelled armed', async ({page}) => {
+  // The drain is the deadline made visible: the fill empties over exactly the window the second
+  // tap has. It is also the part a selector change can quietly drop while every other assertion
+  // still passes — the animation keeps running, over a fill nobody painted — so it is measured
+  // here rather than eyeballed. Armed and read in one evaluate, because the arm expires in 1.5s.
+  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
+  const painted = ([id, arm]) => {
+    window[arm]();
+    const c = getComputedStyle(document.getElementById(id));
+    return {fill: c.backgroundImage.startsWith('linear-gradient'), drain: c.animationName};
+  };
+  expect(await page.evaluate(painted, ['clsBtn', 'armClear']))
+    .toEqual({fill: true, drain: 'arm-drain'});
+  expect(await page.evaluate(painted, ['abortBtn', 'abortWorking']))
+    .toEqual({fill: true, drain: 'arm-drain'});
+});
