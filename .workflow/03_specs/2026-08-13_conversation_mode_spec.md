@@ -46,7 +46,7 @@ Four things follow from that, and they are the whole feature:
 | A named conversation grouping any number of panes, chosen by the user | Cross-device sync, sharing, a server |
 | Chat rendering: agent / agent / user, chronological | Editing a recorded message, deleting one message |
 | A joint view over the members, and each member alone | A merged *record* — grouping never rewrites a pane's own transcript |
-| Per-session `spawn` metadata: agent, role, Project, cwd, host, placement | A Respawn button in v1 (§4.1), and any replay of a transcript into a new agent |
+| Per-session `spawn` metadata: agent, role, Project, cwd, host, where it was observed | A Respawn button in v1 (§4.1), a recorded placement or slot (§4.1), and any replay of a transcript into a new agent |
 | Per-prompt provenance: typed, transferred, or mixed | Recording provenance for a send this browser did not make (§4.2) |
 | Copy the whole conversation as Markdown | Search, filter, tags, folders |
 | A `localStorage` fallback when IndexedDB is unavailable | Compression, the File System Access API, a worker, any storage library |
@@ -118,7 +118,7 @@ fourteen other keys.
   label: 'Architect 1',                   // as of the last read; entries keep their own (§8)
   first: 1755000000000,
   touched: 1755000900000,                 // indexed, so eviction can range-scan by age
-  spawn: { /* what it would take to stand this session up again — §4.1 */ },
+  spawn: { /* the session facts the browser can recover — §4.1 */ },
   entries: [{
     who: 'agent' | 'user',
     seen: 1755000012345,                  // when THIS BROWSER first saw the text — see §5
@@ -150,11 +150,29 @@ short hash may find candidates, but exact normalized text confirms every match. 
 real, separate `Done.` messages in one pane; deduping against every text ever seen would silently
 lose the second. Per transcript, not globally: two agents can both say `Done.` and both are real.
 
+Three things the overlap has to be pinned to, or it is not implementable:
+
+- **The unit is the extracted message, not the row.** Both windows are run through §3's extractors
+  first, and the match is over that list. Rows would make every wrap width change look like a gap.
+  *Normalized* means what `summary_body` already does to a range — gutter and box margin stripped,
+  lines joined, runs of whitespace collapsed to one space — so the same message read at a phone
+  width and a desktop width is one string. It is the comparison key only; `text` is stored as
+  extracted.
+- **The window's first message may be cut in half**, because a read starts at whatever row the
+  backlog begins on. So the head is matched by *suffix*: a stored message that ends with the
+  window's first message is that message, seen whole earlier. Without this clause every read of a
+  scrolled pane reports a false gap and stores a truncated duplicate of a message it already has.
+  A truncated head is never appended and never rewrites the stored full text.
+- **Only the tail is searched.** The scan compares at most the last `OVERLAP_MAX` (200) stored
+  messages against the window, so the cost is bounded by the window and not by the transcript. No
+  overlap inside that span is a gap (§6), not a reason to search further back.
+
 **Ceilings, named.** IndexedDB's budget is a share of free disk, not 5 MB, so these are set by what
 a thread is still readable at rather than by what fits:
 
 | Constant | Value | Why |
 |---|---|---|
+| `OVERLAP_MAX` | 200 messages | how far back the overlap scan looks; a read window holds far fewer, so a miss here is a real gap and not a short search |
 | `TEXT_MAX` | 4000 chars per entry | a closing message longer than this is a document; kept high because the store is no longer the constraint |
 | `ENTRY_MAX` | 5000 entries per transcript | oldest-first eviction past it, per pane — a chatty pane must not evict a quiet one's history. Months of turns, not hours |
 | `MEMBER_MAX` | 8 panes per conversation | past this the joint view stops being a thread; a soft cap the user is told about, not a silent drop |
@@ -205,15 +223,20 @@ split, nor which slot it occupied. Recording invented values would make the futu
   from the client — that is a security property of `start_agent` and this feature does not touch it.
   So a member with a `project_id` can be respawned; one recorded while Projects were off carries
   `cwd` as a **note for a human**, not as a parameter. The view says which of the two it is.
-- **A replacement needs a placement choice.** The saved record can preselect agent, role and
-  Project, and can offer its observed workspace when it is still live; it cannot reconstruct a
-  historical placement or slot. Nothing here replays a transcript into a new agent, and offering
-  to would be a feature that silently pastes hours of old output into a fresh context.
+- **A replacement is placed by today's layout, not by the dead pane's.** Nothing here replays a
+  transcript into a new agent either, and offering to would be a feature that silently pastes hours
+  of old output into a fresh context.
 
 **Respawn is a v2 button, not a v1 one.** v1 records `spawn` and shows it ("claude · architect ·
-charts"), with **Copy start details**. v2 opens the existing start dialog with those fields
-preselected and asks for placement/slot; it is not a one-line re-send. Recording is the part that
-cannot be added retroactively.
+charts"), with **Copy start details**. Recording is the part that cannot be added retroactively.
+
+When v2 comes, placement is `duplicatePane()`'s rule and not a new dialog — the app already answers
+this question from a snapshot, at `web/index.html:4326`: a recorded `workspace_id` that is still
+live means `new_tab` in it, and anything else means `new_workspace`; `slot` comes from `slotFor()`,
+which reads the viewport this browser has *now*. That is the correct answer rather than a cheaper
+one: the slot exists to fit the screen the replacement is being watched on, and the dead pane's slot
+was a fact about a screen someone had months ago. The dialog is only needed when the Project is
+unknown.
 
 ### 4.2 `via` — typed, transferred, or both
 
@@ -477,6 +500,7 @@ The record binds pane fingerprints, so:
 |---|---|
 | `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: adjacent user rows become one message; overlap dedupe preserves repeated identical messages, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
 | `tests/test_conversation.js` | the `via` classifier (§4.2): the composed payload sent unchanged is `transfer`, the payload with an instruction typed over it is `mixed`, the payload deleted and replaced is `typed`, an expired outbox entry is `typed`. Fed by `composeTransfer` itself, so a change to the payload shape breaks the classifier's test rather than the classifier |
+| `tests/test_conversation.js` | the overlap's three pinned cases (§4): a window whose first message is cut in half by the start of the backlog matches by suffix and neither duplicates nor truncates the stored one; a pane that scrolled past a whole window is a `gap` and not a search further back; a window re-read at a different wrap width is not a gap |
 | `tests/test_conversation.js` | `spawn` is captured only from snapshot fields plus `roleOf()`: it records workspace/tab as observations and never invents placement or slot |
 | `tests/test_conversation.js` | the merge: three members interleave by `seen`, **and no member's own order is ever broken** — the property that lets a member be read alone. Fed by `tests/fixtures/pane_*_done.txt`, the same panes the detector is tested on, so a harness whose glyphs change breaks here too |
 | `tests/e2e/browser/conversation.spec.js` (new) | naming a conversation, the thread rendering, a pair opening on the joint thread, "Show paired conversation" off leaving the pane's own transcript unchanged, adding a third pane, the quick-actions toggle surviving a pane switch, the landing-page section outliving a pane that has gone |
@@ -510,12 +534,11 @@ wire format. That is a different phase.
 
 ## 11. V1 decisions
 
-1. **Record only the actively read pane.** Recording every member needs
-   a background read per member (a `read_pane` every ~12s for a pane nobody is looking at), and
-   this now scales with `MEMBER_MAX`, not with two. Without it, each member's transcript advances
-   only while that member is on screen — which is what agents watched in turn actually look like,
-   and the joint view already draws the resulting gaps honestly (§6). Revisit with real
-   transcripts. If it is added later it is a poll budget
+1. **Record only the actively read pane.** Recording every member needs a background read per member
+   (a `read_pane` every ~12s for a pane nobody is looking at), and that scales with `MEMBER_MAX`,
+   not with two. Without it, each member's transcript advances only while that member is on screen —
+   which is what agents watched in turn actually look like, and the joint view already draws the
+   resulting gaps honestly (§6). If background recording is added later it is a poll budget
    (N members × 12s), not a change to anything above.
 2. **Read the user's own sent text back from the pane.** Recording at send time is exact, immediate,
    and includes what a shortcut sent, but it can disagree with what the agent actually received.
@@ -534,7 +557,7 @@ wire format. That is a different phase.
 
 | Piece | Size |
 |---|---|
-| Recorder + merge (pure, vm-testable) | ~140 lines |
+| Recorder + overlap match + merge (pure, vm-testable) | ~170 lines |
 | IndexedDB wrapper — open, `get`/`put`/`getAll`, the age index, eviction | ~60 lines |
 | `localStorage` index + fallback store + self-upgrade | ~50 lines |
 | Views (one member, N members) and CSS | ~140 lines |
