@@ -54,7 +54,7 @@ test('a stored order is what the page is painted in', async ({page}) => {
   // innerHTML rewrites from fighting the layout.
   const domOrder = await page.evaluate(() =>
     [...document.getElementById('agentListView').children].map(el => el.id));
-  expect(domOrder).toEqual(['agents', 'terminals', 'pairs', 'recents']);
+  expect(domOrder).toEqual(['agents', 'terminals', 'pairs', 'recents', 'conversations']);
 });
 
 // Settings is a panel over the list, not beside it, so the list is display:none while it is open
