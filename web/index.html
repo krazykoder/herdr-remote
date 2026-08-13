@@ -6145,7 +6145,7 @@
       held.touched = now;
       held.spawn = convSpawn(a, now);
       await convPut(held);
-      convNoteCounts(key, held.entries.length, now);
+      convNoteCounts(key, held.entries, now);
       // The thread is a render of what was just folded, so it follows the same read.
       if (convThreadShows(key)) renderConvView();
     }
@@ -6189,14 +6189,20 @@
         pairedConvMembers(a, conv).some(m => m.key === key);
     }
 
-    // The count and the last-seen the landing list renders, kept per member rather than per
-    // conversation: a member's own record is the only one this browser can count without opening
-    // every other member's, and the list wants a total it can add up without awaiting anything.
-    function convNoteCounts(key, messages, now) {
+    // The count and the last message time the landing list renders, kept per member rather than
+    // per conversation: a member's own record is the only one this browser can count without
+    // opening every other member's, and the list wants a total it can add up without awaiting
+    // anything.
+    //
+    // `seen` here is the newest entry's own time, not the fold's — a first read that backfills an
+    // afternoon of history would otherwise report the whole conversation as active just now, which
+    // is the one thing the landing list is asked.
+    function convNoteCounts(key, entries, now) {
       const items = loadConvIndex();
+      const last = convAt(entries[entries.length - 1]) || now;
       let hit = false;
       for (const c of items) for (const m of c.members || []) {
-        if (m.key === key) { m.messages = messages; m.seen = now; hit = true; }
+        if (m.key === key) { m.messages = entries.length; m.seen = last; hit = true; }
       }
       if (hit) saveConvIndex(items);
     }
