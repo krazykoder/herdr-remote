@@ -401,6 +401,19 @@ test('conversation text has its own menu font control', async ({page}) => {
   await expect(page.locator('#convThread .conv-who').first()).toHaveCSS('font-size', '9px');
 });
 
+test('final-only view counts only the bubbles it shows', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConvFinal').click();
+  // This pane's first read is backfill and filtered out; the partner's two committed entries
+  // remain. The header must not keep its pre-filter cached total of four.
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
+  await expect(page.locator('#convThread .conv-head')).toContainText('2 messages');
+});
+
 test('the conversation text size is applied before the first thread is painted', async ({page}) => {
   // The control writes a CSS custom property. Nothing else reads localStorage for it, so a boot
   // that forgets to apply it shows the default until the gear menu happens to be opened.

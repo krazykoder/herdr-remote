@@ -1712,6 +1712,21 @@
       font-family: inherit;
     }
 
+    /* A message that is not settled yet: the live draft above a working composer, or backfill read
+       off the scrollback. No fill at all rather than a different one — an unfilled bubble against a
+       wall of washed ones is unmistakable on any of the eleven themes and borrows no meaning from a
+       colour. The dashed edge is what keeps it a bubble. */
+    .conv-msg.provisional {
+      background: none;
+      border-style: dashed;
+    }
+
+    .conv-state {
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.7;
+    }
+
     /* A pair is a two-column conversation: agent one and the prompts sent to it live left;
        agent two and its prompts live right. The user keeps one colour of their own, but no longer
        claims a third, unrelated side of the discussion. */
@@ -2878,6 +2893,10 @@
           <!-- Shown only while this pane's conversation has someone else in it. -->
           <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
             onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
+          <!-- Drafts and backfill are drawn unfilled; this hides them outright. Offered only while
+               the thread is the view on screen, which is the only place they appear. -->
+          <button class="menu-item" role="menuitem" id="menuConvFinal" hidden
+            onclick="closeTermMenu(); toggleConvFinalOnly()">Show final messages only</button>
           <!-- The repair for a transcript recorded before the wrapped-frame guard. Shown only on a
                pane that has one, and it counts before it asks. -->
           <button class="menu-item" role="menuitem" id="menuConvDedupe" hidden
@@ -6620,6 +6639,32 @@
       if (window.cue) cue('page');
     }
 
+    // Not everything in a thread is a settled fact about what was said. Two kinds are not:
+    //
+    //   draft     the pane is mid-turn, and this is the block above the live composer. The agent
+    //             may print past it, and then it is replaced rather than kept (§5.1).
+    //   backfill  read off scrollback that predates the first read, so its place in the order is
+    //             an inference and its time is not a reading at all.
+    //
+    // Both are worth showing by default — a thread that went quiet for the length of a turn reads
+    // as broken — and both are worth being able to switch off while checking chronology, which is
+    // the one job they get in the way of.
+    function convProvisional(e) { return !!e && (!!e.draft || e.at_src === 'backfill'); }
+
+    const CONV_FINAL_KEY = 'herdr_conv_final_only';
+
+    function convFinalOnly() {
+      try { return localStorage.getItem(CONV_FINAL_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvFinalOnly() {
+      try { localStorage.setItem(CONV_FINAL_KEY, convFinalOnly() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      renderConvView();
+      if (window.cue) cue('page');
+    }
+
     // Joint by default, and global rather than per pane: it is a preference about how threads are
     // read, not a fact about one pane. Off means this pane's own transcript alone, which is always
     // available — the joint thread is only ever a render, and the records are never merged on disk.
@@ -6691,13 +6736,19 @@
       // Following the newest message is the default, and a reader who has scrolled up keeps their
       // place: the same rule the pane rows follow.
       const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
-      const entries = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      const all = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      // Filtered here rather than in the renderer: picks, Summary and the count are all positions
+      // in the list that was drawn, so the list that was drawn has to be the list they index.
+      const entries = convFinalOnly() ? all.filter(e => !convProvisional(e)) : all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
-      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length) +
+      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length, joint ? entries.length : -1) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
         ? convEntriesHtml(entries, a, paired)
-        : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
+        : (all.length
+          ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
+            'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
+          : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>'));
       // Which bubble Summary means, found once here rather than by the button every render. The
       // button is only rebuilt when the answer changed — it is on the poll path.
       const wasFinal = convLastAgent;
@@ -6748,8 +6799,8 @@
     // on screen — the index is written after a fold, so it is a message behind for exactly as long
     // as it takes this to run. A joint thread has every member's entries on screen already and
     // passes -1 to say so.
-    function convHeadHtml(conv, key, count) {
-      const n = (conv.members || []).reduce(
+    function convHeadHtml(conv, key, count, total) {
+      const n = total >= 0 ? total : (conv.members || []).reduce(
         (t, m) => t + (count >= 0 && m.key === key ? count : (m.messages || 0)), 0);
       return `<div class="conv-head"><span class="name">${escapeHtml(conv.name)}</span>` +
         `<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
@@ -6852,14 +6903,22 @@
           ? `<span class="conv-time" title="${escapeHtml(new Date(at).toLocaleString())} · `
             + `${escapeHtml(e.at_src || 'unknown')}">${escapeHtml(clock)}</span>`
           : '';
-        const head = bar || time ? `<span class="conv-who">${bar}${time}</span>` : '';
+        // Named as well as unfilled: the fill says "not settled", the word says which of the two
+        // reasons it is. `~` in front of the clock already says backfill, so only the draft is
+        // spelled out.
+        const mark = e.draft ? '<span class="conv-state">draft</span>' : '';
+        const head = bar || time ? `<span class="conv-who">${bar}${time}${mark}</span>` : '';
         // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
         // the joint thread: one member needs no telling apart from itself.
         const side = paired && e.member === 1 ? ' conv-right' : '';
+        // Told apart by having no fill at all rather than by a different one: an unfilled bubble
+        // against a wall of washed ones is unmistakable at a glance, on any of the eleven themes,
+        // and it needs no colour of its own to say "this is not settled yet".
+        const state = convProvisional(e) ? ` provisional${e.draft ? ' draft' : ''}` : '';
         const pick = `<button class="conv-pick" onclick="toggleConvPick(${i})" aria-pressed="false" ` +
           `aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
-        return rule + `<div class="conv-msg${user ? ' user' : ''}${side}" data-key="${escapeHtml(key)}"` +
+        return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
           ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${pick}${head}${text}</div>`;
       }).join('');
     }
@@ -7324,9 +7383,11 @@
       const joint = document.getElementById('menuConvJoint');
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
+      const final = document.getElementById('menuConvFinal');
       joint.hidden = true;
       convFont.hidden = true;
       dedupe.hidden = true;
+      final.hidden = true;
       if (!conv.hidden) {
         const mine = convsForPane(a);
         dedupe.hidden = !mine.length;
@@ -7338,6 +7399,11 @@
           ? 'Show this pane alone' : 'Show paired conversation';
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());
+        // Same condition as the text size: both are about reading a thread, and neither means
+        // anything while the rows are what is on screen.
+        final.hidden = convFont.hidden;
+        final.textContent = convFinalOnly()
+          ? 'Show drafts and backfill' : 'Show final messages only';
       }
     }
 
