@@ -89,18 +89,20 @@ class FinishedBodyTests(unittest.TestCase):
     is one, the bottom of the pane when there is not, and the setting that forces the latter.
     """
 
-    def test_it_says_what_the_agent_concluded(self):
-        body = herdr_relay.finished_body(DONE, "claude")
-        self.assertEqual(body, "Ready. Name the change.")
+    def test_an_unset_relay_reads_the_pane_as_it_always_did(self):
+        # The detector is opt-in while it is new. Nothing about a relay that has never heard of
+        # HERDR_PUSH_SUMMARY changes.
+        self.assertEqual(herdr_relay.finished_body(DONE, "claude"), notify_body(DONE))
+
+    def test_switched_on_it_says_what_the_agent_concluded(self):
+        with unittest.mock.patch.object(herdr_relay, "PUSH_SUMMARY", True):
+            self.assertEqual(herdr_relay.finished_body(DONE, "claude"), "Ready. Name the change.")
         # Which is the difference: the pane's last three lines start with the command it ran.
         self.assertIn("git status --short", notify_body(DONE))
 
-    def test_a_harness_with_no_profile_falls_back_on_its_own(self):
-        self.assertEqual(herdr_relay.finished_body(DONE, "amp"), notify_body(DONE))
-
-    def test_the_setting_puts_the_old_reading_back(self):
-        with unittest.mock.patch.object(herdr_relay, "PUSH_SUMMARY", False):
-            self.assertEqual(herdr_relay.finished_body(DONE, "claude"), notify_body(DONE))
+    def test_a_harness_with_no_profile_falls_back_even_when_it_is_on(self):
+        with unittest.mock.patch.object(herdr_relay, "PUSH_SUMMARY", True):
+            self.assertEqual(herdr_relay.finished_body(DONE, "amp"), notify_body(DONE))
 
 
 class PushTagTests(unittest.TestCase):

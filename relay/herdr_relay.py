@@ -97,11 +97,12 @@ SEND_SETTLE = 0.15
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
 VAPID_PRIVATE_KEY = os.environ.get("HERDR_VAPID_PRIVATE", "")
 VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
-# What a "finished" push says: the agent's closing message, or the bottom of the pane. On by
-# default because the closing message is the thing the user wanted to be told, and `0` is here
-# because a harness can change its gutter glyphs in a release and the pane's last three lines are
-# never wrong, only vaguer. Falls back on its own for any pane it cannot read a message off.
-PUSH_SUMMARY = os.environ.get("HERDR_PUSH_SUMMARY", "") != "0"
+# What a "finished" push says: `1` for the agent's closing message, otherwise the bottom of the
+# pane. Off until the detector has been watched against real panes for a while — it reads gutter
+# glyphs a harness can change in any release, and the failure is a notification that says the wrong
+# thing, which is worse than one that says a vaguer right thing. Falls back on its own for any pane
+# it cannot read a message off, so turning it on is not a promise it always has one.
+PUSH_SUMMARY = os.environ.get("HERDR_PUSH_SUMMARY", "") == "1"
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 
