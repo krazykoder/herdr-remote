@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'recordMessages', 'convKey', 'convText', 'convHash', 'convMemberKey',
+const NAMES = ['paneMessages', 'recordMessages', 'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries',
                'parseConvIndex', 'capEntries', 'evictOrder',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
@@ -50,7 +50,7 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, recordMessages, convKey, convText, convHash, convMemberKey, classifyVia,
+const {paneMessages, recordMessages, convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries,
        parseConvIndex, capEntries, evictOrder,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
@@ -75,7 +75,7 @@ const TWO_TURNS = [
 // difference. Copying them into this realm compares the contents, which is what is being asserted.
 const texts = ms => Array.from(ms, m => m.text);
 const whos = ms => Array.from(ms, m => m.who);
-const record = (stored, rows, now) => recordMessages(stored, paneMessages(rows, 'claude'), now);
+const record = (stored, rows, now, clock) => recordMessages(stored, paneMessages(rows, 'claude'), now, clock);
 
 test('a window is the user and the agent in the order they spoke', () => {
   const ms = paneMessages(TWO_TURNS, 'claude');
@@ -113,6 +113,13 @@ test('the first read stores the window whole, and is not a gap', () => {
   assert.strictEqual(out.gap, false);
   assert.strictEqual(out.added, 4);
   assert.ok(out.entries.every(e => e.seen === NOW));
+});
+
+test('the first unread frame is ordered as backfill, except a known closing turn', () => {
+  const out = record([], TWO_TURNS, NOW, {end: NOW - 100});
+  assert.deepStrictEqual(Array.from(out.entries, e => e.at_src), ['backfill', 'backfill', 'backfill', 'state']);
+  assert.ok(out.entries.slice(0, -1).every(e => convAt(e) < NOW));
+  assert.strictEqual(convAt(out.entries[3]), NOW - 100);
 });
 
 test('re-reading an unchanged pane adds nothing', () => {
@@ -161,6 +168,18 @@ test('a message still being written is extended, not duplicated', () => {
   assert.deepStrictEqual(texts(out.entries), ['explain', 'The relay polls herdr and broadcasts to clients.']);
   // It is the same message, so it keeps when it was first seen.
   assert.strictEqual(out.entries[1].seen, NOW);
+});
+
+test('a completed agent turn upgrades its read stamp but never rewrites a sent prompt', () => {
+  const half = ['❯ explain', '', '⏺ The relay polls', '', '❯'];
+  const whole = ['❯ explain', '', '⏺ The relay polls herdr.', '', '❯'];
+  const first = record([{who: 'user', text: 'explain', seen: NOW - 10, at: NOW - 10, at_src: 'sent'},
+    {who: 'agent', text: 'The relay polls', seen: NOW, at: NOW, at_src: 'read'}], half, NOW);
+  const out = record(first.entries, whole, NOW + 100, {end: NOW + 50});
+  assert.strictEqual(out.entries[0].at_src, 'sent');
+  assert.strictEqual(convAt(out.entries[0]), NOW - 10);
+  assert.strictEqual(out.entries[1].at_src, 'state');
+  assert.strictEqual(convAt(out.entries[1]), NOW + 50);
 });
 
 test('Load more prepends the older turns and does not restamp the thread', () => {
@@ -418,6 +437,14 @@ test('three members interleave by when each was seen', () => {
   assert.deepStrictEqual(texts(mergeEntries(recs)), ['a1', 'b1', 'c1', 'a2', 'c2']);
   // The colour comes from member order, and it travels with the entry.
   assert.deepStrictEqual(Array.from(mergeEntries(recs), e => e.member), [0, 1, 2, 0, 2]);
+});
+
+test('the joint merge prefers a message time to its later observation time', () => {
+  const recs = [
+    {key: 'a', member: 0, entries: [{who: 'agent', text: 'a', seen: 100, at: 20, at_src: 'state'}]},
+    {key: 'b', member: 1, entries: [{who: 'agent', text: 'b', seen: 10, at: 30, at_src: 'read'}]},
+  ];
+  assert.deepStrictEqual(texts(mergeEntries(recs)), ['a', 'b']);
 });
 
 test('no member’s own order is ever broken, whatever the clocks say', () => {

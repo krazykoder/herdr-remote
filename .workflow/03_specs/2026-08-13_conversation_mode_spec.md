@@ -357,22 +357,54 @@ layer is logic that leaves the fast suite, so it does not.
 
 ---
 
-## 5. Timestamps are observation times, and the field is named for it
+## 5. Timestamps: `seen` is observation, `at` is the best answer available
 
-A pane carries no clock. Nothing in `pane read` says when a line was printed, so a recorder on this
-side of the wire can only say **when it first saw the text**. The field is `seen`, not `at`, and the
-view says "seen 14:02" rather than pretending otherwise.
+A pane carries no clock. Nothing in `pane read` says when a line was printed, so the fold can only
+say **when it first saw the text**. That field is `seen`, it is the fold's own clock, and the
+overlap machinery is built on it — it never changes meaning.
 
-Two consequences, both worth stating in the UI rather than hiding:
+`at` is a second field, added later, and it answers a different question: *when was this said*.
+`at_src` says how good the answer is, and every reader goes through `convAt(e)` (`e.at || e.seen`)
+so records written before the field existed keep working.
+
+| `at_src` | Accuracy | Where it comes from |
+|----------|----------|---------------------|
+| `sent` | Exact | The user pressed send in this browser; the outbox stamped the moment |
+| `state` | Within one relay poll | The pane's own `done`/`blocked` transition ended that turn |
+| `read` | The fold's clock | The turn is still being written, so "now" is the honest answer |
+| `backfill` | Unknown, but older than everything live | Scrollback that predates this browser's first read of the pane |
+
+The relay pushes a status for **every** pane, open or not, so `state` is available for a member
+nobody is reading — which is the whole reason the joint thread can order two panes at all. The
+transitions are held in memory only: one this browser was not connected for was never observed, and
+a stored one would date a message by a session that saw a different turn.
+
+### 5.1 A committed entry is append-only
+
+Recording is not a view of the pane. Once an entry is written to the store:
+
+- **Its text may only be extended, never replaced.** The one legal edit is the message that was
+  still being written when it was last read, now read whole — and only where the committed words
+  are still the start of the new ones. A longer text that does not begin with what was committed is
+  a misalignment, not a finished message, and taking it would rewrite history to match the current
+  frame.
+- **Its stamp may only improve.** `at_src` is ranked `backfill < read < state < sent`; a later fold
+  may raise it — a turn that ended after the entry was written now has a real closing time — and
+  may never lower it, and never moves a `sent` stamp.
+- **Streaming pane content does not own it.** `pane_content` folds into *new* entries. The
+  conversation view renders the committed record, never the frame.
+
+Two consequences of the pane having no clock of its own, both worth stating in the UI rather than
+hiding:
 
 - **A conversation only advances while its pane is open.** Everything an agent said with the app
-  closed arrives stamped with the moment the app was next opened. The first read of a pane is 200
+  closed is `backfill`: ordered, marked, and placed just before the first read, never dated. The first read of a pane is 200
   lines deep, so that backfill is usually the last few turns — but it is backfill, and §6 says how
   it is ordered.
 - **Within a member the order is exact; between members it is as good as the polling.** A pane's
-  own transcript is stored in the pane's own order and `seen` is never what orders it — that is why
+  own transcript is stored in the pane's own order and no timestamp is ever what orders it — that is why
   a member always reads correctly on its own, however coarse the clock was. The joint view is the
-  only place `seen` is used for ordering, and two messages seen 3 seconds apart may have been
+  only place a timestamp is used for ordering, and two messages 3 seconds apart may have been
   printed in the other order. So the joint view draws no precision it does not have: no seconds,
   no "replying to", and a member's own order is never broken to satisfy a timestamp.
 
@@ -384,14 +416,14 @@ Two consequences, both worth stating in the UI rather than hiding:
   exact.
 - **Backfill** — a `Load more` that reveals older turns — uses the same overlap and inserts the
   unmatched head at the front of that pane's run. Those entries take the `seen` of the oldest entry
-  they precede and are flagged `backfill: true`; they are not given the current time, which would
+  they precede, an `at` just below it, and are flagged `backfill: true`; they are not given the current time, which would
   put an hour-old message at the end of the thread.
 - **A gap** is detectable and is worth drawing. If the prior and current normalized windows have
   no exact overlap, something may have scrolled past between reads. The next entry carries
   `gap: true` and the view draws a thin "…" rule above it. This is the difference between a
   transcript with a possible hole and a transcript that lies.
 - **The joint view is a stable merge**, not a sort. Each member's transcript is walked in its own
-  order and the merge only chooses *which member goes next*, by `seen`. A member's own sequence can
+  order and the merge only chooses *which member goes next*, by `convAt`. A member's own sequence can
   therefore never be reordered by a coarse timestamp — the worst a bad clock can do is interleave
   two members badly, which is visible and honest, rather than shuffle one agent's own turns, which
   would be a lie about a single transcript.

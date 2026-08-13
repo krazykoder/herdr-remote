@@ -3261,6 +3261,26 @@
       catch (e) { /* private mode: session-only */ }
     }
 
+    // When each pane last entered a state, as this browser saw it. The relay polls herdr itself
+    // and pushes a status for every pane, open or not — so this is a clock for panes nobody is
+    // reading, which is exactly what a joint thread needs and what a pane read cannot give. In
+    // memory only: a transition this browser was not connected for was never observed, and a
+    // stored one would date a message by a session that saw a different turn.
+    const statusAt = {};
+
+    function noteStatus(paneId, status) {
+      if (!paneId || !status) return;
+      (statusAt[paneId] || (statusAt[paneId] = {}))[status] = Date.now();
+    }
+
+    // The end of the pane's most recent turn, or 0 while it is still writing one — then the fold's
+    // own clock is already the right answer and a stale `done` would date a live message hours ago.
+    function turnEnd(paneId) {
+      const at = statusAt[paneId] || {};
+      const end = Math.max(at.done || 0, at.blocked || 0);
+      return end > (at.working || 0) ? end : 0;
+    }
+
     // --- Attention ---
     //
     // A pane is asking for you when it is blocked or done and you have not looked at it since.
@@ -4289,6 +4309,7 @@
             timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
             if (timeline.length > 100) timeline.pop();
             noteActivity(a.pane_id);
+            noteStatus(a.pane_id, a.status);
             if (shouldSound(a.pane_id, a.status)) ring = true;
           }
           prevStatuses[a.pane_id] = a.status;
@@ -4332,6 +4353,7 @@
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();
           noteActivity(update.pane_id);
+          noteStatus(update.pane_id, update.status);
           if (shouldSound(update.pane_id, update.status) && window.cue) cue('chime');
           // A status change is the one thing that says the pane's text is about to be worth
           // re-reading, and it arrives here rather than being asked for — the relay polls herdr on
@@ -4353,6 +4375,7 @@
         // No chime here. The relay broadcasts the snapshot before this message, so the transition
         // into blocked has already been heard — sounding it again was two chimes for one event.
         noteActivity(msg.pane_id);
+        noteStatus(msg.pane_id, 'blocked');
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
@@ -5657,12 +5680,51 @@
       return Object.assign({ who: m.who, seen: seen, text: m.text }, extra || {});
     }
 
+    // When an entry was said, as opposed to when this browser first saw it. `seen` is the fold's
+    // own clock and is what the overlap machinery is built on; `at` is the best answer available
+    // about the message itself, and `at_src` says how good that answer is:
+    //
+    //   sent      exact — the user pressed send in this browser and the outbox stamped it
+    //   state     within one relay poll — the pane's own done/blocked transition ended this turn
+    //   read      the fold's clock, for a turn still being written: now is the honest answer
+    //   backfill  unknown, but older than everything live — scrollback that predates the first read
+    //
+    // Old records have neither field, so every reader goes through convAt.
+    function convAt(e) { return (e && (e.at || e.seen)) || 0; }
+
+    // A committed entry is not a view of the pane, it is a record of what was said — so a later
+    // read may only ever *extend* it, never replace it, and its stamp may only ever get better.
+    // Streaming pane content is what folds into new entries; it does not own the ones already
+    // written, and the thread renders the record rather than the frame.
+    const CONV_AT_RANK = { backfill: 0, read: 1, state: 2, sent: 3 };
+
+    function convAtRank(e) {
+      const r = CONV_AT_RANK[e && e.at_src];
+      return r === undefined ? 0 : r;
+    }
+
     // One read, folded into a transcript. Returns a new entries array — the caller stores it — and
     // says what happened, because the view draws a gap and the store only writes when something
     // was added.
-    function recordMessages(stored, fresh, now) {
+    // `clock.end` is when the pane last finished a turn — its own done/blocked transition, which
+    // the relay pushes for every pane whether or not anyone is reading it. Zero while the turn is
+    // still being written, because then the fold's clock is already the right answer.
+    function recordMessages(stored, fresh, now, clock) {
       const entries = (stored || []).slice();
       if (!fresh || !fresh.length) return { entries: entries, added: 0, grew: false, gap: false };
+      const end = (clock && clock.end) || 0;
+      // Everything a pane already has on screen the first time it is read was said before this
+      // browser was watching. Stamping it `now` files an hour of history as the newest thing in
+      // the thread — and in a joint view it buries the other member's live messages under it.
+      // Ordered, marked, and placed just before now is all that can honestly be said.
+      const cold = !entries.length;
+      const stamp = (m, i, n, base) => {
+        // The turn's closing message is the one the transition dated. Only the last, and only
+        // when it is the agent's: a prompt is dated by the send, not by the answer to it.
+        if (i === n - 1 && m.who === 'agent' && end && end <= base) return { at: end, at_src: 'state' };
+        if (cold) return { at: base - (n - i), at_src: 'backfill' };
+        return { at: base, at_src: 'read' };
+      };
       // Bounded by OVERLAP_MAX so the cost is the window's, not the transcript's. A read window
       // holds far fewer messages than this, so a miss inside it is a real gap and not a short look.
       const from = Math.max(0, entries.length - CONV_OVERLAP_MAX);
@@ -5675,28 +5737,42 @@
         : { d: 0, len: 0 };
 
       if (!hit) {
-        const add = fresh.map((m, i) => convEntry(m, now, i === 0 ? { gap: true } : null));
+        const add = fresh.map((m, i) => convEntry(m, now,
+          Object.assign(stamp(m, i, fresh.length, now), i === 0 ? { gap: true } : null)));
         return { entries: entries.concat(add), added: add.length, grew: false, gap: true };
       }
 
       const d = hit.d, cut = keys.length - d;
       let grew = false;
-      // The message that was still being written when it was last read, now read whole.
+      // The message that was still being written when it was last read, now read whole. Growth
+      // only, and only where the stored words are still the start of the new ones: a longer text
+      // that does not begin with what was committed is not this message finished, it is a
+      // misalignment, and taking it would rewrite history to match the current frame.
       const last = entries.length - 1;
       if (last >= 0 && cut - 1 >= 0 && cut - 1 < fresh.length
-          && fresh[cut - 1].text.length > entries[last].text.length) {
-        entries[last] = Object.assign({}, entries[last], { text: fresh[cut - 1].text });
+          && fresh[cut - 1].text.length > entries[last].text.length
+          && convKey(fresh[cut - 1].text).startsWith(convKey(entries[last].text))) {
+        const was = entries[last];
+        // The turn ended after this entry was first written, so its closing time is known now and
+        // was not then. Upgrades only — a stamp never gets vaguer than the one already committed.
+        const better = was.who === 'agent' && end && end <= now
+          && convAtRank({ at_src: 'state' }) > convAtRank(was);
+        entries[last] = Object.assign({}, was, { text: fresh[cut - 1].text },
+          better ? { at: end, at_src: 'state' } : null);
         grew = true;
       }
       // Older turns, revealed by Load more. They take the `seen` of the entry they precede: they
       // were said before it, and stamping them now would file an hour-old message as the newest
       // thing in the thread.
       const head = d < 0 ? fresh.slice(0, -d) : [];
-      const before = head.length ? (entries[0] || {}).seen || now : now;
+      const before = head.length ? convAt(entries[0]) || now : now;
+      const seenBefore = head.length ? (entries[0].seen || now) : now;
       const tail = cut < fresh.length ? fresh.slice(cut) : [];
       return {
-        entries: head.map(m => convEntry(m, before, { backfill: true }))
-          .concat(entries, tail.map(m => convEntry(m, now))),
+        entries: head.map((m, i) => convEntry(m, seenBefore,
+            { backfill: true, at: before - (head.length - i), at_src: 'backfill' }))
+          .concat(entries, tail.map((m, i) =>
+            convEntry(m, now, stamp(m, i, tail.length, now)))),
         added: head.length + tail.length,
         grew: grew,
         gap: false,
@@ -5755,7 +5831,11 @@
         if (e.who !== 'user' || e.via) return e;
         const at = left.findIndex(x => x.hash === convHash(e.text));
         const hit = at < 0 ? null : left.splice(at, 1)[0];
-        return Object.assign({}, e, hit ? { via: hit.via, from: hit.from } : { via: 'typed' });
+        // The send is the only moment a prompt's real time is known, and the outbox already holds
+        // it — the pane echoes the same words back seconds to minutes later.
+        return Object.assign({}, e, hit
+          ? { via: hit.via, from: hit.from, at: hit.at, at_src: 'sent' }
+          : { via: 'typed' });
       });
       return { entries: tagged, outbox: left };
     }
@@ -5809,7 +5889,7 @@
         for (let i = 0; i < recs.length; i++) {
           const e = recs[i].entries[heads[i]];
           if (!e) continue;
-          if (pick < 0 || (e.seen || 0) < (recs[pick].entries[heads[pick]].seen || 0)) pick = i;
+          if (pick < 0 || convAt(e) < convAt(recs[pick].entries[heads[pick]])) pick = i;
         }
         if (pick < 0) return out;
         // `member` is the index the colour comes from, and it is the position in the list handed
@@ -6049,7 +6129,8 @@
         held = (await convGet([key]))[0] || { key: key, first: now, entries: [] };
         convHeld.set(key, held);
       }
-      const out = recordMessages(held.entries, paneMessages(rows, a.agent), now);
+      const out = recordMessages(held.entries, paneMessages(rows, a.agent), now,
+        { end: turnEnd(a.pane_id) });
       if (!out.added && !out.grew) return;
       const tagged = tagUserEntries(out.entries, loadOutbox(), now);
       saveOutbox(tagged.outbox);
@@ -6469,7 +6550,7 @@
       const self = convMemberKey(a);
       let last = 0;
       return entries.map((e, i) => {
-        const at = e.seen || 0;
+        const at = convAt(e);
         // How long the thread was not being recorded for, when both ends of the break are known —
         // "41 min" is the fact; "recording resumed" is all there is to say without a previous entry.
         const rule = e.gap
