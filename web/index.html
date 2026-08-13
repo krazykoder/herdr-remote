@@ -1749,6 +1749,42 @@
       border-color: var(--red);
     }
 
+    /* Picking a message. The thread's answer to the line ruler: a thread has no lines to drag a
+       band across, and a message is already the unit — so the selection is per bubble, always
+       visible because a phone has no hover to reveal it, and quiet until it is on. */
+    .conv-pick {
+      position: absolute;
+      top: -8px;
+      left: 10px;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.6rem;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.55;
+    }
+
+    .conv-pick:hover {
+      opacity: 1;
+    }
+
+    .conv-msg.picked {
+      outline: 2px solid var(--orange);
+      outline-offset: 1px;
+    }
+
+    .conv-msg.picked .conv-pick {
+      border-color: var(--orange);
+      background: var(--orange);
+      color: var(--bg);
+      opacity: 1;
+    }
+
     /* Where a transferred prompt came from. A button, because tapping it goes to the source. */
     .conv-from {
       background: none;
@@ -6240,7 +6276,12 @@
       const on = !!conv && convViewOn(a);
       wrap.classList.toggle('conv-on', on);
       box.hidden = !on;
-      if (!on) { box.innerHTML = ''; convViewToken++; return; }
+      if (!on) {
+        box.innerHTML = '';
+        convViewToken++;
+        if (convLastAgent >= 0) { convLastAgent = -1; convPicked.clear(); renderQuickActions(); }
+        return;
+      }
       const token = ++convViewToken;
       const key = convMemberKey(a);
       // Every member, or this pane alone. Joint is the default because that is what a conversation
@@ -6258,7 +6299,18 @@
         (joint ? convMembersHtml(conv, recs) : '') + (entries.length
         ? convEntriesHtml(entries, a, joint, paired)
         : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
+      // Which bubble Summary means, found once here rather than by the button every render. The
+      // button is only rebuilt when the answer changed — it is on the poll path.
+      const wasFinal = convLastAgent;
+      convLastAgent = -1;
+      entries.forEach((e, i) => { if (e.who !== 'user') convLastAgent = i; });
+      if ((wasFinal < 0) !== (convLastAgent < 0)) renderQuickActions();
+      // A render that only appended leaves the picks where they are; anything else moved them, and
+      // a pick on the wrong message is worse than none.
+      if (entries.length < convPickedOf) convPicked.clear();
+      convPickedOf = entries.length;
       syncConvBadge();
+      drawConvSel();
       if (stick) box.scrollTop = box.scrollHeight;
     }
 
@@ -6344,7 +6396,7 @@
     function convEntriesHtml(entries, a, joint, paired) {
       const self = convMemberKey(a);
       let last = 0;
-      return entries.map(e => {
+      return entries.map((e, i) => {
         const at = e.seen || 0;
         // How long the thread was not being recorded for, when both ends of the break are known —
         // "41 min" is the fact; "recording resumed" is all there is to say without a previous entry.
@@ -6384,9 +6436,72 @@
         // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
         // the joint thread: one member needs no telling apart from itself.
         const side = paired && e.member === 1 ? ' conv-right' : '';
+        const pick = `<button class="conv-pick" onclick="toggleConvPick(${i})" aria-pressed="false" ` +
+          `aria-label="Select this message">✓</button>`;
+        const text = escapeHtml(e.text || '');
         return rule + `<div class="conv-msg${user ? ' user' : ''}${side}" data-key="${escapeHtml(key)}"` +
-          ` style="--conv-agent:${color}">${head}${escapeHtml(e.text || '')}</div>`;
+          ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${pick}${head}${text}</div>`;
       }).join('');
+    }
+
+    // --- Picking messages out of a thread ---
+    // The ruler selects a range of lines and the thread has none, so the same three things it feeds
+    // — Copy, Transfer, and the count bar they sit on — are fed here by a set of whole messages.
+    //
+    // ponytail: the set holds positions in the rendered list. Backfill (§6) inserts above them and
+    // would shift what is picked, so a render that is not a pure append drops the selection rather
+    // than moving it to the wrong message. Keyed identity would survive that, and the joint view
+    // builds fresh objects every render, so it would have to be an entry id.
+    let convPicked = new Set(), convPickedOf = 0, convLastAgent = -1;
+
+    function toggleConvPick(i) {
+      if (convPicked.has(i)) convPicked.delete(i); else convPicked.add(i);
+      drawConvSel();
+    }
+
+    function clearConvPick() {
+      if (!convPicked.size) return;
+      convPicked.clear();
+      drawConvSel();
+    }
+
+    // The final message, as the thread states it: the newest thing an agent said. Same claim the
+    // Summary button makes on the pane, made about a bubble instead of a range of lines.
+    function selectFinalConvMessage() {
+      if (convLastAgent < 0) return;
+      convPicked = new Set([convLastAgent]);
+      drawConvSel();
+      const el = document.querySelector(`#convThread .conv-msg[data-i="${convLastAgent}"]`);
+      if (el) el.scrollIntoView({ block: 'center' });
+    }
+
+    // Paints the picks and fills selText, which is what Copy and Transfer already read. The bar is
+    // the pane's own sel-bar: one selection bar, whichever view made the selection.
+    function drawConvSel() {
+      const box = document.getElementById('convThread');
+      const bar = document.getElementById('selBar');
+      if (!box || box.hidden) return;
+      const msgs = Array.from(box.querySelectorAll('.conv-msg'));
+      const texts = [];
+      for (const el of msgs) {
+        const on = convPicked.has(Number(el.dataset.i));
+        el.classList.toggle('picked', on);
+        const pick = el.querySelector('.conv-pick');
+        if (pick) pick.setAttribute('aria-pressed', String(on));
+        // Read in thread order rather than in the order they were tapped: a copied pair of
+        // messages that arrives out of order is not the conversation the reader saw.
+        if (on) texts.push(el.dataset.text || '');
+      }
+      selText = texts.join('\n\n');
+      bar.hidden = !texts.length;
+      if (!texts.length) return;
+      document.getElementById('selCount').textContent =
+        texts.length + (texts.length === 1 ? ' message' : ' messages');
+      // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
+      document.getElementById('selLearn').hidden = true;
+      const pair = pairFor(pairs, activePane);
+      document.getElementById('selTransfer').hidden =
+        !pair || pairHealth(pair, agents).state !== 'healthy';
     }
 
     // --- Line ruler ---
@@ -6395,9 +6510,21 @@
     // the reflow mode reads geometry off a box rather than measuring a Range.
     let selA = null, selB = null, selText = '', paneText = '', paneRows = [];
 
-    function rulerOn() { return !!activePane; }
+    // Not while the thread is on: the band, the handles and the block nav are all positioned
+    // against pane rows, and there are none on screen to position against.
+    function rulerOn() { return !!activePane && !convThreadOn(); }
 
-    function clearSel() { selA = selB = null; selText = ''; selSuggested = false; drawSel(); }
+    function convThreadOn() {
+      const box = document.getElementById('convThread');
+      return !!box && !box.hidden;
+    }
+
+    function clearSel() {
+      selA = selB = null; selText = ''; selSuggested = false;
+      convPicked.clear();
+      drawSel();
+      drawConvSel();
+    }
 
     function lineGeom() {
       const el = document.getElementById('termContent'), cs = getComputedStyle(el);
@@ -7697,7 +7824,8 @@
     // handler recomputes userScrolledUp from where this lands, so one assignment does both.
     // Reading backscroll is what pins the pane, and thumbing back down a long one is real work.
     function scrollPaneToBottom() {
-      const el = document.getElementById('termContent');
+      const box = document.getElementById('convThread');
+      const el = box && !box.hidden ? box : document.getElementById('termContent');
       el.scrollTop = el.scrollHeight;
     }
 
@@ -7750,8 +7878,12 @@
       const open = bottomDockOpen();
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
-      const summary = finalAt
-        ? `<button class="qa-summary" onclick="selectFinalMessage(true)" ` +
+      // In the thread the same button picks the newest agent bubble; on the pane it draws the
+      // band across its lines. One control, because it is one claim about one message.
+      const threadOn = convThreadOn();
+      const hasFinal = threadOn ? convLastAgent >= 0 : !!finalAt;
+      const summary = hasFinal
+        ? `<button class="qa-summary" onclick="${threadOn ? 'selectFinalConvMessage()' : 'selectFinalMessage(true)'}" ` +
         `title="Select the agent's closing message" ` +
         `aria-label="Select the agent's closing message">Summary</button>`
         : '';

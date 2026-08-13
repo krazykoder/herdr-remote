@@ -423,3 +423,65 @@ test('self-upgrade keeps a newer fallback tail beside an existing database recor
     'kept in the database', 'written while IndexedDB was away',
   ]);
 });
+
+test('Last goes to the end of the thread, the same button that ends the pane', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(async k => {
+    const entries = [];
+    for (let i = 0; i < 40; i++) entries.push({who: 'agent', text: 'turn ' + i, seen: i + 1});
+    await convPut({key: k, label: 'Architect 1', first: 1, touched: 40, entries: entries});
+  }, key);
+  await page.locator('#quickActions .qa-conv').click();
+  const top = await page.evaluate(() => {
+    const box = document.getElementById('convThread');
+    box.scrollTop = 0;
+    return box.scrollHeight > box.clientHeight;
+  });
+  expect(top, 'the thread has to overflow for the button to have anywhere to go').toBe(true);
+  await page.locator('#quickActions .qa-last').click();
+  const atEnd = await page.evaluate(() => {
+    const box = document.getElementById('convThread');
+    return box.scrollHeight - box.scrollTop - box.clientHeight;
+  });
+  expect(atEnd).toBeLessThan(4);
+});
+
+test('Summary ticks the newest agent bubble, and a tick is what a selection is here', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const msgs = page.locator('#convThread .conv-msg');
+  await expect(msgs).toHaveCount(2);
+  await page.locator('#quickActions .qa-summary').click();
+  // The newest *agent* message, not the newest message: the user's prompt is the later of the two.
+  await expect(msgs.nth(0)).toHaveClass(/picked/);
+  await expect(msgs.nth(1)).not.toHaveClass(/picked/);
+  await expect(page.locator('#convThread .conv-msg').nth(0).locator('.conv-pick'))
+    .toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#selBar')).toBeVisible();
+  await expect(page.locator('#selCount')).toHaveText('1 message');
+  // Learn reads a gutter glyph off pane lines, and there are none under a bubble.
+  await expect(page.locator('#selLearn')).toBeHidden();
+  // The tick is the selection control: a second one adds, and unticking gives the bar back.
+  await msgs.nth(1).locator('.conv-pick').click();
+  await expect(page.locator('#selCount')).toHaveText('2 messages');
+  // Copy and Transfer both read selText, and they read it in thread order rather than tap order.
+  const sel = await page.evaluate(() => selText);
+  expect(sel.indexOf('Ready. Name the change.')).toBeGreaterThan(-1);
+  expect(sel.indexOf('Ready. Name the change.')).toBeLessThan(sel.indexOf('allow the test commands'));
+  await msgs.nth(0).locator('.conv-pick').click();
+  await msgs.nth(1).locator('.conv-pick').click();
+  await expect(page.locator('#selBar')).toBeHidden();
+});
+
+test('the line ruler stays out of the thread, and comes back with the rows', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  expect(await page.evaluate(() => rulerOn())).toBe(false);
+  await page.locator('#quickActions .qa-conv').click();
+  expect(await page.evaluate(() => rulerOn())).toBe(true);
+});

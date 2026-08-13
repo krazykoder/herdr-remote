@@ -21,6 +21,9 @@ assert.ok(from !== -1 && to > from, 'quick actions block not found in web/index.
 // A fresh context per test: both switches are localStorage-backed module state.
 function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {}) {
   const els = {};
+  // The thread is a sibling of the pane rows, and `hidden` is what says which of the two is on
+  // screen — Last and Summary both branch on it.
+  const el0 = id => els[id];
   const el = id => els[id] || (els[id] =
     {id, innerHTML: '', style: {}, setAttribute() {}, scrollTop: 0, scrollHeight: 4000,
      classes: new Set(),
@@ -43,7 +46,9 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     // block below this one. Stubbed rather than sliced in: this suite owns the nav row, not the
     // recorder.
     convsForPane: () => convs, convViewOn: () => threaded, toggleConvView() {},
+    convThreadOn: () => threaded, convLastAgent: threaded ? 3 : -1, selectFinalConvMessage() {},
   });
+  el('convThread').hidden = !threaded;
   vm.runInContext(HTML.slice(from, to), ctx);
   return {el, store, run: src => vm.runInContext(src, ctx)};
 }
@@ -110,6 +115,22 @@ test('Last goes to the end of the pane, not part way', () => {
   el('termContent').scrollTop = 120;
   run('scrollPaneToBottom()');
   assert.equal(el('termContent').scrollTop, el('termContent').scrollHeight);
+});
+
+test('Last goes to the end of whichever view is on screen', () => {
+  // The thread replaces the rows rather than scrolling with them, so the button has to follow it.
+  const {el, run} = dockCtx({convs: [{id: 'c1', name: 'x'}], threaded: true});
+  el('convThread').scrollTop = 120;
+  el('termContent').scrollTop = 0;
+  run('scrollPaneToBottom()');
+  assert.equal(el('convThread').scrollTop, el('convThread').scrollHeight);
+  assert.equal(el('termContent').scrollTop, 0, 'the rows behind it are left where they were');
+});
+
+test('Summary picks the newest bubble while the thread is on', () => {
+  const {el, run} = dockCtx({convs: [{id: 'c1', name: 'x'}], threaded: true});
+  run('renderQuickActions()');
+  assert.match(el('quickActions').innerHTML, /selectFinalConvMessage\(\)/);
 });
 
 test('the pill hangs over the pane until its own first read lands', () => {
