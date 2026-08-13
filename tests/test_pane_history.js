@@ -42,6 +42,9 @@ function historyCtx({stored = null, paneLines = 200, status = 'working', now = 1
     // The clock is the thing the cadence is measured against, so the test moves it rather than
     // waiting on it.
     Date: {now: () => clock.at},
+    // A conversation's other members are read on the same tick. Whether that happens is the
+    // conversation suite's business; this one owns the cadence of the open pane's own read.
+    convPollMembers() {},
   });
   vm.runInContext(HTML.slice(from, to), ctx);
   // A tick of the real 3s interval, wherever the clock currently is.

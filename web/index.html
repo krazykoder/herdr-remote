@@ -1670,13 +1670,13 @@
     }
 
     .conv-msg.user {
-      color: var(--blue);
+      color: var(--green);
       font-family: inherit;
     }
 
     /* A pair is a two-column conversation: agent one and the prompts sent to it live left;
-       agent two and its prompts live right. The user stays blue, but no longer claims a third,
-       unrelated side of the discussion. */
+       agent two and its prompts live right. The user keeps one colour of their own, but no longer
+       claims a third, unrelated side of the discussion. */
     .conv-msg.conv-right {
       align-self: flex-end;
       border-bottom-left-radius: 12px;
@@ -4348,7 +4348,11 @@
         render();
         renderQuickActions();  // the approval buttons belong on screen the moment it blocks
         syncConvBadge();
-      } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
+      } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {
+        // Another member of the thread on screen, read by convPollMembers. Recorded, never drawn:
+        // recordPane ignores any pane that is not in a conversation, so a stray read is harmless.
+        recordPane(msg.pane_id, (msg.content || '').split('\n'));
+      } else if (msg.type === 'pane_content') {
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
         const prevScroll = el.scrollTop;
@@ -6052,7 +6056,46 @@
       await convPut(held);
       convNoteCounts(key, held.entries.length, now);
       // The thread is a render of what was just folded, so it follows the same read.
-      if (activePane && paneOf(activePane) && convMemberKey(paneOf(activePane)) === key) renderConvView();
+      if (convThreadShows(key)) renderConvView();
+    }
+
+    // Recording is bound to a read, and only the open pane is ever read — so a joint thread would
+    // otherwise show one member talking to itself until you opened the other pane yourself. Read
+    // the conversation's other live members on the same tick, and record what comes back without
+    // ever drawing it.
+    //
+    // ponytail: only while the thread is on screen, so a conversation you are not looking at costs
+    // nothing. A member that was quiet all that time is backfilled no further than its pane still
+    // reaches — recording in the background would need the relay to push, not the client to poll.
+    const CONV_POLL_MAX = 3;      // a read is real work on the host; a thread of four is not a wall
+
+    function convPollMembers() {
+      if (!convThreadOn() || !convJointOn()) return;
+      const a = paneOf(activePane);
+      const conv = a && convsForPane(a)[0];
+      if (!conv) return;
+      const keys = pairedConvMembers(a, conv).map(m => m.key);
+      let sent = 0;
+      for (const other of agents) {
+        if (sent >= CONV_POLL_MAX) break;
+        if (other.pane_id === activePane || !keys.includes(convMemberKey(other))) continue;
+        // Fixed source and length: the transcript is folded out of consecutive reads, and a member
+        // read one way here and another way when it is the open pane would not overlap.
+        ws.send(JSON.stringify(
+          { type: 'read_pane', pane_id: other.pane_id, lines: 200, source: 'recent-unwrapped' }));
+        sent++;
+      }
+    }
+
+    // Whether a transcript that just changed is one the view on screen is rendering: the open
+    // pane's own, or another member of the joint thread it is showing.
+    function convThreadShows(key) {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a) return false;
+      if (convMemberKey(a) === key) return true;
+      const conv = convsForPane(a)[0];
+      return !!conv && convViewOn(a) && convJointOn() &&
+        pairedConvMembers(a, conv).some(m => m.key === key);
     }
 
     // The count and the last-seen the landing list renders, kept per member rather than per
@@ -6290,8 +6333,13 @@
       if (!on) {
         box.innerHTML = '';
         convViewToken++;
-        if (convLastAgent >= 0) { convLastAgent = -1; convPicked.clear(); renderQuickActions(); }
-        clearSel();
+        // Picks were bubbles, and they filled the same selection bar the rows fill, so they leave
+        // with the thread. Only then: this runs on every recorded read, and clearing unasked would
+        // wipe a ruler selection made on the rows every three seconds.
+        const picked = convPicked.size > 0;
+        convPicked.clear();
+        if (convLastAgent >= 0) { convLastAgent = -1; renderQuickActions(); }
+        if (picked) clearSel();
         return;
       }
       const token = ++convViewToken;
@@ -7997,6 +8045,7 @@
         lastPaneRead = Date.now();
         ws.send(JSON.stringify(
           { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+        convPollMembers();
       }
     }
 

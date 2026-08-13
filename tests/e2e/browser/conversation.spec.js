@@ -341,7 +341,8 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   expect(layout[1].right).toBe('flex-start');
   expect(layout[2].user).toBe(true);
   expect(layout[2].right).toBe('flex-start');         // prompt sent to Architect 1
-  await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(122, 162, 247)');
+  // The user's own text carries one colour of its own, and it is not any agent's.
+  await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
