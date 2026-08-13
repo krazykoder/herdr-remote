@@ -96,12 +96,14 @@ one.
 
 ## 6. Order of work while this is deferred
 
-1. **Validate the event model in real use.** A long paired conversation, including a reload, a
-   disconnect, a partner finishing while the other is on screen, and a long draft. Watch for
-   duplicates, a missed newest turn, and whether the draft reads well while it is being written.
-2. **Copy/export.** Whole-thread Markdown copy, and Copy start details from the recorded `spawn`.
-   Orthogonal to the recorder, and the transcript is stable enough to be worth copying.
-3. **Decide this document from that evidence.**
+1. **Validate the event model in real use** — **done, 2026-08-13.** Checked by hand against live
+   paired sessions: no duplicates, the newest turn survives a reload, the draft reads while it is
+   being written. This was the gate on everything below, and it is the reason the rest of this list
+   is deferred rather than scheduled.
+2. **Copy/export — deferred.** Whole-thread Markdown copy, and Copy start details from the recorded
+   `spawn`. Orthogonal to the recorder, and the transcript is stable enough to be worth copying
+   whenever it is picked up.
+3. **This document — deferred** on the evidence in §5, which real use has not produced.
 4. **Known edge, low priority.** Two prompts sent from this app before the pane's first read: only
    the newest is consulted by `splitFirstRead`, so the older one's echo is kept as history and
    duplicates. Rare, and `Remove duplicates` repairs it.
