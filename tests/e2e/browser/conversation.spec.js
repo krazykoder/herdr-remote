@@ -240,6 +240,7 @@ const joinBoth = page => page.evaluate(async () => {
     id: 'c1', name: 'new authentication feature', created: Date.now(),
     members: [{key: mine, added: 1, label: 'Architect 1', messages: 2},
       {key: other, added: 1, label: 'scratch', messages: 2}],
+    pair_id: 'p1',
   }]);
   return [mine, other];
 });
@@ -258,6 +259,43 @@ test('a conversation of two opens on the joint thread, both members in it', asyn
   await expect(msgs.nth(0)).toContainText('scratch');
   await expect(msgs.nth(1)).toContainText('Architect 1');
   await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
+});
+
+test('a paired thread fills the pane, keeps agent colors, and keeps prompts beside their agent', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const msgs = page.locator('#convThread .conv-msg');
+  await expect(msgs).toHaveCount(4);
+  const layout = await page.evaluate(() => {
+    const thread = document.getElementById('convThread').getBoundingClientRect();
+    const wrap = document.getElementById('termWrap').getBoundingClientRect();
+    return Array.from(document.querySelectorAll('#convThread .conv-msg')).map(m => ({
+      right: getComputedStyle(m).alignSelf, color: m.style.getPropertyValue('--conv-agent'),
+      thread: Math.round(thread.width), wrap: Math.round(wrap.width), user: m.classList.contains('user'),
+    }));
+  });
+  expect(layout[0].thread).toBe(layout[0].wrap);
+  expect(layout[0].color).toBe('var(--blue)');       // scratch is codex
+  expect(layout[1].color).toBe('var(--agent-claude)');
+  expect(layout[0].right).toBe('flex-end');
+  expect(layout[1].right).toBe('flex-start');
+  expect(layout[2].user).toBe(true);
+  expect(layout[2].right).toBe('flex-start');         // prompt sent to Architect 1
+});
+
+test('conversation text has its own menu font control', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvFont')).toBeVisible();
+  await expect(page.locator('#convFontValue')).toHaveText('13px');
+  await page.locator('#convFontInc').click();
+  await expect(page.locator('#convFontValue')).toHaveText('14px');
+  await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '14px');
 });
 
 test('the members strip names who is in it, and what each session was', async ({page}) => {
