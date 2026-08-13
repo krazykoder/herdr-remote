@@ -67,7 +67,7 @@ recorder runs over the rows it already has:
 | Source | Already exists | Gives |
 |---|---|---|
 | `turnSummaries(rows, agent)` | yes, tested | one `[start, end]` per turn — the agent's closing message |
-| `userInputLines(rows, agent)` | yes, tested | the line indices the user typed on |
+| `userInputLines(rows, agent)` | yes, tested | the line indices in the user's turn; adjacent indices are joined into one user message |
 | `trimRange(range, agent)` | yes, tested | the user's learned trim, applied to each range |
 | `profileFor(agent)` | yes, tested | null for a harness with no profile — see below |
 
@@ -142,11 +142,13 @@ operation, never a transcript operation.
 **A dangling reference is a rendered state, not an error.** A member whose transcript has been
 evicted renders as "recording no longer held" in the thread and the conversation opens normally.
 
-**Identity is the text, not the line number.** Every read shifts the indices — the pane scrolls,
-`Load more` shifts them the other way — so an entry is deduped on a 32-bit hash of its normalized
-text. The recorder keeps the last ~200 hashes of each *transcript* in memory and appends only what
-that pane has not said. Per transcript, not globally: two agents can both say "Done." and both are
-real.
+**Identity is the overlapping window, not a line number or just its text.** Every read shifts the
+indices — the pane scrolls, `Load more` shifts them the other way — so the recorder matches the
+longest exact suffix/prefix overlap between its previous normalized window and the current one.
+It appends only the non-overlapping tail (or prepends the non-overlapping head on backfill). A
+short hash may find candidates, but exact normalized text confirms every match. This preserves two
+real, separate `Done.` messages in one pane; deduping against every text ever seen would silently
+lose the second. Per transcript, not globally: two agents can both say `Done.` and both are real.
 
 **Ceilings, named.** IndexedDB's budget is a share of free disk, not 5 MB, so these are set by what
 a thread is still readable at rather than by what fits:
@@ -169,33 +171,33 @@ A `QuotaExceededError` on write triggers one eviction pass and one retry. A stor
 keeps the session's recording in memory and says so once — the same posture `setSound` and the theme
 picker already take on private mode.
 
-### 4.1 `spawn` — enough to stand the session up again
+### 4.1 `spawn` — the session facts v1 can recover
 
 A conversation outlives its panes, and the question it leaves behind is "what was this, and how do
-I get it back". The `spawn` block on each transcript is that answer: the fields the app would put on
-a `start_agent` message, captured on the first read and refreshed on every read while the pane is
-live, so a closed session leaves a record of what it was rather than a name and a transcript. It
-sits on the transcript and not on the membership, because it describes the session, and the session
-does not change when someone files it under a second name.
+I get it back". The `spawn` block records the session facts the browser can actually recover,
+captured on the first read and refreshed while the pane is live. It sits on the transcript and not
+on the membership, because it describes the session, and the session does not change when someone
+files it under a second name.
 
 ```js
 spawn: {
   agent: 'claude',            // harness kind — what herdr was asked to run
   role: 'architect',          // as roleOf() reads it off the label
   label: 'Architect 1',
-  project_id: 'charts',       // '' when Projects are off — see the caveat below
+  project_id: 'charts',       // normalized to '' when Projects are off — see the caveat below
   project: 'charts',          // display name, for a record a human reads years later
   cwd: '/Users/x/code/charts',
   host: 'local',              // or the HERDR_REMOTES target
-  workspace_id: 'w1',
-  placement: 'new_tab',       // what it would take to put a replacement beside its siblings
-  slot: 'wide',
+  workspace_id: 'w1',         // where it was observed, not proof of how it was created
+  tab_id: 't1',
   captured: 1755000900000,    // when this was last true
 }
 ```
 
-Every field is one the browser already has on the pane record or already sends on `start_agent`
-(`relay/start_agent.py`, `BASE_FIELDS`). Nothing new is asked of the relay.
+Every field above is in the pane record, except `role`, which `roleOf()` recovers from its label.
+Nothing new is asked of the relay. `placement` and `slot` are deliberately absent: a snapshot tells
+us the current workspace and tab, but not whether the pane was created in a workspace, tab, or
+split, nor which slot it occupied. Recording invented values would make the future action wrong.
 
 **Two honest limits, stated rather than designed around:**
 
@@ -203,14 +205,15 @@ Every field is one the browser already has on the pane record or already sends o
   from the client — that is a security property of `start_agent` and this feature does not touch it.
   So a member with a `project_id` can be respawned; one recorded while Projects were off carries
   `cwd` as a **note for a human**, not as a parameter. The view says which of the two it is.
-- **A respawned session is a new session with the same shape.** It has the agent's name, role,
-  directory and placement — not its context. Nothing here replays a transcript into a new agent,
-  and offering to would be a feature that silently pastes hours of old output into a fresh context.
+- **A replacement needs a placement choice.** The saved record can preselect agent, role and
+  Project, and can offer its observed workspace when it is still live; it cannot reconstruct a
+  historical placement or slot. Nothing here replays a transcript into a new agent, and offering
+  to would be a feature that silently pastes hours of old output into a fresh context.
 
 **Respawn is a v2 button, not a v1 one.** v1 records `spawn` and shows it ("claude · architect ·
-charts · new_tab"), with **Copy start details**. The button that re-sends `start_agent` is one line
-on top of the existing start dialog once the record has been carried by real conversations for a
-while; recording is the part that cannot be added retroactively.
+charts"), with **Copy start details**. v2 opens the existing start dialog with those fields
+preselected and asks for placement/slot; it is not a one-line re-send. Recording is the part that
+cannot be added retroactively.
 
 ### 4.2 `via` — typed, transferred, or both
 
@@ -339,15 +342,14 @@ Two consequences, both worth stating in the UI rather than hiding:
 
 - **Within one read**, entries are appended in window order. That order is the pane's own and is
   exact.
-- **Backfill** — a `Load more` that reveals older turns — produces entries that belong *before*
-  what is already stored. They are inserted at the front of that pane's run and stamped with the
-  `seen` of the oldest entry they precede, flagged `backfill: true`. They are not given the current
-  time; that would put an hour-old message at the end of the thread.
-- **A gap** is detectable and is worth drawing. If none of that member's recent hashes appear
-  anywhere in the current window, the window does not overlap what is stored — something was said
-  and scrolled past between two reads. The next entry carries `gap: true` and the view draws a thin
-  "…" rule above it. This is cheap (a set intersection over the window) and it is the difference
-  between a transcript with a hole in it and a transcript that lies.
+- **Backfill** — a `Load more` that reveals older turns — uses the same overlap and inserts the
+  unmatched head at the front of that pane's run. Those entries take the `seen` of the oldest entry
+  they precede and are flagged `backfill: true`; they are not given the current time, which would
+  put an hour-old message at the end of the thread.
+- **A gap** is detectable and is worth drawing. If the prior and current normalized windows have
+  no exact overlap, something may have scrolled past between reads. The next entry carries
+  `gap: true` and the view draws a thin "…" rule above it. This is the difference between a
+  transcript with a possible hole and a transcript that lies.
 - **The joint view is a stable merge**, not a sort. Each member's transcript is walked in its own
   order and the merge only chooses *which member goes next*, by `seen`. A member's own sequence can
   therefore never be reordered by a coarse timestamp — the worst a bad clock can do is interleave
@@ -473,9 +475,9 @@ The record binds pane fingerprints, so:
 
 | Suite | What |
 |---|---|
-| `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: dedupe per member, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
+| `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: adjacent user rows become one message; overlap dedupe preserves repeated identical messages, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
 | `tests/test_conversation.js` | the `via` classifier (§4.2): the composed payload sent unchanged is `transfer`, the payload with an instruction typed over it is `mixed`, the payload deleted and replaced is `typed`, an expired outbox entry is `typed`. Fed by `composeTransfer` itself, so a change to the payload shape breaks the classifier's test rather than the classifier |
-| `tests/test_conversation.js` | `spawn` is captured from a pane record and carries every field `start_agent` requires, or says which one it lacks — asserted against `BASE_FIELDS` in `relay/start_agent.py` so the two cannot drift apart silently |
+| `tests/test_conversation.js` | `spawn` is captured only from snapshot fields plus `roleOf()`: it records workspace/tab as observations and never invents placement or slot |
 | `tests/test_conversation.js` | the merge: three members interleave by `seen`, **and no member's own order is ever broken** — the property that lets a member be read alone. Fed by `tests/fixtures/pane_*_done.txt`, the same panes the detector is tested on, so a harness whose glyphs change breaks here too |
 | `tests/e2e/browser/conversation.spec.js` (new) | naming a conversation, the thread rendering, a pair opening on the joint thread, "Show paired conversation" off leaving the pane's own transcript unchanged, adding a third pane, the quick-actions toggle surviving a pane switch, the landing-page section outliving a pane that has gone |
 | `tests/e2e/browser/conversation.spec.js` | the store layer (§4.4), which the vm slice cannot see: a transcript written and read back across a **page reload**, the index in `localStorage` agreeing with the records in IndexedDB, eviction dropping unreferenced transcripts first, and a conversation whose panes are gone still opening |
@@ -506,32 +508,25 @@ wire format. That is a different phase.
 
 ---
 
-## 11. Open questions
+## 11. V1 decisions
 
-1. **Does a conversation record only the open pane, or every member?** Recording every member needs
+1. **Record only the actively read pane.** Recording every member needs
    a background read per member (a `read_pane` every ~12s for a pane nobody is looking at), and
    this now scales with `MEMBER_MAX`, not with two. Without it, each member's transcript advances
    only while that member is on screen — which is what agents watched in turn actually look like,
-   and the joint view already draws the resulting gaps honestly (§6). **Recommendation: only the
-   open pane in v1**, and revisit with real transcripts. If it is added later it is a poll budget
+   and the joint view already draws the resulting gaps honestly (§6). Revisit with real
+   transcripts. If it is added later it is a poll budget
    (N members × 12s), not a change to anything above.
-2. **Should the user's own sent text be recorded at send time** (exact, immediate, and includes
-   what a shortcut sent) **or read back off the pane** (matches what the agent actually received)?
-   Reading it back is one code path instead of two and cannot disagree with the pane.
-   **Recommendation: read it back**, and accept that a prompt sent while the pane is closed lands
-   at the next open.
-3. **Does a conversation ever end?** Nothing here archives one. **Recommendation: no explicit end
-   in v1** — a conversation whose panes are gone is already visibly finished, and eviction handles
-   the rest.
-4. **Is "Show paired conversation" per pane, per conversation, or global?** It is written as one
-   stored preference (`herdr_conv_joint`), which is the smallest thing that works and is how every
-   other pane-view setting in the menu behaves. Per conversation would let one thread be joint and
-   another split, at the cost of a setting that answers differently depending on where you opened
-   it. **Recommendation: one preference**, revisit only if someone actually wants both at once.
-5. **Export format:** Markdown to the clipboard is proposed. A file download is one more line
-   (`Blob` + `<a download>`) and works where the clipboard API is blocked on plain HTTP over a LAN
-   address — which is exactly how this app is served. **Recommendation: both, download as the
-   fallback.**
+2. **Read the user's own sent text back from the pane.** Recording at send time is exact, immediate,
+   and includes what a shortcut sent, but it can disagree with what the agent actually received.
+   Readback is one code path and cannot disagree with the pane; a prompt sent while the pane is
+   closed lands at the next open.
+3. **No explicit end in v1.** A conversation whose panes are gone is visibly finished, and eviction
+   handles the rest.
+4. **One global `herdr_conv_joint` preference.** It is how every other pane-view setting in the
+   menu behaves. Revisit only if someone actually wants both views at once.
+5. **Export both ways.** Markdown goes to the clipboard, with a `Blob` download fallback for the
+   plain-HTTP LAN page where the clipboard API may be blocked.
 
 ---
 
