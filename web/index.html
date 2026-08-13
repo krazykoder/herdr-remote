@@ -1649,6 +1649,7 @@
     }
 
     .conv-msg {
+      position: relative;
       width: 86%;
       box-sizing: border-box;
       align-self: flex-start;
@@ -1713,6 +1714,39 @@
       height: 7px;
       border-radius: 50%;
       flex: none;
+    }
+
+    /* The live state of the pane the last bubble belongs to, hung off its top-right corner. Only
+       the last one carries it: a status is a fact about the pane now, not about the message, and
+       a column of them would read as a per-message history that does not exist. */
+    .conv-badge {
+      position: absolute;
+      top: -8px;
+      right: 10px;
+      padding: 1px 7px;
+      border-radius: 9px;
+      border: 1px solid;
+      background: var(--surface);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.55rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .conv-badge.done {
+      color: var(--green);
+      border-color: var(--green);
+    }
+
+    .conv-badge.working {
+      color: var(--orange);
+      border-color: var(--orange);
+    }
+
+    .conv-badge.blocked {
+      color: var(--red);
+      border-color: var(--red);
     }
 
     /* Where a transferred prompt came from. A button, because tapping it goes to the source. */
@@ -4225,6 +4259,7 @@
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
+        syncConvBadge();
         if (activePane) {
           // herdr reuses a pane_id once its pane closes, so an open pane that has left both lists
           // is not retargeted or polled on — it is let go.
@@ -4264,6 +4299,7 @@
         prevStatuses[update.pane_id] = update.status;
         render();
         renderQuickActions();
+        syncConvBadge();
       }
       else if (msg.type === 'blocked') {
         const a = agents.find(x => x.pane_id === msg.pane_id);
@@ -4276,6 +4312,7 @@
         if (timeline.length > 100) timeline.pop();
         render();
         renderQuickActions();  // the approval buttons belong on screen the moment it blocks
+        syncConvBadge();
       } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
@@ -5968,11 +6005,12 @@
       const tagged = tagUserEntries(out.entries, loadOutbox(), now);
       saveOutbox(tagged.outbox);
       const label = paneLabel(a) || held.label || '';
-      // Stamped once, on the entries this fold added: an entry keeps the label the pane had when
-      // it was recorded, because that is what the transcript said at the time (§8). It is also
-      // what lets the joint thread name three members without holding three snapshots.
+      // Stamped once, on the entries this fold added: an entry keeps the name and the harness the
+      // pane had when it was recorded, because that is what the transcript said at the time (§8).
+      // It is also what lets the joint thread label three members, and badge a member that has
+      // since exited, without holding three snapshots.
       held.entries = capEntries(tagged.entries)
-        .map(e => e.label ? e : Object.assign({}, e, { label: label }));
+        .map(e => e.label ? e : Object.assign({}, e, { label: label, agent: a.agent || '' }));
       held.label = label;
       held.touched = now;
       held.spawn = convSpawn(a, now);
@@ -6220,7 +6258,29 @@
         (joint ? convMembersHtml(conv, recs) : '') + (entries.length
         ? convEntriesHtml(entries, a, joint, paired)
         : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
+      syncConvBadge();
       if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // What the pane is doing right now, on the newest bubble. Written in place rather than by
+    // re-rendering the thread: the status arrives on every poll, and rebuilding the thread three
+    // times a minute would take the reader's text selection with it mid-copy.
+    function syncConvBadge() {
+      const box = document.getElementById('convThread');
+      if (!box || box.hidden) return;
+      const msgs = box.querySelectorAll('.conv-msg');
+      const last = msgs[msgs.length - 1];
+      if (!last) return;
+      const live = agents.find(x => convMemberKey(x) === last.dataset.key);
+      // 'idle' is not a state worth a badge — it is what a pane is nearly all of the time, and a
+      // badge that is always on says nothing. blocked is here because it is the one this whole app
+      // exists to surface.
+      const status = live && ['working', 'done', 'blocked'].includes(live.status) ? live.status : '';
+      let badge = last.querySelector('.conv-badge');
+      if (!status) { if (badge) badge.remove(); return; }
+      if (!badge) { badge = document.createElement('span'); last.appendChild(badge); }
+      badge.className = 'conv-badge ' + status;
+      badge.textContent = status;
     }
 
     // This session's copies first, so the common case — a thread re-rendered on every read of the
@@ -6282,6 +6342,7 @@
     const CONV_RULE_GAP = 10 * 60 * 1000;
 
     function convEntriesHtml(entries, a, joint, paired) {
+      const self = convMemberKey(a);
       let last = 0;
       return entries.map(e => {
         const at = e.seen || 0;
@@ -6303,20 +6364,28 @@
         // Every agent bubble carries its label as well as its colour: two washes of one family are
         // not enough on a phone in sunlight, and past two members colour alone stops working.
         const tint = convTint(e.member || 0);
-        const live = joint && agents.find(x => convMemberKey(x) === e.key);
-        const color = agentColor((live && live.agent) || e.agent || a.agent) || 'var(--muted)';
+        const key = e.key || self;
+        const live = agents.find(x => convMemberKey(x) === key);
+        // The harness the entry was recorded under, not the one running in that pane today: a
+        // conversation outlives its panes, and a member that has exited still gets its own badge.
+        const agent = e.agent || (live && live.agent) || a.agent;
+        const color = agentColor(agent) || 'var(--muted)';
         const name = escapeHtml(e.label || paneLabel(a));
+        // The same badge the pane list and the pair sheet use, beside the name: colour says which
+        // member, and the badge says what it is — a thread of claude and codex reads as two
+        // colleagues rather than as two colours.
+        const badge = agentBadge(agent);
         // In a joint thread a user bubble also names the pane it was sent to: every prompt in the
         // thread is the same blue on the same side, and "which colleague was this said to" is the
         // question the joint view exists to answer.
-        const to = joint ? `<span class="dot" style="background:${tint}"></span>${name}` : '';
-        const bar = user ? [to, from].filter(Boolean).join(' · ')
-          : `<span class="dot" style="background:${tint}"></span>${name}`;
-        const who = bar ? `<span class="conv-who">${bar}</span>` : '';
+        const who = `<span class="dot" style="background:${tint}"></span>${name}${badge}`;
+        const bar = user ? [joint ? who : '', from].filter(Boolean).join(' · ') : who;
+        const head = bar ? `<span class="conv-who">${bar}</span>` : '';
         // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
         // the joint thread: one member needs no telling apart from itself.
         const side = paired && e.member === 1 ? ' conv-right' : '';
-        return rule + `<div class="conv-msg${user ? ' user' : ''}${side}" style="--conv-agent:${color}">${who}${escapeHtml(e.text || '')}</div>`;
+        return rule + `<div class="conv-msg${user ? ' user' : ''}${side}" data-key="${escapeHtml(key)}"` +
+          ` style="--conv-agent:${color}">${head}${escapeHtml(e.text || '')}</div>`;
       }).join('');
     }
 
@@ -8488,6 +8557,7 @@
     measureCellRatio();  // before applyWrapMode, which divides by it
     setFont(currentFont());
     setInputFont(currentInputFont());
+    setConvFont(currentConvFont());
     applyWrapMode();
     placePairStrip();
     syncQaBtn();

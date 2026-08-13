@@ -260,8 +260,9 @@ const joinBoth = page => page.evaluate(async () => {
   const other = convMemberKey(agents.find(a => a.label === 'scratch'));
   await convPut({key: other, label: 'scratch', first: 1, touched: 2,
     spawn: {agent: 'codex', role: 'reviewer', project: 'charts'},
-    entries: [{who: 'agent', text: 'the other pane spoke first', seen: 1, label: 'scratch'},
-      {who: 'agent', text: 'and again, last', seen: 9e12, label: 'scratch'}]});
+    entries: [
+      {who: 'agent', text: 'the other pane spoke first', seen: 1, label: 'scratch', agent: 'codex'},
+      {who: 'agent', text: 'and again, last', seen: 9e12, label: 'scratch', agent: 'codex'}]});
   saveConvIndex([{
     id: 'c1', name: 'new authentication feature', created: Date.now(),
     members: [{key: mine, added: 1, label: 'Architect 1', messages: 2},
@@ -323,6 +324,54 @@ test('conversation text has its own menu font control', async ({page}) => {
   await page.locator('#convFontInc').click();
   await expect(page.locator('#convFontValue')).toHaveText('10px');
   await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '10px');
+});
+
+test('the conversation text size is applied before the first thread is painted', async ({page}) => {
+  // The control writes a CSS custom property. Nothing else reads localStorage for it, so a boot
+  // that forgets to apply it shows the default until the gear menu happens to be opened.
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await page.evaluate(() => localStorage.setItem('herdr_conv_font_size', '16'));
+  await page.reload();
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '16px');
+});
+
+test('every bubble names the harness beside the member, including one that has exited', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const badges = page.locator('#convThread .conv-msg .conv-who .badge');
+  await expect(badges.first()).toHaveText('codex');     // scratch, still live
+  await expect(badges.nth(1)).toHaveText('claude');
+  // The recorder stamps the harness on each entry, which is what lets a member that has since
+  // exited keep its own badge rather than borrowing the open pane's.
+  const key = await page.evaluate(() => convMemberKey(paneOf(activePane)));
+  expect((await held(page, key)).entries.every(e => e.agent === 'claude')).toBe(true);
+  await page.evaluate(() => { agents = agents.filter(a => a.label !== 'scratch'); renderConvView(); });
+  await expect(page.locator('#convThread .conv-msg .conv-who .badge').first()).toHaveText('codex');
+});
+
+test('the newest bubble wears the pane state, and only the newest', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const badge = page.locator('#convThread .conv-badge');
+  await expect(badge).toHaveCount(1);
+  await expect(badge).toHaveText('done');
+  await expect(page.locator('#convThread .conv-msg').last().locator('.conv-badge')).toHaveCount(1);
+  // An agent that starts working says so on the thread, without the thread being rebuilt.
+  await page.evaluate(() => { paneOf(activePane).status = 'working'; syncConvBadge(); });
+  await expect(badge).toHaveText('working');
+  await page.evaluate(() => { paneOf(activePane).status = 'blocked'; syncConvBadge(); });
+  await expect(badge).toHaveText('blocked');
+  // Idle is what a pane is nearly all of the time, so it is not a badge.
+  await page.evaluate(() => { paneOf(activePane).status = 'idle'; syncConvBadge(); });
+  await expect(badge).toHaveCount(0);
 });
 
 test('the members strip names who is in it, and what each session was', async ({page}) => {
