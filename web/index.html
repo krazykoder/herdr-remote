@@ -2749,6 +2749,14 @@
           <!-- Shown only while this pane's conversation has someone else in it. -->
           <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
             onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
+          <div id="menuConvFont" hidden>
+            <div class="menu-label" style="margin-top:10px">Conversation text</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button id="convFontDec" onclick="bumpConvFont(-1)" aria-label="Smaller conversation text">A−</button>
+              <span id="convFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
+              <button id="convFontInc" onclick="bumpConvFont(1)" aria-label="Larger conversation text">A+</button>
+            </div>
+          </div>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -2770,14 +2778,6 @@
               <button id="inputFontDec" onclick="bumpInputFont(-1)" aria-label="Smaller composer text">A−</button>
               <span id="inputFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
               <button id="inputFontInc" onclick="bumpInputFont(1)" aria-label="Larger composer text">A+</button>
-            </div>
-          </div>
-          <div id="menuConvFont" hidden>
-            <div class="menu-label" style="margin-top:10px">Conversation text</div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <button id="convFontDec" onclick="bumpConvFont(-1)" aria-label="Smaller conversation text">A−</button>
-              <span id="convFontValue" style="flex:1;text-align:center;font-size:0.75rem"></span>
-              <button id="convFontInc" onclick="bumpConvFont(1)" aria-label="Larger conversation text">A+</button>
             </div>
           </div>
           <div class="menu-label" style="margin-top:10px">Line width</div>
