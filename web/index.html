@@ -5789,11 +5789,29 @@
       const entries = (stored || []).slice();
       if (!fresh || !fresh.length) return { entries: entries, added: 0, grew: false, gap: false };
       const end = (clock && clock.end) || 0;
+      const working = !!(clock && clock.working);
       // Everything a pane already has on screen the first time it is read was said before this
       // browser was watching. Stamping it `now` files an hour of history as the newest thing in
       // the thread — and in a joint view it buries the other member's live messages under it.
       // Ordered, marked, and placed just before now is all that can honestly be said.
       const cold = !entries.length;
+      // A turn in progress has no closing message yet, and what stands in for one moves. The
+      // detector reports the block above the live composer, so every new block the agent prints
+      // *replaces* what the last read called the pane's newest message — the one before it is not
+      // extended, it stops being reported at all.
+      //
+      // That entry is a draft: what the thread shows while the agent works, and not a record of
+      // anything until the turn ends. Peeling drafts off before the alignment is the load-bearing
+      // part. A stored tail that is nowhere in the window agrees with no offset, convAlign returns
+      // null, and the null path appends *the whole window* — so one moving message was duplicating
+      // every message on screen along with it.
+      let drafts = 0;
+      while (drafts < entries.length && entries[entries.length - 1 - drafts].draft) drafts++;
+      const peeled = drafts ? entries.splice(entries.length - drafts, drafts) : [];
+      // Only the last, and only the agent's: a prompt is real the moment it is on screen, and a
+      // turn that has ended is a record rather than a draft.
+      const draftMark = (m, i, n) =>
+        working && !end && i === n - 1 && m.who === 'agent' ? { draft: true } : null;
       const stamp = (m, i, n, base) => {
         // The turn's closing message is the one the transition dated. Only the last, and only
         // when it is the agent's: a prompt is dated by the send, not by the answer to it.
@@ -5814,7 +5832,8 @@
 
       if (!hit) {
         const add = fresh.map((m, i) => convEntry(m, now,
-          Object.assign(stamp(m, i, fresh.length, now), i === 0 ? { gap: true } : null)));
+          Object.assign(stamp(m, i, fresh.length, now), i === 0 ? { gap: true } : null,
+            draftMark(m, i, fresh.length))));
         return { entries: entries.concat(add), added: add.length, grew: false, gap: true };
       }
 
@@ -5844,11 +5863,18 @@
       const before = head.length ? convAt(entries[0]) || now : now;
       const seenBefore = head.length ? (entries[0].seen || now) : now;
       const tail = cut < fresh.length ? fresh.slice(cut) : [];
+      // A draft that came back word for word is not news. The caller renders and writes on what
+      // this reports, so a quiet poll in the middle of a turn has to report nothing — and the
+      // entry it keeps is the stored one, which still knows when it was first seen.
+      if (!grew && !head.length && drafts === 1 && tail.length === 1
+          && tail[0].who === peeled[0].who && convKey(tail[0].text) === convKey(peeled[0].text)) {
+        return { entries: (stored || []).slice(), added: 0, grew: false, gap: false };
+      }
       return {
         entries: head.map((m, i) => convEntry(m, seenBefore,
             { backfill: true, at: before - (head.length - i), at_src: 'backfill' }))
-          .concat(entries, tail.map((m, i) =>
-            convEntry(m, now, stamp(m, i, tail.length, now)))),
+          .concat(entries, tail.map((m, i) => convEntry(m, now,
+            Object.assign(stamp(m, i, tail.length, now), draftMark(m, i, tail.length))))),
         added: head.length + tail.length,
         grew: grew,
         gap: false,
@@ -6252,8 +6278,11 @@
         held = (await convGet([key]))[0] || { key: key, first: now, entries: [] };
         convHeld.set(key, held);
       }
+      // Read from the live list rather than from the pane this fold was queued for: the record
+      // handed in was captured before the read went out, and a turn can end while it is in flight.
+      const working = isWorking(paneOf(a.pane_id));
       const out = recordMessages(held.entries, paneMessages(rows, a.agent), now,
-        { end: turnEnd(a.pane_id) });
+        { end: turnEnd(a.pane_id), working: working });
       if (!out.added && !out.grew) return;
       const tagged = tagUserEntries(out.entries, loadOutbox(), now);
       saveOutbox(tagged.outbox);
@@ -6272,9 +6301,7 @@
       // one turn. The record in memory is already the transcript; the durable write is what waits
       // for the turn to end. convFlushConv is the safety net behind that, so a browser killed
       // mid-turn loses seconds rather than the turn.
-      // Read from the live list rather than from the pane this fold was queued for: the record
-      // handed in was captured before the read went out, and a turn can end while it is in flight.
-      if (isWorking(paneOf(a.pane_id))) convMarkDirty(key);
+      if (working) convMarkDirty(key);
       else await convCommit(key);
       // The thread is a render of what was just folded, so it follows the same read.
       if (convThreadShows(key)) renderConvView();

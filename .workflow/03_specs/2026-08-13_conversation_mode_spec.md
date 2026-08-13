@@ -394,6 +394,28 @@ Recording is not a view of the pane. Once an entry is written to the store:
 - **Streaming pane content does not own it.** `pane_content` folds into *new* entries. The
   conversation view renders the committed record, never the frame.
 
+**An entry becomes committed when the turn ends.** A turn in progress has no closing message yet,
+and what the detector reports in its place moves: it reads the block above the live composer, so
+each new block the agent prints *replaces* the last one rather than extending it. That entry is a
+**draft** — marked `draft: true`, the thing the thread shows while the agent works, and a record of
+nothing until the pane's `done`/`blocked` transition drops the flag and stamps it `state`.
+
+Drafts sit outside the append-only rule and nowhere else does. Concretely:
+
+- Only the newest entry may be a draft, only while the pane's status is `working`, and never a user
+  prompt — a prompt is real the moment it is on screen.
+- A fold peels trailing drafts off *before* aligning the window. This is the load-bearing part: a
+  stored tail that is nowhere in the new window agrees with no offset, the alignment fails, and the
+  failure path appends the whole window. One moving message duplicated every message on screen with
+  it, which is the bug drafts exist to close.
+- A draft that comes back word for word is not news: the fold reports nothing, so a quiet poll
+  mid-turn neither re-renders the thread nor writes the record.
+- The durable write follows the same boundary — §4.4 defers the IndexedDB put while the pane is
+  working, with a 30s flush and a flush on `visibilitychange`/`pagehide` behind it.
+
+The cost is stated plainly: a mid-turn message the agent printed and then printed past is not kept.
+One agent bubble per turn, live while it is being written, frozen when the turn ends.
+
 Two consequences of the pane having no clock of its own, both worth stating in the UI rather than
 hiding:
 

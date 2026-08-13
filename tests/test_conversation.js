@@ -497,3 +497,52 @@ test('a member with nothing recorded yet contributes nothing and breaks nothing'
   assert.deepStrictEqual(texts(mergeEntries(recs)), ['b1']);
   assert.deepStrictEqual(texts(mergeEntries([])), []);
 });
+
+// --- The draft, and the duplicate it used to make ---
+//
+// While an agent works there is no closing message yet, and what the detector reports in its place
+// moves: the block above the live composer is whatever the agent last printed, so a new block
+// replaces the previous one rather than extending it. Before drafts, that stored tail agreed with
+// no offset in the next window, the alignment failed, and the failure path appended every message
+// on screen a second time — one moving message duplicating a whole conversation.
+const WORKING = {working: true};
+const TURN = [{who: 'user', text: 'fix the auth bug'}, {who: 'agent', text: 'I will look at auth.ts'}];
+const MOVED = [{who: 'user', text: 'fix the auth bug'}, {who: 'agent', text: 'Found it on line 42'}];
+
+test('a mid-turn message that moves replaces the draft instead of duplicating the window', () => {
+  const one = recordMessages([], TURN, NOW, WORKING);
+  assert.deepStrictEqual(texts(one.entries), ['fix the auth bug', 'I will look at auth.ts']);
+  assert.ok(one.entries[1].draft, 'the agent has not finished, so its newest block is a draft');
+  assert.ok(!one.entries[0].draft, 'a prompt is real the moment it is on screen');
+  const two = recordMessages(one.entries, MOVED, NOW + 3000, WORKING);
+  assert.deepStrictEqual(texts(two.entries), ['fix the auth bug', 'Found it on line 42']);
+  assert.equal(two.gap, false, 'nothing was missed, so nothing draws a break');
+});
+
+test('the turn ending freezes the draft, and dates it by the transition', () => {
+  const one = recordMessages([], TURN, NOW, WORKING);
+  const done = recordMessages(one.entries, MOVED, NOW + 6000, {end: NOW + 5000});
+  assert.deepStrictEqual(texts(done.entries), ['fix the auth bug', 'Found it on line 42']);
+  assert.ok(!done.entries[1].draft, 'the turn is over, so this is a record rather than a draft');
+  assert.equal(done.entries[1].at, NOW + 5000);
+  assert.equal(done.entries[1].at_src, 'state');
+});
+
+test('a draft that came back unchanged is not news', () => {
+  // The caller renders the thread and writes the record on what this reports, and a turn where the
+  // agent is thinking is most of a turn.
+  const one = recordMessages([], TURN, NOW, WORKING);
+  const again = recordMessages(one.entries, TURN, NOW + 3000, WORKING);
+  assert.equal(again.added, 0);
+  assert.equal(again.grew, false);
+  assert.deepStrictEqual(again.entries, one.entries, 'and the entry keeps when it was first seen');
+});
+
+test('a committed entry is still never replaced, draft or no draft', () => {
+  // The rule the drafts sit inside (§5.1): what a finished turn committed may only be extended.
+  const done = recordMessages([], TURN, NOW, {end: NOW - 1000});
+  const rewritten = recordMessages(done.entries, [TURN[0], {who: 'agent', text: 'Something else'}],
+    NOW + 3000, WORKING);
+  assert.ok(texts(rewritten.entries).includes('I will look at auth.ts'),
+    'the finished message stays, whatever the frame says now');
+});
