@@ -18,10 +18,10 @@ the read is 200, "an hour ago" is closer to "ten minutes ago".
 
 **Conversation mode is a recorder.** While a pane is open, the browser already receives its content
 every few seconds, and the detector already knows which lines are the agent's messages and which
-are the user's prompts. Conversation mode writes those out to `localStorage` as they go by, under a
-name the user gives, and offers them back as a chat rather than a terminal.
+are the user's prompts. Conversation mode writes those out to the browser's own database as they go
+by, under a name the user gives, and offers them back as a chat rather than a terminal.
 
-Three things follow from that, and they are the whole feature:
+Four things follow from that, and they are the whole feature:
 
 1. **A conversation outlives the pane's scrollback.** The transcript is kept in the browser, so it
    survives the pane scrolling, `/clear`, the agent exiting, and the pane ID being recycled.
@@ -31,6 +31,10 @@ Three things follow from that, and they are the whole feature:
    order, always. A conversation names a *set* of panes — a pair, or any panes the user picks — and
    the joint thread is a render over those transcripts, never a second copy of them. Every member
    can therefore still be read alone, in its own order, with nothing lost by ungrouping.
+4. **It records the session, not only its words.** Each member carries what it would take to stand
+   that session up again (§4.1), and every prompt carries whether the user typed it, transferred it
+   from another agent, or both (§4.2). Those are the two things a transcript is useless without once
+   the panes are gone: what this was, and who actually said it.
 
 ---
 
@@ -38,12 +42,14 @@ Three things follow from that, and they are the whole feature:
 
 | In | Out |
 |---|---|
-| Recording messages of an open pane into `localStorage` | Any relay-side storage, or a relay that records while nothing is watching |
+| Recording messages of an open pane, into IndexedDB | Any relay-side storage, or a relay that records while nothing is watching |
 | A named conversation grouping any number of panes, chosen by the user | Cross-device sync, sharing, a server |
 | Chat rendering: agent / agent / user, chronological | Editing a recorded message, deleting one message |
 | A joint view over the members, and each member alone | A merged *record* — grouping never rewrites a pane's own transcript |
+| Per-session `spawn` metadata: agent, role, Project, cwd, host, placement | A Respawn button in v1 (§4.1), and any replay of a transcript into a new agent |
+| Per-prompt provenance: typed, transferred, or mixed | Recording provenance for a send this browser did not make (§4.2) |
 | Copy the whole conversation as Markdown | Search, filter, tags, folders |
-| Byte budget with oldest-first eviction | Compression, IndexedDB, the File System Access API |
+| A `localStorage` fallback when IndexedDB is unavailable | Compression, the File System Access API, a worker, any storage library |
 
 **No relay change of any kind.** Everything below runs on the `pane_content` messages the browser
 already asks for. This is deliberate: the same recorder in the relay is a different feature with a
@@ -77,70 +83,234 @@ a hole in the transcript.
 
 ## 4. Storage
 
-One key, `herdr_conversations`, versioned and parsed with the same contract `parsePairs` uses — a
-corrupt blob loads as *nothing* rather than as a partial transcript.
+**A transcript is stored once, under the pane that said it. A conversation is a name and a list of
+references.** Nothing is copied when a pane joins a conversation, and a pane in three conversations
+is recorded once. The joint thread is composed at render time, every time (§6, §7.3).
+
+**Two stores, split by what each is good at** (§4.4): the conversation *index* in `localStorage`,
+because it is small and has to be on screen before the first `await`; the *transcripts* in
+IndexedDB, because they are the part that grows and `localStorage` is a ~5 MB cap shared with
+fourteen other keys.
 
 ```js
+// localStorage['herdr_conversations'] — the index. Small, synchronous, versioned and parsed with
+// the same contract parsePairs uses: a corrupt blob loads as nothing rather than as a half-index.
+// No entries here, by construction. A conversation cannot hold a message, so it cannot hold a
+// second copy of one.
 {
   version: 1,
   items: [{
     id: 'c_8f3a1c22',
     name: 'new authentication feature',   // the user's identifier, 1–64 chars
     created: 1755000000000,
-    touched: 1755000900000,               // last recorded entry, for eviction order (§4 ceilings)
-    // One transcript per pane, never merged on disk. Each member's `entries` is that pane's own
-    // order and nothing else's, which is what lets a member be read alone (§7.1) and what makes
-    // adding or removing a member a change to a list rather than a rewrite of a transcript.
-    //
-    // The fingerprint is the shape pairs use, so memberMatches() rejects a recycled pane_id: a
-    // pane_id with a different cwd is a different session, and appending its words to this
-    // transcript is the worst failure this feature has.
-    members: [{
-      pane_id: 'w1:p1', host: 'local', agent: 'claude', cwd: '/x',
-      label: 'Architect 1',               // as of the last read; entries keep their own (§8)
-      added: 1755000000000,
-      entries: [{
-        who: 'agent' | 'user',
-        seen: 1755000012345,              // when THIS BROWSER first saw the text — see §5
-        text: 'Ready. Name the change.',  // joined, margin-stripped, capped at TEXT_MAX
-        gap: true,                        // optional: recording resumed after a break, see §6
-      }],
-    }],
-    pair_id: 'p_9c1d',                    // set when the conversation was seeded from a pair
+    members: [{ key: 'local|w1:p1|claude|/x', added: 1755000000000, label: 'Architect 1' }],
+    pair_id: 'p_9c1d',                    // provenance: seeded from this pair. Nothing reads it back
+    counts: { messages: 24, seen: 1755000900000 },   // cached, so the landing list renders unawaited
+  }],
+}
+
+// IndexedDB `herdr` → store `transcripts`, keyPath 'key' — the recordings.
+// Keyed by fingerprint: `host|pane_id|agent|cwd`. That key is memberMatches() in string form — a
+// recycled pane_id with a different cwd lands on a different key and cannot inherit the dead
+// session's words, which is the worst failure this feature has.
+{
+  key: 'local|w1:p1|claude|/x',
+  label: 'Architect 1',                   // as of the last read; entries keep their own (§8)
+  first: 1755000000000,
+  touched: 1755000900000,                 // indexed, so eviction can range-scan by age
+  spawn: { /* what it would take to stand this session up again — §4.1 */ },
+  entries: [{
+    who: 'agent' | 'user',
+    seen: 1755000012345,                  // when THIS BROWSER first saw the text — see §5
+    text: 'Ready. Name the change.',      // joined, margin-stripped, capped at TEXT_MAX
+    gap: true,                            // optional: recording resumed after a break, see §6
+    via: 'typed' | 'transfer' | 'mixed',  // user entries only — where the words came from, §4.2
+    from: { key: 'local|w1:p2|codex|/x', label: 'Reviewer 2', hash: 0x8f3a1c22 },  // via != typed
   }],
 }
 ```
 
-**A pane may belong to more than one conversation.** Two conversations over the same pane record the
-same entries twice, which is the honest cost of a grouping the user chose and is bounded by the
-same ceilings as everything else. The recorder writes to every conversation the pane is a member
-of, in one pass over the rows.
+**Recording is per pane and does not consult the conversation list** beyond "is this pane in one at
+all". One pass over the rows, one append, however many conversations reference it.
 
-**Adding and removing members.** "Add a pane to this conversation…" appends a member with its own
-empty transcript, which then fills from that pane's first read — a member added today does not
-retroactively acquire yesterday's messages, because nothing outside the pane's current scrollback
-exists to acquire. Removing a member takes its transcript with it, and takes a confirmation.
+**Adding a member is retroactive, and removing one is not destructive.** A pane joining a
+conversation brings the transcript it already has — everything recorded since it was first watched,
+not only what it says next. Removing a member unlinks it; the transcript stays, and re-adding it
+later gets the history back. This is the direct consequence of storing once: membership is a list
+operation, never a transcript operation.
+
+**A dangling reference is a rendered state, not an error.** A member whose transcript has been
+evicted renders as "recording no longer held" in the thread and the conversation opens normally.
 
 **Identity is the text, not the line number.** Every read shifts the indices — the pane scrolls,
 `Load more` shifts them the other way — so an entry is deduped on a 32-bit hash of its normalized
-text. The recorder keeps the last ~200 hashes of each *member* in memory and appends only what that
-member has not said. Per member, not per conversation: two agents can say "Done." and both are
+text. The recorder keeps the last ~200 hashes of each *transcript* in memory and appends only what
+that pane has not said. Per transcript, not globally: two agents can both say "Done." and both are
 real.
 
-**Ceilings, named.** `localStorage` is ~5 MB for the whole origin and this app already keeps
-fourteen other keys in it, so the transcript takes a budget rather than all of it:
+**Ceilings, named.** IndexedDB's budget is a share of free disk, not 5 MB, so these are set by what
+a thread is still readable at rather than by what fits:
 
 | Constant | Value | Why |
 |---|---|---|
-| `TEXT_MAX` | 2000 chars per entry | a closing message longer than this is a document, and the tail of it is the part that matters |
-| `ENTRY_MAX` | 400 entries per member | oldest-first eviction past it, per transcript — a chatty member must not evict a quiet one's history |
+| `TEXT_MAX` | 4000 chars per entry | a closing message longer than this is a document; kept high because the store is no longer the constraint |
+| `ENTRY_MAX` | 5000 entries per transcript | oldest-first eviction past it, per pane — a chatty pane must not evict a quiet one's history. Months of turns, not hours |
 | `MEMBER_MAX` | 8 panes per conversation | past this the joint view stops being a thread; a soft cap the user is told about, not a silent drop |
-| `CONV_MAX` | 16 conversations | oldest-*touched* first eviction past it |
-| `BYTES_MAX` | 1 MB serialized | checked on write; evict oldest entries across all conversations until it fits |
+| `CONV_MAX` | 200 conversations | oldest-*touched* first eviction past it |
+| `TRANSCRIPT_MAX` | 500 transcripts | its own cap, because transcripts outlive the conversations that referenced them |
+| `BYTES_TARGET` | 50 MB | checked against `navigator.storage.estimate()` where it exists (§4.4); evict until under it |
 
-`QuotaExceededError` on write is caught, triggers one eviction pass, and retries once. A browser
-that still refuses keeps the conversation in memory for the session and says so once — the same
-posture `setSound` and the theme picker already take on private mode.
+**Eviction order, once transcripts are shared.** Unreferenced first: a transcript no conversation
+names and no open pane is writing to is the only thing here nobody asked to keep. Then oldest
+`touched` among the rest. A referenced transcript is never dropped while an unreferenced one exists,
+so naming a conversation is what protects its history — which is the promise the name makes.
+
+A `QuotaExceededError` on write triggers one eviction pass and one retry. A store that still refuses
+keeps the session's recording in memory and says so once — the same posture `setSound` and the theme
+picker already take on private mode.
+
+### 4.1 `spawn` — enough to stand the session up again
+
+A conversation outlives its panes, and the question it leaves behind is "what was this, and how do
+I get it back". The `spawn` block on each transcript is that answer: the fields the app would put on
+a `start_agent` message, captured on the first read and refreshed on every read while the pane is
+live, so a closed session leaves a record of what it was rather than a name and a transcript. It
+sits on the transcript and not on the membership, because it describes the session, and the session
+does not change when someone files it under a second name.
+
+```js
+spawn: {
+  agent: 'claude',            // harness kind — what herdr was asked to run
+  role: 'architect',          // as roleOf() reads it off the label
+  label: 'Architect 1',
+  project_id: 'charts',       // '' when Projects are off — see the caveat below
+  project: 'charts',          // display name, for a record a human reads years later
+  cwd: '/Users/x/code/charts',
+  host: 'local',              // or the HERDR_REMOTES target
+  workspace_id: 'w1',
+  placement: 'new_tab',       // what it would take to put a replacement beside its siblings
+  slot: 'wide',
+  captured: 1755000900000,    // when this was last true
+}
+```
+
+Every field is one the browser already has on the pane record or already sends on `start_agent`
+(`relay/start_agent.py`, `BASE_FIELDS`). Nothing new is asked of the relay.
+
+**Two honest limits, stated rather than designed around:**
+
+- **`cwd` cannot spawn anything.** The relay takes a new session's directory from the Project, never
+  from the client — that is a security property of `start_agent` and this feature does not touch it.
+  So a member with a `project_id` can be respawned; one recorded while Projects were off carries
+  `cwd` as a **note for a human**, not as a parameter. The view says which of the two it is.
+- **A respawned session is a new session with the same shape.** It has the agent's name, role,
+  directory and placement — not its context. Nothing here replays a transcript into a new agent,
+  and offering to would be a feature that silently pastes hours of old output into a fresh context.
+
+**Respawn is a v2 button, not a v1 one.** v1 records `spawn` and shows it ("claude · architect ·
+charts · new_tab"), with **Copy start details**. The button that re-sends `start_agent` is one line
+on top of the existing start dialog once the record has been carried by real conversations for a
+while; recording is the part that cannot be added retroactively.
+
+### 4.2 `via` — typed, transferred, or both
+
+P3 transfer moves one agent's words into another agent's composer, and after it lands the pane shows
+that text as a prompt like any other. A transcript that cannot tell the two apart claims the user
+said something a different agent said. So every `user` entry carries where its words came from:
+
+| `via` | Means |
+|---|---|
+| `typed` | the user's own text |
+| `transfer` | the payload `composeTransfer` built, sent unchanged |
+| `mixed` | that payload, edited or added to before sending — the common case, since `doTransfer` **prefills and stops** |
+
+**How it is known, given prompts are read back off the pane (§11.2).** `doTransfer` prefills the
+composer and never sends; the user reads it, may edit it, and presses send. So:
+
+1. `doTransfer` records a **pending transfer**: `{from_pane, from_label, body, hash, at}`, where
+   `body` is the transferred text (not the instruction), and `hash` identifies the source entry.
+2. On send, the outgoing text is classified against it: equal to the composed payload →
+   `transfer`; still contains `body` → `mixed`; no longer contains it → `typed`.
+3. The classification is written to a small **outbox** keyed by a hash of the sent text — 50
+   entries, 30 minutes, in `localStorage` so a reload does not lose it. When the recorder later
+   reads that prompt back off the pane, it matches the hash and tags the entry.
+4. No match, or an expired one, means `typed`. Which is the honest failure mode and worth naming:
+   **provenance is only knowable where the send happened.** A transfer done on the desktop and
+   recorded on the phone reads as typed there — the phone never saw the transfer.
+
+`from.hash` points at the source agent's own entry, so when the source pane is also a member the
+joint view can draw the transfer as a link between two bubbles rather than a label on one. When it
+is not a member, the label is all there is, and that is still the answer to "where did this come
+from".
+
+The agent's own entries are never given a `via`: everything an agent says is the agent saying it.
+`from.key` names the source pane whether or not it is a member, so a transfer from a pane nobody
+filed is still attributed.
+
+### 4.3 Why the record is normalized — the trade, stated
+
+The alternative considered was a conversation owning its members' entries, copying a pane's messages
+into every conversation that names it. Rejected. What it costs to store once instead:
+
+| Gained | Paid |
+|---|---|
+| A pane in *n* conversations is recorded once and written once, not *n* times | One indirection: the view resolves member keys before it can render |
+| Adding a member brings its **existing** history, which the copying design could not do — there is no second copy to backfill from | Eviction needs a reference rule (above), because "delete the conversation" no longer means "delete its messages" |
+| Removing a member is reversible: unlink, re-link, history intact | A dangling reference becomes a state the view has to render (above) |
+| The per-pane order is structurally the only order stored, so "grouping is a view" is enforced by the schema rather than by discipline | Two collections to migrate together if the format ever changes |
+| One transcript to correct when a message is wrong, one to export, one to reason about | |
+
+**Verdict: normalize.** The costs are all one-time code; the copying design's costs are permanent
+and grow with use. And its worst property is not the bytes — it is that two conversations over one
+pane would slowly *disagree*, because each copy is appended to independently and one of them was
+made while the app was on a different screen. A transcript that disagrees with itself is worse than
+no transcript.
+
+### 4.4 Where it lives: IndexedDB for the transcripts, `localStorage` for the index
+
+`localStorage` is a ~5 MB origin-wide cap this app already spends fourteen keys of, it is
+synchronous on the main thread, and every write re-serializes the whole value. Transcripts are the
+one thing here that grows without limit — this feature exists *because* the pane's own history is
+too short — so they go where growth is allowed.
+
+| | `localStorage` | IndexedDB |
+|---|---|---|
+| Holds | the conversation index, the transfer outbox (§4.2), the view preferences | one record per transcript |
+| Size | a few KB | tens of MB, evicted against `BYTES_TARGET` |
+| Why there | read synchronously at boot, so the landing list and the menus render before any `await` | async, per-record writes, and no cap worth designing around |
+
+**Reads.** Opening a conversation loads its members' transcripts by key — at most `MEMBER_MAX`
+records, in one transaction. Nothing scans the store to render a thread. The landing list renders
+from the index's cached `counts` and never touches IndexedDB at all, which is what keeps the app's
+first screen synchronous.
+
+**Writes.** One `put` per pane per read cycle at most, and only when that cycle actually produced a
+new entry — a 3-second poll over an idle pane writes nothing. The recorder appends to an in-memory
+copy of the transcript and the store write is the last step, so a rejected write costs the session's
+tail and never a corrupt record.
+
+**When IndexedDB is not there.** Private mode in some browsers, a blocked-by-policy store, an
+`onblocked` upgrade: the store falls back to `localStorage` under the small ceilings the earlier
+draft of this spec used (400 entries, 1 MB, oldest-first), tells the user once that history is being
+kept short, and upgrades itself the next time IndexedDB opens successfully. **The app must not fail
+to render a pane because a transcript could not be stored.** Recording is the feature; the terminal
+is the product.
+
+**Persistence and quota are best-effort, and secure-context-only.** `navigator.storage.persist()`
+and `.estimate()` do not exist on `http://192.168.x.x`, which is exactly how the relay serves this
+page on a LAN — the same non-secure-context problem `newPairId` already works around for
+`crypto.randomUUID`. So both are called behind a guard and their absence is normal: eviction then
+runs on the record counts alone. Over HTTPS (the tunnel, or GitHub Pages) the persist request is
+made once and its refusal is not an error.
+
+**No library, no build step.** IndexedDB is reached through ~60 lines of promise wrappers in the
+same file as everything else, keeping the app's one-file property intact.
+
+**Testability, which the split changes.** The recorder stays pure — rows in, entries out — and is
+what `tests/test_conversation.js` extracts and runs in a `vm`, with no store of any kind. The
+persistence layer is thin by design and is covered in the browser, where there is a real
+IndexedDB, by `tests/e2e/browser/conversation.spec.js` (§9). Any logic that migrates into the store
+layer is logic that leaves the fast suite, so it does not.
 
 ---
 
@@ -227,9 +397,22 @@ The pane rows are replaced; header, composer and quick actions stay exactly wher
 │  │ Added web/login.html and wired the     │   │  agent: left, pane's own tint
 │  │ callback. Tests pass.                  │   │
 │  └───────────────────────────────────────┘   │
+│      ┌────────────────────────────────────┐  │
+│      │ ⇄ Reviewer 2 · edited              │  │   via: mixed (§4.2) — the source, named
+│      │ Review, edit, fix; then propose…   │  │
+│      └────────────────────────────────────┘  │
 │  ┄┄┄┄┄┄┄┄┄┄┄┄┄ ⋯ 41 min ⋯ ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄  │   a gap (§6)
 └──────────────────────────────────────────────┘
 ```
+
+A transferred prompt wears a `⇄` and the pane it came from. `transfer` says the name alone;
+`mixed` adds "edited", because "the user approved this verbatim" and "the user rewrote it" are
+different facts about the same bubble. Tapping the marker scrolls to the source entry when its pane
+is a member of this conversation — which is the whole reason `from.hash` is stored.
+
+Under the conversation name, a **members strip**: each member's colour, label, live/gone, and its
+`spawn` line ("claude · architect · charts · new\_tab"), collapsed to one row until tapped. That is
+where a conversation whose panes have all exited says what it was.
 
 ### 7.3 Conversation view, several panes
 
@@ -291,11 +474,17 @@ The record binds pane fingerprints, so:
 | Suite | What |
 |---|---|
 | `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: dedupe per member, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
+| `tests/test_conversation.js` | the `via` classifier (§4.2): the composed payload sent unchanged is `transfer`, the payload with an instruction typed over it is `mixed`, the payload deleted and replaced is `typed`, an expired outbox entry is `typed`. Fed by `composeTransfer` itself, so a change to the payload shape breaks the classifier's test rather than the classifier |
+| `tests/test_conversation.js` | `spawn` is captured from a pane record and carries every field `start_agent` requires, or says which one it lacks — asserted against `BASE_FIELDS` in `relay/start_agent.py` so the two cannot drift apart silently |
 | `tests/test_conversation.js` | the merge: three members interleave by `seen`, **and no member's own order is ever broken** — the property that lets a member be read alone. Fed by `tests/fixtures/pane_*_done.txt`, the same panes the detector is tested on, so a harness whose glyphs change breaks here too |
 | `tests/e2e/browser/conversation.spec.js` (new) | naming a conversation, the thread rendering, a pair opening on the joint thread, "Show paired conversation" off leaving the pane's own transcript unchanged, adding a third pane, the quick-actions toggle surviving a pane switch, the landing-page section outliving a pane that has gone |
+| `tests/e2e/browser/conversation.spec.js` | the store layer (§4.4), which the vm slice cannot see: a transcript written and read back across a **page reload**, the index in `localStorage` agreeing with the records in IndexedDB, eviction dropping unreferenced transcripts first, and a conversation whose panes are gone still opening |
+| `tests/e2e/browser/conversation.spec.js` | the `localStorage` fallback: with `indexedDB` stubbed to throw on `open`, recording still works under the small ceilings, and the same page with IndexedDB restored self-upgrades — the transcripts already in `localStorage` move across and are not read twice |
 
 The recorder must be written as a pure block (rows in, entries out) so the vm slice can reach it —
-the same constraint the P3 pair logic carries and for the same reason.
+the same constraint the P3 pair logic carries and for the same reason. The store is the other side
+of that line: it is asynchronous and it is the browser's, so it is proved in a real browser and
+never in a `vm` context.
 
 ---
 
@@ -350,11 +539,13 @@ wire format. That is a different phase.
 
 | Piece | Size |
 |---|---|
-| Recorder + store + merge (pure, vm-testable) | ~140 lines |
+| Recorder + merge (pure, vm-testable) | ~140 lines |
+| IndexedDB wrapper — open, `get`/`put`/`getAll`, the age index, eviction | ~60 lines |
+| `localStorage` index + fallback store + self-upgrade | ~50 lines |
 | Views (one member, N members) and CSS | ~140 lines |
 | Quick-actions toggle and the menu setting | ~30 lines |
 | Menus, naming dialog, member editor, landing-page section | ~110 lines |
 | Copy/export | ~20 lines |
-| Tests (vm slice + Playwright) | ~280 lines |
+| Tests (vm slice + Playwright) | ~340 lines |
 
 No new dependency, no build step, no relay change.
