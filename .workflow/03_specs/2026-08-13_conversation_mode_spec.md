@@ -68,8 +68,13 @@ recorder runs over the rows it already has:
 |---|---|---|
 | `turnSummaries(rows, agent)` | yes, tested | one `[start, end]` per turn — the agent's closing message |
 | `userInputLines(rows, agent)` | yes, tested | the line indices in the user's turn; adjacent indices are joined into one user message |
-| `trimRange(range, agent)` | yes, tested | the user's learned trim, applied to each range |
 | `profileFor(agent)` | yes, tested | null for a harness with no profile — see below |
+
+**`trimRange` is deliberately not in that list.** It applies a *learned* trim, and it keeps
+learning: the same message extracted before and after the user teaches it once comes out as two
+different strings, which is precisely what the overlap match (§4) reads as a new message. So the
+transcript stores the block as found and the trim belongs to the view, where a preference that
+changes is allowed to change what is on screen without rewriting what was said.
 
 A harness with no profile (`opencode` today, and anything unknown) records **nothing** and says so
 in the view. This is the same answer Summary already gives, and the alternative — guessing at a
@@ -158,11 +163,15 @@ Three things the overlap has to be pinned to, or it is not implementable:
   lines joined, runs of whitespace collapsed to one space — so the same message read at a phone
   width and a desktop width is one string. It is the comparison key only; `text` is stored as
   extracted.
-- **The window's first message may be cut in half**, because a read starts at whatever row the
-  backlog begins on. So the head is matched by *suffix*: a stored message that ends with the
-  window's first message is that message, seen whole earlier. Without this clause every read of a
-  scrolled pane reports a false gap and stores a truncated duplicate of a message it already has.
-  A truncated head is never appended and never rewrites the stored full text.
+- **Two messages are allowed to match inexactly**, and both are one message cut by the edges of a
+  read rather than two different ones:
+  - *The window's first message* can have its opener above the top of the read (agy starts blocks
+    positionally, so this is reachable), so a stored message that **ends with** it is it. A
+    truncated head is never appended and never rewrites the stored full text.
+  - *The transcript's last message* was read while the agent was still writing it, so a fresh
+    message that **starts with** it is that same message, longer — it is extended in place and
+    keeps its original `seen`. This is the common one: every poll during a reply reads another few
+    sentences of the same paragraph, and without this each poll appends another copy of it.
 - **Only the tail is searched.** The scan compares at most the last `OVERLAP_MAX` (200) stored
   messages against the window, so the cost is bounded by the window and not by the transcript. No
   overlap inside that span is a gap (§6), not a reason to search further back.
@@ -500,7 +509,7 @@ The record binds pane fingerprints, so:
 |---|---|
 | `tests/test_conversation.js` (new, vm slice) | the recorder as a pure function: adjacent user rows become one message; overlap dedupe preserves repeated identical messages, append order, backfill insertion, gap detection, `TEXT_MAX` truncation, eviction at each ceiling, corrupt-blob parse, one pane recorded into two conversations |
 | `tests/test_conversation.js` | the `via` classifier (§4.2): the composed payload sent unchanged is `transfer`, the payload with an instruction typed over it is `mixed`, the payload deleted and replaced is `typed`, an expired outbox entry is `typed`. Fed by `composeTransfer` itself, so a change to the payload shape breaks the classifier's test rather than the classifier |
-| `tests/test_conversation.js` | the overlap's three pinned cases (§4): a window whose first message is cut in half by the start of the backlog matches by suffix and neither duplicates nor truncates the stored one; a pane that scrolled past a whole window is a `gap` and not a search further back; a window re-read at a different wrap width is not a gap |
+| `tests/test_conversation.js` | the overlap's pinned cases (§4): a reply still being written is extended rather than appended again; a truncated head neither duplicates nor overwrites the stored message; a pane that scrolled past a whole window is a `gap` and not a search further back; a window re-read at a different wrap width is not a gap |
 | `tests/test_conversation.js` | `spawn` is captured only from snapshot fields plus `roleOf()`: it records workspace/tab as observations and never invents placement or slot |
 | `tests/test_conversation.js` | the merge: three members interleave by `seen`, **and no member's own order is ever broken** — the property that lets a member be read alone. Fed by `tests/fixtures/pane_*_done.txt`, the same panes the detector is tested on, so a harness whose glyphs change breaks here too |
 | `tests/e2e/browser/conversation.spec.js` (new) | naming a conversation, the thread rendering, a pair opening on the joint thread, "Show paired conversation" off leaving the pane's own transcript unchanged, adding a third pane, the quick-actions toggle surviving a pane switch, the landing-page section outliving a pane that has gone |

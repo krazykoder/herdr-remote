@@ -5159,6 +5159,148 @@
       if (scroll) scrollPaneToLine(Math.min(selA, selB));
     }
 
+    // --- Conversation recorder (pure) --- start
+    // A pane keeps a few hundred lines of history and then forgets. This turns what is on screen
+    // into transcript entries that outlive it, and it does so as a function of (rows, agent, what
+    // is already stored) — no storage, no DOM, no clock of its own. Storing is §4.4's job and the
+    // views are §7's; both sit on top of this.
+    //
+    // The whole problem is that consecutive reads overlap. The pane scrolls between them, `Load
+    // more` shifts the other way, the newest message is still being written, and the same words
+    // therefore arrive over and over at different line numbers. Deduping on "have I ever seen this
+    // text" would fix that and silently lose the second time an agent says "Done." — which is a
+    // real message, on a pane where saying "Done." twice is the normal case. So identity here is
+    // *where the windows overlap*, never the text alone.
+
+    const CONV_TEXT_MAX = 4000, CONV_OVERLAP_MAX = 200;
+
+    // Gutter glyph, the box side it may sit inside, and the leading space. Same characters as
+    // _MARGIN in relay/pane_summary.py, and for the same reason: what is left is where the text
+    // starts.
+    const CONV_MARGIN = /^[\s│┃⏺•❯>›⋯]+/;
+
+    function convLine(row) {
+      return String(row == null ? '' : row).replace(/\s+$/, '').replace(/[│┃]+$/, '')
+        .replace(CONV_MARGIN, '');
+    }
+
+    // A range of rows as one message. Line breaks are kept — Codex closes in three paragraphs and a
+    // thread that ran them together would be lying about what it said — but a run of blank lines is
+    // not structure, it is the gap before the next glyph.
+    function convText(rows, [s, e]) {
+      const out = [];
+      for (let i = s; i <= e; i++) out.push(convLine(rows[i]));
+      const text = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      return text.length > CONV_TEXT_MAX ? text.slice(0, CONV_TEXT_MAX - 1) + '…' : text;
+    }
+
+    // The comparison key, and only ever that: whitespace collapsed, so one message read at a phone
+    // width and at a desktop width is one string. Stored text stays as it was extracted.
+    function convKey(text) { return String(text == null ? '' : text).replace(/\s+/g, ' ').trim(); }
+
+    // Everything said in this window, in window order: the agent's closing message per turn, and
+    // each run of the user's own lines as one message rather than one per line.
+    //
+    // Untrimmed on purpose. `trimRange` is a *learned* preference and it changes as the user
+    // teaches it; applying it here would make the same message extract differently over time, which
+    // is exactly what the overlap match reads as a new message. The trim belongs to the view.
+    function paneMessages(rows, agent) {
+      const found = [];
+      for (const at of turnSummaries(rows, agent)) found.push({ who: 'agent', at });
+      const lines = [...userInputLines(rows, agent)].sort((a, b) => a - b);
+      for (let i = 0; i < lines.length;) {
+        let j = i;
+        while (j + 1 < lines.length && lines[j + 1] === lines[j] + 1) j++;
+        found.push({ who: 'user', at: [lines[i], lines[j]] });
+        i = j + 1;
+      }
+      return found.sort((a, b) => a.at[0] - b.at[0])
+        .map(m => ({ who: m.who, text: convText(rows, m.at) }))
+        // The empty composer at the foot of a live pane is a prompt line with nothing typed on it.
+        .filter(m => m.text);
+    }
+
+    // Where the fresh window sits against what is stored: the offset `d` at which fresh[0] lines up
+    // with stored[d], picked for the longest agreeing overlap. A negative `d` means the window
+    // reaches above what is stored, which is what `Load more` produces.
+    //
+    // Two matches are allowed to be inexact, and both are the same read cut in half by its own
+    // edges rather than two different messages:
+    //
+    //   the window's first message — its opener can be above the top of the read, so a stored
+    //   message that *ends with* it is it (agy starts blocks positionally, so this is reachable).
+    //   the transcript's last message — it was read while the agent was still writing it, so a
+    //   fresh message that *starts with* it is that same message, longer. Without this every poll
+    //   during a reply appends another copy of the growing paragraph.
+    function convAlign(stored, fresh, minD) {
+      let best = null;
+      for (let d = stored.length - 1; d >= minD; d--) {
+        const from = Math.max(0, d), to = Math.min(stored.length, d + fresh.length);
+        if (to - from <= 0) continue;
+        let ok = true;
+        for (let i = from; i < to && ok; i++) {
+          const f = fresh[i - d];
+          if (f === stored[i]) continue;
+          if (i - d === 0 && stored[i].endsWith(f)) continue;
+          if (i === stored.length - 1 && f.startsWith(stored[i])) continue;
+          ok = false;
+        }
+        if (ok && (!best || to - from > best.len)) best = { d: d, len: to - from };
+      }
+      return best;
+    }
+
+    function convEntry(m, seen, extra) {
+      return Object.assign({ who: m.who, seen: seen, text: m.text }, extra || {});
+    }
+
+    // One read, folded into a transcript. Returns a new entries array — the caller stores it — and
+    // says what happened, because the view draws a gap and the store only writes when something
+    // was added.
+    function recordMessages(stored, fresh, now) {
+      const entries = (stored || []).slice();
+      if (!fresh || !fresh.length) return { entries: entries, added: 0, grew: false, gap: false };
+      // Bounded by OVERLAP_MAX so the cost is the window's, not the transcript's. A read window
+      // holds far fewer messages than this, so a miss inside it is a real gap and not a short look.
+      const from = Math.max(0, entries.length - CONV_OVERLAP_MAX);
+      const keys = entries.slice(from).map(e => convKey(e.text));
+      const fkeys = fresh.map(m => convKey(m.text));
+      // Only a transcript whose beginning is in view can be prepended to. Further back than that,
+      // an apparent backfill is an alignment there is nothing left to check against.
+      const hit = keys.length
+        ? convAlign(keys, fkeys, from === 0 ? -(fresh.length - 1) : 0)
+        : { d: 0, len: 0 };
+
+      if (!hit) {
+        const add = fresh.map((m, i) => convEntry(m, now, i === 0 ? { gap: true } : null));
+        return { entries: entries.concat(add), added: add.length, grew: false, gap: true };
+      }
+
+      const d = hit.d, cut = keys.length - d;
+      let grew = false;
+      // The message that was still being written when it was last read, now read whole.
+      const last = entries.length - 1;
+      if (last >= 0 && cut - 1 >= 0 && cut - 1 < fresh.length
+          && fresh[cut - 1].text.length > entries[last].text.length) {
+        entries[last] = Object.assign({}, entries[last], { text: fresh[cut - 1].text });
+        grew = true;
+      }
+      // Older turns, revealed by Load more. They take the `seen` of the entry they precede: they
+      // were said before it, and stamping them now would file an hour-old message as the newest
+      // thing in the thread.
+      const head = d < 0 ? fresh.slice(0, -d) : [];
+      const before = head.length ? (entries[0] || {}).seen || now : now;
+      const tail = cut < fresh.length ? fresh.slice(cut) : [];
+      return {
+        entries: head.map(m => convEntry(m, before, { backfill: true }))
+          .concat(entries, tail.map(m => convEntry(m, now))),
+        added: head.length + tail.length,
+        grew: grew,
+        gap: false,
+      };
+    }
+    // --- Conversation recorder (pure) --- end
+
     // --- Line ruler ---
     // Two integers and one band element — the selection itself is never per-line DOM, and nothing
     // here is rebuilt on the 3s poll. The rows it measures against are spans (renderPaneRows), so
