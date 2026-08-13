@@ -6669,7 +6669,7 @@
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
       box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
-        ? convEntriesHtml(entries, a, joint, paired)
+        ? convEntriesHtml(entries, a, paired)
         : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
       // Which bubble Summary means, found once here rather than by the button every render. The
       // button is only rebuilt when the answer changed — it is on the poll path.
@@ -6778,7 +6778,7 @@
       return convAtRank(e) ? t : '~' + t;
     }
 
-    function convEntriesHtml(entries, a, joint, paired) {
+    function convEntriesHtml(entries, a, paired) {
       const self = convMemberKey(a);
       let last = 0;
       return entries.map((e, i) => {
@@ -6812,11 +6812,12 @@
         // member, and the badge says what it is — a thread of claude and codex reads as two
         // colleagues rather than as two colours.
         const badge = agentBadge(agent);
-        // In a joint thread a user bubble also names the pane it was sent to: every prompt in the
-        // thread is the same blue on the same side, and "which colleague was this said to" is the
-        // question the joint view exists to answer.
+        // A user bubble names the pane it was sent *to*, on the same terms as an agent bubble names
+        // the one that spoke — in a joint thread "which colleague was this said to" is the question
+        // the view exists to answer, and in a single-pane thread it is what keeps a prompt and the
+        // reply to it under headers of the same shape rather than two different ones.
         const who = `<span class="dot" style="background:${tint}"></span>${name}${badge}`;
-        const bar = user ? [joint ? who : '', from].filter(Boolean).join(' · ') : who;
+        const bar = user ? [who, from].filter(Boolean).join(' · ') : who;
         // On every bubble, including a user's own in a single-pane thread, where it is the whole
         // header: a time you have to switch views to check is not one you can check an entry with.
         const clock = convClock(e);
