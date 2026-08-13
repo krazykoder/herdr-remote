@@ -40,6 +40,11 @@ const read = (page, text = PANE) => page.evaluate(async text => {
 }, text);
 
 const held = (page, key) => page.evaluate(async k => (await convGet([k]))[0] || null, key);
+const tapWire = page => page.evaluate(() => {
+  window.__sent = [];
+  const send = ws.send.bind(ws);
+  ws.send = message => { window.__sent.push(JSON.parse(message)); send(message); };
+});
 
 test.beforeEach(async ({page}) => {
   const errors = [];
@@ -61,6 +66,19 @@ test('a pane in a conversation is recorded into the database', async ({page}) =>
   expect(rec.entries[0].text).toMatch(/^Ready\. Name the change\./);
   expect(rec.label).toBe(AGENT);
   expect(rec.touched).toBeGreaterThan(0);
+});
+
+test('the landing page lists recorded conversations and their live members', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  const card = page.locator('#conversations .conversation-card');
+  await expect(card).toContainText('new authentication feature');
+  await expect(card).toContainText('2 messages');
+  await expect(card).toContainText('Architect 1');
+  await expect(card).toContainText('Live: Architect 1');
+  await expect(card).toContainText('Last activity');
 });
 
 test('the transcript is still there after a reload', async ({page}) => {
@@ -103,6 +121,19 @@ test('re-reading an unchanged pane does not write again', async ({page}) => {
   const second = await held(page, key);
   expect(second.touched).toBe(first.touched);
   expect(second.entries.length).toBe(first.entries.length);
+});
+
+test('a visible frame is drawn but never folded; unwrapped scrollback is', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(text => ws.onmessage({data: JSON.stringify({
+    type: 'pane_content', pane_id: activePane, content: text, source: 'visible',
+  })}), PANE);
+  expect(await held(page, key)).toBeNull();
+  await page.evaluate(text => ws.onmessage({data: JSON.stringify({
+    type: 'pane_content', pane_id: activePane, content: text, source: 'recent-unwrapped',
+  })}), PANE);
+  await expect.poll(() => held(page, key)).not.toBeNull();
 });
 
 test('two reads arriving together keep both transcript updates', async ({page}) => {
@@ -302,6 +333,17 @@ test('a conversation of two opens on the joint thread, both members in it', asyn
   await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
 });
 
+test('a joint thread reads each live partner with unwrapped scrollback', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await page.evaluate(() => convPollMembers());
+  const reads = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
+  expect(reads).toEqual([{type: 'read_pane', pane_id: 'w8:p1', lines: 200, source: 'recent-unwrapped'}]);
+});
+
 test('Show paired conversation joins separately recorded pair threads', async ({page}) => {
   await open(page);
   await joinSeparatePair(page);
@@ -356,6 +398,7 @@ test('conversation text has its own menu font control', async ({page}) => {
   await page.locator('#convFontInc').click();
   await expect(page.locator('#convFontValue')).toHaveText('10px');
   await expect(page.locator('#convThread .conv-msg').first()).toHaveCSS('font-size', '10px');
+  await expect(page.locator('#convThread .conv-who').first()).toHaveCSS('font-size', '9px');
 });
 
 test('the conversation text size is applied before the first thread is painted', async ({page}) => {
@@ -534,4 +577,15 @@ test('the line ruler stays out of the thread, and comes back with the rows', asy
   expect(await page.evaluate(() => rulerOn())).toBe(false);
   await page.locator('#quickActions .qa-conv').click();
   expect(await page.evaluate(() => rulerOn())).toBe(true);
+});
+
+test('leaving a thread keeps an existing ruler selection', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  const kept = await page.evaluate(() => { selA = 0; selB = 0; drawSel(); return selText; });
+  await page.locator('#quickActions .qa-conv').click();
+  await page.locator('#quickActions .qa-conv').click();
+  expect(await page.evaluate(() => ({selA, selB, selText})))
+    .toEqual({selA: 0, selB: 0, selText: kept});
 });

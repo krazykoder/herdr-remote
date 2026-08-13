@@ -90,6 +90,12 @@ test('the empty composer at the foot is not a message', () => {
   assert.ok(!paneMessages(TWO_TURNS, 'claude').some(m => !m.text.trim()));
 });
 
+test('the Codex composer and its status line are not a user message', () => {
+  const rows = fs.readFileSync(path.join(__dirname, 'fixtures', 'pane_codex_done.txt'), 'utf8')
+    .split('\n');
+  assert.deepStrictEqual(texts(paneMessages(rows, 'codex')), ['S2b review clean. No edit needed.\n\nVerified: 118 Node + 19 Playwright tests pass.\n\nNext: S3. Convert poll/render path to explicit view, then remove S1 accessors under two-view browser coverage.']);
+});
+
 test('a multi-line prompt is one message, not one per line', () => {
   const rows = ['❯ do the thing', '❯ and then the other thing', '', '⏺ Done.', '', '❯'];
   const ms = paneMessages(rows, 'claude');

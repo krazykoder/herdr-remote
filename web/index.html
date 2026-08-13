@@ -832,6 +832,30 @@
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 
+    .conversation-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+    }
+
+    .conversation-title {
+      display: flex;
+      gap: 8px;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .conversation-title span,
+    .conversation-meta {
+      color: var(--muted);
+      font-size: 0.7rem;
+    }
+
+    .conversation-title span { margin-left: auto; font-weight: 400; }
+    .conversation-meta { margin-top: 4px; }
+
     .agent:active {
       transform: scale(0.99);
       box-shadow: none;
@@ -2602,7 +2626,8 @@
       .agents,
       .terminals,
       .pairs,
-      .recents {
+      .recents,
+      .conversations {
         padding: 0 8px 8px;
       }
 
@@ -2716,6 +2741,7 @@
       <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
       <label class="toggle-option"><input type="checkbox" id="sectionPairs" onchange="toggleSection('pairs', this.checked)"> Pairs</label>
       <label class="toggle-option"><input type="checkbox" id="sectionRecents" onchange="toggleSection('recents', this.checked)"> Recents</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionConversations" onchange="toggleSection('conversations', this.checked)"> Conversations</label>
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
         to stay on.</div>
@@ -2750,7 +2776,7 @@
     </div>
   </div>
 
-  <!-- Three sections the user orders themselves — see applySections. Siblings and not nested:
+  <!-- Landing sections the user orders themselves — see applySections. Siblings and not nested:
        each is rewritten wholesale on its own schedule, and each needs to be movable past the
        others without the one above it owning where it lands. -->
   <div class="view" id="agentListView">
@@ -2760,6 +2786,7 @@
     <div class="pairs" id="pairs" style="display:none"></div>
     <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
+    <div class="conversations" id="conversations" style="display:none"></div>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
@@ -3683,7 +3710,7 @@
     }
 
     // --- Main page sections ---
-    // Which of the four the main page shows, and in what order. Stored as the order itself rather
+    // Which main-page sections show, and in what order. Stored as the order itself rather
     // than as booleans plus a separate ranking: switching one on means "put it after what is
     // already there", so the list *is* the setting and there is no second thing to keep in step.
     //
@@ -3691,10 +3718,10 @@
     // the terminals write rewrites each section's innerHTML on their own schedule, and a reorder
     // that moved DOM nodes would race all three.
     const SECTIONS_KEY = 'herdr_sections';
-    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents'};
+    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents', conversations: 'conversations'};
     const SECTION_KEYS = Object.keys(SECTION_IDS);
     // Today's layout, so an install that never opens Settings sees no change at all.
-    const SECTION_DEFAULT = ['agents', 'terminals', 'pairs', 'recents'];
+    const SECTION_DEFAULT = ['agents', 'terminals', 'pairs', 'recents', 'conversations'];
     let sectionOrder = SECTION_DEFAULT.slice();
 
     // Anything unrecognised, duplicated or empty falls back to the default. This is a display
@@ -4480,6 +4507,7 @@
       const html = terminalsHtml();
       document.getElementById('terminals').innerHTML = html;
       document.getElementById('pairs').innerHTML = pairsHtml();
+      renderConversations();
       // "Waiting for agents…" is true of the agents and false of the box: a machine with
       // terminals and no agents is not waiting for anything. Only that placeholder goes — wiping
       // the node took the Projects strip and its cards with it.
@@ -5633,7 +5661,17 @@
     function paneMessages(rows, agent) {
       const found = [];
       for (const at of turnSummaries(rows, agent)) found.push({ who: 'agent', at });
-      const lines = [...userInputLines(rows, agent)].sort((a, b) => a - b);
+      const userLines = userInputLines(rows, agent);
+      // Codex's idle composer shares its prompt gutter. Its model/context status immediately
+      // follows, unlike a sent prompt, which is followed by the agent reply.
+      if (agent === 'codex') for (const i of userLines) {
+        const next = rows.slice(i + 1).find(r => (r || '').trim()) || '';
+        if (/^\s*\S+(?:\s+\S+)*\s+· Context \d+% used(?:\s|$)/.test(next)) {
+          for (const j of userLines) if (j >= i) userLines.delete(j);
+          break;
+        }
+      }
+      const lines = [...userLines].sort((a, b) => a - b);
       for (let i = 0; i < lines.length;) {
         let j = i;
         while (j + 1 < lines.length && lines[j + 1] === lines[j] + 1) j++;
@@ -6216,7 +6254,7 @@
       for (const c of items) for (const m of c.members || []) {
         if (m.key === key) { m.messages = entries.length; m.seen = last; hit = true; }
       }
-      if (hit) saveConvIndex(items);
+      if (hit) { saveConvIndex(items); renderConversations(); }
     }
 
     // What the session was, for a conversation that outlives it. Every field is one the pane
@@ -6449,6 +6487,7 @@
         convPicked.clear();
         if (convLastAgent >= 0) { convLastAgent = -1; renderQuickActions(); }
         if (picked) clearSel();
+        else drawSel();
         return;
       }
       const token = ++convViewToken;
@@ -6663,9 +6702,9 @@
         // messages that arrives out of order is not the conversation the reader saw.
         if (on) texts.push(el.dataset.text || '');
       }
+      if (!texts.length) { bar.hidden = true; return; }
       selText = texts.join('\n\n');
-      bar.hidden = !texts.length;
-      if (!texts.length) return;
+      bar.hidden = false;
       document.getElementById('selCount').textContent =
         texts.length + (texts.length === 1 ? ' message' : ' messages');
       // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
@@ -7820,6 +7859,31 @@
           agentCard(left) + `<span class="pair-link" aria-label="paired with">↔</span>` + agentCard(right) + `</div>`;
       }).filter(Boolean);
       return rows.length ? `<div class="section-header">Pairs</div>` + rows.join('') : '';
+    }
+
+    // The index already carries the only landing-page facts that do not require opening every
+    // transcript: each member's count and newest message time. Live-ness comes from this snapshot.
+    function renderConversations() {
+      const el = document.getElementById('conversations');
+      if (!el) return;
+      const now = Date.now();
+      const rows = loadConvIndex().map(c => {
+        const members = c.members || [];
+        const count = members.reduce((n, m) => n + (Number(m.messages) || 0), 0);
+        const seen = Math.max(0, ...members.map(m => Number(m.seen) || 0));
+        const live = members.map(m => agents.find(a => convMemberKey(a) === m.key)).filter(Boolean);
+        const names = members.map(m => escapeHtml(m.label || (agents.find(a => convMemberKey(a) === m.key) || {}).label || 'Former pane'));
+        const liveNames = live.map(a => escapeHtml(paneLabel(a)));
+        return { c, count, seen, names, liveNames };
+      }).sort((a, b) => b.seen - a.seen || b.count - a.count);
+      el.innerHTML = rows.length ? `<div class="section-header">Conversations</div>` + rows.map(r =>
+        `<div class="conversation-card"><div class="conversation-title">💬 ${escapeHtml(r.c.name)}` +
+        `<span>${r.count} ${r.count === 1 ? 'message' : 'messages'}</span></div>` +
+        `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
+        `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
+        `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`
+      ).join('') : '';
+      applySections();
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
