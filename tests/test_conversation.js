@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessages', 'newTurnMessages', 'turnEntries',
+const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
@@ -51,7 +51,7 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessages, turnEntries,
+const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
@@ -173,6 +173,38 @@ test('a first read keeps a sent prompt in place and appends its completed reply'
   assert.deepStrictEqual(texts(history.concat(stored, reply)),
     ['first question', 'First answer.', 'second question', 'Second answer.']);
   assert.strictEqual(reply[0].at_src, 'state');
+});
+
+// A reload arms the turn clock at the reconnect, so `end` is newer than anything stored and the
+// usual guard cannot tell a turn that ended while nobody was connected from the one recorded
+// seconds before the tab closed. These are the rules that can.
+const msgs = rows => paneMessages(rows, 'claude');
+
+test('a turn already recorded before the tab closed is not recovered again', () => {
+  const stored = backfill(TWO_TURNS, NOW);
+  const found = turnEntries(msgs(TWO_TURNS), stored, NOW + 5000, 0, true);
+  assert.deepStrictEqual(texts(found), [], 'the transcript already ends on this closing message');
+});
+
+test('a turn that ended while nothing was connected is recovered off the pane', () => {
+  const stored = backfill(['\u276f first question', '', '\u23fa First answer.', '', '\u276f'], NOW);
+  const found = turnEntries(msgs(TWO_TURNS), stored, NOW + 5000, 0, true);
+  assert.deepStrictEqual(texts(found), ['second question', 'Second answer.']);
+  // The reconnect is not when the agent finished, and the stamp says so rather than claiming a
+  // transition this browser never saw.
+  assert.ok(found.every(e => e.at_src === 'read'));
+});
+
+test('recovery consults the newest stored agent entry and no further', () => {
+  // A prompt sent after the last recorded reply sits between them; the reply is still the answer.
+  const stored = backfill(TWO_TURNS, NOW)
+    .concat({who: 'user', text: 'third question', at: NOW + 1, at_src: 'sent'});
+  assert.strictEqual(recoveredTurn(stored, turnMessages(msgs(TWO_TURNS))).length, 0);
+});
+
+test('an empty transcript recovers whatever is on the pane', () => {
+  assert.deepStrictEqual(texts(turnEntries(msgs(TWO_TURNS), [], NOW, 0, true)),
+    ['second question', 'Second answer.']);
 });
 
 test('a prompt typed at the keyboard is read back, because nothing else will', () => {

@@ -387,6 +387,7 @@ So nothing is matched. A transcript is written by three events, each of which ha
 |---|---|---|
 | **First read of a pane** | everything on screen, in order — the pane's history before anyone was watching | `backfill` |
 | **A turn ending** (`done`/`blocked`) | the agent's closing message, and the prompt above it if that prompt is not already recorded | `state` |
+| **A member found already finished** at the first snapshot after a reload | the same, if the transcript does not already end on that closing message | `read` |
 | **A prompt this app sent** | the exact text, at the exact moment | `sent` |
 
 The guards are about shape, never text:
@@ -400,12 +401,23 @@ The guards are about shape, never text:
   This is why `noteStatus` stamps one transition once.
 - **The prompt is skipped when the transcript already ends on a user entry** — that is what "this
   app sent it" looks like from here, whatever the harness's echo of it looks like on screen.
+- **A recovered turn has no transition to prove it is new**, because the clock was armed at the
+  reconnect rather than when the agent finished. So it, alone, is checked against the newest stored
+  agent entry: same closing message means this is the turn recorded just before the tab closed and
+  there is nothing to recover. One comparison, once per reconnect. The mirror cost of the prompt
+  rule: an agent whose last two turns closed with the same words recovers neither. Its stamp is
+  `read`, not `state` — the reconnect is when the turn was *found*, and claiming otherwise would
+  date it with a transition nobody saw.
 
 Two costs, stated rather than hidden:
 
-- **A turn that ends while this browser is not connected is a permanent hole.** There is no later
-  fold to find it. This is a deliberate trade: the app already has to be running to chime, push, or
-  notify, so "it records what it witnesses" is a property users already hold about it.
+- **A turn that ends while this browser is not connected is a hole, unless it is still the pane's
+  newest turn when the browser comes back.** The first snapshot after a reload has no previous
+  status for any pane, so a member sitting on `done` is read once — that turn is on screen and
+  readable, and refusing to look at it would throw away a recording the browser can plainly see.
+  Turns behind it are gone; there is no later fold to find them. This is a deliberate trade: the
+  app already has to be running to chime, push, or notify, so "it records what it witnesses" is a
+  property users already hold about it.
 - **The same prompt typed at the keyboard twice running, with nothing said between, records once.**
   A second reply to one prompt would otherwise record the prompt twice, and the only thing left to
   tell those apart is the text. A prompt sent from this app is exempt — it is committed at the send.

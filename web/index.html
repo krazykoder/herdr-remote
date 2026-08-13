@@ -342,6 +342,16 @@
       gap: 7px;
     }
 
+    /* Esc comes and goes with `working`, and the chip is taller than the bar's line box — so its
+       height is reserved whether or not it is on screen. Without this the bar grew 6px the moment
+       a pane started working and shrank again when it stopped, which is the same bounce the
+       min-height above was written to kill, once per status change instead of once per switch.
+       Only while a pane is open: the chip cannot appear on the list screen, so neither can the
+       reservation. 1.16rem is the chip: a 0.65rem line at 1.2, plus 2px padding and 2px border. */
+    body.terminal-open .status-bar .state {
+      min-height: 1.16rem;
+    }
+
     .status-bar .abort {
       padding: 2px 6px;
       font: inherit;
@@ -3362,12 +3372,22 @@
     // One transition, one timestamp. The same change is announced twice — a `blocked` push and the
     // snapshot carrying it — and the recorder appends a turn when this clock moves past what it
     // last wrote, so a second stamp for a state the pane is already in would append the turn twice.
-    function noteStatus(paneId, status) {
+    // `seeded` is a status this browser did not watch arrive — the first snapshot after a reload,
+    // where a pane sitting on `done` finished at some unknown time while nothing was connected.
+    // The stamp is still taken, because a clock that starts at zero would make the pane's next
+    // turn look like its first; what the flag says is that the stamp is the reconnect, not the
+    // transition, and a turn written off it has to prove itself some other way (§5.2).
+    function noteStatus(paneId, status, seeded) {
       if (!paneId || !status) return;
       const at = statusAt[paneId] || (statusAt[paneId] = {});
       if (at.last === status) return;
       at.last = status;
       at[status] = Date.now();
+      at.seeded = !!seeded;
+    }
+
+    function turnSeeded(paneId) {
+      return !!(statusAt[paneId] || {}).seeded;
     }
 
     // The end of the pane's most recent turn, or 0 while it is still writing one — then the fold's
@@ -4410,7 +4430,16 @@
         let ring = false;
         for (const a of msg.agents) {
           const prev = prevStatuses[a.pane_id];
-          if (prev && prev !== a.status) {
+          // First sight of a pane — the first snapshot after a reload, or an agent someone else
+          // started. Nothing rings and nothing lands on the timeline, because none of that
+          // happened while anyone was here to hear it. The recorder is the exception: a pane
+          // already sitting on `done` finished a turn that is still on screen and still readable,
+          // and refusing to look at it would throw away a recording this browser can plainly see.
+          if (!prev) {
+            noteStatus(a.pane_id, a.status, true);
+            convReadTurnEnd(a.pane_id, a.status);
+          }
+          else if (prev !== a.status) {
             timeline.unshift({ project: a.project, agent: a.agent, status: a.status, time: new Date() });
             if (timeline.length > 100) timeline.pop();
             noteActivity(a.pane_id);
@@ -5857,11 +5886,32 @@
       return (turn || []).filter(m => !(m.who === 'user' && said && convKey(m.text) === said));
     }
 
+    // A turn found sitting finished at a reconnect, rather than watched ending. There is no
+    // transition to prove it is new — the clock was armed at the reconnect — so the one question
+    // left is whether the transcript already ends on this exact closing message. If it does, this
+    // is the turn that was recorded just before the tab closed and there is nothing to recover;
+    // if it does not, it ended while nothing was connected and it is still on screen.
+    //
+    // The newest stored agent entry is the only thing consulted, once per reconnect. That is the
+    // whole extent to which text is trusted here, and the cost is the mirror of the prompt rule
+    // above: an agent whose last two turns closed with the same words recovers neither.
+    function recoveredTurn(stored, turn) {
+      const entries = stored || [], ms = turn || [], closing = ms[ms.length - 1];
+      if (!closing) return [];
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].who !== 'agent') continue;
+        return convKey(entries[i].text) === convKey(closing.text) ? [] : ms;
+      }
+      return ms;
+    }
+
     // One turn appended. `end` is the transition that ended it, which is also what dates the
     // closing message — the relay pushes done/blocked for every pane, so this is a real clock and
-    // not the fold's own.
-    function turnEntries(fresh, stored, now, end) {
-      const add = newTurnMessages(stored, turnMessages(fresh));
+    // not the fold's own. A recovered turn passes no `end`: the reconnect is not when the agent
+    // finished, and `read` is the honest stamp for "this is when it was found".
+    function turnEntries(fresh, stored, now, end, recover) {
+      const picked = turnMessages(fresh);
+      const add = newTurnMessages(stored, recover ? recoveredTurn(stored, picked) : picked);
       return add.map((m, i) => convEntry(m, now, m.who === 'agent' && i === add.length - 1 && end
         ? { at: end, at_src: 'state' } : { at: now, at_src: 'read' }));
     }
@@ -6315,7 +6365,8 @@
         // A turn ended since the last one this transcript recorded. Reads of the same turn after
         // this one find `lastTurn` already at `end` and append nothing, so the turn-end read and
         // the poll that follows it cannot both write it.
-        add = turnEntries(fresh, held.entries, now, end);
+        const found = turnSeeded(a.pane_id);
+        add = turnEntries(fresh, held.entries, now, found ? 0 : end, found);
         if (add.length) held.lastTurn = end;
       }
       convNoteDraft(key, working ? fresh[fresh.length - 1] : null, a, now);

@@ -172,6 +172,54 @@ test('a send before the first pane read is written once, before its reply', asyn
   ]);
 });
 
+test('a member found already finished is read once, and recorded only if it is new',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    const before = (await held(page, key)).entries.length;
+
+    // What a reload looks like from inside: the socket's first snapshot, with no previous status
+    // for any pane. The fake herdr's claude pane reports `idle`, so the status the recorder cares
+    // about is put on the snapshot rather than on the fixture — every other spec counts those
+    // panes. `prevStatuses` is emptied because that, and not the reload itself, is what makes a
+    // status first-sight.
+    await tapWire(page);
+    await page.evaluate(() => {
+      for (const k of Object.keys(prevStatuses)) delete prevStatuses[k];
+      delete statusAt[activePane];
+      handleMessage({type: 'agents', agents: agents.map(a =>
+        a.pane_id === activePane ? Object.assign({}, a, {status: 'done'}) : a)});
+    });
+    // Nothing transitioned — it was already finished when the page arrived — and it is read
+    // anyway. That read is the only way a turn that ended while the tab was closed is ever seen.
+    await expect.poll(() => page.evaluate(() =>
+      window.__sent.filter(m => m.type === 'read_pane' && m.pane_id === 'w1:p1').length)).toBe(1);
+    // And the turn it finds is the one already recorded, so coming back costs no duplicate.
+    await read(page);
+    expect((await held(page, key)).entries.length).toBe(before);
+  });
+
+test('a turn that ended while nothing was connected is recovered off the pane', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+
+  await page.evaluate(() => {
+    for (const k of Object.keys(prevStatuses)) delete prevStatuses[k];
+    delete statusAt[activePane];
+    handleMessage({type: 'agents', agents: agents.map(a =>
+      a.pane_id === activePane ? Object.assign({}, a, {status: 'done'}) : a)});
+  });
+  // The pane says something the transcript has never heard, which is what a turn that ended while
+  // the tab was closed looks like from here.
+  await read(page, '❯ what changed?\n\n⏺ The relay now polls slower.\n\n❯\n');
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toContain('The relay now polls slower.');
+  // Found, not watched: the reconnect is not when the agent finished, and the stamp says so.
+  expect(rec.entries[rec.entries.length - 1].at_src).toBe('read');
+});
+
 test('with no database, recording still works and says history will be short', async ({page}) => {
   // Private mode, a policy-blocked store, a blocked upgrade. None of them is a reason to stop
   // rendering a pane, and none of them may lose the session's recording silently.
@@ -572,6 +620,10 @@ test('Last goes to the end of the thread, the same button that ends the pane', a
     await convPut({key: k, label: 'Architect 1', first: 1, touched: 40, entries: entries});
   }, key);
   await page.locator('#quickActions .qa-conv').click();
+  // The switch returns before the thread does — the entries come out of IndexedDB — so measuring
+  // the scroll box straight after the click measures an empty one, and an empty one does not
+  // overflow. Wait for the bubbles, not for the click.
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(40);
   const top = await page.evaluate(() => {
     const box = document.getElementById('convThread');
     box.scrollTop = 0;

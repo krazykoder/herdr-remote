@@ -105,17 +105,19 @@ test('the composer sends to the pane that is open', async ({page}) => {
 });
 
 test('Esc is beside a working pane badge and targets that pane', async ({page}) => {
-  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  // The codex pane is the one the fake herdr reports as genuinely working, so the chip is on
+  // screen because the pane is working — not because the test set a field that the next snapshot,
+  // three seconds later, sets back.
+  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
+  await expect(page.locator('#statusBarRight')).toHaveText('working');
   const sent = [];
   await page.exposeFunction('__noteEsc', d => sent.push(JSON.parse(d)));
   await page.evaluate(() => {
-    paneOf(activePane).status = 'working';
-    renderStatusBar();
     const send = ws.send.bind(ws);
     ws.send = d => { window.__noteEsc(d); return send(d); };
   });
   await expect(page.locator('#abortBtn')).toBeVisible();
-  await expect(page.locator('#statusBarRight')).toHaveText('working');
   await page.locator('#abortBtn').click();
-  await expect.poll(() => sent).toContainEqual({type: 'send_keys', pane_id: 'w1:p1', keys: ['Escape']});
+  await expect.poll(() => sent).toContainEqual(
+    {type: 'send_keys', pane_id: 'w8:p1', keys: ['Escape']});
 });
