@@ -476,6 +476,18 @@ test('Summary ticks the newest agent bubble, and a tick is what a selection is h
   await expect(page.locator('#selBar')).toBeHidden();
 });
 
+test('leaving a thread clears its bubble selection', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await page.locator('#quickActions .qa-summary').click();
+  await expect(page.locator('#selBar')).toBeVisible();
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#selBar')).toBeHidden();
+  expect(await page.evaluate(() => selText)).toBe('');
+});
+
 test('the line ruler stays out of the thread, and comes back with the rows', async ({page}) => {
   await open(page);
   await join(page);

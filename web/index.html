@@ -6280,6 +6280,7 @@
         box.innerHTML = '';
         convViewToken++;
         if (convLastAgent >= 0) { convLastAgent = -1; convPicked.clear(); renderQuickActions(); }
+        clearSel();
         return;
       }
       const token = ++convViewToken;
