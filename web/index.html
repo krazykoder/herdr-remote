@@ -2869,6 +2869,10 @@
           <!-- Shown only while this pane's conversation has someone else in it. -->
           <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
             onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
+          <!-- The repair for a transcript recorded before the wrapped-frame guard. Shown only on a
+               pane that has one, and it counts before it asks. -->
+          <button class="menu-item" role="menuitem" id="menuConvDedupe" hidden
+            onclick="closeTermMenu(); removeConvDuplicates()">Remove duplicates</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -5952,6 +5956,40 @@
           { key: recs[pick].key, member: recs[pick].member }));
       }
     }
+    // The repair for a transcript that already holds duplicates, run from the menu and never on its
+    // own. The duplicate it removes is a whole screen folded in a second time, which happened while
+    // a pane was being read as a `visible` frame: those breaks land mid-word, so the same sentence
+    // normalized to a string the overlap match had never seen and everything on screen was appended
+    // again. convRecordable stopped it happening; records written before it still carry the copies.
+    //
+    // Whitespace is dropped entirely rather than collapsed, because that is exactly the difference
+    // the wrap made — "our loca l database" against "our local database".
+    function convDupKey(e) {
+      return (e.who || '') + '\u0000' + convKey(e.text).replace(/\s+/g, '');
+    }
+
+    // Only a repeat inside one read window counts: an agent that says "Done." again an hour later
+    // said it twice, and a dedupe that cannot tell those apart would quietly delete history.
+    function convDedupe(entries) {
+      const out = [], at = new Map();      // dup key -> index in `out` of the copy being kept
+      let removed = 0;
+      for (const e of entries || []) {
+        const k = convDupKey(e), prev = at.get(k);
+        if (prev !== undefined && out.length - prev <= CONV_OVERLAP_MAX) {
+          // The copy that goes keeps nothing back: the longer text wins, since the unwrapped read
+          // is the one with the words whole, and the better-ranked stamp wins (§5.1).
+          const kept = out[prev];
+          out[prev] = Object.assign({}, kept,
+            (e.text || '').length > (kept.text || '').length ? { text: e.text } : null,
+            convAtRank(e) > convAtRank(kept) ? { at: e.at, at_src: e.at_src } : null);
+          removed++;
+          continue;
+        }
+        at.set(k, out.length);
+        out.push(e);
+      }
+      return { entries: out, removed: removed };
+    }
     // --- Conversation recorder (pure) --- end
 
     // The pending transfer, and where a classified send waits for the recorder to find it. Both
@@ -6178,11 +6216,16 @@
       if (!a || !profileFor(a.agent)) return;
       const key = convMemberKey(a);
       if (!convReferenced().has(key)) return;
-      // pane_content can arrive again before IndexedDB answers the first read. One queue per
-      // transcript keeps the second fold based on the first result, rather than two stale puts
-      // racing and dropping whichever message wrote first.
+      return convQueue(key, () => recordPaneNow(a, key, rows));
+    }
+
+    // pane_content can arrive again before IndexedDB answers the first read. One queue per
+    // transcript keeps the second fold based on the first result, rather than two stale puts racing
+    // and dropping whichever message wrote first. Every write of a transcript goes through here,
+    // which is what keeps the menu's dedupe from landing on top of a fold in flight.
+    function convQueue(key, job) {
       const previous = convQueues.get(key) || Promise.resolve();
-      const queued = previous.catch(() => {}).then(() => recordPaneNow(a, key, rows));
+      const queued = previous.catch(() => {}).then(job);
       convQueues.set(key, queued);
       queued.finally(() => { if (convQueues.get(key) === queued) convQueues.delete(key); });
       return queued;
@@ -6214,6 +6257,38 @@
       convNoteCounts(key, held.entries, now);
       // The thread is a render of what was just folded, so it follows the same read.
       if (convThreadShows(key)) renderConvView();
+    }
+
+    // The one place the append-only rule (§5.1) is broken, and it is broken by the user, on a
+    // record they are looking at and can see is wrong. Counted and confirmed before anything is
+    // written, and scoped to the open pane: a transcript is per-member, so the other members of a
+    // joint thread are repaired from their own panes.
+    async function removeConvDuplicates() {
+      const a = activePane ? paneOf(activePane) : null;
+      const key = a ? convMemberKey(a) : '';
+      if (!key || !convReferenced().has(key)) return;
+      const held = convHeld.get(key) || (await convGet([key]))[0];
+      const found = convDedupe(held && held.entries).removed;
+      if (!found) { showToast('No duplicates found in this transcript'); return; }
+      if (!confirm(`Remove ${found} duplicate message${found > 1 ? 's' : ''} from this pane's `
+        + `transcript? The copy that is kept is the longer of the two.`)) return;
+      // Re-read and re-counted inside the queue: a fold may have landed while the dialog was up.
+      const removed = await convQueue(key, () => convDedupeNow(key));
+      showToast(removed ? `Removed ${removed} duplicate message${removed > 1 ? 's' : ''}`
+        : 'No duplicates found in this transcript');
+    }
+
+    async function convDedupeNow(key) {
+      const held = convHeld.get(key) || (await convGet([key]))[0];
+      const out = convDedupe(held && held.entries);
+      if (!out.removed) return 0;
+      held.entries = out.entries;
+      held.touched = Date.now();
+      convHeld.set(key, held);
+      await convPut(held);
+      convNoteCounts(key, held.entries, Date.now());
+      if (convThreadShows(key)) renderConvView();
+      return out.removed;
     }
 
     // Recording is bound to a read, and only the open pane is ever read — so a joint thread would
@@ -7131,10 +7206,13 @@
       conv.hidden = !(a && profileFor(a.agent));
       const joint = document.getElementById('menuConvJoint');
       const convFont = document.getElementById('menuConvFont');
+      const dedupe = document.getElementById('menuConvDedupe');
       joint.hidden = true;
       convFont.hidden = true;
+      dedupe.hidden = true;
       if (!conv.hidden) {
         const mine = convsForPane(a);
+        dedupe.hidden = !mine.length;
         conv.textContent = mine.length ? `In "${mine[0].name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
         // A conversation of one has no joint thread to show, so the preference is not offered.
