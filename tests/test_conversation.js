@@ -41,7 +41,7 @@ const ctx = vm.createContext({
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
 const NAMES = ['paneMessages', 'recordMessages', 'convKey', 'convText', 'convHash', 'convMemberKey',
-               'classifyVia', 'outboxAdd', 'outboxVia', 'tagUserEntries', 'composeTransfer',
+               'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer',
                'parseConvIndex', 'capEntries', 'evictOrder',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
 vm.runInContext(
@@ -51,7 +51,7 @@ vm.runInContext(
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {paneMessages, recordMessages, convKey, convText, convHash, convMemberKey, classifyVia,
-       outboxAdd, outboxVia, tagUserEntries, composeTransfer,
+       outboxAdd, tagUserEntries, composeTransfer,
        parseConvIndex, capEntries, evictOrder,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
 
@@ -283,8 +283,10 @@ test('the outbox keeps queued classifications in send order and forgets the old 
     box = outboxAdd(box, convHash('prompt ' + i), {via: 'transfer'}, NOW + i);
   }
   assert.strictEqual(box.length, CONV_OUTBOX_MAX);
-  assert.strictEqual(outboxVia(box, 'prompt 0', NOW), null, 'an evicted send still answers');
-  assert.ok(outboxVia(box, 'prompt 59', NOW + 60));
+  const user = t => [{who: 'user', text: t, seen: NOW + 60}];
+  assert.strictEqual(tagUserEntries(user('prompt 0'), box, NOW + 60).entries[0].via, 'typed',
+    'a send evicted by the cap answers nothing');
+  assert.strictEqual(tagUserEntries(user('prompt 59'), box, NOW + 60).entries[0].via, 'transfer');
 });
 
 test('two identical transferred prompts each consume one outbox entry', () => {
@@ -301,7 +303,10 @@ test('two identical transferred prompts each consume one outbox entry', () => {
 
 test('an expired entry answers nothing, even before it is evicted', () => {
   const box = outboxAdd([], convHash('do the thing'), {via: 'mixed'}, NOW);
-  assert.strictEqual(outboxVia(box, 'do the thing', NOW + CONV_OUTBOX_TTL + 1), null);
+  const late = NOW + CONV_OUTBOX_TTL + 1;
+  const out = tagUserEntries([{who: 'user', text: 'do the thing', seen: late}], box, late);
+  assert.strictEqual(out.entries[0].via, 'typed');
+  assert.deepStrictEqual(Array.from(out.outbox), []);
 });
 
 test('the recorder tags the prompt when it reads it back off the pane', () => {

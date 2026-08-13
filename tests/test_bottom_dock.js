@@ -19,7 +19,7 @@ const to = HTML.indexOf('    let paneLines = 200;', from);
 assert.ok(from !== -1 && to > from, 'quick actions block not found in web/index.html');
 
 // A fresh context per test: both switches are localStorage-backed module state.
-function dockCtx({status = 'idle', store = {}} = {}) {
+function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {}) {
   const els = {};
   const el = id => els[id] || (els[id] =
     {id, innerHTML: '', style: {}, setAttribute() {}, scrollTop: 0, scrollHeight: 4000,
@@ -39,6 +39,10 @@ function dockCtx({status = 'idle', store = {}} = {}) {
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},
     syncComposerMode() {}, isShell: () => false,
+    // The conversation switch reads membership and the per-pane view, both of which live in the
+    // block below this one. Stubbed rather than sliced in: this suite owns the nav row, not the
+    // recorder.
+    convsForPane: () => convs, convViewOn: () => threaded, toggleConvView() {},
   });
   vm.runInContext(HTML.slice(from, to), ctx);
   return {el, store, run: src => vm.runInContext(src, ctx)};
@@ -80,6 +84,19 @@ test('the bar switched off while unfolded is still empty, as it was before', () 
   const {el, run} = dockCtx();
   run("localStorage.setItem('herdr_quick_actions', 'off'); renderQuickActions()");
   assert.equal(el('quickActions').innerHTML, '');
+});
+
+test('the conversation switch is offered only on a pane that is in one', () => {
+  const none = dockCtx();
+  none.run('renderQuickActions()');
+  assert.doesNotMatch(none.el('quickActions').innerHTML, /qa-conv/,
+    'a button that does nothing on most panes teaches people to stop pressing it');
+  const inOne = dockCtx({convs: [{id: 'c1', name: 'x'}]});
+  inOne.run('renderQuickActions()');
+  assert.match(inOne.el('quickActions').innerHTML, /qa-conv[^>]*aria-pressed="false"/);
+  const threaded = dockCtx({convs: [{id: 'c1', name: 'x'}], threaded: true});
+  threaded.run('renderQuickActions()');
+  assert.match(threaded.el('quickActions').innerHTML, /qa-conv on[^>]*aria-pressed="true"/);
 });
 
 test('Last rides the other edge of the same row', () => {

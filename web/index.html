@@ -1506,6 +1506,163 @@
       flex: 1;
     }
 
+    /* Conversation view. The pane's own furniture — ruler, selection band, block nav — is about
+       lines, and a thread has none, so the whole lot goes with the rows rather than being left
+       hanging over bubbles it cannot address. */
+    .term-wrap.conv-on>.term-content,
+    .term-wrap.conv-on>.ruler,
+    .term-wrap.conv-on>.sel-band,
+    .term-wrap.conv-on>.sel-bubble,
+    .term-wrap.conv-on>.block-nav {
+      display: none !important;
+    }
+
+    .conv-thread {
+      flex: 1;
+      min-width: 0;
+      /* A thread is read down a column, not across a desk. Capped and centred, so a 1440px window
+         does not put a two-word reply a foot away from the message it answers — the pane rows
+         opposite are monospace and set their own width, and this one has to set its. */
+      max-width: 820px;
+      margin-inline: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* display:flex outranks the user agent's [hidden] rule, the same guard .block-nav carries. */
+    .conv-thread[hidden] {
+      display: none;
+    }
+
+    .conv-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      padding-bottom: 2px;
+    }
+
+    .conv-head .name {
+      color: var(--text);
+      font-weight: 600;
+      /* A 64-character name must not push the count off the row. */
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* A time rule, and the same element says "there is history missing here" — one shape for
+       "when" means a gap is read as a break in the thread rather than as a second kind of thing. */
+    .conv-rule {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.65rem;
+      color: var(--muted);
+      margin: 6px 0 2px;
+    }
+
+    .conv-rule::before,
+    .conv-rule::after {
+      content: '';
+      flex: 1;
+      border-top: 1px dashed var(--border);
+    }
+
+    .conv-rule.gap {
+      color: var(--orange);
+    }
+
+    .conv-rule.gap::before,
+    .conv-rule.gap::after {
+      border-top-color: var(--orange);
+      opacity: 0.5;
+    }
+
+    .conv-msg {
+      max-width: 86%;
+      align-self: flex-start;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      border-bottom-left-radius: 4px;
+      padding: 8px 10px;
+      /* The agent's own tint, mixed in by the renderer. A wash rather than a fill: the text on it
+         is --text in both themes and has to keep its contrast. */
+      background: var(--surface);
+      font-size: 0.8rem;
+      line-height: 1.45;
+      /* Agent output is monospace on the pane and stays monospace here — a plan or a diff loses
+         its shape in a proportional face. */
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .conv-msg.user {
+      align-self: flex-end;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 4px;
+      border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+      background: color-mix(in srgb, var(--blue) 12%, var(--surface));
+      font-family: inherit;
+    }
+
+    .conv-who {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.6rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    /* The glyph carries the fact at a glance and the label spells it out, so the glyph is set at
+       reading size rather than at the label's. */
+    .conv-who .via {
+      font-size: 0.85rem;
+      line-height: 1;
+      color: var(--blue);
+    }
+
+    .conv-who .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    /* Where a transferred prompt came from. A button, because tapping it goes to the source. */
+    .conv-from {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .conv-from:hover {
+      color: var(--text);
+    }
+
+    .conv-empty {
+      margin: auto;
+      max-width: 30ch;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
     /* Lines are DOM rows rather than a scrolling overlay, so prompt treatment stays attached to
        its text in every wrap mode. `min-height` keeps an empty terminal line real, and matches
        the container's line-height so the ruler's arithmetic row geometry stays true. */
@@ -1850,6 +2007,31 @@
     .quick-actions .qa-nav button.qa-summary {
       border-color: var(--orange);
       color: var(--orange);
+    }
+
+    /* Beside the fold, and shaped like it: both are switches for what is on screen rather than
+       things to press constantly. Pressed is filled, because this one changes the whole pane and
+       an outline alone is not enough to say which of two views is showing. */
+    .quick-actions .qa-nav button.qa-conv {
+      min-width: 0;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
+      filter: grayscale(1);
+      opacity: 0.75;
+    }
+
+    .quick-actions .qa-nav button.qa-conv.on {
+      border-color: var(--blue);
+      background: color-mix(in srgb, var(--blue) 20%, var(--surface));
+      filter: none;
+      opacity: 1;
     }
 
     /* The v folds the whole composer stack away — the button rail, the text area, and whichever
@@ -2478,6 +2660,11 @@
                renderTermMenuState names the agent and hides it when it cannot be started. -->
           <button class="menu-item" role="menuitem" id="menuDuplicate" hidden
             onclick="closeTermMenu(); duplicatePane()">Duplicate</button>
+          <!-- One item for both jobs: membership is a list the user edits, so joining an existing
+               conversation and naming a new one are the same sheet. renderTermMenuState writes the
+               text, because "start one" and "you are in one" are different offers. -->
+          <button class="menu-item" role="menuitem" id="menuConv"
+            onclick="closeTermMenu(); openConvDialog(activePane)">Start conversation…</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->
@@ -2534,6 +2721,10 @@
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
     <div class="term-wrap" id="termWrap">
       <div class="term-content" id="termContent"></div>
+      <!-- The same pane, read as a thread. A sibling of the rows rather than a replacement for
+           them: switching views is a re-render of what is already in memory, and nothing about
+           the pane read, the ruler or the composer changes underneath it. -->
+      <div class="conv-thread" id="convThread" hidden></div>
       <!-- A pane opened a moment ago still holds the last one's text until its own first read
            lands, so this hangs over the middle of the pane rather than replacing it. -->
       <div class="term-loading" id="termLoading" hidden>Loading…</div>
@@ -2784,6 +2975,36 @@
         <button id="pairSubmit" onclick="savePair()"
           style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Save
           pair</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conversation editor — membership is the user's list, so one sheet does both jobs: join or
+       leave the conversations that exist, and name a new one. Frontend only; the relay knows
+       nothing of conversations, and nothing here goes on the wire. -->
+  <div id="convSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeConvDialog()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Conversation · <span id="convSource"></span></span>
+        <button onclick="closeConvDialog()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <!-- Edge to edge, the same as the pair sheet's rows. -->
+      <div id="convList"></div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <label class="start-field">New conversation<input id="convName" maxlength="64" type="text"
+            placeholder="what this thread is about" onkeydown="if(event.key==='Enter')saveNewConv()" /></label>
+        <!-- Present only while this pane is in a healthy pair: seeding from the pair is the one
+             tap that case deserves, and it is a suggestion the member list can undo. -->
+        <label id="convPairRow" hidden
+          style="display:flex;align-items:center;gap:8px;font-size:0.75rem;color:var(--muted)">
+          <input id="convPair" type="checkbox" checked /><span id="convPairLabel"></span></label>
+        <p id="convError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="convSubmit" onclick="saveNewConv()"
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
+          conversation</button>
       </div>
     </div>
   </div>
@@ -5344,15 +5565,6 @@
       return kept.slice(-CONV_OUTBOX_MAX);
     }
 
-    function outboxVia(box, text, now) {
-      const hash = convHash(text);
-      for (let i = 0; i < (box || []).length; i++) {
-        const e = box[i];
-        if (e.hash === hash && now - e.at < CONV_OUTBOX_TTL) return e;
-      }
-      return null;
-    }
-
     // Every user entry gets a `via`, and `typed` is what an unmatched one gets — the honest
     // failure mode, because provenance is only knowable where the send happened. A transfer made
     // on the desktop and recorded on the phone reads as typed there; the phone never saw it.
@@ -5641,12 +5853,32 @@
       const out = recordMessages(held.entries, paneMessages(rows, a.agent), now);
       if (!out.added && !out.grew) return;
       const tagged = tagUserEntries(out.entries, loadOutbox(), now);
-      held.entries = capEntries(tagged.entries);
       saveOutbox(tagged.outbox);
-      held.label = paneLabel(a) || held.label || '';
+      const label = paneLabel(a) || held.label || '';
+      // Stamped once, on the entries this fold added: an entry keeps the label the pane had when
+      // it was recorded, because that is what the transcript said at the time (§8). It is also
+      // what lets the joint thread name three members without holding three snapshots.
+      held.entries = capEntries(tagged.entries)
+        .map(e => e.label ? e : Object.assign({}, e, { label: label }));
+      held.label = label;
       held.touched = now;
       held.spawn = convSpawn(a, now);
       await convPut(held);
+      convNoteCounts(key, held.entries.length, now);
+      // The thread is a render of what was just folded, so it follows the same read.
+      if (activePane && paneOf(activePane) && convMemberKey(paneOf(activePane)) === key) renderConvView();
+    }
+
+    // The count and the last-seen the landing list renders, kept per member rather than per
+    // conversation: a member's own record is the only one this browser can count without opening
+    // every other member's, and the list wants a total it can add up without awaiting anything.
+    function convNoteCounts(key, messages, now) {
+      const items = loadConvIndex();
+      let hit = false;
+      for (const c of items) for (const m of c.members || []) {
+        if (m.key === key) { m.messages = messages; m.seen = now; hit = true; }
+      }
+      if (hit) saveConvIndex(items);
     }
 
     // What the session was, for a conversation that outlives it. Every field is one the pane
@@ -5667,6 +5899,244 @@
         localStorage.setItem(CONV_INDEX_KEY,
           JSON.stringify({ version: 1, items: items.slice(0, CONV_CONV_MAX) }));
       } catch (e) { /* private mode: this session only */ }
+    }
+
+    // --- Conversation membership ---
+    // Which conversations a pane is in, and the two edits that answer it: join one, or name a new
+    // one. Membership is the whole of "is this recorded" (§3), so this is the switch — and it is
+    // the user's list, never the pair's: a conversation seeded from a pair outlives it.
+    let convSource = null;
+
+    function convsForPane(a) {
+      const key = convMemberKey(a);
+      return key ? loadConvIndex().filter(c => (c.members || []).some(m => m.key === key)) : [];
+    }
+
+    function convMemberOf(a) {
+      return { key: convMemberKey(a), added: Date.now(), label: paneLabel(a) };
+    }
+
+    function openConvDialog(paneId) {
+      convSource = agents.find(x => x.pane_id === paneId);
+      if (!convSource) return;
+      document.getElementById('convSource').textContent = paneTitle(convSource);
+      document.getElementById('convName').value = '';
+      setConvError('');
+      // The pair is offered as a second member only while it is healthy: a stale pair's partner is
+      // a pane this browser has not verified, and seeding a member from it would record a
+      // fingerprint nothing on the other end matches.
+      const pair = pairFor(pairs, paneId);
+      const partner = pair && pairHealth(pair, agents).state === 'healthy'
+        ? agents.find(x => x.pane_id === partnerOf(pair, paneId).pane_id) : null;
+      const row = document.getElementById('convPairRow');
+      row.hidden = !partner;
+      row.style.display = partner ? 'flex' : 'none';
+      if (partner) {
+        document.getElementById('convPair').checked = true;
+        document.getElementById('convPairLabel').textContent = `Include ${paneLabel(partner)}`;
+      }
+      renderConvList();
+      document.getElementById('convSheet').style.display = 'block';
+      document.getElementById('convName').focus();
+    }
+
+    function closeConvDialog() {
+      document.getElementById('convSheet').style.display = 'none';
+      convSource = null;
+    }
+
+    function setConvError(text) {
+      const el = document.getElementById('convError');
+      el.textContent = text || '';
+      el.style.display = text ? 'block' : 'none';
+    }
+
+    function renderConvList() {
+      const box = document.getElementById('convList');
+      if (!convSource) { box.innerHTML = ''; return; }
+      const key = convMemberKey(convSource);
+      const items = loadConvIndex();
+      if (!items.length) {
+        box.innerHTML = '<p class="pair-empty">No conversations yet. Name one below and this pane starts recording into it.</p>';
+        return;
+      }
+      // Same row as the pair sheet's candidates: a list of things to pick reads as one when the
+      // rows run the full width. The tick is membership, and tapping is the toggle.
+      box.innerHTML = '<div class="pair-head">Conversations</div>' + items.map(c => {
+        const on = (c.members || []).some(m => m.key === key);
+        const n = (c.members || []).length;
+        const msgs = (c.members || []).reduce((t, m) => t + (m.messages || 0), 0);
+        const meta = `${n} member${n > 1 ? 's' : ''}` + (msgs ? ` · ${msgs} messages` : '');
+        return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="toggleConvMember('${escapeHtml(c.id)}')">
+      <span class="kind" aria-hidden="true">💬</span>
+      <span class="info"><span class="name">${escapeHtml(c.name)}</span><span class="meta">${meta}</span></span>
+      <span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
+    </button>`;
+      }).join('');
+    }
+
+    function toggleConvMember(id) {
+      if (!convSource) return;
+      const key = convMemberKey(convSource);
+      const items = loadConvIndex();
+      const conv = items.find(c => c.id === id);
+      if (!conv) return;
+      const at = (conv.members || []).findIndex(m => m.key === key);
+      if (at >= 0) {
+        // Leaving stops the recording and keeps what was recorded: the transcript is only evicted
+        // once space runs out, and until then re-joining picks the thread back up.
+        conv.members.splice(at, 1);
+        setConvError('');
+      } else {
+        if (conv.members.length >= CONV_MEMBER_MAX) {
+          setConvError(`"${conv.name}" already has ${CONV_MEMBER_MAX} panes.`); return;
+        }
+        conv.members.push(convMemberOf(convSource));
+        setConvError('');
+      }
+      saveConvIndex(items);
+      renderConvList();
+      renderTermMenuState();
+      renderConvBar();
+    }
+
+    function saveNewConv() {
+      if (!convSource) return;
+      const name = document.getElementById('convName').value.trim();
+      if (!name) { setConvError('A conversation needs a name.'); return; }
+      const items = loadConvIndex();
+      if (items.length >= CONV_CONV_MAX) {
+        setConvError(`Already at ${CONV_CONV_MAX} conversations — leave one first.`); return;
+      }
+      const members = [convMemberOf(convSource)];
+      const pair = pairFor(pairs, convSource.pane_id);
+      const row = document.getElementById('convPairRow');
+      if (!row.hidden && document.getElementById('convPair').checked && pair) {
+        const partner = agents.find(x => x.pane_id === partnerOf(pair, convSource.pane_id).pane_id);
+        if (partner) members.push(convMemberOf(partner));
+      }
+      saveConvIndex([{
+        // Not crypto.randomUUID(), for the reason newPairId() gives: no secure context on a LAN.
+        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        name: name.slice(0, 64), created: Date.now(), members: members,
+        pair_id: pair ? pair.id : '',   // provenance only — nothing reads it back (§8)
+      }].concat(items));
+      closeConvDialog();
+      renderTermMenuState();
+      renderConvBar();
+    }
+
+    // --- Conversation view ---
+    // The same pane read as a thread. Which view a pane was last read in is remembered per pane:
+    // a pane being watched as a terminal and one being followed as a thread are two different
+    // jobs, and a global switch would keep answering the wrong one.
+    const CONV_VIEW_KEY = 'herdr_conv_view';
+
+    function convViews() {
+      try {
+        const d = JSON.parse(localStorage.getItem(CONV_VIEW_KEY) || '');
+        return d && typeof d === 'object' ? d : {};
+      } catch (e) { return {}; }
+    }
+
+    function convViewOn(a) {
+      const key = convMemberKey(a);
+      return !!(key && convViews()[key]);
+    }
+
+    function toggleConvView() {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a) return;
+      const key = convMemberKey(a), views = convViews();
+      if (views[key]) delete views[key]; else views[key] = 1;
+      try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
+      catch (e) { /* private mode: this session only */ }
+      renderConvBar();
+      if (window.cue) cue('page');
+    }
+
+    // Both halves of the switch: the button that offers it and the view it selects.
+    function renderConvBar() {
+      renderQuickActions();
+      renderConvView();
+    }
+
+    // A render can be overtaken by the next one while it waits on the database, and the loser
+    // would paint a thread the pane has since left.
+    let convViewToken = 0;
+
+    async function renderConvView() {
+      const wrap = document.getElementById('termWrap'), box = document.getElementById('convThread');
+      const a = activePane ? paneOf(activePane) : null;
+      const conv = a ? convsForPane(a)[0] : null;
+      const on = !!conv && convViewOn(a);
+      wrap.classList.toggle('conv-on', on);
+      box.hidden = !on;
+      if (!on) { box.innerHTML = ''; convViewToken++; return; }
+      const token = ++convViewToken;
+      const key = convMemberKey(a);
+      // The session's own copy first, so the common case — a thread re-rendered on every read of
+      // an open pane — never waits on IndexedDB at all.
+      const rec = convHeld.get(key) || (await convGet([key]))[0];
+      if (token !== convViewToken) return;
+      // Following the newest message is the default, and a reader who has scrolled up keeps their
+      // place: the same rule the pane rows follow.
+      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+      const entries = (rec && rec.entries) || [];
+      box.innerHTML = convHeadHtml(conv, key, entries.length) + (entries.length
+        ? convEntriesHtml(entries, a)
+        : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>');
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // The conversation's total, not this pane's: the other members' counts come from the index,
+    // which is what it caches them for, and the rendered member's own count comes from the entries
+    // on screen — the index is written after a fold, so it is a message behind for exactly as long
+    // as it takes this to run.
+    function convHeadHtml(conv, key, count) {
+      const n = (conv.members || []).reduce(
+        (t, m) => t + (m.key === key ? count : (m.messages || 0)), 0);
+      return `<div class="conv-head"><span class="name">${escapeHtml(conv.name)}</span>` +
+        `<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+    }
+
+    function convSpan(ms) {
+      const m = Math.max(1, Math.round(ms / 60000));
+      if (m < 60) return `${m} min`;
+      const h = Math.round(m / 60);
+      return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+    }
+
+    // A rule before an entry that is far enough from the one above it to be a different sitting,
+    // and the same shape carries a gap — a break in the recording is a break in the thread, not a
+    // second kind of furniture.
+    const CONV_RULE_GAP = 10 * 60 * 1000;
+
+    function convEntriesHtml(entries, a) {
+      const color = a && a.agent ? statusColor(a) : 'var(--muted)';
+      let last = 0;
+      return entries.map(e => {
+        const at = e.seen || 0;
+        // How long the thread was not being recorded for, when both ends of the break are known —
+        // "41 min" is the fact; "recording resumed" is all there is to say without a previous entry.
+        const rule = e.gap
+          ? `<div class="conv-rule gap">⋯ ${last && at > last ? escapeHtml(convSpan(at - last)) : 'recording resumed'} ⋯</div>`
+          : (at - last > CONV_RULE_GAP
+            ? `<div class="conv-rule">${escapeHtml(new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</div>`
+            : '');
+        last = at;
+        const user = e.who === 'user';
+        // `transfer` says the source alone; `mixed` adds "edited", because "approved verbatim" and
+        // "rewrote it" are different facts about the same bubble.
+        const from = user && e.via && e.via !== 'typed' && e.from
+          ? `<span class="conv-who"><span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
+            `${e.via === 'mixed' ? ' · edited' : ''}</span>`
+          : '';
+        const who = user ? from
+          : `<span class="conv-who"><span class="dot" style="background:${color}"></span>` +
+            `${escapeHtml(e.label || paneLabel(a))}</span>`;
+        return rule + `<div class="conv-msg${user ? ' user' : ''}">${who}${escapeHtml(e.text || '')}</div>`;
+      }).join('');
     }
 
     // --- Line ruler ---
@@ -6034,6 +6504,14 @@
       // Names the harness, because "Duplicate" alone reads as copying the pane's text.
       dup.hidden = !canDuplicate(a);
       if (!dup.hidden) dup.textContent = `Duplicate this ${a.agent}`;
+      const conv = document.getElementById('menuConv');
+      // Only a pane an agent is running in has messages to record, so a shell is not offered one.
+      conv.hidden = !(a && profileFor(a.agent));
+      if (!conv.hidden) {
+        const mine = convsForPane(a);
+        conv.textContent = mine.length ? `In "${mine[0].name}"…`
+          : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
+      }
     }
 
     // Says what the strip is currently hiding, because a tab bar that is missing a pane and does
@@ -6832,6 +7310,9 @@
       document.getElementById('actionKeys').innerHTML = '';
       renderQuickActions();
       renderPairStrip();
+      // The view this pane was last read in, restored with it — after activePane is set, which is
+      // what it reads.
+      renderConvView();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
       disarmShortcut();
@@ -6848,6 +7329,7 @@
       disarmShortcut();
       disarmCtrl();
       renderQuickActions();  // reads activePane, so it empties the bar now that there is none
+      renderConvView();      // and takes the thread with it, for the same reason
       clearSel();  // after activePane, so rulerOn() is already false and the ruler goes with it
       document.getElementById('pairStrip').style.display = 'none';
       renderRecents();  // the pane just visited belongs at the front before the next poll, not after
@@ -6998,11 +7480,21 @@
         : '';
       // Source order is the column order now that the edges are grid tracks rather than absolute:
       // fold, arrows, right group.
+      // Offered only on a pane that is in a conversation, for the reason Summary is conditional:
+      // a button that does nothing on most panes teaches people to stop pressing it.
+      const inConv = a && convsForPane(a).length;
+      const threaded = inConv && convViewOn(a);
+      const conv = inConv
+        ? `<button class="qa-conv${threaded ? ' on' : ''}" onclick="toggleConvView()" ` +
+        `aria-pressed="${threaded}" ` +
+        `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
+        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">💬</button>`
+        : '';
       const navRow = `<div class="qa-nav">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
-        `${open ? 'v' : '^'}</button>` +
+        `${open ? 'v' : '^'}</button>` + conv +
         `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +

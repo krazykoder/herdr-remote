@@ -155,6 +155,78 @@ test('what the fallback kept moves into the database when one appears', async ({
   expect(await page.evaluate(() => localStorage.getItem('herdr_transcripts'))).toBeNull();
 });
 
+// --- The switch, the sheet, and the thread ---
+
+test('a pane in no conversation is offered one, and starting it begins the recording', async ({page}) => {
+  await open(page);
+  await expect(page.locator('#quickActions .qa-conv')).toHaveCount(0);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConv')).toHaveText('Start conversation…');
+  await page.locator('#menuConv').click();
+  await page.locator('#convName').fill('new authentication feature');
+  await page.locator('#convSubmit').click();
+  await expect(page.locator('#convSheet')).toBeHidden();
+  // The switch is the confirmation: it is offered only on a pane that is in a conversation.
+  await expect(page.locator('#quickActions .qa-conv')).toBeVisible();
+  await read(page);
+  const key = await page.evaluate(() => convMemberKey(paneOf(activePane)));
+  expect((await held(page, key)).entries.length).toBe(2);
+});
+
+test('a name is required, and the sheet says so rather than filing an unnamed thread', async ({page}) => {
+  await open(page);
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConv').click();
+  await page.locator('#convSubmit').click();
+  await expect(page.locator('#convError')).toHaveText('A conversation needs a name.');
+  await expect(page.locator('#convSheet')).toBeVisible();
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(0);
+});
+
+test('the switch swaps the rows for the thread, and back, without a read', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#termContent')).toBeHidden();
+  await expect(page.locator('#convThread .conv-head .name')).toHaveText('new authentication feature');
+  // Agent left, user right — the bubble's side is the whole of "who", before any label is read.
+  const msgs = page.locator('#convThread .conv-msg');
+  await expect(msgs).toHaveCount(2);
+  await expect(msgs.nth(0)).not.toHaveClass(/user/);
+  await expect(msgs.nth(0)).toContainText('Ready. Name the change.');
+  await expect(msgs.nth(1)).toHaveClass(/user/);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread')).toBeHidden();
+  await expect(page.locator('#termContent')).toBeVisible();
+});
+
+test('the view a pane was last read in is the one it opens on', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread')).toBeVisible();
+  await page.reload();
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
+});
+
+test('leaving a conversation takes the switch with it and keeps what was recorded', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConv')).toHaveText('In "new authentication feature"…');
+  await page.locator('#menuConv').click();
+  await page.locator('#convList .pair-pick').click();      // the tick is membership; tapping toggles it
+  await page.locator('#convSheet [aria-label="Close"]').click();
+  await expect(page.locator('#quickActions .qa-conv')).toHaveCount(0);
+  expect((await held(page, key)).entries.length).toBe(2);   // still readable, and re-joining resumes
+});
+
 test('self-upgrade keeps a newer fallback tail beside an existing database record', async ({page}) => {
   await open(page);
   const key = await page.evaluate(async () => {
