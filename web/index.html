@@ -4384,7 +4384,7 @@
       } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {
         // Another member of the thread on screen, read by convPollMembers. Recorded, never drawn:
         // recordPane ignores any pane that is not in a conversation, so a stray read is harmless.
-        recordPane(msg.pane_id, (msg.content || '').split('\n'));
+        if (convRecordable(msg)) recordPane(msg.pane_id, (msg.content || '').split('\n'));
       } else if (msg.type === 'pane_content') {
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
@@ -4421,7 +4421,7 @@
         drawSel();
         // After the pane is drawn: recording must never be what a user waits on, and it runs on
         // the rows the read already produced.
-        recordPane(activePane, paneRows);
+        if (convRecordable(msg)) recordPane(activePane, paneRows);
       }
     }
 
@@ -6107,6 +6107,18 @@
     // One read, recorded. Bound to the conversation and not to the view: a pane in a conversation
     // records while it is open no matter which of the two views is on screen, because switching to
     // the terminal must not punch a hole in the transcript.
+    // Only the unwrapped scrollback is folded into a transcript. `visible` is the live frame with
+    // the terminal's own breaks left in, and those land mid-word — the same sentence read the two
+    // ways normalizes to two different strings, so the overlap match sees a message it has never
+    // seen and appends a second copy of everything on screen. A pane is on `visible` after a
+    // /clear and goes back to unwrapped when it is reopened or Load more is pressed, so the flip
+    // happens in ordinary use.
+    //
+    // Skipping is safe: the same lines come back unwrapped on the next read that asks for them.
+    function convRecordable(msg) {
+      return !msg.source || msg.source === 'recent-unwrapped';
+    }
+
     function recordPane(paneId, rows) {
       const a = paneId ? paneOf(paneId) : null;
       if (!a || !profileFor(a.agent)) return;
