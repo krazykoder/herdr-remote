@@ -1688,29 +1688,39 @@
       border-bottom-right-radius: 12px;
     }
 
+    /* Sized off the bubble's own text rather than off the root, so the menu's conversation-text
+       control moves the header with the message it names. Uppercase reads larger than it measures,
+       hence 0.9 rather than 1; the floor keeps the smallest offered size legible. */
     .conv-who {
       display: flex;
       align-items: center;
       gap: 6px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.6rem;
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
       letter-spacing: 0.04em;
       text-transform: uppercase;
       color: var(--muted);
       margin-bottom: 4px;
     }
 
+    /* Everything in the header is measured in its own ems, so the row scales as one piece. */
+    .conv-who .badge {
+      font-size: 1em;
+      padding: 0 0.4em;
+      line-height: 1.5;
+    }
+
     /* The glyph carries the fact at a glance and the label spells it out, so the glyph is set at
        reading size rather than at the label's. */
     .conv-who .via {
-      font-size: 0.85rem;
+      font-size: 1.4em;
       line-height: 1;
       color: var(--blue);
     }
 
     .conv-who .dot {
-      width: 7px;
-      height: 7px;
+      width: 0.75em;
+      height: 0.75em;
       border-radius: 50%;
       flex: none;
     }
