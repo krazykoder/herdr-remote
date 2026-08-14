@@ -266,6 +266,26 @@ test('at the conversation ceiling it is the auto tier that gives way', async ({p
   expect(kept.some(c => c.id === 'c1')).toBe(true);
 });
 
+test('a full named index remains intact, and an unfitted auto pane retries later', async ({page}) => {
+  await autoOn(page);
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  const result = await page.evaluate(() => {
+    const named = Array.from({length: CONV_CONV_MAX + 1}, (_, i) =>
+      ({id: 'named' + i, name: 'named' + i, created: i, members: []}));
+    localStorage.removeItem('herdr_conv_auto_seen');
+    saveConvIndex(named);
+    convAutoJoin();
+    const key = convMemberKey(agents.find(a => a.agent === 'claude'));
+    const before = { count: loadConvIndex().length, seen: convAutoSeen().includes(key) };
+    saveConvIndex(loadConvIndex().slice(1));
+    convAutoJoin();
+    return { before, after: { auto: loadConvIndex().some(c => c.auto), seen: convAutoSeen().includes(key) } };
+  });
+  expect(result.before).toEqual({count: 201, seen: false});
+  expect(result.after).toEqual({auto: true, seen: true});
+});
+
 test('the card says what the conversation is doing and what was last said', async ({page}) => {
   await openCard(page);
   await page.locator('#convView .back').click();

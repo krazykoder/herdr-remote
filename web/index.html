@@ -6276,8 +6276,7 @@
         return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
           // The roster, not the recording cap: an ended member is the record of a session that
           // happened, and truncating it here would delete history on the next read of the index.
-          .map(c => Object.assign({}, c, { members: c.members.slice(-CONV_ROSTER_MAX) }))
-          .slice(0, CONV_CONV_MAX);
+          .map(c => Object.assign({}, c, { members: c.members.slice(-CONV_ROSTER_MAX) }));
       } catch (e) { return []; }
     }
 
@@ -6867,7 +6866,9 @@
       const drop = new Set(items.map((c, i) => ({ c, i })).filter(x => x.c.auto)
         .sort((a, b) => (a.c.created || 0) - (b.c.created || 0))
         .slice(0, items.length - CONV_CONV_MAX).map(x => x.i));
-      return items.filter((c, i) => !drop.has(i)).slice(0, CONV_CONV_MAX);
+      // Named records are a floor, not the second tier of an eviction algorithm. A local index
+      // may predate this cap; keeping it is safer than silently making a user's record disappear.
+      return items.filter((c, i) => !drop.has(i));
     }
 
     function saveConvIndex(items) {
@@ -7125,16 +7126,21 @@
         && profileFor(a.agent));
       if (!fresh.length) return;
       const items = loadConvIndex();
-      for (const a of fresh) {
-        items.unshift({
+      const added = fresh.map(a => {
+        const conv = {
           id: 'c_' + Math.random().toString(36).slice(2, 10),
           name: convAutoName(a), created: Date.now(), members: [convMemberOf(a)],
           // The tier, and the whole of it: naming one is what promotes it (D4).
           auto: true,
-        });
-        seen.push(convMemberKey(a));
-      }
+        };
+        items.unshift(conv);
+        return { a, conv };
+      });
+      const kept = new Set(convFit(items).map(c => c.id));
       saveConvIndex(items);
+      // Do not call a pane filed if the cap had no auto slot for it. It retries after space is
+      // freed; marking it seen here would lose its transcript permanently.
+      for (const {a, conv} of added) if (kept.has(conv.id)) seen.push(convMemberKey(a));
       try { localStorage.setItem(CONV_AUTO_SEEN_KEY,
         JSON.stringify(seen.slice(-CONV_AUTO_SEEN_MAX))); }
       catch (e) { /* private mode: this session only */ }
