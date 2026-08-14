@@ -888,18 +888,67 @@
 
     .conversation-title {
       display: flex;
+      align-items: center;
       gap: 8px;
+      min-width: 0;
       color: var(--text);
       font-weight: 600;
     }
 
-    .conversation-title span,
+    /* The same dot the Project cards carry, saying the same thing: nothing, running, finished,
+       or needs you. A conversation is where you would look for that answer. */
+    .conversation-title .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    .conversation-title .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* The tier, not the name. Naming an auto conversation promotes it, so this is what goes away
+       when it does — the name the user typed is never marked up. */
+    .conversation-tier {
+      flex: none;
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .conversation-count,
     .conversation-meta {
       color: var(--muted);
       font-size: 0.7rem;
     }
 
-    .conversation-title span { margin-left: auto; font-weight: 400; }
+    .conversation-count {
+      margin-left: auto;
+      flex: none;
+      font-weight: 400;
+      white-space: nowrap;
+    }
+
+    /* The newest thing said, which is what answers "is this the one I want" — one line, because a
+       card that grows with the message stops being scannable. */
+    .conversation-last {
+      margin-top: 6px;
+      font-size: 0.72rem;
+      color: var(--text);
+      opacity: 0.85;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .conversation-meta { margin-top: 4px; }
 
     .agent:active {
@@ -1811,6 +1860,7 @@
     }
 
     .conv-roster .conv-drop,
+    .conv-roster .conv-again,
     .conv-roster-actions button,
     .conv-roster-add .conv-chip {
       font-size: 0.65rem;
@@ -1845,7 +1895,8 @@
       padding-top: 6px;
     }
 
-    .conv-roster-add .conv-chip {
+    .conv-roster-add .conv-chip,
+    .conv-roster .conv-again {
       color: var(--blue);
       border-color: var(--blue);
     }
@@ -3106,6 +3157,10 @@
                text, because "start one" and "you are in one" are different offers. -->
           <button class="menu-item" role="menuitem" id="menuConv"
             onclick="closeTermMenu(); openConvDialog(activePane)">Start conversation…</button>
+          <!-- The default recorder, global rather than per pane: it is a preference about whether
+               this browser keeps a record at all, and the per-pane switch is membership. -->
+          <button class="menu-item" role="menuitem" id="menuConvAuto"
+            onclick="closeTermMenu(); toggleConvAuto()">Record every session</button>
           <!-- Shown only while this pane's conversation has someone else in it. -->
           <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
             onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
@@ -4656,6 +4711,8 @@
         // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
         // has to read as "no terminals" rather than crash the next .filter.
         shells = Array.isArray(msg.shells) ? msg.shells : [];
+        // Before the render, so a pane's first snapshot and the card for it arrive together.
+        convAutoJoin();
         render();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
@@ -5060,6 +5117,24 @@
         const paired = !pairSource;   // savePair closes the dialog; a refusal leaves it open
         showSpawnStatus(`${a.label || a.agent || 'Session'} started` +
           (paired ? ' and paired.' : ' — confirm the pair.'), 'success');
+        return;
+      }
+      // A respawn asked from a conversation: the new session joins it as a new member, and the
+      // pane opens on the thread — continuing a conversation is asking to say the next thing in it.
+      if (intent && intent.conv) {
+        const items = loadConvIndex();
+        const conv = items.find(c => c.id === intent.conv);
+        if (conv) {
+          conv.members = (conv.members || []).concat(convMemberOf(a));
+          saveConvIndex(items);
+          const key = convMemberKey(a), views = convViews();
+          views[key] = 1;
+          try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
+          catch (e) { /* private mode: this session only */ }
+        }
+        openTerminal(a.pane_id);
+        showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} joined "${conv.name}".`
+          : `${a.label || a.agent || 'Session'} started.`, 'success');
         return;
       }
       // Never over a pane the user has since opened themselves — the start was a while ago in
@@ -6755,7 +6830,16 @@
       const last = convAt(entries[entries.length - 1]) || now;
       let hit = false;
       for (const c of items) for (const m of c.members || []) {
-        if (m.key === key) { m.messages = entries.length; m.seen = last; hit = true; }
+        if (m.key === key) {
+          m.messages = entries.length;
+          m.seen = last;
+          // Enough of the newest message to recognise it on a card, and no more: this lives in
+          // the ~5 MB localStorage index beside fourteen other keys, and the words themselves are
+          // in IndexedDB where there is room for them.
+          m.last = String((entries[entries.length - 1] || {}).text || '')
+            .replace(/\s+/g, ' ').trim().slice(0, 120);
+          hit = true;
+        }
       }
       // Not while a pane is open: the landing list is behind it, and this runs on every recorded
       // read of every member. renderBody redraws it on the way back out.
@@ -6775,10 +6859,21 @@
       };
     }
 
+    // At the ceiling it is the auto tier that gives way, oldest first (D4). New conversations are
+    // prepended, so the tail is the oldest — and slicing the tail is exactly how the named ones,
+    // the ones the user asserted mattered, would be the first to go.
+    function convFit(items) {
+      if (items.length <= CONV_CONV_MAX) return items;
+      const drop = new Set(items.map((c, i) => ({ c, i })).filter(x => x.c.auto)
+        .sort((a, b) => (a.c.created || 0) - (b.c.created || 0))
+        .slice(0, items.length - CONV_CONV_MAX).map(x => x.i));
+      return items.filter((c, i) => !drop.has(i)).slice(0, CONV_CONV_MAX);
+    }
+
     function saveConvIndex(items) {
       try {
         localStorage.setItem(CONV_INDEX_KEY,
-          JSON.stringify({ version: 1, items: items.slice(0, CONV_CONV_MAX) }));
+          JSON.stringify({ version: 1, items: convFit(items) }));
       } catch (e) { /* private mode: this session only */ }
     }
 
@@ -6979,6 +7074,71 @@
       catch (e) { /* private mode: this session only */ }
       renderTermMenuState();
       renderConvView();
+    }
+
+    // --- The default recorder ---
+    // Book-keeping — "what happened in this repo" — is not served by a feature you have to
+    // remember to switch on before the thing worth keeping happens (D5). So every agent pane files
+    // itself under a conversation of its own, and the user's job is reading it rather than
+    // arming it. D4's auto tier is what keeps that from becoming a storage problem.
+    const CONV_AUTO_KEY = 'herdr_conv_auto', CONV_AUTO_SEEN_KEY = 'herdr_conv_auto_seen';
+    const CONV_AUTO_SEEN_MAX = 500;
+
+    function convAutoOn() {
+      try { return localStorage.getItem(CONV_AUTO_KEY) !== 'off'; }
+      catch (e) { return true; }
+    }
+
+    function toggleConvAuto() {
+      try { localStorage.setItem(CONV_AUTO_KEY, convAutoOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      renderTermMenuState();
+      if (convAutoOn()) convAutoJoin();
+    }
+
+    // Which panes this has already filed, kept apart from membership on purpose: "already in an
+    // auto conversation" is not the question. A member the user removed must stay removed, and
+    // reading it off the roster would file it again on the next poll.
+    function convAutoSeen() {
+      try {
+        const d = JSON.parse(localStorage.getItem(CONV_AUTO_SEEN_KEY) || '');
+        return Array.isArray(d) ? d : [];
+      } catch (e) { return []; }
+    }
+
+    // One conversation per pane, not per project: a project runs several threads of work at once,
+    // and folding them into one record produces a transcript nobody can read. The name is the
+    // project and the pane's label, which the relay sends for every pane — no Projects config
+    // needed, and unique enough to tell two parallel sessions apart.
+    function convAutoName(a) {
+      const label = paneLabel(a) || a.agent || a.pane_id;
+      const project = a.project || (a.cwd || '').split('/').filter(Boolean).pop() || '';
+      return (project ? `${project} · ${label}` : label).slice(0, 64);
+    }
+
+    function convAutoJoin() {
+      if (!convAutoOn() || !agents.length) return;
+      const seen = convAutoSeen(), had = new Set(seen);
+      // Only a pane an agent is running in has messages to record — the same gate the menu item
+      // uses, so a harness the app cannot read is not filed under a record it can never write to.
+      const fresh = agents.filter(a => convMemberKey(a) && !had.has(convMemberKey(a))
+        && profileFor(a.agent));
+      if (!fresh.length) return;
+      const items = loadConvIndex();
+      for (const a of fresh) {
+        items.unshift({
+          id: 'c_' + Math.random().toString(36).slice(2, 10),
+          name: convAutoName(a), created: Date.now(), members: [convMemberOf(a)],
+          // The tier, and the whole of it: naming one is what promotes it (D4).
+          auto: true,
+        });
+        seen.push(convMemberKey(a));
+      }
+      saveConvIndex(items);
+      try { localStorage.setItem(CONV_AUTO_SEEN_KEY,
+        JSON.stringify(seen.slice(-CONV_AUTO_SEEN_MAX))); }
+      catch (e) { /* private mode: this session only */ }
+      renderConversations();
     }
 
     // A pair can predate conversations, leaving each pane with its own recorded thread. Read
@@ -7504,15 +7664,10 @@
       document.getElementById('termContent').replaceChildren(frag);
     }
 
-    function copySel() {
-      const btn = document.getElementById('selCopy'), text = selText;
+    // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way this
+    // app is reached. The textarea path is the one that actually runs at home.
+    function writeClipboard(text, done) {
       if (!text) return;
-      // Copying is a commit too. Without a pair configured the Transfer button never appears
-      // (:4095), so this is the only thing most panes will ever teach from.
-      learnFromSelection();
-      const done = () => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1200); };
-      // navigator.clipboard is undefined on a plain-http LAN origin, which is the ordinary way
-      // this app is reached. The textarea path is the one that actually runs at home.
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(done, () => { });
         return;
@@ -7524,6 +7679,18 @@
       ta.select();
       try { if (document.execCommand('copy')) done(); } catch (e) { /* nothing else to offer */ }
       ta.remove();
+    }
+
+    function copySel() {
+      const btn = document.getElementById('selCopy');
+      if (!selText) return;
+      // Copying is a commit too. Without a pair configured the Transfer button never appears
+      // (:4095), so this is the only thing most panes will ever teach from.
+      learnFromSelection();
+      writeClipboard(selText, () => {
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+      });
     }
 
     {
@@ -7724,6 +7891,8 @@
       const conv = document.getElementById('menuConv');
       // Only a pane an agent is running in has messages to record, so a shell is not offered one.
       conv.hidden = !(a && profileFor(a.agent));
+      document.getElementById('menuConvAuto').textContent = convAutoOn()
+        ? 'Stop recording new sessions' : 'Record every session';
       const joint = document.getElementById('menuConvJoint');
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
@@ -8506,14 +8675,30 @@
         const live = members.map(m => agents.find(a => convMemberKey(a) === m.key)).filter(Boolean);
         const names = members.map(m => escapeHtml(m.label || (agents.find(a => convMemberKey(a) === m.key) || {}).label || 'Former pane'));
         const liveNames = live.map(a => escapeHtml(paneLabel(a)));
-        return { c, count, seen, names, liveNames };
+        // The newest message across the members, which is the one line that says whether this
+        // conversation is worth opening. Written by convNoteCounts as each member records.
+        const newest = members.reduce((w, m) =>
+          (Number(m.seen) || 0) >= (Number(w.seen) || 0) ? m : w, members[0] || {});
+        // The same two colours the Project cards use, and for the same reason: "needs you" and
+        // "finished" are different facts, and one dot covering both reads as the wrong one.
+        const kinds = live.map(attentionKind);
+        const dot = kinds.includes('blocked') ? 'var(--dot-red)'
+          : kinds.includes('done') ? 'var(--dot-blue)'
+            : live.length ? 'var(--dot-green)' : 'var(--muted)';
+        return { c, count, seen, names, liveNames, dot, last: newest.last || '' };
       }).sort((a, b) => b.seen - a.seen || b.count - a.count);
       el.innerHTML = rows.length ? `<div class="section-header">Conversations</div>` + rows.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
-        `<div class="conversation-title">💬 ${escapeHtml(r.c.name)}` +
-        `<span>${r.count} ${r.count === 1 ? 'message' : 'messages'}</span></div>` +
+        `<div class="conversation-title"><span class="dot" style="background:${r.dot}"></span>` +
+        `<span class="name">${escapeHtml(r.c.name)}</span>` +
+        // The tier, on the card rather than in the name: promotion is a rename the user makes,
+        // not a marker the app writes into what they typed (D4).
+        `${r.c.auto ? '<span class="conversation-tier">auto</span>' : ''}` +
+        `<span class="conversation-count">${r.count} ` +
+        `${r.count === 1 ? 'message' : 'messages'}</span></div>` +
+        (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
         `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
         `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`
@@ -8557,6 +8742,9 @@
     }
 
     let convStandaloneToken = 0, convStandaloneHtml = '', convAdding = false;
+    // What the standalone view last drew, so Copy and Start again read the same thread the reader
+    // is looking at rather than fetching it a second time and getting a different one.
+    let convViewRecs = [], convViewEntries = [];
 
     // Who is in this conversation, and the three edits that are the conversation's own rather than
     // a pane's. Only in the standalone view: this is where a conversation is owned, and the pane's
@@ -8576,6 +8764,9 @@
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
           agentBadge((rec.spawn || {}).agent || '') +
           `<span class="tag">${on ? 'recording' : 'no longer live'}</span>` +
+          (!on && canRespawn(rec.spawn) ? `<button class="conv-again" data-key="${escapeHtml(m.key)}"` +
+            ` onclick="convRespawn(this.dataset.key)"` +
+            ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
           `<button class="conv-drop" data-key="${escapeHtml(m.key)}"` +
           ` onclick="convRemoveMember(this.dataset.key)"` +
           ` aria-label="Remove this member from the conversation">Remove</button></div>`;
@@ -8590,8 +8781,92 @@
         : '<span class="conv-none">Every live pane is already in this conversation.</span>') + '</div>';
       return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
         `<button onclick="renameConversation()">Rename</button>` +
+        `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
         ` onclick="convToggleAdd()">Add pane</button></div>${chips}</div>`;
+    }
+
+    // A pane does not carry the role it was started with, and neither does a record that predates
+    // convSpawn. The fallback is the one the Start dialog would have opened on, exactly as roleOf's.
+    function respawnRole(spawn) {
+      const roles = (startOptions && startOptions.roles) || [];
+      return roles.includes(spawn.role) ? spawn.role : roles[0];
+    }
+
+    // canDuplicate's predicate, read off a record rather than off a pane: the relay willing to
+    // start, a Project it still knows, and a harness inside the allowlist. Everything it refuses
+    // gets no button rather than a refusal after the tap.
+    function canRespawn(spawn) {
+      return !!(spawn && spawn.agent && spawn.project_id && startOptions
+        && (startOptions.agents || []).includes(spawn.agent)
+        && projects.some(p => p.id === spawn.project_id) && respawnRole(spawn));
+    }
+
+    // Continuing is adding a member, and a respawn is a **new** one — a new pane means a new
+    // convMemberKey, which means a new transcript (D3). That is what stops a recycled pane id
+    // inheriting a dead session's words, and the joint view's time merge is what makes the two
+    // read as one thread across the seam.
+    function convRespawn(key) {
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const rec = convViewRecs.find(r => r.key === key);
+      const spawn = rec && rec.spawn;
+      if (!ws || !conv || !canRespawn(spawn)) return;
+      const project = projects.find(p => p.id === spawn.project_id);
+      // The relay takes a new session's cwd from the Project and never from the client, so the
+      // recorded cwd is shown rather than sent: if the Project has been repointed since, the two
+      // disagree, and pretending they agree is the one thing this must not do.
+      const where = agents.find(x => x.project_id === spawn.project_id && x.cwd);
+      const moved = where && spawn.cwd && where.cwd !== spawn.cwd
+        ? `\n\nIt ran in ${spawn.cwd}. That Project now points at ${where.cwd}.` : '';
+      if (!confirm(`Start a new ${spawn.agent} session in ${project.label} and continue ` +
+        `"${conv.name}"?${moved}`)) return;
+      // herdr recycles workspace IDs, so a stale one cannot be trusted to name the workspace the
+      // session was in. New tab only where that workspace is live on that host right now.
+      const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
+        && (x.host || 'local') === (spawn.host || 'local'));
+      const msg = {
+        type: 'start_agent', name: spawn.agent, role: respawnRole(spawn),
+        project_id: spawn.project_id,
+        placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
+      };
+      if (tab) msg.workspace_id = spawn.workspace_id;
+      startIntent = { conv: conv.id };
+      showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
+      ws.send(JSON.stringify(msg));
+    }
+
+    // The whole thread as Markdown, members and what they were included: a conversation is a
+    // record of what happened in a repo, and the place that record is wanted is usually somewhere
+    // that is not this app. The roster doubles as the start details — every field is one the
+    // transcript already carries, so there is no second button for it.
+    function convMarkdown(conv, recs, entries) {
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      const who = (conv.members || []).map(m => {
+        const rec = recs.find(r => r.key === m.key) || {}, spawn = rec.spawn || {};
+        const facts = [spawn.agent, spawn.role, spawn.project || spawn.cwd].filter(Boolean);
+        return `- ${rec.label || m.label || 'Former pane'}` +
+          (facts.length ? ` — ${facts.join(' · ')}` : '') +
+          ` (${live.has(m.key) ? 'recording' : 'no longer live'})`;
+      }).join('\n');
+      const body = entries.map(e => {
+        const at = convAt(e);
+        // The tilde the thread draws, in words: a stamp that is an ordering rather than a reading
+        // must not be pasted somewhere else as if it were a reading.
+        const when = at ? new Date(at).toLocaleString() + (convAtRank(e) ? '' : ' (approx)') : '';
+        return `### ${e.label || 'unknown'}${when ? ` — ${when}` : ''}\n\n${e.text || ''}`;
+      }).join('\n\n');
+      return `# ${conv.name}\n\n${who}\n\n${body}\n`;
+    }
+
+    function convCopy() {
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      if (!conv || !convViewEntries.length) return;
+      const btn = document.getElementById('convCopyBtn');
+      writeClipboard(convMarkdown(conv, convViewRecs, convViewEntries), () => {
+        if (!btn) return;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+      });
     }
 
     function convEdit(fn) {
@@ -8666,6 +8941,8 @@
       // saying nothing.
       document.getElementById('convViewCount').textContent =
         `${entries.length} message${entries.length === 1 ? '' : 's'}`;
+      convViewRecs = composed.recs;
+      convViewEntries = entries;
       const html = convRosterHtml(conv, composed.recs) + (entries.length
         ? convEntriesHtml(entries, null, false, false)
         : (composed.all.length

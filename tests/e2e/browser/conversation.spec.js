@@ -46,7 +46,17 @@ const tapWire = page => page.evaluate(() => {
   ws.send = message => { window.__sent.push(JSON.parse(message)); send(message); };
 });
 
+// The default recorder files every agent pane under a conversation of its own on the first
+// snapshot (D5). Every test below that is about the recorder rather than about the default starts
+// with it off, so what a pane is in is what the test put it in. The three that own the default
+// switch it back on for themselves.
+const autoOff = page => page.addInitScript(
+  () => localStorage.setItem('herdr_conv_auto', 'off'));
+const autoOn = page => page.addInitScript(
+  () => localStorage.setItem('herdr_conv_auto', 'on'));
+
 test.beforeEach(async ({page}) => {
+  await autoOff(page);
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -189,6 +199,168 @@ test('a member removed is asked about first, and takes its words with it', async
   // The record is still on disk — removal unreferences a transcript, it does not delete one.
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(0);
   expect((await held(page, key)).entries.length).toBe(2);
+});
+
+test('every session records itself, into a conversation named for the pane', async ({page}) => {
+  await autoOn(page);
+  // Book-keeping is not served by a switch you have to remember to throw before the thing worth
+  // keeping happens (D5), so this is what the app does on its own, on the first snapshot.
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  const items = await page.evaluate(() => loadConvIndex());
+  expect(items.every(c => c.auto)).toBe(true);
+  expect(items.map(c => c.name).sort()).toEqual(['relay · Architect 1', 'tmp · scratch']);
+  expect(items.every(c => c.members.length === 1)).toBe(true);
+  // One per pane and not one per project: a project runs several threads of work at once.
+  expect(new Set(items.map(c => c.members[0].key)).size).toBe(items.length);
+  // amp has no gutter profile, so there is nothing to record and no record is filed — the same
+  // gate the menu item uses.
+  expect(items.some(c => c.name.includes('amp'))).toBe(false);
+});
+
+test('a pane is filed once ever, so removing it does not undo itself', async ({page}) => {
+  await autoOn(page);
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  await page.evaluate(() => saveConvIndex([]));
+  // Every later snapshot, and a reload on top: "already in an auto conversation" is deliberately
+  // not the question asked, or a member the user removed would come back on the next poll.
+  await page.evaluate(() => { convAutoJoin(); convAutoJoin(); });
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(0);
+  await page.reload();
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(0);
+});
+
+test('switched off, nothing new is filed', async ({page}) => {
+  await autoOn(page);
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  await page.evaluate(() => {
+    saveConvIndex([]);
+    localStorage.removeItem('herdr_conv_auto_seen');
+    toggleConvAuto();
+    convAutoJoin();
+  });
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(0);
+  expect(await page.evaluate(() => convAutoOn())).toBe(false);
+});
+
+test('at the conversation ceiling it is the auto tier that gives way', async ({page}) => {
+  await page.goto('/');
+  const kept = await page.evaluate(() => {
+    const items = [];
+    for (let i = 0; i < CONV_CONV_MAX + 5; i++) {
+      items.push({id: 'c' + i, name: 'c' + i, created: i, members: [], auto: i % 2 === 0});
+    }
+    saveConvIndex(items);
+    return loadConvIndex();
+  });
+  expect(kept.length).toBe(200);
+  // The five dropped are the oldest autos, and every named one is still there: new conversations
+  // are prepended, so slicing the tail would have taken the named ones first.
+  expect(kept.filter(c => !c.auto).length).toBe(102);
+  // c0..c8 even are the five oldest autos and are the five that went; every named one stayed.
+  expect(kept.some(c => c.id === 'c8')).toBe(false);
+  expect(kept.some(c => c.id === 'c10')).toBe(true);
+  expect(kept.some(c => c.id === 'c1')).toBe(true);
+});
+
+test('the card says what the conversation is doing and what was last said', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .back').click();
+  const card = page.locator('#conversations .conversation-card');
+  await expect(card.locator('.conversation-last')).toHaveText('allow the test commands without prompting');
+  // The tier is on the card, never in the name — promotion is a rename the user makes.
+  await expect(card.locator('.conversation-tier')).toHaveCount(0);
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].auto = true;
+    saveConvIndex(items);
+    renderConversations();
+  });
+  await expect(card.locator('.conversation-tier')).toHaveText('auto');
+});
+
+test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openCard(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Copy'}).click();
+  await expect(page.locator('#convCopyBtn')).toHaveText('Copied');
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text).toContain('# new authentication feature');
+  expect(text).toContain('- Architect 1 — claude');
+  expect(text).toContain('### Architect 1 — ');
+  expect(text).toContain('Ready. Name the change.');
+  expect(text).toContain('allow the test commands without prompting');
+});
+
+// A dead member with a startable record behind it. The harness relay runs without Projects, so
+// both halves of canRespawn's gate are seeded here — what is being tested is the message the tap
+// sends, and the member the reply becomes.
+const endMember = page => page.evaluate(async () => {
+  projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+  startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect', 'coder']};
+  const items = loadConvIndex();
+  const old = items[0].members[0];
+  const rec = (await convGet([old.key]))[0];
+  rec.key = 'dead:pane';
+  rec.spawn = {agent: 'claude', role: 'architect', label: 'Architect 1', project_id: 'p1',
+    project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local', workspace_id: 'w404'};
+  await convPut(rec);
+  items[0].members = [{key: 'dead:pane', added: Date.now(), label: 'Architect 1'}];
+  saveConvIndex(items);
+  await renderConvStandalone(false);
+});
+
+test('an ended session can be started again, and the new pane joins as a new member', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await tapWire(page);
+  await expect(page.locator('#convView .conv-roster-row.gone')).toHaveCount(1);
+
+  page.once('dialog', d => d.accept());
+  await page.locator('#convView .conv-again').click();
+  await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
+    .toHaveLength(1);
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.name).toBe('claude');
+  expect(sent.role).toBe('architect');
+  expect(sent.project_id).toBe('p1');
+  // The relay takes a new session's cwd from the Project and never from the client. The recorded
+  // cwd is a record of where it ran, and sending it would make it an instruction.
+  expect(sent.cwd).toBeUndefined();
+  // w404 is not a live workspace, so a stale ID is not trusted to place it — herdr recycles them.
+  expect(sent.placement).toBe('new_workspace');
+  expect(sent.workspace_id).toBeUndefined();
+
+  // The reply lands, the pane shows up on the next snapshot, and it joins as a NEW member: a new
+  // pane means a new key, which means a new transcript, so no recycled id inherits dead words.
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  const members = await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key));
+  expect(members.length).toBe(2);
+  expect(members[0]).toBe('dead:pane');
+  expect(members[1]).not.toBe('dead:pane');
+  // And it opens on the thread — continuing a conversation is asking to say the next thing in it.
+  await expect(page.locator('#convThread')).toBeVisible();
+});
+
+test('an ended session with no Project the relay knows is offered no button', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await expect(page.locator('#convView .conv-again')).toHaveCount(1);
+  // Every one of canRespawn's three gates, one at a time: an unstartable session gets no button
+  // rather than a refusal after the tap.
+  for (const kill of ['projects = []',
+                      'startOptions = {agents: ["codex"], roles: ["architect"]}',
+                      'startOptions = null']) {
+    await page.evaluate(k => { eval(k); renderConvStandalone(false); }, kill);
+    await expect(page.locator('#convView .conv-again')).toHaveCount(0);
+    await endMember(page);
+  }
 });
 
 test('the transcript is still there after a reload', async ({page}) => {

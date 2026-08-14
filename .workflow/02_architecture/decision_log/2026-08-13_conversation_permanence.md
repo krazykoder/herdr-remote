@@ -157,9 +157,23 @@ free. D4's auto tier is what keeps "on by default" from becoming a storage probl
 
 ## Order of work
 
-1. Eviction floor, and the tier field. Nothing else is safe to build on a store that can drop the
-   record underneath it.
-2. A conversation opens as itself — pane-independent thread, read-only.
-3. Conversation-level actions: rename (which promotes), add a live pane, remove a member.
-4. Respawn from `spawn`.
-5. Auto-recording on by default, and the card content that makes the section worth scanning.
+All five shipped on 2026-08-13, in this order.
+
+1. Eviction floor, and the tier field — `a2cefc5`. Nothing else is safe to build on a store that
+   can drop the record underneath it.
+2. A conversation opens as itself — pane-independent thread, read-only — `753749a`.
+3. Conversation-level actions: rename (which promotes), add a live pane, remove a member —
+   `ada16bc`.
+4. Respawn from `spawn`, 5. auto-recording on by default and the card content — one commit, with
+   whole-thread Markdown copy, which the roster made free.
+
+Two things the build added that this document did not call for, both forced by D4 rather than
+chosen:
+
+- **`convFit`.** `saveConvIndex` trimmed the tail at `CONV_CONV_MAX`, and new conversations are
+  prepended — so the tail is the oldest, and with the default recorder filing one per pane the tail
+  is where the named ones end up. The cap now gives way at the auto tier, oldest first, the same
+  rule `evictOrder` follows for transcripts.
+- **A record of which panes have been filed**, kept apart from membership. "Already in an auto
+  conversation" is not the question D5's once-per-pane rule asks: a member the user removed would
+  be filed again on the next poll.
