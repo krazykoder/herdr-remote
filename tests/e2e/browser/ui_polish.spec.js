@@ -181,7 +181,7 @@ test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   await page.locator('#agents .agent').first().click();
   await expect(page.locator('#termContent')).toContainText('done.');
   await page.keyboard.press('Alt+Tab');
-  await page.locator('.back').first().click();
+  await page.locator('.term-header .back').click();
   await expect(tabs.nth(0)).toHaveClass(/active/);
 });
 

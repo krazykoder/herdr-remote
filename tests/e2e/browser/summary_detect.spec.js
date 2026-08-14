@@ -224,7 +224,7 @@ const UNKNOWN = 'amp';
 const UNKNOWN_PANE = '◆ Ran the build\n  compiled\n\n◆ All finished.\n  and here is why\n';
 
 const openUnknown = async page => {
-  await page.locator('.back').first().click();
+  await page.locator('.term-header .back').click();
   await page.locator('#agents .agent', {hasText: UNKNOWN}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
 };
@@ -297,7 +297,7 @@ test('Learn asks the user to trim an untouched suggestion first', async ({page})
 test('switching panes drops the suggestion with the rest of the ruler', async ({page}) => {
   await feed(page, PANE);
   expect(await sel(page)).not.toBeNull();
-  await page.locator('.back').first().click();
+  await page.locator('.term-header .back').click();
   await page.locator('#agents .agent', {hasText: 'scratch'}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
   expect(await sel(page)).toBeNull();

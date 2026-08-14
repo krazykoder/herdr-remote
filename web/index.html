@@ -1614,6 +1614,70 @@
       display: none;
     }
 
+    /* The standalone view scrolls as a whole — .view already does — so the thread is content here
+       rather than its own scroller, and the header stays put by sticking rather than by a second
+       flex column. */
+    #convView {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #convViewThread {
+      flex: none;
+      overflow: visible;
+    }
+
+    .conv-view-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .conv-view-head .count {
+      font-size: 0.7rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .conv-view-head .title {
+      flex: 1;
+      min-width: 0;
+      /* The pane header's title, one notch bolder: same row, same job, and a 64-character name
+         needs the width. */
+      font-size: 0.85rem;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-view-head .back {
+      background: none;
+      border: none;
+      color: var(--blue);
+      cursor: pointer;
+      padding: 4px 8px;
+      display: flex;
+    }
+
+    /* The one action this read-only view offers, shaped like the header buttons a pane has. */
+    .conv-view-head .open-pane {
+      font-size: 0.7rem;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--blue);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
     .conv-head {
       display: flex;
       align-items: baseline;
@@ -2869,6 +2933,24 @@
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
   </div>
 
+  <!-- A conversation read as itself. Its own view and not the pane's thread panel, because the
+       record outlives the panes that wrote it: a conversation whose members have all exited has
+       no pane to hang a panel off, and it is still the thing worth reading. Read-only. -->
+  <div class="view" id="convView" style="display:none">
+    <div class="conv-view-head">
+      <button class="back" onclick="closePanel()" aria-label="Back to list"><svg width="20" height="20"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="m15 18-6-6 6-6" />
+        </svg></button>
+      <span class="title" id="convViewTitle"></span>
+      <span class="count" id="convViewCount"></span>
+      <button class="open-pane" id="convViewOpen" onclick="openConvPane()" hidden
+        aria-label="Open the live pane in this conversation">Open pane</button>
+    </div>
+    <div class="conv-thread" id="convViewThread"></div>
+  </div>
+
   <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
        anything. Deliberately sparse for now — the space exists as much for the iPhone's bottom
        curve as for what it says. -->
@@ -3896,9 +3978,17 @@
     // Settings always dumped them on the agent list and they had to find the pane again.
     let panelReturnPane = null;
 
+    // Every panel that takes the list's place, against the display mode it wants — adding one is a
+    // line here rather than a line in each of the four functions below. Settings is display:none in
+    // its class, so an empty string would hide it; the conversation view is a flex column.
+    const PANELS = { settingsView: 'block', timelineView: 'block', convView: 'flex' };
+
+    function hidePanels() {
+      for (const id in PANELS) document.getElementById(id).style.display = 'none';
+    }
+
     function panelIsOpen() {
-      return document.getElementById('settingsView').style.display === 'block'
-        || document.getElementById('timelineView').style.display === 'block';
+      return Object.keys(PANELS).some(id => document.getElementById(id).style.display !== 'none');
     }
 
     function openPanel(id) {
@@ -3909,13 +3999,11 @@
         if (activePane) closeTerminal();
       }
       document.getElementById('agentListView').style.display = 'none';
-      document.getElementById('settingsView').style.display = id === 'settingsView' ? 'block' : 'none';
-      document.getElementById('timelineView').style.display = id === 'timelineView' ? 'block' : 'none';
+      for (const p in PANELS) document.getElementById(p).style.display = p === id ? PANELS[p] : 'none';
     }
 
     function closePanel() {
-      document.getElementById('settingsView').style.display = 'none';
-      document.getElementById('timelineView').style.display = 'none';
+      hidePanels();
       const back = panelReturnPane;
       panelReturnPane = null;
       // The pane may have died while the panel was open; openTerminal falls back to the ID, so
@@ -4259,8 +4347,7 @@
     // have returned to — otherwise closing Settings later would yank them back to an older pane.
     function jumpToPane(paneId) {
       panelReturnPane = null;
-      document.getElementById('settingsView').style.display = 'none';
-      document.getElementById('timelineView').style.display = 'none';
+      hidePanels();
       openTerminal(paneId);
     }
 
@@ -4636,6 +4723,8 @@
       document.getElementById('terminals').innerHTML = html;
       document.getElementById('pairs').innerHTML = pairsHtml();
       renderConversations();
+      // Live-ness is the one thing on the standalone view that this snapshot can change.
+      renderConvStandalone(false);
       // "Waiting for agents…" is true of the agents and false of the box: a machine with
       // terminals and no agents is not waiting for anything. Only that placeholder goes — wiping
       // the node took the Projects strip and its cards with it.
@@ -6236,10 +6325,15 @@
       } catch (e) { return false; }   // full, or private mode: this session keeps it in memory
     }
 
-    // The transcripts for the members of one conversation — at most MEMBER_MAX records, by key, in
-    // one transaction. Nothing scans the store to render a thread.
+    // The transcripts for the members of one conversation, by key, in one transaction. Nothing
+    // scans the store to render a thread.
+    //
+    // Capped by the roster and not by MEMBER_MAX: that one is a ceiling on how many panes record
+    // at once, and a conversation continued across several respawns has ended members whose
+    // records are most of what it is. Fetching only the first eight would draw the oldest sessions
+    // and drop the live one.
     async function convGet(keys) {
-      const want = (keys || []).slice(0, CONV_MEMBER_MAX);
+      const want = (keys || []).slice(0, CONV_ROSTER_MAX);
       if (!want.length) return [];
       const db = await openConvDB();
       if (!db) {
@@ -6680,8 +6774,10 @@
         conv.members.splice(at, 1);
         setConvError('');
       } else {
-        if (conv.members.length >= CONV_MEMBER_MAX) {
-          setConvError(`"${conv.name}" already has ${CONV_MEMBER_MAX} panes.`); return;
+        // Recording members, not the roster: MEMBER_MAX is what a joint thread stops being one
+        // past, and an ended member draws history without competing for a colour or a poll.
+        if (convRecordingMembers(conv).length >= CONV_MEMBER_MAX) {
+          setConvError(`"${conv.name}" already has ${CONV_MEMBER_MAX} live panes.`); return;
         }
         conv.members.push(convMemberOf(convSource));
         setConvError('');
@@ -6802,6 +6898,37 @@
       return members.some(m => m.key === key) ? members : members.concat({key, label: paneLabel(partner)});
     }
 
+    // A member is recording or it has ended, and that is derived rather than stored: a live pane
+    // answers it, and a pane that has exited answers it by not being there. No lifecycle, no event
+    // to miss, and a conversation whose panes have all gone is a full record rather than a
+    // half-cleaned one.
+    function convRecordingMembers(conv) {
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      return (conv.members || []).filter(m => live.has(m.key));
+    }
+
+    // The thread, composed from the store and from nothing else. No pane, no view, no selection —
+    // a conversation is a record, and reading one must not require a live pane to read it through.
+    // The caller supplies the drafts, because a draft is the one part that only exists while a
+    // pane is being watched.
+    async function convCompose(conv, keys, drafts) {
+      const recs = await convRecords(keys);
+      const joint = keys.length > 1;
+      const stored = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
+      // An entry recorded before convStamped existed carries no name and no harness, and a thread
+      // read with no pane behind it has nothing else to fall back to. The record knows both.
+      const by = new Map(recs.map(r => [r.key, r]));
+      const all = stored.concat(drafts || []).map(e => {
+        if (e.label) return e;
+        const rec = by.get(e.key || (recs[0] || {}).key) || {};
+        return Object.assign({}, e, { label: rec.label, agent: e.agent || (rec.spawn || {}).agent });
+      });
+      // `all` and `entries` both, because "nothing recorded" and "everything recorded is
+      // provisional" are different empty states and the view says so differently.
+      return { recs: recs, joint: joint, all: all,
+        entries: convFinalOnly() ? all.filter(e => !convProvisional(e)) : all };
+    }
+
     // Both halves of the switch: the button that offers it and the view it selects.
     function renderConvBar() {
       renderQuickActions();
@@ -6839,28 +6966,29 @@
       const members = pairedConvMembers(a, conv);
       const joint = convJointOn() && members.length > 1;
       const want = joint ? members.map(m => m.key) : [key];
-      const recs = await convRecords(want);
-      if (token !== convViewToken) return;
-      // Following the newest message is the default, and a reader who has scrolled up keeps their
-      // place: the same rule the pane rows follow.
-      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
-      const stored = joint ? mergeEntries(recs) : ((recs[0] && recs[0].entries) || []);
       // The live draft is drawn, never stored: it is what a working pane is saying right now, and
       // the turn it belongs to has not ended, so there is nothing to record yet. Always last —
       // whatever is still being written is newer than everything that has been.
-      const all = stored.concat(want.map((k, i) => {
+      const drafts = want.map((k, i) => {
         const d = convDrafts.get(k), live = agents.find(x => convMemberKey(x) === k);
         return d && live && live.status === 'working'
           ? Object.assign({}, d, { key: k, member: joint ? i : 0 }) : null;
-      }).filter(Boolean));
-      // Filtered here rather than in the renderer: picks, Summary and the count are all positions
-      // in the list that was drawn, so the list that was drawn has to be the list they index.
-      const entries = convFinalOnly() ? all.filter(e => !convProvisional(e)) : all;
+      }).filter(Boolean);
+      const composed = await convCompose(conv, want, drafts);
+      if (token !== convViewToken) return;
+      const recs = composed.recs;
+      // Following the newest message is the default, and a reader who has scrolled up keeps their
+      // place: the same rule the pane rows follow.
+      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+      // Filtered in the composer rather than in the renderer: picks, Summary and the count are all
+      // positions in the list that was drawn, so the list that was drawn has to be the list they
+      // index.
+      const entries = composed.entries, all = composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
       box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length, joint ? entries.length : -1) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
-        ? convEntriesHtml(entries, a, paired)
+        ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
@@ -6972,8 +7100,12 @@
       return convAtRank(e) ? t : '~' + t;
     }
 
-    function convEntriesHtml(entries, a, paired) {
-      const self = convMemberKey(a);
+    // `self` is what an entry written before the recorder stamped its own label and harness falls
+    // back to: the pane the thread is being read through, or nothing at all when it is being read
+    // as a record with no pane behind it. `pick` is off for a thread that is not a selection —
+    // the standalone view reads, it does not transfer.
+    function convEntriesHtml(entries, self, paired, pick) {
+      const me = self || {};
       let last = 0;
       return entries.map((e, i) => {
         const at = convAt(e);
@@ -6995,13 +7127,13 @@
         // Every agent bubble carries its label as well as its colour: two washes of one family are
         // not enough on a phone in sunlight, and past two members colour alone stops working.
         const tint = convTint(e.member || 0);
-        const key = e.key || self;
+        const key = e.key || me.key || '';
         const live = agents.find(x => convMemberKey(x) === key);
         // The harness the entry was recorded under, not the one running in that pane today: a
         // conversation outlives its panes, and a member that has exited still gets its own badge.
-        const agent = e.agent || (live && live.agent) || a.agent;
+        const agent = e.agent || (live && live.agent) || me.agent || '';
         const color = agentColor(agent) || 'var(--muted)';
-        const name = escapeHtml(e.label || paneLabel(a));
+        const name = escapeHtml(e.label || me.label || '');
         // The same badge the pane list and the pair sheet use, beside the name: colour says which
         // member, and the badge says what it is — a thread of claude and codex reads as two
         // colleagues rather than as two colours.
@@ -7031,11 +7163,12 @@
         // against a wall of washed ones is unmistakable at a glance, on any of the eleven themes,
         // and it needs no colour of its own to say "this is not settled yet".
         const state = convProvisional(e) ? ` provisional${e.draft ? ' draft' : ''}` : '';
-        const pick = `<button class="conv-pick" onclick="toggleConvPick(${i})" aria-pressed="false" ` +
+        const tick = pick === false ? '' :
+          `<button class="conv-pick" onclick="toggleConvPick(${i})" aria-pressed="false" ` +
           `aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
         return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
-          ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${pick}${head}${text}</div>`;
+          ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${tick}${head}${text}</div>`;
       }).join('');
     }
 
@@ -8293,22 +8426,75 @@
       applySections();
     }
 
-    // Every other card on this page opens something, so this one does too: the conversation's
-    // first live member, in the thread view. A conversation whose panes have all exited is a
-    // record with nothing to open — said plainly rather than by a card that does nothing.
+    // The conversation the standalone view is showing, or null. Held rather than passed, because
+    // the snapshot redraws it: live-ness is the one thing on that view that changes under it.
+    let convViewId = null;
+
+    // A card opens the conversation itself, and not a pane: the record is what the card names, and
+    // it outlives every pane that wrote it. Read-only — the pane is one tap further on, for the
+    // members that still have one.
     function openConversation(id) {
       const conv = loadConvIndex().find(c => c.id === id);
       if (!conv) return;
-      const live = (conv.members || [])
+      convViewId = id;
+      convStandaloneHtml = '';
+      openPanel('convView');
+      renderConvStandalone(true);
+    }
+
+    // The only action the read-only view offers: the first live member's pane, opened as the list
+    // would open it. Absent — not disabled — when the conversation has no live member, because
+    // that is the ordinary end state of a record and not a failure to explain.
+    function openConvPane() {
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const live = conv && convRecordingMembers(conv)
         .map(m => agents.find(a => convMemberKey(a) === m.key)).find(Boolean);
-      if (!live) { showToast(`No live pane in "${conv.name}"`); return; }
+      if (!live) return;
+      // The thread panel, on, so the pane opens showing the conversation rather than its rows.
       const key = convMemberKey(live), views = convViews();
       if (!views[key]) {
         views[key] = 1;
         try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
         catch (e) { /* private mode: this session only */ }
       }
-      openTerminal(live.pane_id);
+      jumpToPane(live.pane_id);
+    }
+
+    let convStandaloneToken = 0, convStandaloneHtml = '';
+
+    // The whole record, every member, from the store alone. `bottom` scrolls to the newest on the
+    // way in; a redraw from the snapshot leaves the reader where they were.
+    async function renderConvStandalone(bottom) {
+      const view = document.getElementById('convView');
+      if (!view || view.style.display === 'none') return;
+      const box = document.getElementById('convViewThread');
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      if (!conv) { closePanel(); return; }
+      document.getElementById('convViewTitle').textContent = conv.name;
+      const open = document.getElementById('convViewOpen');
+      open.hidden = !convRecordingMembers(conv).length;
+      const token = ++convStandaloneToken;
+      const keys = (conv.members || []).map(m => m.key);
+      // No drafts: a draft belongs to a pane being watched, and this view watches none.
+      const composed = await convCompose(conv, keys, []);
+      if (token !== convStandaloneToken || convViewId !== conv.id) return;
+      const entries = composed.entries;
+      // The count goes in the header beside the name rather than in a conv-head above the thread:
+      // the name is already up there, and printing it twice is the panel's only line of chrome
+      // saying nothing.
+      document.getElementById('convViewCount').textContent =
+        `${entries.length} message${entries.length === 1 ? '' : 's'}`;
+      const html =
+        (keys.length > 1 ? convMembersHtml(conv, composed.recs) : '') + (entries.length
+        ? convEntriesHtml(entries, null, false, false)
+        : (composed.all.length
+          ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +
+            'messages only" off in the pane menu to see it.</p>'
+          : '<p class="conv-empty">Nothing recorded here yet.</p>'));
+      // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
+      // reader's text selection with it mid-copy. Only a thread that actually changed is written.
+      if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
+      if (bottom) view.scrollTop = view.scrollHeight;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
@@ -8345,8 +8531,7 @@
       noteVisit(paneId);
       syncOpenPaneChrome();
       document.getElementById('agentListView').style.display = 'none';
-      document.getElementById('settingsView').style.display = 'none';
-      document.getElementById('timelineView').style.display = 'none';
+      hidePanels();
       document.body.classList.add('terminal-open');
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.

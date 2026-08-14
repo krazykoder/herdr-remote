@@ -81,6 +81,55 @@ test('the landing page lists recorded conversations and their live members', asy
   await expect(card).toContainText('Last activity');
 });
 
+test('a card opens the conversation itself, not a pane', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+
+  // The record, read as itself: no pane open, no composer, no rows behind it.
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(2);
+  await expect(page.locator('#convViewCount')).toHaveText('2 messages');
+  expect(await page.evaluate(() => activePane)).toBe(null);
+  // Read-only: a bubble here is not a selection, so it carries no tick.
+  await expect(page.locator('#convViewThread .conv-pick')).toHaveCount(0);
+
+  // And back where it came from.
+  await page.locator('#convView .back').click();
+  await expect(page.locator('#conversations .conversation-card')).toBeVisible();
+});
+
+test('a conversation whose panes have all exited is still the record it was', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  // The pane leaves the snapshot: the member stays, the words stay, and the card still names the
+  // thing worth reading. This is the case the view exists for — it used to be a dead end.
+  await page.evaluate(() => { agents = []; renderBody(); });
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(2);
+  // Nothing to open, said by not offering it rather than by a toast after the tap.
+  await expect(page.locator('#convViewOpen')).toBeHidden();
+});
+
+test('the live member is one tap on, in its own thread', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#termTitle')).toContainText(AGENT);
+  // Opened on the thread and not on the rows: the conversation is what the reader was reading.
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#convView')).toBeHidden();
+});
+
 test('the transcript is still there after a reload', async ({page}) => {
   // The whole point of the feature: the pane keeps a few hundred lines and then forgets.
   await open(page);
@@ -747,28 +796,4 @@ test('leaving a thread keeps an existing ruler selection', async ({page}) => {
   await page.locator('#quickActions .qa-conv').click();
   expect(await page.evaluate(() => ({selA, selB, selText})))
     .toEqual({selA: 0, selB: 0, selText: kept});
-});
-
-test('a conversation card opens a live member, on its thread', async ({page}) => {
-  await open(page);
-  await join(page);
-  await read(page);
-  await page.locator('#terminalView .back').click();
-  const card = page.locator('#conversations .conversation-card');
-  await expect(card).toContainText('new authentication feature');
-  await card.click();
-  // Straight to the thread: the card names a conversation, so the pane it opens shows one.
-  await expect(page.locator('#convThread')).toBeVisible();
-  await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
-});
-
-test('a conversation whose panes have all exited says so rather than doing nothing', async ({page}) => {
-  await open(page);
-  await join(page);
-  await read(page);
-  await page.locator('#terminalView .back').click();
-  // The pane is gone from the snapshot: what is left is a record with nothing live to open.
-  await page.evaluate(() => { agents = []; renderBody(); });
-  await page.locator('#conversations .conversation-card').click();
-  await expect(page.locator('#toast')).toContainText('No live pane');
 });
