@@ -159,9 +159,14 @@ conditions, both required:
 Then, per member that passes — conversation member, transcript exists, agent profile known:
 
 ```
-lines = min(DEEP_LINES, paneHistoryMax())
-send { type: 'read_pane', pane_id, lines, source: 'recent-unwrapped' }
+send { type: 'read_pane', pane_id, lines: DEEP_LINES, source: 'recent-unwrapped' }
 ```
+
+`DEEP_LINES` flat, **not** `min(DEEP_LINES, paneHistoryMax())`. The two were coupled in an earlier
+draft and should not be: `paneHistoryMax()` is how much scrollback the user wants *drawn in the
+pane*, and a T2 read is never drawn. Someone who sets 2000 to keep a phone light has said nothing
+about how far back a recovery may look. The relay clamps anyway (§2.7), so this number is a request
+and not an assertion.
 
 Same message `convReadTurnEnd` sends today, deeper. The reply lands on the **non-active** branch
 (`status_bar.js:409`), which records and never draws — so this is invisible by construction. That is
@@ -198,7 +203,7 @@ copies in every respect: a transcript repair, hidden unless it applies, that rep
 - **Does** what §2.5 already specifies for the active pane, which is why this is nearly free:
 
   ```js
-  paneLines = paneHistoryMax();
+  paneLines = READ_LINES_ASK;      // "as deep as the relay allows" — see §2.7
   refreshPane();
   ```
 
@@ -208,8 +213,10 @@ copies in every respect: a transcript repair, hidden unless it applies, that rep
   request is never declined for being a repeat (§2.2). Idempotence, not the guard, is what keeps a
   second press harmless.
 - **Reaches the ceiling in one press**, rather than `historyStep()` at a time. That is the difference
-  between this and Load more, and it is the reason to have it as well as a scroll: recovering a
-  member from `paneHistoryMax()` of 50000 is ten taps of Load more.
+  between this and Load more, and it is the reason to have it as well as a scroll: recovering from a
+  50000-line scrollback is ten taps of Load more. The ceiling it reaches is the relay's, not the
+  picker's (§2.7) — pressing this is an explicit "everything you have", which is a different
+  statement from the standing display preference.
 - **Says what happened**, like dedupe does: `Recovered 4 messages.` / `Nothing new to recover.` /
   `Could not find where the record left off — the gap is marked in the thread.` The third is the
   missed anchor, and saying so is what stops a silent no-op reading as a broken button.
@@ -227,11 +234,13 @@ the rows and move the scroll.
 Rather than add a wire field, T2 gives the active pane the one thing that is already correct for it:
 
 ```js
-paneLines = Math.min(recoveryLines, paneHistoryMax());
+paneLines = DEEP_LINES;
 refreshPane();
 ```
 
-— i.e. `loadMore` to the recovery depth. Identical consequences to the user pressing Load more,
+— i.e. `loadMore` to the automatic depth, and the relay clamps it (§2.7). `DEEP_LINES` rather than
+`READ_LINES_ASK`, because this fires without anyone asking: the button is where "everything you
+have" belongs. Identical consequences to the user pressing Load more,
 which they were about to do anyway: the history appears above, `userScrolledUp` governs the scroll
 exactly as it does today, the poll stops above `POLL_MAX_LINES` as documented, and returning to the
 tail turns it live again. No new state, no new branch, and T1 does the recording.
@@ -240,6 +249,46 @@ tail turns it live again. No new state, no new branch, and T1 does the recording
 a deep reply can be routed to the recorder alone — is deliberately not taken. It is one field and it
 would work; it is out of scope because this spec's whole claim is that no relay change is needed, and
 the special case costs nothing.
+
+### 2.7 The ceiling is the relay's, and the app must never restate it
+
+`READ_LINES_MAX` (`relay/herdr_relay.py:490`) is 50000 today and is a server-side number the operator
+can change — as can herdr's own scrollback depth behind it. The app must track that without being
+edited, so **no constant here may name a maximum**.
+
+It does not have to. `read_pane_lines` already clamps every request:
+
+```python
+READ_LINES_MAX = 50000
+def read_pane_lines(raw):
+    try:
+        return max(1, min(int(raw), READ_LINES_MAX))
+    except (TypeError, ValueError, OverflowError):
+        return READ_LINES_DEFAULT
+```
+
+So "as deep as you allow" is expressible today, with no wire change and no negotiation: **ask for
+more than the ceiling and the clamp answers with the ceiling.** `READ_LINES_ASK = 1e9` is that ask.
+Raise `READ_LINES_MAX` to 200000 and the next `Recover history` returns 200000 lines, with nothing in
+`web/` touched. Lower it to 10000 and recovery quietly stops at 10000, which is correct rather than
+broken.
+
+The alternative — the relay advertising its ceiling in the snapshot, the app storing it — is one
+field and it works, and it is worse: it adds a wire field, a stale-value question, and a
+backward-compatibility branch for relays that do not send it, all to compute a number the clamp
+already applies. Not taken.
+
+**Two consequences to carry into the build:**
+
+- **`HISTORY_MAX` is a display list, not a ceiling.** `[2000, 5000, 20000, 50000]`
+  (`history.js:189`) is a picker of how much to draw, and its top entry coincidentally equals today's
+  `READ_LINES_MAX`. That coincidence is not load-bearing and must not become so. If the picker should
+  also follow the relay, it grows a `Max` option carrying `READ_LINES_ASK` rather than a bigger
+  number — a small, separate change, and out of scope here.
+- **The clamp is the only guard on a huge ask.** An operator who raises `READ_LINES_MAX` to 500000
+  has asked for 500000-line reads and will get them, over SSH, on a phone. That is their decision
+  and the correct place for it. T2 does not participate: it asks for `DEEP_LINES`, a real number,
+  precisely because it fires without anyone pressing anything.
 
 ---
 
@@ -264,8 +313,8 @@ the special case costs nothing.
   still a guess. Mitigation is unchanged from the deferred doc: miss → append nothing, mark the gap.
   Worth noting the exposure is *lower* here than in the fold, because the anchor is consulted once
   per new depth rather than once per tick.
-- **T2's read cost**, per recovery: one read per stale conversation member, at `DEEP_LINES` capped
-  by `paneHistoryMax()`, SSH-backed for remote panes. Bounded by conversation membership and by the
+- **T2's read cost**, per recovery: one read per stale conversation member, at `DEEP_LINES` or the
+  relay's ceiling if that is lower, SSH-backed for remote panes. Bounded by conversation membership and by the
   15-minute gate. Strictly once per member per recovery — `held.depth` enforces it even if the gate
   leaks. T1 and T3 add no reads at all: one is a read the user already made, the other a read the
   user asked for.
@@ -286,12 +335,11 @@ the special case costs nothing.
 | Name | Value | Why |
 |---|---|---|
 | `DEEP_AWAY_MS` | **15 min** | The only threshold. Below it nothing worth a read was missed; a flap costs nothing. §2.4. |
-| `DEEP_LINES` | 5000 | One depth. The default `paneHistoryMax()`, roughly a working day of one pane. |
+| `DEEP_LINES` | 5000 | The automatic depth, T2 only. Roughly a working day of one pane. A request, not a bound — the relay clamps it. |
+| `READ_LINES_ASK` | `1e9` | Sentinel: "as deep as you allow". T3 and the deep-read paths. Never a literal depth. §2.7. |
 | `held.depth` | — | Deepest recorded window, per transcript. New persisted field; absent reads as 0. |
 
-`paneHistoryMax()` is the ceiling — the user's own setting, and a recovery has no business exceeding
-what they asked the app to fetch. It is also the answer to "5000 is not enough for me": raise the
-setting, or press `Recover history`, which goes straight to it.
+No constant in the app names the maximum. §2.7 is why.
 
 ---
 
@@ -327,11 +375,20 @@ setting, or press `Recover history`, which goes straight to it.
 
 - `Recover history` is hidden on a pane with no transcript, on a pane no conversation names, and on
   a pane whose agent has no profile; shown on one that has all three.
-- It reads to `paneHistoryMax()` in one press, regardless of the current `paneLines`.
+- It sends `READ_LINES_ASK` in one press, regardless of the current `paneLines`, and takes back
+  whatever the relay's clamp allows.
 - Pressed twice in a row it appends nothing the second time, and says so — idempotence proved
   through the UI and not only in the unit slice.
 - Pressed on a member the automatic gates declined (gap under `DEEP_AWAY_MS`) it still recovers.
 - A missed anchor reports the gap rather than reporting success or nothing at all.
+
+**The ceiling, relay (`tests/test_read_lines.py` or the existing relay suite):**
+
+- `read_pane_lines(READ_LINES_ASK)` returns `READ_LINES_MAX`, and returns the *changed* value when
+  `READ_LINES_MAX` is monkeypatched. This is the whole contract the app leans on, and it is one
+  assertion.
+- Browser: `Recover history` sends a `lines` the relay clamps, and the app asserts nothing about what
+  comes back beyond "deeper than what it had". No test may hard-code 50000.
 
 **Regression:** the existing single-turn recovery (`turnSeeded` → `recoveredTurn`) still writes
 exactly one turn and does not double-write alongside a deep backfill of the same window.
