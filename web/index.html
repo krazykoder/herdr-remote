@@ -751,7 +751,8 @@
     .agents,
     .terminals,
     .pairs,
-    .recents {
+    .recents,
+    .conversations {
       padding: 0 12px 12px;
     }
 
@@ -895,13 +896,52 @@
       font-weight: 600;
     }
 
-    /* The same dot the Project cards carry, saying the same thing: nothing, running, finished,
-       or needs you. A conversation is where you would look for that answer. */
+    /* The agent list's dot, at the agent list's size: this card stands in for the panes in it,
+       so it says what they say and it pulses when they are working. */
     .conversation-title .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex: none;
+      width: 10px;
+      height: 10px;
+    }
+
+    .transfer-head {
+      position: relative;
+      padding: 14px 44px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .transfer-head button {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.2rem;
+      line-height: 1;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    .transfer-head .to {
+      margin: 0;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .transfer-head .who {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin: 4px 0 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+      /* A 32-character pane name must not push the badge onto a second line. */
+      min-width: 0;
     }
 
     .conversation-title .name {
@@ -3529,10 +3569,14 @@
     <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Transfer to <span id="transferTarget"></span></span>
-        <button onclick="closeTransfer()" aria-label="Close"
-          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      <!-- The destination, centred and on its own line rather than folded into a header. This is
+           one agent's output entering another's context, and "which agent" is the fact the reader
+           has to be sure of before anything else on this sheet matters. -->
+      <div class="transfer-head">
+        <button onclick="closeTransfer()" aria-label="Close">✕</button>
+        <p class="to">Transfer to</p>
+        <p class="who"><span class="dot" id="transferDot" aria-hidden="true"></span><span
+          id="transferTarget"></span><span id="transferBadge"></span></p>
       </div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
         <p style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin:0">
@@ -7136,8 +7180,12 @@
         items.unshift(conv);
         return { a, conv };
       });
-      const kept = new Set(convFit(items).map(c => c.id));
-      saveConvIndex(items);
+      // Fitted once, and what is stored is what `kept` was read from. saveConvIndex fits again —
+      // it has to, since every other caller writes through it — and on an already-fitted list that
+      // is a no-op, which is the property that keeps the two from disagreeing.
+      const fitted = convFit(items);
+      const kept = new Set(fitted.map(c => c.id));
+      saveConvIndex(fitted);
       // Do not call a pane filed if the cap had no auto slot for it. It retries after space is
       // freed; marking it seen here would lose its transcript permanently.
       for (const {a, conv} of added) if (kept.has(conv.id)) seen.push(convMemberKey(a));
@@ -8407,6 +8455,12 @@
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
         (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
+      // The harness badge and the live dot, exactly as the agent list draws them: this sheet
+      // prefills a composer in another pane, and a name alone is not enough to be sure which.
+      document.getElementById('transferBadge').innerHTML =
+        agentBadge((live && live.agent) || partner.agent || '');
+      document.getElementById('transferDot').style.background =
+        live ? statusColor(live) : 'var(--muted)';
       const preview = document.getElementById('transferPreview');
       const box = document.getElementById('transferShortcuts');
       if (!transferSelection) {
@@ -8685,19 +8739,24 @@
         // conversation is worth opening. Written by convNoteCounts as each member records.
         const newest = members.reduce((w, m) =>
           (Number(m.seen) || 0) >= (Number(w.seen) || 0) ? m : w, members[0] || {});
-        // The same two colours the Project cards use, and for the same reason: "needs you" and
-        // "finished" are different facts, and one dot covering both reads as the wrong one.
-        const kinds = live.map(attentionKind);
-        const dot = kinds.includes('blocked') ? 'var(--dot-red)'
-          : kinds.includes('done') ? 'var(--dot-blue)'
-            : live.length ? 'var(--dot-green)' : 'var(--muted)';
-        return { c, count, seen, names, liveNames, dot, last: newest.last || '' };
+        // The agent card's dot, not a second dialect of it: this card stands in for the panes in
+        // it, and a conversation whose agent is working should read exactly as that agent's own
+        // card does — pulse included. One member speaks for the card, and it is the one whose
+        // state the reader would have gone looking for.
+        const lead = live.find(a => a.status === 'blocked') || live.find(a => a.status === 'working')
+          || live.find(a => attentionKind(a) === 'done') || live[0];
+        return {
+          c, count, seen, names, liveNames, last: newest.last || '',
+          dot: lead ? statusColor(lead) : 'var(--muted)',
+          pulse: lead && lead.status === 'working' ? ' pulse' : '',
+        };
       }).sort((a, b) => b.seen - a.seen || b.count - a.count);
       el.innerHTML = rows.length ? `<div class="section-header">Conversations</div>` + rows.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
-        `<div class="conversation-title"><span class="dot" style="background:${r.dot}"></span>` +
+        `<div class="conversation-title"><span class="dot${r.pulse}" style="background:${r.dot}"` +
+        ` aria-hidden="true"></span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
         // not a marker the app writes into what they typed (D4).

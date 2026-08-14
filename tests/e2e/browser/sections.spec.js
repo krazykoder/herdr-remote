@@ -25,6 +25,33 @@ const setSections = (page, order) => page.evaluate(o => {
   localStorage.setItem('herdr_sections', JSON.stringify(o));
 }, order);
 
+// Every section's cards start on one left edge. Conversations arrived last and was the one
+// section never added to the rule that gives the others their outer spacing, which put its cards
+// and its header 12px left of everything above them.
+test('every landing section starts on the same left edge', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  await page.evaluate(() => {
+    for (const id of ['terminals', 'recents', 'conversations']) toggleSection(id, true);
+    renderBody();
+    renderConversations();
+  });
+  const edges = await page.evaluate(() => {
+    const at = sel => {
+      const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().x) : null;
+    };
+    return {
+      agent: at('#agents .agent'),
+      terminal: at('#terminals .agent'),
+      conversation: at('#conversations .conversation-card'),
+      header: at('#conversations .section-header'),
+      agentHeader: at('#agents .section-header'),
+    };
+  });
+  expect(new Set(Object.values(edges).filter(x => x !== null)).size).toBe(1);
+});
+
 test.beforeEach(async ({page}) => {
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));

@@ -266,24 +266,35 @@ test('at the conversation ceiling it is the auto tier that gives way', async ({p
   expect(kept.some(c => c.id === 'c1')).toBe(true);
 });
 
-test('a full named index remains intact, and an unfitted auto pane retries later', async ({page}) => {
+test('a full named index is never trimmed, and a pane refused a slot retries later', async ({page}) => {
   await autoOn(page);
   await page.goto('/');
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
   const result = await page.evaluate(() => {
-    const named = Array.from({length: CONV_CONV_MAX + 1}, (_, i) =>
+    const recordable = agents.filter(a => profileFor(a.agent)).map(a => convMemberKey(a));
+    const named = n => Array.from({length: n}, (_, i) =>
       ({id: 'named' + i, name: 'named' + i, created: i, members: []}));
     localStorage.removeItem('herdr_conv_auto_seen');
-    saveConvIndex(named);
+    // One past the ceiling and every one of them named. Nothing may go: a named record is a floor
+    // (D2), and a ceiling is not a licence to delete one.
+    saveConvIndex(named(CONV_CONV_MAX + 1));
     convAutoJoin();
-    const key = convMemberKey(agents.find(a => a.agent === 'claude'));
-    const before = { count: loadConvIndex().length, seen: convAutoSeen().includes(key) };
-    saveConvIndex(loadConvIndex().slice(1));
+    const full = {
+      count: loadConvIndex().length,
+      auto: loadConvIndex().filter(c => c.auto).length,
+      seen: convAutoSeen().length,
+    };
+    // Room for exactly the panes that record. A pane refused a slot was never marked filed, so
+    // this is its retry — without it its transcript would be lost for good.
+    saveConvIndex(named(CONV_CONV_MAX - recordable.length));
     convAutoJoin();
-    return { before, after: { auto: loadConvIndex().some(c => c.auto), seen: convAutoSeen().includes(key) } };
+    return {full, recordable: recordable.length, after: {
+      autos: loadConvIndex().filter(c => c.auto).length,
+      seen: recordable.every(k => convAutoSeen().includes(k)),
+    }};
   });
-  expect(result.before).toEqual({count: 201, seen: false});
-  expect(result.after).toEqual({auto: true, seen: true});
+  expect(result.full).toEqual({count: 201, auto: 0, seen: 0});
+  expect(result.after).toEqual({autos: result.recordable, seen: true});
 });
 
 test('the card says what the conversation is doing and what was last said', async ({page}) => {
@@ -300,6 +311,27 @@ test('the card says what the conversation is doing and what was last said', asyn
     renderConversations();
   });
   await expect(card.locator('.conversation-tier')).toHaveText('auto');
+});
+
+test('a live conversation carries its agent’s own dot, pulse and all', async ({page}) => {
+  await autoOn(page);
+  await page.goto('/');
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+  await page.evaluate(() => { toggleSection('conversations', true); renderConversations(); });
+  // The card stands in for the panes in it, so it says what they say. scratch is the pane the
+  // fake herdr reports as working — the one whose card pulses.
+  const shown = await page.evaluate(() => {
+    const card = Array.from(document.querySelectorAll('#conversations .conversation-card'))
+      .find(c => c.textContent.includes('scratch'));
+    const mine = card.querySelector('.dot'), theirs = document.querySelector('#agents .agent .dot');
+    const seen = el => {
+      const c = getComputedStyle(el);
+      return {fill: c.backgroundColor, beat: c.animationName, size: c.width};
+    };
+    return {card: seen(mine), agent: seen(theirs)};
+  });
+  expect(shown.card).toEqual(shown.agent);
+  expect(shown.card.beat).toBe('pulse');
 });
 
 test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
@@ -829,6 +861,16 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   await page.locator('#selTransfer').click();
   await expect(page.locator('#transferSheet')).toBeVisible();
   await expect(page.locator('#transferTarget')).toHaveText('Architect 1');
+  // One agent's output entering another's context: which agent is the fact the reader has to be
+  // sure of, so the sheet says it the way the agent list does — name, harness badge, live dot.
+  await expect(page.locator('#transferBadge')).toHaveText('claude');
+  await expect(page.locator('#transferSheet .transfer-head .who')).toHaveCSS('justify-content', 'center');
+  const dot = await page.evaluate(() => {
+    const c = getComputedStyle(document.getElementById('transferDot'));
+    return {fill: c.backgroundColor, size: c.width};
+  });
+  expect(dot.size).toBe('8px');
+  expect(dot.fill).not.toBe('rgba(0, 0, 0, 0)');
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
