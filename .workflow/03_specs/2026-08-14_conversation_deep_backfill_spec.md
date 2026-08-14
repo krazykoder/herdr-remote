@@ -60,8 +60,9 @@ The words are fetched, transmitted, parsed, and dropped. That is the bug this sp
 ### 1.2 What history the browser can reach at all
 
 Asked directly, because it bounds everything below. The browser has exactly one source of past pane
-text: `read_pane`, `source: 'recent-unwrapped'`, `lines` up to `READ_LINES_MAX` = 50000
-(`relay/herdr_relay.py:498`), served out of herdr's own scrollback. That is the ceiling.
+text: `read_pane`, `source: 'recent-unwrapped'`, with a depth the relay clamps to its configured
+`READ_LINES_MAX` (`relay/herdr_relay.py:498`) and herdr's available scrollback. Those, not the app,
+are the ceiling.
 
 - `source: 'visible'` is the live frame with the terminal's own breaks left in. Unusable for
   recording and already refused by `convRecordable` — the same sentence read the two ways normalizes
@@ -316,12 +317,12 @@ already applies. Not taken.
 - **T2's read cost**, per recovery: one read per stale conversation member, at `DEEP_LINES` or the
   relay's ceiling if that is lower, SSH-backed for remote panes. Bounded by conversation membership and by the
   15-minute gate. Strictly once per member per recovery — `held.depth` enforces it even if the gate
-  leaks. T1 and T3 add no reads at all: one is a read the user already made, the other a read the
-  user asked for.
-- **`CONV_ENTRY_MAX` is not a problem, checked rather than assumed.** The cap is 5000 *entries*, and
-  entries are messages: a 10000-line window yields tens of them. `capEntries` trims from the front,
-  so a pathological transcript could still shed its oldest — but nothing a deep read adds approaches
-  the cap. (The deferred doc's successor draft flagged this as a hazard; it is not one.)
+  leaks. T1 adds no read beyond Load more; T3 adds one read the user explicitly requested.
+- **`CONV_ENTRY_MAX` needs a policy before implementation.** The cap is 5000 *entries*, not lines,
+  and `Recover history` may now ask for a relay-configured depth far beyond 10000 lines. Calling
+  `capEntries` on that union would silently remove the oldest existing transcript entries, violating
+  the permanence model. A deep backfill must preserve the existing record and report a capacity
+  limit rather than discard it; the exact storage policy is the first implementation decision.
 - **A pane recycled onto a stale transcript.** Already handled — `convMemberKey` includes host,
   pane_id, agent and cwd for exactly this reason, and a recycled id does not match.
 - **`visible` panes.** A pane on the live frame after `/clear` is refused by `convRecordable` before
@@ -336,10 +337,10 @@ already applies. Not taken.
 |---|---|---|
 | `DEEP_AWAY_MS` | **15 min** | The only threshold. Below it nothing worth a read was missed; a flap costs nothing. §2.4. |
 | `DEEP_LINES` | 5000 | The automatic depth, T2 only. Roughly a working day of one pane. A request, not a bound — the relay clamps it. |
-| `READ_LINES_ASK` | `1e9` | Sentinel: "as deep as you allow". T3 and the deep-read paths. Never a literal depth. §2.7. |
+| `READ_LINES_ASK` | `1e9` | Sentinel: "as deep as you allow". T3 only. Never a literal depth. §2.7. |
 | `held.depth` | — | Deepest recorded window, per transcript. New persisted field; absent reads as 0. |
 
-No constant in the app names the maximum. §2.7 is why.
+No recovery constant in the app names the relay's maximum. §2.7 is why.
 
 ---
 
@@ -355,6 +356,8 @@ No constant in the app names the maximum. §2.7 is why.
 - Messages older than the oldest stored entry are prepended, and do not duplicate the anchor.
 - A duplicated anchor inside the window selects the newest occurrence. Pinned as a *known* choice,
   not asserted as correct.
+- A deep backfill that would exceed `CONV_ENTRY_MAX` preserves every pre-existing entry and reports
+  the capacity limit; it never silently lets `capEntries` discard history.
 
 **T2, browser (`tests/e2e/browser/conversation.spec.js`):**
 
@@ -397,16 +400,18 @@ exactly one turn and does not double-write alongside a deep backfill of the same
 
 ## 7. Order of work
 
-1. `held.depth` + the watermark guard in `recordPaneNow`. Inert on its own — it only ever declines.
-2. `deepEntries`, pure, with the T1 unit tests. At this point Load more closes gaps and nothing else
+1. Decide and test the `CONV_ENTRY_MAX` policy above. This must protect existing records before any
+   deep union can reach `capEntries`.
+2. `held.depth` + the watermark guard in `recordPaneNow`. Inert on its own — it only ever declines.
+3. `deepEntries`, pure, with the T1 unit tests. At this point Load more closes gaps and nothing else
    has changed.
-3. **`Recover history` in the `⋯` menu (T3).** Three lines of handler over step 2, and it is what
+4. **`Recover history` in the `⋯` menu (T3).** Three lines of handler over step 3, and it is what
    makes the feature usable before either gate is written — a gap you can see becomes a gap you can
    close, deliberately, on the pane you are looking at.
-4. `wsDownSince` + the T2 gate and the per-member read. Browser tests.
-5. The active-pane variant of T2, which is step 3's handler under a different caller.
+5. `wsDownSince` + the T2 gate and the per-member read. Browser tests.
+6. The active-pane variant of T2, which is step 4's handler under a different caller.
 
-Steps 1–3 are the whole user-visible win for the pane in front of you, cost nothing on the wire, and
-are worth shipping before 4–5 are written. Step 4 is the only part that issues reads nobody asked
-for, and it is the only part whose gates can be wrong — which is why the button precedes it rather
+Steps 1–4 are the whole user-visible win for the pane in front of you, cost nothing on the wire beyond
+the user-requested read, and are worth shipping before 5–6 are written. Step 5 is the only part that
+issues reads nobody asked for, and it is the only part whose gates can be wrong — which is why the button precedes it rather
 than backstopping it.
