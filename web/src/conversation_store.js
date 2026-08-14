@@ -402,7 +402,7 @@
       return out.removed;
     }
 
-    // The end of a turn is announced: the relay polls herdr itself and pushes done/blocked for
+    // The end of a turn is announced: the relay polls herdr itself and pushes ending states for
     // every pane, whether or not anyone is reading it. That is what the recorder writes on, so this
     // is the read behind every append — one per turn, for every pane in a conversation, wherever
     // the app happens to be looking.

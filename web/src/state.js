@@ -44,7 +44,7 @@
     // snapshot carrying it — and the recorder appends a turn when this clock moves past what it
     // last wrote, so a second stamp for a state the pane is already in would append the turn twice.
     // `seeded` is a status this browser did not watch arrive — the first snapshot after a reload,
-    // where a pane sitting on `done` finished at some unknown time while nothing was connected.
+    // where a pane sitting in an ending state finished at some unknown time while nothing was connected.
     // The stamp is still taken, because a clock that starts at zero would make the pane's next
     // turn look like its first; what the flag says is that the stamp is the reconnect, not the
     // transition, and a turn written off it has to prove itself some other way (§5.2).

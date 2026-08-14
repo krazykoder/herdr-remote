@@ -82,7 +82,7 @@
     // about the message itself, and `at_src` says how good that answer is:
     //
     //   sent      exact — the user pressed send in this browser and the outbox stamped it
-    //   state     within one relay poll — the pane's own done/blocked transition ended this turn
+    //   state     within one relay poll — the pane's own ending transition ended this turn
     //   read      the fold's clock, for a turn still being written: now is the honest answer
     //   backfill  unknown, but older than everything live — scrollback that predates the first read
     //
@@ -206,7 +206,7 @@
     }
 
     // One turn appended. `end` is the transition that ended it, which is also what dates the
-    // closing message — the relay pushes done/blocked for every pane, so this is a real clock and
+    // closing message — the relay pushes ending states for every pane, so this is a real clock and
     // not the fold's own. A recovered turn passes no `end`: the reconnect is not when the agent
     // finished, and `read` is the honest stamp for "this is when it was found".
     function turnEntries(fresh, stored, now, end, recover) {
