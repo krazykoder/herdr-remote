@@ -124,6 +124,17 @@ test('a card opens the conversation itself, not a pane', async ({page}) => {
   // Read-only: a bubble here is not a selection, so it carries no tick.
   await expect(page.locator('#convViewThread .conv-pick')).toHaveCount(0);
 
+  // A conversation is not a terminal, but it still needs the same bottom navigation: otherwise
+  // closing the terminal hides the agent tabs and moves the chrome where the thumb cannot reach it.
+  const bottom = await page.evaluate(() => {
+    const header = document.querySelector('.header').getBoundingClientRect();
+    const status = document.getElementById('statusBar').getBoundingClientRect();
+    return {tabs: getComputedStyle(document.getElementById('agentTabs')).display,
+      headerBottom: header.bottom, statusTop: status.top};
+  });
+  expect(bottom.tabs).toBe('flex');
+  expect(bottom.headerBottom).toBeLessThanOrEqual(bottom.statusTop);
+
   // And back where it came from.
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toBeVisible();

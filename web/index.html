@@ -274,7 +274,8 @@
     /* In a pane the app header moves to the bottom, under the composer: the thumb is already
        down there, and the term header above already carries back, status, title and refresh.
        `order` moves the same node, so nothing is re-rendered and no state is rebuilt. */
-    body.terminal-open > .header {
+    body.terminal-open > .header,
+    body.conversation-open > .header {
       order: 9;
       border-bottom: none;
       border-top: 1px solid var(--border);
@@ -368,7 +369,8 @@
     }
 
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
-    body.terminal-open>.status-bar {
+    body.terminal-open>.status-bar,
+    body.conversation-open>.status-bar {
       order: 10;
     }
 
@@ -400,7 +402,8 @@
       scroll-padding: 0 12px;
     }
 
-    body.terminal-open .agent-tabs {
+    body.terminal-open .agent-tabs,
+    body.conversation-open .agent-tabs {
       display: flex;
     }
 
@@ -4419,12 +4422,14 @@
         panelReturnPane = activePane;
         if (activePane) closeTerminal();
       }
+      document.body.classList.toggle('conversation-open', id === 'convView');
       document.getElementById('agentListView').style.display = 'none';
       for (const p in PANELS) document.getElementById(p).style.display = p === id ? PANELS[p] : 'none';
     }
 
     function closePanel() {
       hidePanels();
+      document.body.classList.remove('conversation-open');
       const back = panelReturnPane;
       panelReturnPane = null;
       // The pane may have died while the panel was open; openTerminal falls back to the ID, so
@@ -9641,6 +9646,7 @@
       syncOpenPaneChrome();
       document.getElementById('agentListView').style.display = 'none';
       hidePanels();
+      document.body.classList.remove('conversation-open');
       document.body.classList.add('terminal-open');
       // After the class, never before: the strip is display:none outside a pane, and a hidden
       // element measures zero — the edge fades and the scroll-into-view would both no-op.
