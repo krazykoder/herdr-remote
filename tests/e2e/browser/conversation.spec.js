@@ -1112,6 +1112,24 @@ test('a conversation can be duplicated, and the copy is nobody\'s auto record', 
   await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature (copy)');
 });
 
+test('a conversation deleted ends the grouping and keeps the words', async ({page}) => {
+  const key = await openCard(page);
+  const del = page.locator('#convView .conv-del');
+  // One tap arms, and the record is still there.
+  await del.click();
+  await expect(del).toHaveText('Delete?');
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(1);
+
+  await del.click();
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(0);
+  // The view it was read in goes with it, and so does its per-conversation reading state.
+  await expect(page.locator('#convView')).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem('herdr_conv_hidden'))).toBe('{}');
+  // But not the transcript: a conversation is a roster and a name, and deleting one unreferences
+  // words rather than erasing them.
+  expect((await held(page, key)).entries.length).toBe(2);
+});
+
 test('a session that has already ended can be added from its recording', async ({page}) => {
   await openCard(page);
   // A pane this browser recorded and that is not running now — the whole reason to assemble a

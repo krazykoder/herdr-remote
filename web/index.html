@@ -2149,6 +2149,13 @@
       padding-top: 4px;
     }
 
+    /* The one action in this row that ends something. Coloured rather than moved apart — the row
+       wraps on a phone, so a gap cannot be relied on to keep it away from the others. */
+    .conv-roster-actions .conv-del {
+      color: var(--red);
+      border-color: var(--red);
+    }
+
     .conv-roster-actions button[aria-pressed="true"] {
       border-color: var(--blue);
       color: var(--blue);
@@ -3580,8 +3587,8 @@
             onclick="closeTermMenu(); startInThisProject()">New session</button>
           <!-- Another one of these, beside this one, without answering the dialog again.
                renderTermMenuState names the agent and hides it when it cannot be started. -->
-          <button class="menu-item" role="menuitem" id="menuDuplicate" hidden
-            onclick="closeTermMenu(); duplicatePane()">Duplicate</button>
+          <button class="menu-item arm-btn" role="menuitem" id="menuDuplicate" hidden
+            onclick="armButton(this, 'Duplicate?', duplicatePane)">Duplicate</button>
           <!-- One item for both jobs: membership is a list the user edits, so joining an existing
                conversation and naming a new one are the same sheet. renderTermMenuState writes the
                text, because "start one" and "you are in one" are different offers. -->
@@ -5616,6 +5623,8 @@
     function duplicatePane() {
       const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
       if (!ws || !canDuplicate(a)) return;
+      // Armed in the menu, so the menu is still open behind the second tap.
+      closeTermMenu();
       const tab = !!a.workspace_id;
       const msg = {
         type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
@@ -9605,7 +9614,13 @@
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
         `Duplicate</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
-        ` onclick="convToggleAdd()">Add pane</button></div>${chips}${tier}</div>`;
+        ` onclick="convToggleAdd()">Add pane</button>` +
+        // Last, and the only one here that ends something. The words are not what goes: a
+        // conversation is a roster and a name, and deleting one unreferences transcripts rather
+        // than erasing them — which is what D2's floor has always meant by removal.
+        `<button class="conv-del arm-btn" onclick="armButton(this, 'Delete?', deleteConversation)"` +
+        ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
+        `</div>${chips}${tier}</div>`;
     }
 
     // A pane does not carry the role it was started with, and neither does a record that predates
@@ -9800,6 +9815,38 @@
         }
         conv.members = (conv.members || []).concat(convMemberOf(pane));
       });
+    }
+
+    // A conversation is a roster and a name, so this ends the grouping and nothing else: every
+    // member's transcript stays in the store, unreferenced, and takes its turn under the eviction
+    // rules like any other. Said in the toast, because "delete" reads as "the words are gone".
+    function deleteConversation() {
+      const items = loadConvIndex(), conv = items.find(c => c.id === convViewId);
+      if (!conv) return;
+      saveConvIndex(items.filter(c => c.id !== conv.id));
+      // The reading state goes with it, or a conversation created later on a recycled id would
+      // inherit a stranger's folded-out members.
+      const hidden = convHiddenAll();
+      delete hidden[conv.id];
+      try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(hidden)); }
+      catch (e) { /* private mode: this session only */ }
+      convStandaloneHtml = '';
+      renderConversations();
+      if (document.body.classList.contains('conversation-open')) {
+        closePanel();
+      } else {
+        // In a pane: fall back to another of its conversations, or to the rows if that was the
+        // last one. The panel it was deleted from goes too — it acts on something that is gone.
+        const a = activePane ? paneOf(activePane) : null;
+        if (convPaneRoster) toggleConvPaneRoster();
+        if (a) {
+          const next = convsForPane(a)[0];
+          convSetView(a, next ? next.id : '');
+          renderConvBar();
+        }
+      }
+      showToast(`Deleted "${conv.name}". What its panes said stays on this device, ` +
+        'unreferenced, until space runs out.');
     }
 
     function convRemoveMember(key) {
