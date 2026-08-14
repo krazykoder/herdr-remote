@@ -47,6 +47,8 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     // recorder.
     convsForPane: () => convs, convViewOn: () => threaded, toggleConvView() {},
     convThreadOn: () => threaded, convLastAgent: threaded ? 3 : -1, selectFinalConvMessage() {},
+    // The strip's centre names the pane the composer types into, so the fold has to redraw it.
+    renderPairStrip() {},
   });
   el('convThread').hidden = !threaded;
   vm.runInContext(HTML.slice(from, to), ctx);

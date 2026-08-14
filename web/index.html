@@ -1946,6 +1946,13 @@
       color: var(--muted);
     }
 
+    .conv-roster .conv-tier-note {
+      margin: 8px 0 0;
+      font-size: 0.65rem;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+
     /* A time rule, and the same element says "there is history missing here" — one shape for
        "when" means a gap is read as a break in the thread rather than as a second kind of thing. */
     .conv-rule {
@@ -8808,7 +8815,8 @@
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
         // not a marker the app writes into what they typed (D4).
-        `${r.c.auto ? '<span class="conversation-tier">auto</span>' : ''}` +
+        `${r.c.auto ? '<span class="conversation-tier" title="Filed automatically, and dropped ' +
+          'first when space runs out. Open it and rename it to keep it for good.">auto</span>' : ''}` +
         `<span class="conversation-count">${r.count} ` +
         `${r.count === 1 ? 'message' : 'messages'}</span></div>` +
         (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
@@ -8892,11 +8900,16 @@
         ? free.map(x => `<button class="conv-chip" data-key="${escapeHtml(convMemberKey(x))}"` +
             ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}</button>`).join('')
         : '<span class="conv-none">Every live pane is already in this conversation.</span>') + '</div>';
+      // The tier, said where the button that changes it is. "How do I make this one mine" is the
+      // question an auto record raises, and the answer is one word on the button below it.
+      const tier = conv.auto
+        ? '<p class="conv-tier-note">Filed automatically, and dropped first when space runs out. ' +
+          'Rename it to keep it for good.</p>' : '';
       return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
         `<button onclick="renameConversation()">Rename</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
-        ` onclick="convToggleAdd()">Add pane</button></div>${chips}</div>`;
+        ` onclick="convToggleAdd()">Add pane</button></div>${chips}${tier}</div>`;
     }
 
     // A pane does not carry the role it was started with, and neither does a record that predates
@@ -9236,6 +9249,9 @@
       catch (e) { /* private mode: session-only */ }
       syncBottomDock();
       renderQuickActions();  // the v has to become a ^, and vice versa
+      // The strip names the pane the composer types into, so it is only true while there is a
+      // composer. Without this the name outlives the fold by up to one poll.
+      renderPairStrip();
     }
 
     // Jump to the newest line. It also puts the pane back to following the tail: the scroll
@@ -9595,12 +9611,7 @@
 
     // Typing wins over browsing: a dock and the on-screen keyboard together leave almost no pane
     // visible, and the user who just tapped the composer wants to read what they are answering.
-    document.getElementById('termInput').addEventListener('focus', () => {
-      closeDocks();
-      renderPairStrip();
-    });
-    // Let a pair-strip button receive its click before replacing the focused-composer marker.
-    document.getElementById('termInput').addEventListener('blur', () => setTimeout(renderPairStrip));
+    document.getElementById('termInput').addEventListener('focus', closeDocks);
 
     // Clearing is destructive and sits next to two controls that are not, so it takes two taps.
     // The armed state expires on its own — a stray first tap must not leave a live trigger behind.

@@ -308,6 +308,8 @@ test('the card says what the conversation is doing and what was last said', asyn
     const items = loadConvIndex();
     items[0].auto = true;
     saveConvIndex(items);
+    // Auto records are behind their own control on the landing page; this is that control.
+    localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on');
     renderConversations();
   });
   await expect(card.locator('.conversation-tier')).toHaveText('auto');
@@ -317,7 +319,11 @@ test('a live conversation carries its agent’s own dot, pulse and all', async (
   await autoOn(page);
   await page.goto('/');
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
-  await page.evaluate(() => { toggleSection('conversations', true); renderConversations(); });
+  await page.evaluate(() => {
+    toggleSection('conversations', true);
+    localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on');   // every card here is an auto one
+    renderConversations();
+  });
   // The card stands in for the panes in it, so it says what they say. scratch is the pane the
   // fake herdr reports as working — the one whose card pulses.
   const shown = await page.evaluate(() => {
@@ -873,9 +879,11 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   await page.evaluate(() => {
     pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
       recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
-    agents.find(a => a.label === 'Architect 1').status = 'working';
   });
   await read(page);
+  // After the read and not before: read() forces the open pane to `done`, which is the status the
+  // transfer sheet would then have drawn.
+  await page.evaluate(() => { agents.find(a => a.label === 'Architect 1').status = 'working'; });
   await page.locator('#quickActions .qa-conv').click();
   // First bubble belongs to scratch, while Architect 1 remains the open pane.
   await page.locator('#convThread .conv-msg').first().locator('.conv-pick').click();
@@ -909,6 +917,41 @@ test('pair strip names its composer target and switching keeps composer focus', 
   await expect.poll(() => page.evaluate(() => ({pane: paneLabel(paneOf(activePane)), focus: document.activeElement.id})))
     .toEqual({pane: 'scratch', focus: 'termInput'});
   await expect(page.locator('#pairStrip .pair-target')).toContainText('scratch');
+});
+
+test('folding the composer away takes the typing target with it', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    renderPairStrip();
+  });
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  // The strip names the pane the composer types into, so it is only true while there is one. The
+  // fold is the button that decides that, and it has to redraw the strip itself — the poll is
+  // three seconds away.
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#pairStrip .pair-target')).toHaveCount(0);
+  await expect(page.locator('#pairStrip .pair-name')).toBeVisible();
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+});
+
+test('an auto conversation says how to make it permanent', async ({page}) => {
+  await openCard(page);
+  await expect(page.locator('#convView .conv-tier-note')).toHaveCount(0);
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].auto = true;
+    saveConvIndex(items);
+    renderConvStandalone(false);
+  });
+  // The question an auto record raises is "how do I make this one mine", and the answer is the
+  // button directly above this line.
+  await expect(page.locator('#convView .conv-tier-note')).toContainText('Rename it to keep it');
+  page.once('dialog', d => d.accept('mine now'));
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Rename'}).click();
+  await expect(page.locator('#convView .conv-tier-note')).toHaveCount(0);
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
