@@ -413,7 +413,7 @@
     // not you were watching it.
     function convReadTurnEnd(paneId, status) {
       if (!ws || !paneId) return;
-      if (status !== 'done' && status !== 'blocked') return;
+      if (!endsTurn(status)) return;
       const a = paneOf(paneId);
       if (!a || !profileFor(a.agent) || !convReferenced().has(convMemberKey(a))) return;
       // Fixed source and length. `visible` is the live frame with the terminal's own breaks left in

@@ -11,6 +11,7 @@ what a hosted copy of the app needs to reach this relay from anywhere, and all t
 both listeners. That is the line these tests draw.
 """
 import asyncio
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -54,6 +55,17 @@ APP_PATHS = ["/", "/index.html", "/src/state.js", "/dist/index.html", "/sw.js",
 
 
 class StaticScopeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # `/dist/index.html` is a build artifact and `web/dist/` is gitignored, so a fresh clone or
+        # a new worktree has never run the build and this suite failed on a missing file rather
+        # than on the routing it exists to test. Build it here instead of skipping the path: the
+        # bundle's route is exactly as much of the LAN/external line as the others, and a test that
+        # quietly stops covering it is worse than one that takes a second longer.
+        if not (ROOT / "web" / "dist" / "index.html").exists():
+            subprocess.run([sys.executable, str(ROOT / "scripts" / "build.py")],
+                           check=True, capture_output=True)
+
     def test_lan_serves_the_app(self):
         for path in APP_PATHS:
             with self.subTest(path=path):
