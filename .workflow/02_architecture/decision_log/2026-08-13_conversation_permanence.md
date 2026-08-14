@@ -177,3 +177,8 @@ chosen:
 - **A record of which panes have been filed**, kept apart from membership. "Already in an auto
   conversation" is not the question D5's once-per-pane rule asks: a member the user removed would
   be filed again on the next poll.
+
+**The auto tier's roster prune** — the half of D4 the first five commits did not build — landed on
+2026-08-13 in `8e4df6c`, as `convPruneAuto` on the `agents` snapshot: past
+`CONV_AUTO_ROSTER_MAX` (20) an auto conversation sheds its oldest *ended* members, never a
+recording one. A named conversation still grows without limit.
