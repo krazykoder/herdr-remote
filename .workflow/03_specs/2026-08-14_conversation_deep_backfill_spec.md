@@ -90,16 +90,21 @@ the app noticed (T2), or the user asking outright (T3).
 2. Anchor: the transcript's newest **agent** entry, matched by `convKey(text)`, searched from the
    **end** of the deep window backwards. Same comparison `recoveredTurn` already uses
    (`conversation_pure.js:198`), so a message that matches there matches here.
-3. **Anchor found** → append only the messages after it, in pane order, stamped `at_src: 'read'`,
+3. **Anchor found** → append only the messages after it, in pane order, stamped `at_src: 'backfill'`,
    `at` stepped one per message the way `backfillEntries` steps its own. Completion times are
    unknown, and the read is not one of them; stepping is what keeps a member's internal order
-   through the joint merge instead of stacking the recovered run on a single timestamp.
+   through the joint merge instead of stacking the recovered run on a single timestamp. `backfill`
+   rather than `read` because that is exactly what `at_src` means by it — "unknown, but older than
+   everything live" — and it is what puts the tilde on the bubble instead of a clock nobody read.
 4. **Anchor missed** → append **nothing**, and mark the next entry `gap: true`; the view already
    draws a rule for it. A miss means `/clear`, a scrollback deeper than the window, or an anchor
    whose text changed. None of the three is a reason to guess.
 5. Prepend, independently of 3 and 4: messages **older than the transcript's oldest entry**, anchored
-   on that oldest entry the same way. This is the pane-first-read-late case, and it is the `before`
-   slot `recordPaneNow` already builds for `backfillEntries`.
+   on that oldest entry — of either speaker, since a transcript can begin on either — and searched
+   from the **start** forwards, which is the same "recover less" rule the append side follows from
+   the other end. This is the pane-first-read-late case, and it is the `before` slot `recordPaneNow`
+   already builds for `backfillEntries`. Its stamps step down from the oldest stored entry rather
+   than from `now`, or a joint thread would sort the prepend after the history it was prepended to.
 
 ### 2.2 The watermark — what makes this not the fold
 
@@ -212,7 +217,9 @@ copies in every respect: a transcript repair, hidden unless it applies, that rep
   exactly as Load more puts it there.
 - **Bypasses both gates.** No outage test, no `held.touched` test, and no watermark — an explicit
   request is never declined for being a repeat (§2.2). Idempotence, not the guard, is what keeps a
-  second press harmless.
+  second press harmless. The watermark bypass is not politeness: a pane sitting at herdr's own
+  scrollback ceiling returns the same row count every time, so the watermark alone would refuse
+  every recovery after the first, on exactly the panes with the most history to lose.
 - **Reaches the ceiling in one press**, rather than `historyStep()` at a time. That is the difference
   between this and Load more, and it is the reason to have it as well as a scroll: recovering from a
   50000-line scrollback is ten taps of Load more. The ceiling it reaches is the relay's, not the
@@ -396,8 +403,9 @@ No recovery constant in the app names the relay's maximum. §2.7 is why.
 - A shallower window appends nothing, whatever it contains.
 - Anchor missed → nothing appended, next entry carries `gap: true`.
 - Messages older than the oldest stored entry are prepended, and do not duplicate the anchor.
-- A duplicated anchor inside the window selects the newest occurrence. Pinned as a *known* choice,
-  not asserted as correct.
+- A duplicated anchor selects the occurrence that recovers *less*: the newest on the append side,
+  the oldest on the prepend side. Both are the same rule — a short recovery is a smaller wrong than
+  a duplicate, because the record is permanent.
 - A prepend that would exceed `CONV_ENTRY_MAX` keeps its newest end and drops no stored entry; a
   prepend with no room at all writes nothing. Neither reaches `capEntries` (§2.8).
 - An append at the cap still slides the window, exactly as an ordinary turn does.

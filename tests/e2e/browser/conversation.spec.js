@@ -1825,3 +1825,80 @@ test('leaving a thread keeps an existing ruler selection', async ({page}) => {
   expect(await page.evaluate(() => ({selA, selB, selText})))
     .toEqual({selA: 0, selB: 0, selText: kept});
 });
+
+// --- Recovering what was missed ---
+//
+// A browser that was closed, asleep, or off the network saw none of the turns that happened while
+// it was away, and the pane still holds them. These are about getting them into the record: the
+// free half, which is any read pulled deeper than the transcript was written from, and the button
+// for the times a gap is visible on screen and nothing automatic has closed it.
+
+// A claude pane of `n` turns, numbered so the assertions can name which ones came back.
+const turns = n => Array.from({length: n},
+  (_, i) => `❯ question ${i + 1}\n\n⏺ Answer ${i + 1}.\n`).join('\n') + '\n❯\n';
+
+test('a read pulled deeper records the turns nobody was connected for', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  // What the browser saw before it went away, and what the pane holds now.
+  await read(page, turns(2));
+  await read(page, turns(6));
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toContain('Answer 6.');
+  expect(rec.entries.filter(e => e.who === 'agent').length).toBe(6);
+  // Once, however many times the same window is read back.
+  await read(page, turns(6));
+  expect((await held(page, key)).entries.length).toBe(12);
+});
+
+test('Recover history asks the relay for everything it has, and says what came back',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page, turns(2));
+    await tapWire(page);
+    await page.evaluate(() => recoverConvHistory());
+    // No ceiling of the app's own: the relay clamps this at whatever it is configured for, which is
+    // what lets an operator raise it without the app being edited.
+    const asked = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
+    expect(asked.at(-1).lines).toBe(1e9);
+    // The reply arrives on the ordinary draw path, and the recorder reports on the write it lands on.
+    await read(page, turns(6));
+    await expect(page.locator('#toast')).toContainText('Recovered 8 messages');
+    expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(6);
+  });
+
+test('a recovery that finds nothing new says so rather than nothing at all', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page, turns(2));
+  await page.evaluate(() => recoverConvHistory());
+  await read(page, turns(2));
+  await expect(page.locator('#toast')).toContainText('Nothing new to recover');
+});
+
+test('a window the record cannot be located in marks the break instead of guessing',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page, turns(2));
+    // /clear, or a scrollback that no longer reaches the record. Longer, so it is a deep read, and
+    // with nothing in it the transcript can be joined to.
+    await page.evaluate(() => recoverConvHistory());
+    await read(page, turns(6).replace(/Answer/g, 'Something else'));
+    await expect(page.locator('#toast')).toContainText('Could not find where the record left off');
+    // Nothing written, and the break remembered for the next thing that is.
+    expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(2);
+    expect((await held(page, key)).gap).toBe(true);
+  });
+
+test('the button is offered on a pane with a transcript and on no other', async ({page}) => {
+  await open(page);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvRecover')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await join(page);
+  await read(page);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvRecover')).toBeVisible();
+});

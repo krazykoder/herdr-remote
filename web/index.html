@@ -3556,6 +3556,10 @@
                pane that has one, and it counts before it asks. -->
           <button class="menu-item" role="menuitem" id="menuConvDedupe" hidden
             onclick="closeTermMenu(); removeConvDuplicates()">Remove duplicates</button>
+          <!-- Turns a gap you can see into a gap you can close: reads the pane as far back as the
+               relay allows and records what the transcript is missing. Only ever adds. -->
+          <button class="menu-item" role="menuitem" id="menuConvRecover" hidden
+            onclick="closeTermMenu(); recoverConvHistory()">Recover history</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->

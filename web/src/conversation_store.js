@@ -300,8 +300,14 @@
       // A window deeper than any this transcript has been recorded from — Load more, or the button
       // (§2.2). Not a comparison against the last read: it is a watermark, so the 3s poll can never
       // reach this branch however many times it runs.
-      const deep = held.backfilled && rows.length > (held.depth || 0);
-      let before = [], add = [];
+      //
+      // An explicit request is never declined for being a repeat. Idempotence is what makes that
+      // safe, and it is not merely a nicety: a pane sitting at herdr's own scrollback ceiling comes
+      // back the same length every time, so a watermark alone would refuse every recovery after the
+      // first — on exactly the panes with the most history to lose.
+      const asked = convRecoverKey === key;
+      const deep = held.backfilled && (asked || rows.length > (held.depth || 0));
+      let before = [], add = [], noteGap = false;
       if (!held.backfilled) {
         // The first read.
         const first = splitFirstRead(body, held.entries);
@@ -318,7 +324,9 @@
         const found = deepEntries(body, held.entries, now);
         before = found.before;
         add = found.add;
-        if (found.gap) held.gap = true;
+        // Noticed here, drawn above whatever is recorded next — which may be days away and a reload
+        // later, so it is committed on its own rather than riding a write that never comes.
+        if (found.gap && !held.gap) { held.gap = true; noteGap = true; }
         if (add.length && end) held.lastTurn = end;
       } else if (end > (held.lastTurn || 0)) {
         // A turn ended since the last one this transcript recorded. Reads of the same turn after
@@ -332,6 +340,7 @@
       // The watermark moves on the read, not on what the read produced: a deeper window that added
       // nothing has still been recorded from, and asking it again would add nothing again.
       if (deep || held.backfilled) held.depth = Math.max(held.depth || 0, rows.length);
+      let wrote = 0, dropped = 0;
       if (before.length || add.length) {
         const old = tagUserEntries(convStamped(before, label, a.agent || ''), loadOutbox(), now);
         const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), old.outbox, now);
@@ -345,11 +354,21 @@
         // The prepend is fitted to the room the record leaves it, rather than handed to `capEntries`
         // — which trims from the front, which is where a prepend lands (§2.8).
         const fitted = fitPrepend(old.entries, held.entries.length, tagged.entries.length);
+        dropped = old.entries.length - fitted.length;
+        wrote = fitted.length + tagged.entries.length;
         held.entries = capEntries(fitted.concat(held.entries, tagged.entries));
         held.label = label;
         held.touched = now;
         held.spawn = convSpawn(a, now);
         await convCommit(key);
+      } else if (noteGap) {
+        await convCommit(key);
+      }
+      // Answered on the first record after the press, whatever it found. A button that adds nothing
+      // and says nothing reads as broken (§2.6).
+      if (asked) {
+        convRecoverKey = '';
+        convRecoverReport(wrote, dropped, held.gap);
       }
       // The thread draws the draft as well as the record, so a poll that added nothing can still
       // have changed what is on screen.
@@ -414,6 +433,44 @@
       const removed = await convQueue(key, () => convDedupeNow(key));
       showToast(removed ? `Removed ${removed} duplicate message${removed > 1 ? 's' : ''}`
         : 'No duplicates found in this transcript');
+    }
+
+    // `Recover history` (§2.6). Every automatic trigger is bounded by a gate that can be wrong — a
+    // gap too short to count, an outage the browser never registered — and the answer to a
+    // heuristic that can miss is a button, not a looser heuristic.
+    //
+    // It issues no read of its own. It asks the pane for everything the relay will give and lets
+    // the ordinary draw path deliver it; the recorder does the rest, exactly as it does for Load
+    // more. What this holds is *who asked*, so that the write it lands on can report what it did
+    // rather than leaving a silent no-op looking like a broken button.
+    let convRecoverKey = '';
+
+    function recoverConvHistory() {
+      const a = activePane ? paneOf(activePane) : null;
+      const key = a ? convMemberKey(a) : '';
+      if (!key || !convReferenced().has(key)) return;
+      convRecoverKey = key;
+      paneLines = READ_LINES_ASK;
+      refreshPane();
+      showToast('Reading as far back as the relay allows…');
+    }
+
+    // What the recovery did, in the pane's own words. `wrote` counts entries added on both sides;
+    // `dropped` is history the transcript had no room for (§2.8), which is a fact about the ceiling
+    // and not a failure of the read.
+    function convRecoverReport(wrote, dropped, gap) {
+      const many = n => `${n} message${n === 1 ? '' : 's'}`;
+      if (gap && !wrote) {
+        showToast('Could not find where the record left off — the gap is marked in the thread');
+      } else if (!wrote && dropped) {
+        showToast('This transcript is full — older messages could not be added');
+      } else if (!wrote) {
+        showToast('Nothing new to recover');
+      } else if (dropped) {
+        showToast(`Recovered ${many(wrote)}; ${many(dropped)} did not fit`);
+      } else {
+        showToast(`Recovered ${many(wrote)}`);
+      }
     }
 
     async function convDedupeNow(key) {

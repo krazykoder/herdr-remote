@@ -191,6 +191,12 @@
       const v = parseInt(localStorage.getItem(HISTORY_KEY), 10);
       return HISTORY_MAX.includes(v) ? v : HISTORY_DEFAULT;
     }
+    // "As deep as you allow." The relay clamps every request at its own `READ_LINES_MAX`, so asking
+    // for more than any ceiling is answered with the ceiling — which is how the app tracks an
+    // operator raising or lowering it without being edited, and why no constant here may name a
+    // maximum. `HISTORY_MAX`'s top entry equalling today's is a coincidence, not a contract.
+    // Recovery is the only caller: a standing read is a repeated cost and is bounded by the picker.
+    const READ_LINES_ASK = 1e9;
     // A tenth of the ceiling, so reaching a deep one does not take fifty taps. 500 at the default,
     // which is the step this had before the ceiling was adjustable.
     function historyStep() { return Math.max(500, Math.round(paneHistoryMax() / 10)); }
