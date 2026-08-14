@@ -165,7 +165,15 @@ const openCard = async page => {
   await page.locator('.term-header .back').click();
   await page.locator('#conversations .conversation-card').click();
   await expect(page.locator('#convView')).toBeVisible();
+  // The roster and the conversation's own actions live behind the header's disclosure, so every
+  // test that acts on one opens it first — which is also the user's first tap.
+  await openRoster(page);
   return key;
+};
+
+const openRoster = async page => {
+  await page.locator('#convViewWho').click();
+  await expect(page.locator('#convViewRoster')).toBeVisible();
 };
 
 test('naming a conversation is what promotes it out of the evictable tier', async ({page}) => {
@@ -1134,6 +1142,114 @@ test('three members read by colour, name and badge, with no left or right', asyn
   await expect(page.locator('#convThread')).toContainText('said by m2');
   await expect(page.locator('#convThread')).toContainText('said by m3');
   expect(new Set(dots).size).toBe(3);
+});
+
+test('the roster is a disclosure under the header, not a block above the thread', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  // Closed on the way in: a reader opened a conversation to read it.
+  await expect(page.locator('#convViewRoster')).toBeHidden();
+  await expect(page.locator('#convViewWho')).toHaveText('1 pane ▾');
+  await expect(page.locator('#convViewWho')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#convViewWho').click();
+  await expect(page.locator('#convViewRoster')).toBeVisible();
+  await expect(page.locator('#convViewWho')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#convViewRoster .conv-roster-row')).toHaveCount(1);
+  // The thread is not inside it, and did not move to make room.
+  await expect(page.locator('#convViewThread .conv-roster')).toHaveCount(0);
+  await page.locator('#convViewWho').click();
+  await expect(page.locator('#convViewRoster')).toBeHidden();
+});
+
+test('a member can be folded out of the thread without leaving the conversation', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: 'the other one', touched: Date.now(),
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'said by the other one', at: Date.now(), at_src: 'state'}]});
+    convEdit(c => { c.members = c.members.concat({key: 'ghost', added: 2, label: 'the other one'}); });
+  });
+  await expect(page.locator('#convViewThread')).toContainText('said by the other one');
+  const before = await page.locator('#convViewThread .conv-msg').count();
+
+  await page.locator('#convViewRoster .conv-roster-row', {hasText: 'the other one'})
+    .locator('.conv-eye').click();
+  await expect(page.locator('#convViewThread')).not.toContainText('said by the other one');
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(before - 1);
+  // Hiding is a reading state and nothing else: the member is still in the roster, still in the
+  // conversation on disk, and its transcript is still referenced.
+  await expect(page.locator('#convViewRoster .conv-roster-row')).toHaveCount(2);
+  await expect(page.locator('#convViewRoster .conv-roster-row.hidden-member')).toHaveCount(1);
+  await expect(page.locator('#convViewWho')).toHaveText('1/2 panes ▾');
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(2);
+  expect(await page.evaluate(async () => ((await convGet(['ghost']))[0] || {}).entries.length)).toBe(1);
+
+  await page.locator('#convViewRoster .conv-roster-row', {hasText: 'the other one'})
+    .locator('.conv-eye').click();
+  await expect(page.locator('#convViewThread')).toContainText('said by the other one');
+  await expect(page.locator('#convViewWho')).toHaveText('2 panes ▾');
+});
+
+test('hiding is remembered per conversation, not per pane', async ({page}) => {
+  await openCard(page);
+  // From the roster, not from activePane: the standalone view has no open pane by design.
+  const key = await page.evaluate(() => loadConvIndex()[0].members[0].key);
+  await page.locator('#convViewRoster .conv-eye').click();
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('herdr_conv_hidden')));
+  expect(stored).toEqual({c1: [key]});
+  // The same pane in a second grouping is unaffected — being noise in one reading does not make it
+  // noise in another, which is the whole reason a pane may be in several.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items.push({id: 'c2', name: 'the release', created: 2, members: items[0].members.slice()});
+    saveConvIndex(items);
+    openConversation('c2');
+  });
+  await expect(page.locator('#convViewThread .conv-msg').first()).toBeVisible();
+});
+
+test('every live member opens its own pane, and the header opens the first visible one',
+  async ({page}) => {
+  await openCard(page);
+  await page.evaluate(() => {
+    convEdit(c => {
+      c.members = c.members.concat(convMemberOf(agents.find(a => a.label === 'scratch')));
+    });
+  });
+  // Two Open buttons, one per live member — the header's single button picks the first, and a
+  // conversation of four is exactly where that is the wrong one.
+  await expect(page.locator('#convViewRoster .conv-open')).toHaveCount(2);
+  await page.locator('#convViewRoster .conv-roster-row', {hasText: 'scratch'})
+    .locator('.conv-open').click();
+  await expect(page.locator('#termTitle')).toContainText('scratch');
+  // And it lands on this conversation's thread rather than whichever one that pane last read
+  // under.
+  expect(await page.evaluate(() => convViewConv(paneOf(activePane)).id)).toBe('c1');
+});
+
+test('the header button skips a member folded out of the thread', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(() => {
+    convEdit(c => {
+      c.members = c.members.concat(convMemberOf(agents.find(a => a.label === 'scratch')));
+    });
+  });
+  await expect(page.locator('#convViewOpen')).toBeVisible();
+  // Hide the first, and the header follows the reader's own filter rather than the roster order.
+  await page.locator('#convViewRoster .conv-roster-row').first().locator('.conv-eye').click();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#termTitle')).toContainText('scratch');
+});
+
+test('with every member hidden the view says so rather than looking empty', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convViewRoster .conv-eye').click();
+  await expect(page.locator('#convViewThread .conv-empty')).toContainText('Every member is hidden');
+  // And the one action that needs a live pane goes, because there is no visible one to open.
+  await expect(page.locator('#convViewOpen')).toBeHidden();
 });
 
 // A pane may be in any number of conversations — the store never stopped it, and grouping is a

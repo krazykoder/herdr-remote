@@ -155,3 +155,36 @@ Browser (`tests/e2e/browser/conversation.spec.js`):
 - Duplicate copies the roster, clears `auto`, and adds no transcript.
 - The recorded-panes group offers an ended session, and joining it puts its words in the thread.
 - Three members render with three tints, three names, and no left/right sides.
+
+---
+
+## 9. S4 — The standalone view's chrome (added 2026-08-14)
+
+Three changes to the view a landing card opens, and to nothing else. The pane's own thread panel is
+untouched.
+
+**The roster and the conversation's actions are a disclosure.** They were a block above every
+thread — reference and ownership sitting on top of the thing the view exists to read. They now live
+in `#convViewRoster`, opened by a `Members` button in the header that also carries the count
+(`3 panes`, or `2/3 panes` when something is folded out). Header and panel stick as one
+`.conv-view-top`, so the panel needs no measurement of the header to sit under it. The panel is
+diffed separately from the thread: a message arriving must not rewrite the roster under a reader
+who has just opened it.
+
+**A member can be folded out of the thread.** Per conversation, in `herdr_conv_hidden` — the same
+pane can be worth reading in one grouping and noise in another, which is what S1 makes possible.
+This changes no membership, deletes no words and stops no recording; it is a reading state and the
+roster row says `hidden` rather than being struck through.
+
+The thread is composed over **every** member and filtered after. Composing over the visible ones
+would renumber them, and the member index is what picks a bubble's colour — hiding the first member
+would repaint the second in its tint. A single-member thread's entries carry no key, because there
+was never another member to tell them from; that member is `keys[0]`.
+
+**Every live member opens its own pane.** `openConvMemberPane(key)` is the general form, and the
+header's button is now `convVisibleLive(conv)` fed into it: the first member of the roster that is
+live *and* not folded out. Roster order is when each member joined, so that is the conversation's
+oldest running session — worth stating plainly, because it is easy to read the old code as picking
+a "primary". There is no primary. A pair partner is something the pane's own thread adds once it is
+open (`pairedConvMembers`), not something this picks. Either route sets the pane's per-pane
+conversation preference to this conversation, so a pane in several opens on the one you came from.
