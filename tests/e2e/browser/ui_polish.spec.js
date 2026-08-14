@@ -154,6 +154,57 @@ test('Summary never lands on an arrow, at any phone width', async ({page}) => {
   }
 });
 
+test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  const fire = page.locator('#fireBtn'), quit = page.locator('#quitBtn'), cls = page.locator('#clsBtn');
+  const refresh = page.locator('#refreshBtn');
+  // Wide: unchanged. The fold exists for the width it is not needed at.
+  await expect(fire).toBeHidden();
+  await expect(quit).toBeVisible();
+  await expect(refresh).toBeVisible();
+  // Icon only in the row — the word belongs to the menu, where an icon says nothing.
+  await expect(page.locator('.fire-label')).toBeHidden();
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({width, height: 844});
+    await expect(fire, `f() missing at ${width}`).toBeVisible();
+    await expect(quit, `QUIT still in the row at ${width}`).toBeHidden();
+    await expect(cls).toBeHidden();
+    await expect(refresh, `Refresh still in the row at ${width}`).toBeHidden();
+    // The header is what this buys: nothing may run off the edge of it.
+    const over = await page.evaluate(() => {
+      const h = document.querySelector('#terminalView .term-header'), b = h.getBoundingClientRect();
+      return [...h.querySelectorAll('button, .fire-menu')].map(e => e.getBoundingClientRect())
+        .filter(r => r.width && (r.left < b.left - 0.5 || r.right > b.right + 0.5)).length;
+    });
+    expect(over, `something runs off the header at ${width}`).toBe(0);
+  }
+
+  await fire.click();
+  await expect(quit).toBeVisible();
+  await expect(cls).toBeVisible();
+  await expect(refresh).toBeVisible();
+  await expect(page.locator('.fire-label')).toHaveText('Refresh');
+  // A menu, read down its left edge: one column, one left edge, one width.
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button')]
+    .map(b => { const r = b.getBoundingClientRect(); return [r.left, r.width, r.top]; }));
+  expect(rows.length).toBe(3);
+  expect(new Set(rows.map(r => r[0])).size, 'the rows share a left edge').toBe(1);
+  expect(new Set(rows.map(r => r[1])).size, 'the rows share a width').toBe(1);
+  expect(rows[0][2] < rows[1][2] && rows[1][2] < rows[2][2], 'stacked, not a row').toBe(true);
+  // And it says a menu opens, rather than looking like one more action in the row.
+  expect(await fire.evaluate(b =>
+    getComputedStyle(b, '::after').content.replace(/"/g, ''))).toBe('▾');
+  await expect(fire).toHaveAttribute('aria-expanded', 'true');
+  // One tap only arms, exactly as it does in the row.
+  await quit.click();
+  await expect(quit).toHaveText('QUIT?');
+  // And closing the fold takes the arm with it — the promise was about a button about to vanish.
+  await page.locator('#termTitle').click();
+  await expect(page.locator('#fireMenu')).toBeHidden();
+  await expect(quit).toHaveText('QUIT');
+});
+
 test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   // The fake herdr's w1 is the one Space with two tabs in it.
   await page.locator('.chip-strip', {hasText: 'Spaces'}).locator('.chip').nth(1).click();
@@ -181,7 +232,7 @@ test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   await page.locator('#agents .agent').first().click();
   await expect(page.locator('#termContent')).toContainText('done.');
   await page.keyboard.press('Alt+Tab');
-  await page.locator('.back').first().click();
+  await page.locator('.term-header .back').click();
   await expect(tabs.nth(0)).toHaveClass(/active/);
 });
 

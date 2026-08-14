@@ -40,22 +40,23 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
+const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
-               'parseConvIndex', 'capEntries', 'evictOrder',
-               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
+               'parseConvIndex', 'capEntries', 'evictOrder', 'convCopyName',
+               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
   + slice('    // --- Final message detection ---', '    // --- Conversation recorder (pure) --- end')
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
+const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
-       parseConvIndex, capEntries, evictOrder,
-       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
+       parseConvIndex, capEntries, evictOrder, convCopyName,
+       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
+       CONV_ROSTER_MAX} = ctx.__out;
 
 const NOW = 1755000000000;
 
@@ -173,6 +174,46 @@ test('a first read keeps a sent prompt in place and appends its completed reply'
   assert.deepStrictEqual(texts(history.concat(stored, reply)),
     ['first question', 'First answer.', 'second question', 'Second answer.']);
   assert.strictEqual(reply[0].at_src, 'state');
+});
+
+test('two sends before a first read cost neither its prompt nor its reply', () => {
+  // Both prompts reached the store before the pane was ever read, so both echoes are already
+  // entries and the older reply is not scrollback.
+  const rows = ['\u276f old business', '', '\u23fa Older answer.', '',
+                '\u276f first question', '', '\u23fa First answer.', '',
+                '\u276f second question', '', '\u23fa Second answer.', '', '\u276f'];
+  const stored = [{who: 'user', text: 'first question', at: NOW - 20, at_src: 'sent'},
+                  {who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
+  const first = splitFirstRead(paneMessages(rows, 'claude'), stored);
+  const history = backfillEntries(first.history, NOW);
+  const reply = sentTurnEntries(first.turn, stored, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(history), ['old business', 'Older answer.'],
+    'the seam is the oldest sent prompt, so neither prompt is filed twice');
+  assert.deepStrictEqual(texts(reply), ['First answer.', 'Second answer.']);
+  assert.strictEqual(reply[0].at_src, 'read', 'only the closing message carries the transition');
+  assert.strictEqual(reply[1].at_src, 'state');
+});
+
+test('a sent prompt that also sits far up the scrollback splits at its echo', () => {
+  const rows = ['\u276f go', '', '\u23fa Older answer.', '',
+                '\u276f go', '', '\u23fa Newer answer.', '', '\u276f'];
+  const stored = [{who: 'user', text: 'go', at: NOW - 10, at_src: 'sent'}];
+  const first = splitFirstRead(paneMessages(rows, 'claude'), stored);
+  assert.deepStrictEqual(texts(backfillEntries(first.history, NOW)), ['go', 'Older answer.']);
+  assert.deepStrictEqual(texts(sentTurnEntries(first.turn, stored, NOW, NOW - 1)),
+    ['Newer answer.']);
+});
+
+test('a copy is named apart from what it was copied from', () => {
+  assert.strictEqual(convCopyName('the release', []), 'the release (copy)');
+  // The second copy is the third grouping of the same work, and two rows called the same is a list
+  // nobody can pick from.
+  assert.strictEqual(convCopyName('the release', ['the release', 'the release (copy)']),
+    'the release (copy 2)');
+  // Copying a copy does not stack the suffix.
+  assert.strictEqual(convCopyName('the release (copy 2)', ['the release (copy)']),
+    'the release (copy 2)');
+  assert.ok(convCopyName('x'.repeat(80), []).length <= 64);
 });
 
 // A reload arms the turn clock at the reconnect, so `end` is newer than anything stored and the
@@ -412,11 +453,24 @@ test('a named conversation may be empty, but malformed entries are dropped', () 
   assert.deepStrictEqual(ids(index(items)), ['c1']);
 });
 
-test('membership is capped, and the cap does not drop the conversation', () => {
+test('the roster is capped far above the recording cap, and keeps ended members', () => {
+  // MEMBER_MAX is a ceiling on how many panes record at once — a statement about the view. An
+  // ended member costs a label and draws history, and a conversation continued across several
+  // respawns collects them, so truncating the roster to MEMBER_MAX here would delete sessions that
+  // happened on the next read of the index.
   const members = Array.from({length: 20}, (_, i) => ({key: 'local|w1:p' + i + '|claude|/work'}));
   const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
-  assert.strictEqual(conv.members.length, CONV_MEMBER_MAX);
+  assert.strictEqual(conv.members.length, 20);
   assert.strictEqual(conv.name, 'auth');
+  assert.ok(CONV_ROSTER_MAX > CONV_MEMBER_MAX);
+});
+
+test('a roster past even that ceiling is trimmed rather than dropping the conversation', () => {
+  const members = Array.from({length: CONV_ROSTER_MAX + 5}, (_, i) => ({key: 'k' + i}));
+  const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
+  assert.strictEqual(conv.members.length, CONV_ROSTER_MAX);
+  assert.strictEqual(conv.members[0].key, 'k5', 'oldest ended sessions leave first');
+  assert.strictEqual(conv.members.at(-1).key, 'k204', 'new live session stays recorded');
 });
 
 test('a transcript past its ceiling loses its oldest entries, not its newest', () => {
@@ -440,6 +494,26 @@ test('eviction drops what nobody named before anything anyone did', () => {
 test('with everything referenced, the oldest touched goes first', () => {
   const all = [{key: 'a', touched: 3}, {key: 'b', touched: 1}, {key: 'c', touched: 2}];
   assert.deepStrictEqual(dropped(all, new Set(['a', 'b', 'c']), 1), ['b', 'c']);
+});
+
+test('a transcript a named conversation holds is never evicted', () => {
+  // The floor the whole model rests on: the record outliving the panes that wrote it is the
+  // feature, so deleting one to stay under a ceiling is the failure it cannot absorb.
+  const rec = (key, touched) => ({key: key, touched: touched});
+  const all = [rec('a', 1), rec('b', 2), rec('c', 3)];
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'b', 'c']), 1, new Set(['a'])), ['b', 'c']);
+});
+
+test('a ceiling reached with everything named drops nothing at all', () => {
+  const all = [{key: 'a', touched: 1}, {key: 'b', touched: 2}];
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'b']), 1, new Set(['a', 'b'])), []);
+});
+
+test('what nobody named goes before what only the recorder named', () => {
+  // The tier split: auto conversations are book-keeping, and they are what stays evictable so
+  // that recording by default cannot grow forever.
+  const all = [{key: 'auto', touched: 1}, {key: 'loose', touched: 9}];
+  assert.deepStrictEqual(dropped(all, new Set(['auto']), 1, new Set()), ['loose']);
 });
 
 test('nothing is evicted while there is room', () => {
