@@ -1,7 +1,11 @@
-# Spec — Conversation Mode (proposal)
+# Spec — Conversation Mode
 
 **Date:** 2026-08-13
-**Status:** **Proposed — not implemented.** Open questions in §11 need answers before build.
+**Status:** **Implemented** — `web/index.html`, `tests/test_conversation.js`,
+`tests/e2e/browser/conversation.spec.js`. Merged 2026-08-13. Two of the five v1 decisions in §11
+were overturned during the build and are marked there; §5.2 is the recorder as it actually works.
+Deep recovery is deferred separately in
+[2026-08-13_conversation_deep_recovery_deferred.md](2026-08-13_conversation_deep_recovery_deferred.md).
 **Scope:** `web/index.html` only. No relay change, no new WebSocket message, no new env var.
 **Builds on:** the final-message detector (`web/index.html`, `// --- Final message detection ---`,
 covered by `tests/test_summary_detect.js`) and P3 Session Pairs
@@ -639,16 +643,17 @@ wire format. That is a different phase.
 
 ## 11. V1 decisions
 
-1. **Record only the actively read pane.** Recording every member needs a background read per member
-   (a `read_pane` every ~12s for a pane nobody is looking at), and that scales with `MEMBER_MAX`,
-   not with two. Without it, each member's transcript advances only while that member is on screen —
-   which is what agents watched in turn actually look like, and the joint view already draws the
-   resulting gaps honestly (§6). If background recording is added later it is a poll budget
-   (N members × 12s), not a change to anything above.
-2. **Read the user's own sent text back from the pane.** Recording at send time is exact, immediate,
-   and includes what a shortcut sent, but it can disagree with what the agent actually received.
-   Readback is one code path and cannot disagree with the pane; a prompt sent while the pane is
-   closed lands at the next open.
+1. ~~**Record only the actively read pane.**~~ **Overturned by the event model.** The reasoning was
+   a poll budget: recording every member meant a background read per member, forever, scaling with
+   `MEMBER_MAX`. Events removed the budget — a member is read when *its own turn ends*, which the
+   relay announces for every pane anyway, so a partner's half of a conversation is recorded whether
+   or not anyone is watching it, and costs less than the polling this decision was avoiding.
+2. ~~**Read the user's own sent text back from the pane.**~~ **Overturned by the event model.** A
+   prompt this app sends is now committed at the send, with its exact text and its exact moment,
+   because a send *is* one of the three write events (§5.2). Readback did not survive contact with
+   the fold it belonged to: it is what forced the recorder to ask "is this prompt one I already
+   have?", and answering that from pane text is where duplicates came from. Readback remains for a
+   prompt typed at the keyboard, which nothing else can see.
 3. **No explicit end in v1.** A conversation whose panes are gone is visibly finished, and eviction
    handles the rest.
 4. **One global `herdr_conv_joint` preference.** It is how every other pane-view setting in the
@@ -658,7 +663,10 @@ wire format. That is a different phase.
 
 ---
 
-## 12. Rough sizing
+## 12. Sizing, as estimated before the build
+
+Kept as written. The recorder line is the one worth reading twice: the estimate was for the fold,
+and the event model that replaced it is smaller than the estimate for the thing it replaced.
 
 | Piece | Size |
 |---|---|
