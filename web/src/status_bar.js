@@ -313,7 +313,7 @@
           // First sight of a pane — the first snapshot after a reload, or an agent someone else
           // started. Nothing rings and nothing lands on the timeline, because none of that
           // happened while anyone was here to hear it. The recorder is the exception: a pane
-          // already sitting on `done` finished a turn that is still on screen and still readable,
+          // already sitting in an ending state finished a turn that is still on screen and readable,
           // and refusing to look at it would throw away a recording this browser can plainly see.
           if (!prev) {
             noteStatus(a.pane_id, a.status, true);

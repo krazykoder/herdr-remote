@@ -723,6 +723,43 @@ test('a turn that ended while nothing was connected is recovered off the pane', 
   expect(rec.entries[rec.entries.length - 1].at_src).toBe('read');
 });
 
+test('a turn that ends the way herdr really reports it is recorded', async ({page}) => {
+  // The regression this exists for. herdr 0.8.0's agent lifecycle vocabulary is
+  // `idle, working, blocked, unknown` — `herdr pane report-agent --state` enumerates exactly those
+  // four — so an agent finishing is `working -> idle` and nothing ever reports `done`. The turn
+  // clock watched `done` and `blocked`, so it never moved, and a transcript kept whatever its
+  // first read backfilled and never gained another word the agent said.
+  //
+  // Every other test in this file forces `done` onto a pane, which is why the suite stayed green
+  // through it. This one drives the transition the relay actually delivers, through the handler
+  // that actually receives it.
+  await open(page);
+  const key = await join(page);
+  // The first read backfills whatever is on screen whatever the status is, which is the half that
+  // kept working and the reason this went a day unnoticed.
+  await page.evaluate(async text => {
+    setPaneText(text);
+    await recordPane(activePane, paneRows);
+  }, PANE);
+  const before = (await held(page, key)).entries.length;
+  expect(before).toBeGreaterThan(0);
+
+  const snapshot = (page, status) => page.evaluate(s => handleMessage({
+    type: 'agents',
+    agents: agents.map(a => (a.pane_id === activePane ? Object.assign({}, a, {status: s}) : a)),
+  }), status);
+  await snapshot(page, 'working');
+  await snapshot(page, 'idle');
+
+  await page.evaluate(async () => {
+    setPaneText('\u276f what changed?\n\n\u23fa The relay now polls slower.\n\n\u276f\n');
+    await recordPane(activePane, paneRows);
+  });
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toContain('The relay now polls slower.');
+  expect(rec.entries.length).toBeGreaterThan(before);
+});
+
 test('with no database, recording still works and says history will be short', async ({page}) => {
   // Private mode, a policy-blocked store, a blocked upgrade. None of them is a reason to stop
   // rendering a pane, and none of them may lose the session's recording silently.

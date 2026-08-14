@@ -44,7 +44,7 @@
     // snapshot carrying it — and the recorder appends a turn when this clock moves past what it
     // last wrote, so a second stamp for a state the pane is already in would append the turn twice.
     // `seeded` is a status this browser did not watch arrive — the first snapshot after a reload,
-    // where a pane sitting on `done` finished at some unknown time while nothing was connected.
+    // where a pane sitting in an ending state finished at some unknown time while nothing was connected.
     // The stamp is still taken, because a clock that starts at zero would make the pane's next
     // turn look like its first; what the flag says is that the stamp is the reconnect, not the
     // transition, and a turn written off it has to prove itself some other way (§5.2).
@@ -61,10 +61,29 @@
       return !!(statusAt[paneId] || {}).seeded;
     }
 
+    // The statuses that mean "the agent stopped writing", which is what ends a turn.
+    //
+    // `idle` is the one that matters and it was missing. herdr's agent lifecycle vocabulary is
+    // `idle, working, blocked, unknown` — those four and no more; `herdr pane report-agent --state`
+    // enumerates them, and 42s of polling a live workspace produced 1818 samples of which none was
+    // `done`. So an agent finishing goes `working → idle`, and a turn clock that only watched
+    // `done` and `blocked` never moved. Every consequence followed from that one omission: the
+    // recorder's `end > held.lastTurn` was never true, so a transcript kept whatever its first read
+    // backfilled and whatever this app sent, and never gained another word the agent said.
+    //
+    // `done` is kept ahead of it rather than replaced. It costs nothing, and if herdr ever
+    // distinguishes "finished and unread" from "idle" this reads the better signal without
+    // changing again. It is *not* dropped in favour of `idle` alone for the same reason.
+    const TURN_END_STATES = ['idle', 'done', 'blocked'];
+
     // The end of the pane's most recent turn, or 0 while it is still writing one — then the fold's
-    // own clock is already the right answer and a stale `done` would date a live message hours ago.
+    // own clock is already the right answer and a stale stamp would date a live message hours ago.
     function turnEnd(paneId) {
       const at = statusAt[paneId] || {};
-      const end = Math.max(at.done || 0, at.blocked || 0);
+      const end = Math.max(...TURN_END_STATES.map(s => at[s] || 0));
       return end > (at.working || 0) ? end : 0;
+    }
+
+    function endsTurn(status) {
+      return TURN_END_STATES.includes(status);
     }

@@ -402,7 +402,7 @@
       return out.removed;
     }
 
-    // The end of a turn is announced: the relay polls herdr itself and pushes done/blocked for
+    // The end of a turn is announced: the relay polls herdr itself and pushes ending states for
     // every pane, whether or not anyone is reading it. That is what the recorder writes on, so this
     // is the read behind every append — one per turn, for every pane in a conversation, wherever
     // the app happens to be looking.
@@ -413,7 +413,7 @@
     // not you were watching it.
     function convReadTurnEnd(paneId, status) {
       if (!ws || !paneId) return;
-      if (status !== 'done' && status !== 'blocked') return;
+      if (!endsTurn(status)) return;
       const a = paneOf(paneId);
       if (!a || !profileFor(a.agent) || !convReferenced().has(convMemberKey(a))) return;
       // Fixed source and length. `visible` is the live frame with the terminal's own breaks left in
