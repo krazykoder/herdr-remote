@@ -1902,3 +1902,124 @@ test('the button is offered on a pane with a transcript and on no other', async 
   await page.locator('#termMenuBtn').click();
   await expect(page.locator('#menuConvRecover')).toBeVisible();
 });
+
+// --- Coming back after being away (T2) ---
+//
+// T1 covers the pane in front of you and T3 is the button. Neither covers the members of a
+// conversation whose panes were never opened this session — and those are most of a joint thread.
+// What follows is the only read this feature issues on its own, and most of these are about the
+// times it must not.
+
+// A second member, recorded and then dated: what a partner's transcript looks like after an
+// afternoon of nobody looking at it. `stale` is how long ago it was last written.
+const partner = (page, stale) => page.evaluate(async stale => {
+  const other = agents.find(a => a.pane_id !== activePane && profileFor(a.agent));
+  const key = convMemberKey(other);
+  const items = loadConvIndex();
+  items[0].members.push({key: key, added: Date.now(), label: other.label});
+  saveConvIndex(items);
+  // Written straight at the store rather than through a read: this pane is whatever harness the
+  // fake herdr gave it, and the question here is what recovery does with an old record, not what
+  // the parser does with that harness's gutters.
+  const then = Date.now() - stale;
+  await convPut({key: key, first: then, touched: then, label: other.label, depth: 200,
+    backfilled: true, entries: [{who: 'agent', text: 'Answered.', at: then, at_src: 'backfill',
+      seen: then}]});
+  convHeld.delete(key);
+  return {key: key, pane: other.pane_id};
+}, stale);
+
+// The socket having been down, without taking the socket down: the app cannot tell the difference,
+// and a real 40-minute outage is not something a test can wait for.
+const wasAway = (page, ms) => page.evaluate(ms => {
+  wsDownSince = ms ? Date.now() - ms : 0;
+  convSawSnapshot = true;      // the page has been up a while; this is not its first snapshot
+}, ms);
+
+const snapshot = page => page.evaluate(() => handleMessage({type: 'agents', agents: agents}));
+const deepReads = page => page.evaluate(() =>
+  window.__sent.filter(m => m.type === 'read_pane' && m.lines === 5000));
+
+test('a session that never dropped pulls no history it was not asked for', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 0);
+  await snapshot(page);
+  // The members are stale enough. Nothing was missed, so nothing is read: a healthy connected
+  // session is the case this must cost nothing at all.
+  expect(await deepReads(page)).toEqual([]);
+  expect(mate.pane).toBeTruthy();
+});
+
+test('a three-second flap is not an outage', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 3000);
+  await snapshot(page);
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('a real outage recovers the members nobody had open', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 40 * 60 * 1000);
+  await snapshot(page);
+  await expect.poll(() => deepReads(page)).toEqual([
+    {type: 'read_pane', pane_id: mate.pane, lines: 5000, source: 'recent-unwrapped'},
+  ]);
+});
+
+test('a member written moments ago has nothing worth a read', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await partner(page, 30 * 1000);
+  await tapWire(page);
+  await wasAway(page, 40 * 60 * 1000);
+  await snapshot(page);
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('a recovery that found nothing is not tried again on the next outage', async ({page}) => {
+  // `touched` cannot answer this: it moves only when something is written, so a quiet transcript
+  // would buy a deep read on every reconnect and every reload forever.
+  await open(page);
+  await join(page);
+  await read(page);
+  await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 40 * 60 * 1000);
+  await snapshot(page);
+  await expect.poll(() => deepReads(page)).toHaveLength(1);
+  await page.evaluate(() => { window.__sent = []; });
+  await wasAway(page, 40 * 60 * 1000);
+  await snapshot(page);
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('the open pane recovers by pulling its own history, not behind its own back',
+  async ({page}) => {
+    // Its reply lands on the draw branch and would replace the rows under the reader's finger, so
+    // it takes the one path that is already correct for it: Load more, to the same depth.
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    await page.evaluate(async k => {
+      const held = (await convGet([k]))[0];
+      held.touched = Date.now() - 60 * 60 * 1000;
+      convHeld.delete(k);
+      await convPut(held);
+    }, key);
+    await wasAway(page, 40 * 60 * 1000);
+    await snapshot(page);
+    await expect.poll(() => page.evaluate(() => paneLines)).toBe(5000);
+  });

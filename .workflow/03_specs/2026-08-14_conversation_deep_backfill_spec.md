@@ -158,9 +158,17 @@ conditions, both required:
      the following `onopen` sees `Date.now() - wsDownSince` exceed the threshold. `prevStatuses`
      survives a dropped socket, so without this clause a 40-minute outage with no reload recovers
      nothing — which is the reported symptom.
-2. **The gap is worth a read.** `Date.now() - held.touched > DEEP_AWAY_MS` for that member. A
-   transcript written 90 seconds ago has nothing to recover; a three-second socket flap must never
-   cost a deep read on every member.
+2. **The gap is worth a read.** `Date.now() - max(held.touched, held.recovered) > DEEP_AWAY_MS` for
+   that member. A transcript written 90 seconds ago has nothing to recover; a three-second socket
+   flap must never cost a deep read on every member.
+
+   `held.recovered` is the attempt, stamped whether or not the read produced anything, and it is
+   why `touched` cannot answer this alone: `touched` moves only when something is *written*. A
+   quiet transcript — the common case, since a recovery that finds nothing is the outcome to
+   optimise for — would otherwise buy a deep read per member on every reconnect and every reload,
+   forever. The stamp is a small put on a path that already awaits IndexedDB, and it turns the rule
+   into "at most one deep recovery per member per `DEEP_AWAY_MS`", which is the cost story the rest
+   of this section claims.
 
 Then, per member that passes — conversation member, transcript exists, agent profile known:
 

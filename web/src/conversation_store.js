@@ -506,6 +506,64 @@
         { type: 'read_pane', pane_id: paneId, lines: 200, source: 'recent-unwrapped' }));
     }
 
+    // T2 — the recovery nobody asks for (§2.4).
+    //
+    // T1 covers the pane in front of you, because the read that closes its gap is a read the user
+    // already made. It covers nothing else: the other members of a conversation are panes nobody
+    // opened this session, and the one-turn recovery on reconnect is all their transcripts get.
+    //
+    // So one read has to be issued, and both gates on it are about cost. A healthy connected
+    // session buys nothing — there is no gap to close. A three-second flap buys nothing — nothing
+    // was missed. What buys a read is a gap in coverage *and* a member whose record is old enough
+    // for that gap to have cost it something.
+    const DEEP_AWAY_MS = 15 * 60 * 1000;
+    // A request, not a bound: the relay clamps it (§2.7). Flat rather than `paneHistoryMax()` —
+    // that setting is how much scrollback to *draw in the pane*, and a T2 read is never drawn.
+    const DEEP_LINES = 5000;
+    let convSawSnapshot = false;
+
+    // Once per snapshot, and it declines on almost all of them.
+    async function convRecoverAway(list) {
+      if (!ws) return;
+      const now = Date.now();
+      // A page that has just loaded, or a socket that was down long enough to have missed turns.
+      // `prevStatuses` survives a dropped socket, so without the second clause a 40-minute outage
+      // with no reload recovers nothing — which is the reported symptom.
+      const fresh = !convSawSnapshot;
+      const outage = !!wsDownSince && now - wsDownSince > DEEP_AWAY_MS;
+      convSawSnapshot = true;
+      wsDownSince = 0;
+      if (!fresh && !outage) return;
+      const referenced = convReferenced();
+      const panes = (list || [])
+        .filter(a => a && profileFor(a.agent) && referenced.has(convMemberKey(a)));
+      if (!panes.length) return;
+      // One transaction for the lot. A member with no record yet is not here and does not want to
+      // be: it has no history to recover, and its first ordinary read backfills the whole pane.
+      const stored = await convGet(panes.map(convMemberKey));
+      const stale = new Set(stored
+        .filter(h => now - Math.max(h.touched || 0, h.recovered || 0) > DEEP_AWAY_MS)
+        .map(h => h.key));
+      for (const a of panes) {
+        const key = convMemberKey(a);
+        if (!stale.has(key)) continue;
+        // Stamped whether or not the read produces anything, or a recovery that finds nothing would
+        // be re-issued on every reload for as long as the transcript stays quiet. `touched` cannot
+        // answer this on its own: it moves only when something is written.
+        convQueue(key, async () => {
+          const held = await convHold(key, now);
+          held.recovered = now;
+          await convCommit(key);
+        });
+        // The open pane cannot take this path: its reply lands on the draw branch, which would
+        // replace the rows under the reader's finger. It gets Load more to the same depth instead
+        // (§2.5), and T1 does the recording.
+        if (a.pane_id === activePane) { paneLines = DEEP_LINES; refreshPane(); continue; }
+        ws.send(JSON.stringify(
+          { type: 'read_pane', pane_id: a.pane_id, lines: DEEP_LINES, source: 'recent-unwrapped' }));
+      }
+    }
+
     // Whether a transcript that just changed is one the view on screen is rendering: the open
     // pane's own, or another member of the joint thread it is showing.
     function convThreadShows(key) {

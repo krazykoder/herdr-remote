@@ -213,7 +213,13 @@
         if (window.cue) cue('ready');
         announceSubscription();
       };
-      ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
+      ws.onclose = () => {
+        // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
+        // an hour offline reads as three seconds when the socket finally comes back.
+        if (!wsDownSince) wsDownSince = Date.now();
+        setStatus('disconnected');
+        setTimeout(connect, 3000);
+      };
       ws.onerror = () => setStatus('disconnected');
       ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
     }
@@ -341,6 +347,10 @@
         // Which member is ended is a question only a snapshot answers, so the prune rides on one.
         // It writes nothing on the polls where nothing has outgrown the cap, which is all of them.
         convPruneAuto();
+        // After the auto-join, so a pane filed under a conversation on this very snapshot is a
+        // member by the time recovery looks for one. Declines on all but the first snapshot of a
+        // page and the first after a real outage.
+        convRecoverAway(msg.agents);
         render();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
