@@ -1,8 +1,9 @@
 {
   "name": "herdr-remote-tests",
   "private": true,
-  "description": "Test-only manifest. The web app itself is a single self-contained file with no build step and no runtime dependencies; nothing here ships.",
+  "description": "Test manifest and build scripts for modular frontend.",
   "scripts": {
+    "build": "python3 scripts/build.py",
     "test": "node --test tests/*.js",
     "test:e2e": "playwright test"
   },

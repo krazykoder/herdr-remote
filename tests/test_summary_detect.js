@@ -16,10 +16,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    // --- Final message detection ---');
-const to = HTML.indexOf('    // --- Line ruler ---', from);
-assert.ok(from !== -1 && to > from, 'final message block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'summary_detect.js'), 'utf8');
 
 // Everything the block reaches for and does not declare: the ruler's state, the pane it belongs
 // to, and the store the trim is remembered in. The parse itself needs none of them.
@@ -36,7 +33,7 @@ const ctx = vm.createContext({
     setItem: (k, v) => store.set(k, String(v)),
   },
 });
-vm.runInContext(HTML.slice(from, to), ctx);
+vm.runInContext(SRC, ctx);
 const find = (rows, agent) => ctx.findFinalMessage(rows, agent);
 // The block's own state is declared with let, which is a lexical binding rather than a property
 // of the context object, so it is read back the same way the browser specs read it: by evaluating

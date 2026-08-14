@@ -16,10 +16,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    // --- Main page sections ---');
-const to = HTML.indexOf('    // The terminal is a flex sibling, not an overlay', from);
-assert.ok(from !== -1 && to > from, 'main page sections block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'sections.js'), 'utf8');
 
 // A section node, with the two things the block touches: the style it sets and the class it
 // toggles for the top gap. Content is what decides whether a section is drawn at all, so it is
@@ -57,7 +54,7 @@ function sectionsCtx({stored, content = {}} = {}) {
     },
     document: {getElementById: id => nodes[id] || boxes[id] || null},
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   return {store, nodes, boxes, run: src => vm.runInContext(src, ctx)};
 }
 
@@ -205,7 +202,7 @@ test('private mode is session-only rather than an error', () => {
     localStorage: {getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); }},
     document: {getElementById: id => nodes[id] || null},
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   vm.runInContext("toggleSection('agents', false)", ctx);
   assert.deepEqual(vm.runInContext('sectionOrder', ctx), ['terminals', 'pairs', 'recents', 'conversations']);
 });

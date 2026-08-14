@@ -15,10 +15,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf("    const START_AGENT_KEY = 'herdr_start_agent';");
-const to = HTML.indexOf('    // --- Recents ---', from);
-assert.ok(from !== -1 && to > from, 'start session block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'start_dialog.js'), 'utf8');
 
 const PANE = {
   pane_id: 'w1:p1', label: 'Architect 1', agent: 'claude', project_id: 'proj',
@@ -62,7 +59,7 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     renderStartTarget() {},
   };
   const ctx = vm.createContext(g);
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   return {el, sent, calls, g, run: src => vm.runInContext(src, ctx)};
 }
 

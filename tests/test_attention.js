@@ -15,10 +15,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    // --- Attention ---');
-const to = HTML.indexOf('    // How recently a pane moved', from);
-assert.ok(from !== -1 && to > from, 'attention block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'attention.js'), 'utf8');
 
 function attentionCtx({agents = [], stored = null, activePane = null, hidden = false} = {}) {
   const store = stored === null ? {} : {herdr_acked: JSON.stringify(stored)};
@@ -32,7 +29,7 @@ function attentionCtx({agents = [], stored = null, activePane = null, hidden = f
     activePane,
     document: {hidden},
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   return {store, agents, run: src => vm.runInContext(src, ctx)};
 }
 
@@ -108,7 +105,7 @@ test('unreadable storage is treated as no acks, not as a crash', () => {
       localStorage: {getItem: () => bad, setItem: () => {}}, console,
       agents: [pane('a', 'done')],
     });
-    vm.runInContext(HTML.slice(from, to), ctx);
+    vm.runInContext(SRC, ctx);
     assert.equal(vm.runInContext('attentionCount()', ctx), 1, `stored ${bad}`);
   }
 });
@@ -210,7 +207,7 @@ test('private mode is session-only rather than an error', () => {
     },
     console, agents: [pane('a', 'done')],
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   vm.runInContext("ackPane('a')", ctx);
   assert.equal(vm.runInContext('attentionCount()', ctx), 0, 'the ack still took for this session');
 });

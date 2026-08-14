@@ -1,17 +1,8 @@
-.PHONY: relay-install relay-run relay-plugin ios-build deploy-web
+.PHONY: relay-install relay-run relay-plugin ios-build deploy-web build
 
-relay-install:
-	pip install -r relay/requirements.txt
+build:
+	python3 scripts/build.py
 
-relay-run:
-	python3 relay/herdi_relay.py
-
-relay-plugin:
-	herdr plugin link relay/
-
-ios-build:
-	cd herdi-ios && swift build
-
-# Publishes web/ to https://eagerkoder.github.io/mini/ using your own git credentials.
-deploy-web:
+# Publishes web/dist/ to https://eagerkoder.github.io/mini/ using your own git credentials.
+deploy-web: build
 	./web/deploy.sh

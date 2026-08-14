@@ -16,10 +16,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    window.cue = (() => {');
-const to = HTML.indexOf('  </script>', from);
-assert.ok(from !== -1 && to > from, 'cue block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'cue.js'), 'utf8');
 
 // A fake WebAudio graph that records nothing but the fact that a note was scheduled. The envelope
 // is not under test here — a cue that reaches the oscillator has passed the gate, which is the
@@ -40,7 +37,7 @@ function soundCtx(store = {}) {
   const g = {localStorage: {getItem: k => (k in store ? store[k] : null), setItem() {}}};
   g.window = g;
   g.AudioContext = audio;
-  vm.runInContext(HTML.slice(from, to), vm.createContext(g));
+  vm.runInContext(SRC, vm.createContext(g));
   return {played, cue: g.cue, cueOn: g.cueOn};
 }
 
@@ -81,7 +78,7 @@ test('a browser that refuses storage is audible, not muted', () => {
   // and offers no way to find out why — the checkbox it came from was never stored either.
   const g = {localStorage: {getItem() { throw new Error('SecurityError'); }, setItem() {}}};
   g.window = g;
-  vm.runInContext(HTML.slice(from, to), vm.createContext(g));
+  vm.runInContext(SRC, vm.createContext(g));
   for (const group of Object.keys(SAMPLE)) assert.equal(g.cueOn(group), true, group);
 });
 

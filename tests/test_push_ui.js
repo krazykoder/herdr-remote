@@ -14,10 +14,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    function pushBlocker() {');
-const to = HTML.indexOf('    async function initPush()', from);
-assert.ok(from !== -1 && to > from, 'pushBlocker not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'push.js'), 'utf8');
 
 // `navigator.standalone` is the tell: iOS defines it, everything else leaves it undefined.
 function blockerFor({secure = true, standalone, apis = true} = {}) {
@@ -27,7 +24,7 @@ function blockerFor({secure = true, standalone, apis = true} = {}) {
   const window = {isSecureContext: secure, Notification: apis ? function () {} : undefined};
   if (apis) window.PushManager = function () {};
   const ctx = vm.createContext({window, navigator});
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(SRC, ctx);
   return ctx.pushBlocker();
 }
 

@@ -38,13 +38,13 @@ trap 'rm -rf "$work"' EXIT
 echo "deploy: cloning $REPO ($BRANCH)"
 git clone --quiet --branch "$BRANCH" "$REPO" "$work/site"
 
+python3 "$root/scripts/build.py"
+dist="$src/dist"
+
 dest="$work/site/$SUBDIR"
 mkdir -p "$dest"
 rsync -a --delete \
-  --exclude 'deploy.sh' \
-  --exclude '.wrangler' \
-  --exclude '.DS_Store' \
-  "$src/" "$dest/"
+  "$dist/" "$dest/"
 
 # Pages runs the site through Jekyll unless told otherwise, which skips any file beginning with an
 # underscore and adds a build step this app has no use for. Site-wide, so it lives at the root.

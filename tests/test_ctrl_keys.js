@@ -13,10 +13,12 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    let keyQueue = [], armedMod = null, ctrlConfirm = null;');
-const to = HTML.indexOf('    function toggleArrows()', from);
-assert.ok(from !== -1 && to > from, 'ctrl preset block not found in web/index.html');
+const CONTROLS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'controls.js'), 'utf8');
+const DICTATION = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'dictation.js'), 'utf8');
+const CODE = CONTROLS + '\n' + DICTATION;
+const from = CODE.indexOf('let keyQueue = [], armedMod = null, ctrlConfirm = null;');
+const to = CODE.indexOf('function toggleArrows()', from);
+assert.ok(from !== -1 && to > from, 'ctrl preset block not found');
 
 // A fresh context per test: ctrlConfirm is module state and an arm must not leak into the next one.
 function ctrlCtx() {
@@ -38,7 +40,7 @@ function ctrlCtx() {
     sendKeys: k => sent.push(k),
     renderKeyQueue() {},
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(CODE.slice(from, to), ctx);
   return {el, sent, run: src => vm.runInContext(src, ctx)};
 }
 

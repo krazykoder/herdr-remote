@@ -99,10 +99,12 @@ test('every custom property the stylesheet reads is one something sets', () => {
   // a rendering fault rather than as a missing token, which is why this is a test and not a lint.
   const css = HTML.slice(HTML.indexOf('<style>'), HTML.indexOf('</style>'));
   const used = new Set([...css.matchAll(/var\(\s*--([\w-]+)/g)].map(m => m[1]));
-  // Declared anywhere in the file, not only in the stylesheet: a handful are set per element from
-  // JS or from an inline style, which is exactly how a per-agent tint reaches its own bubble.
-  const set = new Set([...HTML.matchAll(/--([\w-]+)\s*:/g)].map(m => m[1])
-    .concat([...HTML.matchAll(/setProperty\(\s*['"]--([\w-]+)/g)].map(m => m[1])));
+  const srcDir = path.join(__dirname, '..', 'web', 'src');
+  const allJS = fs.readdirSync(srcDir).filter(f => f.endsWith('.js'))
+    .map(f => fs.readFileSync(path.join(srcDir, f), 'utf8')).join('\n');
+  const allText = HTML + '\n' + allJS;
+  const set = new Set([...allText.matchAll(/--([\w-]+)\s*:/g)].map(m => m[1])
+    .concat([...allText.matchAll(/setProperty\(\s*['"]--([\w-]+)/g)].map(m => m[1])));
   for (const name of used) {
     assert.ok(set.has(name), `--${name} is read by the stylesheet and set by nothing`);
   }

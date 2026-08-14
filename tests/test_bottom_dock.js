@@ -13,10 +13,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf("    const QA_KEY = 'herdr_quick_actions';");
-const to = HTML.indexOf('    let paneLines = 200;', from);
-assert.ok(from !== -1 && to > from, 'quick actions block not found in web/index.html');
+const HISTORY = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'history.js'), 'utf8');
 
 // A fresh context per test: both switches are localStorage-backed module state.
 function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {}) {
@@ -40,6 +37,8 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
 
     agents: [{pane_id: 'p1', status}],
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
+    navStep: () => 0,
+    paneOf: () => true,
     navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},
     syncComposerMode() {}, isShell: () => false,
     // The conversation switch reads membership and the per-pane view, both of which live in the
@@ -51,7 +50,7 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     renderPairStrip() {},
   });
   el('convThread').hidden = !threaded;
-  vm.runInContext(HTML.slice(from, to), ctx);
+  vm.runInContext(HISTORY, ctx);
   return {el, store, run: src => vm.runInContext(src, ctx)};
 }
 

@@ -20,12 +20,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const slice = (start, end) => {
-  const from = HTML.indexOf(start), to = HTML.indexOf(end, from);
-  assert.ok(from !== -1 && to > from, `${start} not found in web/index.html`);
-  return HTML.slice(from, to);
-};
+const PAIRS_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_pure.js'), 'utf8');
+const SUMMARY_DETECT = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'summary_detect.js'), 'utf8');
+const CONV_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'conversation_pure.js'), 'utf8');
 
 // Everything the detector block reaches for and does not declare. The recorder itself needs none
 // of it — that is the property being kept.
@@ -46,10 +43,9 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEnt
                'parseConvIndex', 'capEntries', 'evictOrder', 'convCopyName',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
-  slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
-  + slice('    // --- Final message detection ---', '    // --- Conversation recorder (pure) --- end')
+  PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
   // `const` is a lexical binding and never lands on the context object, so the block exports
-  // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
+  // itself explicitly. A rename in source therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,

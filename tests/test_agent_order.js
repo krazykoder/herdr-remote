@@ -16,17 +16,14 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = html.indexOf('    // --- Agent order ---');
-const to = html.indexOf('    // Pinned tabs, newest pin first', from);
-assert.ok(from !== -1 && to > from, 'agent order block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'agent_order.js'), 'utf8');
 
 function ctx(agents, store = {}) {
   const context = vm.createContext({
     agents,
     localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = String(v); }},
   });
-  vm.runInContext(html.slice(from, to), context);
+  vm.runInContext(SRC, context);
   return {store, run: code => vm.runInContext(code, context)};
 }
 
@@ -80,7 +77,7 @@ test('private mode keeps the order for this session rather than failing the drag
     agents: [{pane_id: 'a'}, {pane_id: 'b'}],
     localStorage: {getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); }},
   });
-  vm.runInContext(html.slice(from, to), context);
+  vm.runInContext(SRC, context);
   vm.runInContext("agentOrder = ['b', 'a']; saveAgentOrder()", context);
   assert.deepEqual([...vm.runInContext('orderedAgents(agents).map(a => a.pane_id)', context)], ['b', 'a']);
 });

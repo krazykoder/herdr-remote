@@ -1074,6 +1074,33 @@ async def process_request(connection, request, require_token=True):
                 body = f.read()
             return Response(200, "OK", Headers([("Content-Type", ctype), *extra]), body)
 
+    # Modular source scripts (dev mode): web/src/*.js. Safe single-level check prevents traversal.
+    if name.startswith("src/") and name.endswith(".js") and name.count("/") == 1:
+        base = name[4:]
+        if all(c.isalnum() or c in "-_." for c in base):
+            file_path = os.path.join(WEB_DIR, name)
+            if os.path.isfile(file_path):
+                with open(file_path, "rb") as f:
+                    body = f.read()
+                return Response(200, "OK", Headers([("Content-Type", "application/javascript; charset=utf-8"), ("Cache-Control", "no-cache")]), body)
+
+    # Built distribution (production bundle preview): web/dist/*
+    if name in ("dist", "dist/", "dist/index.html"):
+        file_path = os.path.join(WEB_DIR, "dist", "index.html")
+        if os.path.isfile(file_path):
+            with open(file_path, "rb") as f:
+                body = f.read()
+            return Response(200, "OK", Headers([("Content-Type", "text/html; charset=utf-8"), ("Cache-Control", "no-cache")]), body)
+    if name.startswith("dist/") and name.count("/") == 1:
+        base = name[5:]
+        if base in STATIC_FILES:
+            ctype, extra = STATIC_FILES[base]
+            file_path = os.path.join(WEB_DIR, "dist", base)
+            if os.path.isfile(file_path):
+                with open(file_path, "rb") as f:
+                    body = f.read()
+                return Response(200, "OK", Headers([("Content-Type", ctype), *extra]), body)
+
     # Serve VAPID public key
     if path == "/api/vapid-public-key":
         body = json.dumps({"publicKey": VAPID_PUBLIC_KEY}).encode()

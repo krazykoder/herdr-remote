@@ -32,6 +32,13 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+test('the compiled distribution single-file boots and connects', async ({page}) => {
+  await page.goto('/dist/');
+  await expect(page.locator('#agents')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
+});
+
 test('the agent list shows what the relay is polling', async ({page}) => {
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
   // Terminals are agents' equals in this list when the relay has terminal mode on, which the

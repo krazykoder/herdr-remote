@@ -15,10 +15,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf("    const HISTORY_KEY = 'herdr_pane_history';");
-const to = HTML.indexOf('    // --- Slots ---', from);
-assert.ok(from !== -1 && to > from, 'pane history block not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'history.js'), 'utf8');
 
 function historyCtx({stored = null, paneLines = 200, status = 'working', now = 100000} = {}) {
   const store = stored === null ? {} : {herdr_pane_history: String(stored)};
@@ -43,7 +40,8 @@ function historyCtx({stored = null, paneLines = 200, status = 'working', now = 1
     // waiting on it.
     Date: {now: () => clock.at},
   });
-  vm.runInContext(HTML.slice(from, to), ctx);
+  const from = SRC.indexOf("const HISTORY_KEY = 'herdr_pane_history';");
+  vm.runInContext(SRC.slice(from), ctx);
   // A tick of the real 3s interval, wherever the clock currently is.
   const tick = () => { clock.at += 3000; vm.runInContext('refreshPane(true)', ctx); };
   return {el, store, reads, clock, tick, run: src => vm.runInContext(src, ctx)};

@@ -14,3 +14,4 @@ tests/e2e/fake_herdr.log
 node_modules/
 test-results/
 playwright-report/
+.claude/

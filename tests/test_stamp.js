@@ -12,10 +12,11 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    function fmtStamp(d) {');
-const to = HTML.indexOf('    function renderStatusBar()', from);
-assert.ok(from !== -1 && to > from, 'fmtStamp/fmtAgo not found in web/index.html');
+const STATUS_BAR = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'status_bar.js'), 'utf8');
+const UTILS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'utils.js'), 'utf8');
+const from = STATUS_BAR.indexOf('function fmtStamp(d) {');
+const to = STATUS_BAR.indexOf('function renderStatusBar()', from);
+assert.ok(from !== -1 && to > from, 'fmtStamp/fmtAgo not found in status_bar.js');
 
 // activePane / agents / paneStampAt are module state in the app; paneStatusWord reads all three,
 // so the context supplies them and each test sets what it needs. LIVE_MS is declared with the
@@ -23,7 +24,7 @@ assert.ok(from !== -1 && to > from, 'fmtStamp/fmtAgo not found in web/index.html
 const ctx = vm.createContext({
   Date, activePane: null, agents: [], paneStampAt: null, LIVE_MS: 5 * 60 * 1000,
 });
-vm.runInContext(HTML.slice(from, to), ctx);
+vm.runInContext(STATUS_BAR.slice(from, to), ctx);
 const {fmtAgo, fmtStamp} = ctx;
 
 // Returns [word, tone] for a pane with the given herdr status (null for a shell) that last
@@ -105,15 +106,14 @@ test('no evidence reads blank rather than claiming the pane is quiet', () => {
 
 // --- The dot's colour ---
 
-const dotFrom = HTML.indexOf('    function activityBucket(paneId) {');
-const dotTo = HTML.indexOf('    let activeWorkspace = null;', dotFrom);
-assert.ok(dotFrom !== -1 && dotTo > dotFrom, 'activityBucket/statusColor not found in web/index.html');
+const dotFrom = UTILS.indexOf('function activityBucket(paneId) {');
+const dotTo = UTILS.indexOf('let activeWorkspace = null;', dotFrom);
+assert.ok(dotFrom !== -1 && dotTo > dotFrom, 'activityBucket/statusColor not found in utils.js');
 
 const dotCtx = vm.createContext({
-  Date, lastSeen: {},
-  LIVE_MS: 5 * MIN, RECENT_MS: 60 * MIN,
+  Date, lastSeen: {}, LIVE_MS: 5 * 60 * 1000, RECENT_MS: 60 * 60 * 1000,
 });
-vm.runInContext(HTML.slice(dotFrom, dotTo), dotCtx);
+vm.runInContext(UTILS.slice(dotFrom, dotTo), dotCtx);
 
 // Colour for an agent with the given herdr status that last moved `agoMs` ago.
 function dot(status, agoMs) {

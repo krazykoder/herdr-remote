@@ -11,13 +11,13 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const from = HTML.indexOf('    function cleanRelayUrl(raw) {');
-const to = HTML.indexOf('    function saveAndConnect()', from);
-assert.ok(from !== -1 && to > from, 'cleanRelayUrl not found in web/index.html');
+const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'status_bar.js'), 'utf8');
+const from = SRC.indexOf('function cleanRelayUrl(raw) {');
+const to = SRC.indexOf('function saveAndConnect()', from);
+assert.ok(from !== -1 && to > from, 'cleanRelayUrl not found in web/src/status_bar.js');
 
 const ctx = vm.createContext({});
-vm.runInContext(HTML.slice(from, to), ctx);
+vm.runInContext(SRC.slice(from, to), ctx);
 const clean = ctx.cleanRelayUrl;
 
 const OK = 'wss://sturdy-shade-hunt.trycloudflare.com';

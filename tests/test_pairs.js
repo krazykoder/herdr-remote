@@ -13,11 +13,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const START = '// --- P3 pair logic (pure) --- start';
-const END = '// --- P3 pair logic (pure) --- end';
-const from = HTML.indexOf(START), to = HTML.indexOf(END);
-assert.ok(from !== -1 && to > from, 'pure pair logic block not found in web/index.html');
+const PAIRS_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_pure.js'), 'utf8');
+const TRANSFER = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'transfer.js'), 'utf8');
+const SETTINGS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'settings.js'), 'utf8');
+const START_DIALOG = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'start_dialog.js'), 'utf8');
+const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
@@ -28,8 +28,8 @@ const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFo
 
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
-// itself explicitly. A rename in index.html therefore fails here loudly, not silently.
-vm.runInContext(HTML.slice(from, to) + `\n;__out = {${NAMES.join(', ')}};`, ctx);
+// itself explicitly. A rename in source therefore fails here loudly, not silently.
+vm.runInContext(PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
        navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
@@ -121,11 +121,7 @@ test('a stale pair reports a reason naming the member', () => {
 });
 
 test('transfer rechecks pair health immediately before it prefills', () => {
-  const start = HTML.indexOf('function doTransfer');
-  const end = HTML.indexOf('function insertShortcut', start);
-  assert.ok(start !== -1 && end > start, 'doTransfer block not found');
-  const transfer = HTML.slice(start, end);
-  assert.match(transfer, /pairHealth\(pair, agents\)\.state !== 'healthy'/);
+  assert.match(TRANSFER, /pairHealth\(pair, agents\)\.state !== 'healthy'/);
 });
 
 // --- lookup ---
@@ -228,9 +224,7 @@ test('text with no slash commands is untouched for codex', () => {
 });
 
 test('transfer picks the prefix from the destination pane, not the source', () => {
-  const start = HTML.indexOf('function doTransfer');
-  const end = HTML.indexOf('function insertShortcut', start);
-  assert.match(HTML.slice(start, end), /agentSlash\(SHORTCUTS\[shortcutIndex\]\.text, agentOf\(partner\.pane_id\)\)/);
+  assert.match(TRANSFER, /agentSlash\(SHORTCUTS\[shortcutIndex\]\.text, agentOf\(partner\.pane_id\)\)/);
 });
 
 // --- constants ---
@@ -238,7 +232,7 @@ test('transfer picks the prefix from the destination pane, not the source', () =
 test('the frontend cap matches the relay cap', () => {
   const relay = fs.readFileSync(path.join(__dirname, '..', 'relay', 'herdr_relay.py'), 'utf8');
   assert.match(relay, new RegExp(`len\\(text\\) > ${SEND_TEXT_MAX}`),
-    'web/index.html and herdr_relay.py disagree about the send_text cap');
+    'web/src/pairs_pure.js and herdr_relay.py disagree about the send_text cap');
 });
 
 test('shortcuts reference prompts by path and never inline their copy', () => {
@@ -253,12 +247,13 @@ test('shortcuts reference prompts by path and never inline their copy', () => {
 test('MAX_PAIRS is the documented limit', () => assert.equal(MAX_PAIRS, 32));
 
 test('localhost is eligible for same-origin relay auto-connect', () => {
-  const autoDetect = HTML.slice(HTML.indexOf('const autoRelayUrl'), HTML.indexOf('const urlToken'));
-  assert.ok(!autoDetect.includes("location.hostname.includes('localhost')"));
+  assert.match(SETTINGS, /const autoRelayUrl/);
+  assert.ok(!SETTINGS.includes("location.hostname.includes('localhost')"));
 });
 
 test('web app ships no external demo relay', () => {
-  assert.doesNotMatch(HTML, /herdr-demo|herdr-remote-demo|tryDemo/);
+  assert.doesNotMatch(INDEX_HTML, /herdr-demo|herdr-remote-demo|tryDemo/);
+  assert.doesNotMatch(SETTINGS, /herdr-demo|herdr-remote-demo|tryDemo/);
 });
 
 // --- ruler selection re-anchoring ---
@@ -401,11 +396,10 @@ function startDialogCtx(agents, placement, mode = 'agent', shells = []) {
 }
 
 function runRenderStartTarget(agents, placement, mode = 'agent', shells = []) {
-  const start = HTML.indexOf('function renderStartTarget');
-  const end = HTML.indexOf('function submitStart', start);
-  assert.ok(start !== -1 && end > start, 'renderStartTarget block not found');
+  const start = START_DIALOG.indexOf('function renderStartTarget');
+  const end = START_DIALOG.indexOf('function submitStart', start);
   const {els, ctx} = startDialogCtx(agents, placement, mode, shells);
-  vm.runInContext(HTML.slice(start, end) + '\n;renderStartTarget();', ctx);
+  vm.runInContext(START_DIALOG.slice(start, end) + '\n;renderStartTarget();', ctx);
   return els;
 }
 
@@ -521,12 +515,9 @@ test('a terminal is offered as a split source, and named rather than "undefined"
 // again says so.
 
 function runStartStatus(body) {
-  const start = HTML.indexOf('function setStartStatus');
-  const end = HTML.indexOf('function openStartDialog', start);
-  assert.ok(start !== -1 && end > start, 'start status block not found');
   const el = {textContent: '', style: {}};
   const ctx = vm.createContext({document: {getElementById: () => el}});
-  vm.runInContext(HTML.slice(start, end) + '\n;' + body, ctx);
+  vm.runInContext(START_DIALOG + '\n;' + body, ctx);
   return el;
 }
 
@@ -555,16 +546,13 @@ test('a refusal the user can only answer by pressing again says try again', () =
 });
 
 function runSpawnStatus(body) {
-  const start = HTML.indexOf('let spawnStatusTimer');
-  const end = HTML.indexOf('function setStartStatus', start);
-  assert.ok(start !== -1 && end > start, 'floating start status block not found');
   const els = {
     spawnStatus: {style: {}}, spawnSpinner: {hidden: false}, spawnStatusText: {textContent: ''},
   };
   const ctx = vm.createContext({
     document: {getElementById: id => els[id]}, clearTimeout: () => {}, setTimeout: () => 1,
   });
-  vm.runInContext(HTML.slice(start, end) + '\n;' + body, ctx);
+  vm.runInContext(START_DIALOG + '\n;' + body, ctx);
   return els;
 }
 
