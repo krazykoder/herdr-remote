@@ -1760,6 +1760,101 @@
       display: block;
     }
 
+    /* The roster, in the view where a conversation is owned: one row per member, live or not, and
+       the three edits under it. Rows and not the collapsed strip .conv-members draws, because each
+       row carries a button and the strip is itself one. */
+    .conv-roster {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .conv-roster-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      font-size: 0.68rem;
+      color: var(--text);
+      padding: 3px 0;
+    }
+
+    .conv-roster-row.gone {
+      opacity: 0.65;
+    }
+
+    .conv-roster-row .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    /* The name gives up the width, and Remove keeps its place at the end of every row. */
+    .conv-roster-row .who {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-roster-row .tag {
+      flex: 1;
+      font-size: 0.6rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .conv-roster-row.gone .tag {
+      color: var(--orange);
+    }
+
+    .conv-roster .conv-drop,
+    .conv-roster-actions button,
+    .conv-roster-add .conv-chip {
+      font-size: 0.65rem;
+      /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
+         buttons and no thread. 32px is a thumb, and every one of these is either reversible or
+         asked twice. */
+      min-height: 32px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .conv-roster-actions {
+      display: flex;
+      gap: 6px;
+      padding-top: 4px;
+    }
+
+    .conv-roster-actions button[aria-pressed="true"] {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .conv-roster-add {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-top: 6px;
+    }
+
+    .conv-roster-add .conv-chip {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .conv-roster-add .conv-none {
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
     /* A time rule, and the same element says "there is history missing here" — one shape for
        "when" means a gap is read as a break in the thread rather than as a second kind of thing. */
     .conv-rule {
@@ -8438,6 +8533,7 @@
       if (!conv) return;
       convViewId = id;
       convStandaloneHtml = '';
+      convAdding = false;
       openPanel('convView');
       renderConvStandalone(true);
     }
@@ -8460,7 +8556,93 @@
       jumpToPane(live.pane_id);
     }
 
-    let convStandaloneToken = 0, convStandaloneHtml = '';
+    let convStandaloneToken = 0, convStandaloneHtml = '', convAdding = false;
+
+    // Who is in this conversation, and the three edits that are the conversation's own rather than
+    // a pane's. Only in the standalone view: this is where a conversation is owned, and the pane's
+    // thread panel is a pane reading itself.
+    //
+    // Removing a member is deliberately not what a pane exiting does. An exit removes nothing — a
+    // member is recording or ended, and that is derived (D1). This pulls what that member said out
+    // of the thread and stops its transcript being referenced, so it is worded as what it does and
+    // asked twice.
+    function convRosterHtml(conv, recs) {
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      const rows = (conv.members || []).map((m, i) => {
+        const rec = recs.find(r => r.key === m.key) || {};
+        const on = live.has(m.key);
+        return `<div class="conv-roster-row${on ? '' : ' gone'}">` +
+          `<span class="dot" style="background:${convTint(i)}"></span>` +
+          `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
+          agentBadge((rec.spawn || {}).agent || '') +
+          `<span class="tag">${on ? 'recording' : 'no longer live'}</span>` +
+          `<button class="conv-drop" data-key="${escapeHtml(m.key)}"` +
+          ` onclick="convRemoveMember(this.dataset.key)"` +
+          ` aria-label="Remove this member from the conversation">Remove</button></div>`;
+      }).join('');
+      // Candidates are the live panes this conversation does not already name — including panes
+      // already recording elsewhere, which bring their own transcript with them (D3).
+      const taken = new Set((conv.members || []).map(m => m.key));
+      const free = agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)));
+      const chips = !convAdding ? '' : `<div class="conv-roster-add">` + (free.length
+        ? free.map(x => `<button class="conv-chip" data-key="${escapeHtml(convMemberKey(x))}"` +
+            ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}</button>`).join('')
+        : '<span class="conv-none">Every live pane is already in this conversation.</span>') + '</div>';
+      return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
+        `<button onclick="renameConversation()">Rename</button>` +
+        `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
+        ` onclick="convToggleAdd()">Add pane</button></div>${chips}</div>`;
+    }
+
+    function convEdit(fn) {
+      const items = loadConvIndex();
+      const conv = items.find(c => c.id === convViewId);
+      if (!conv || fn(conv, items) === false) return;
+      saveConvIndex(items);
+      renderConversations();
+      renderTermMenuState();
+      renderConvBar();
+      renderConvStandalone(false);
+    }
+
+    // Naming is the whole of promotion (D4): what the user named is permanent, what the app named
+    // for them is not, and there is no second concept to learn.
+    function renameConversation() {
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      if (!conv) return;
+      const next = prompt('Name for this conversation', conv.name || '');
+      if (next === null) return;
+      const name = next.trim().slice(0, 64);
+      if (!name || name === conv.name) return;
+      convEdit(c => { c.name = name; delete c.auto; });
+    }
+
+    function convToggleAdd() {
+      convAdding = !convAdding;
+      renderConvStandalone(false);
+    }
+
+    function convJoinPane(key) {
+      const pane = agents.find(x => convMemberKey(x) === key);
+      if (!pane) return;
+      convAdding = false;
+      convEdit(conv => {
+        if (convRecordingMembers(conv).length >= CONV_MEMBER_MAX) {
+          showToast(`"${conv.name}" already has ${CONV_MEMBER_MAX} live panes.`);
+          return false;
+        }
+        conv.members = (conv.members || []).concat(convMemberOf(pane));
+      });
+    }
+
+    function convRemoveMember(key) {
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const m = conv && (conv.members || []).find(x => x.key === key);
+      if (!m) return;
+      if (!confirm(`Remove "${m.label || 'this member'}" from "${conv.name}"?\n\n` +
+        'What it said leaves the thread, and its transcript stops being kept.')) return;
+      convEdit(c => { c.members = (c.members || []).filter(x => x.key !== key); });
+    }
 
     // The whole record, every member, from the store alone. `bottom` scrolls to the newest on the
     // way in; a redraw from the snapshot leaves the reader where they were.
@@ -8484,8 +8666,7 @@
       // saying nothing.
       document.getElementById('convViewCount').textContent =
         `${entries.length} message${entries.length === 1 ? '' : 's'}`;
-      const html =
-        (keys.length > 1 ? convMembersHtml(conv, composed.recs) : '') + (entries.length
+      const html = convRosterHtml(conv, composed.recs) + (entries.length
         ? convEntriesHtml(entries, null, false, false)
         : (composed.all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +

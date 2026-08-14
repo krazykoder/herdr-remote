@@ -130,6 +130,67 @@ test('the live member is one tap on, in its own thread', async ({page}) => {
   await expect(page.locator('#convView')).toBeHidden();
 });
 
+// The card, then the view: every action below is the conversation's own rather than a pane's.
+const openCard = async page => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  return key;
+};
+
+test('naming a conversation is what promotes it out of the evictable tier', async ({page}) => {
+  await openCard(page);
+  // It starts as one the app filed for itself. Naming is the whole ceremony (D4): no keep
+  // checkbox, no archive, no second concept — and the tier is what eviction reads.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].auto = true;
+    saveConvIndex(items);
+    renderConvStandalone(false);
+  });
+  page.once('dialog', d => d.accept('the auth rewrite'));
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Rename'}).click();
+  await expect(page.locator('#convViewTitle')).toHaveText('the auth rewrite');
+  const conv = await page.evaluate(() => loadConvIndex()[0]);
+  expect(conv.name).toBe('the auth rewrite');
+  expect(conv.auto).toBeUndefined();
+  // And the card the view was opened from says the new name too.
+  await page.locator('#convView .back').click();
+  await expect(page.locator('#conversations .conversation-card')).toContainText('the auth rewrite');
+});
+
+test('a live pane can be added to a conversation from the conversation', async ({page}) => {
+  await openCard(page);
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await page.locator('#convView .conv-roster-add .conv-chip', {hasText: 'scratch'}).click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
+  await expect(page.locator('#convView .conv-roster-row').nth(1)).toContainText('recording');
+  // The picker closes behind the pick, and the roster is what changed on disk.
+  await expect(page.locator('#convView .conv-roster-add')).toHaveCount(0);
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(2);
+});
+
+test('a member removed is asked about first, and takes its words with it', async ({page}) => {
+  const key = await openCard(page);
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(2);
+  // Declined: an accidental tap on the one control here that loses history changes nothing.
+  page.once('dialog', d => d.dismiss());
+  await page.locator('#convView .conv-drop').click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);
+
+  page.once('dialog', d => d.accept());
+  await page.locator('#convView .conv-drop').click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(0);
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(0);
+  // The record is still on disk — removal unreferences a transcript, it does not delete one.
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(0);
+  expect((await held(page, key)).entries.length).toBe(2);
+});
+
 test('the transcript is still there after a reload', async ({page}) => {
   // The whole point of the feature: the pane keeps a few hundred lines and then forgets.
   await open(page);
