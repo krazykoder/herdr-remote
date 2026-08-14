@@ -6784,7 +6784,7 @@
         before = backfillEntries(first.history, now);
         // A local send has its own event and timestamp. Its pane echo opens the current turn,
         // rather than becoming an older copy of the same prompt.
-        if (first.turn.length && end) add = sentTurnEntries(first.turn, held.entries, now, end);
+        if (first.turn.length) add = sentTurnEntries(first.turn, held.entries, now, end);
         if (body.length) held.backfilled = true;
         if (add.length) held.lastTurn = end;
       } else if (end > (held.lastTurn || 0)) {

@@ -597,6 +597,25 @@ test('a send before the first pane read is written once, before its reply', asyn
   ]);
 });
 
+test('a working first read keeps replies before its live draft', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(async () => {
+    const now = Date.now(), pane = activePane;
+    paneOf(pane).status = 'working';
+    await convRecordSend(pane, 'first question', null, now - 2);
+    await convRecordSend(pane, 'second question', null, now - 1);
+    await recordPane(pane, [
+      '❯ old business', '', '⏺ Older answer.', '',
+      '❯ first question', '', '⏺ First answer.', '',
+      '❯ second question', '', '⏺ Still working.', '', '❯',
+    ]);
+  });
+  expect((await held(page, key)).entries.map(e => e.text)).toEqual([
+    'old business', 'Older answer.', 'first question', 'second question', 'First answer.',
+  ]);
+});
+
 test('a member found already finished is read once, and recorded only if it is new',
   async ({page}) => {
     await open(page);
