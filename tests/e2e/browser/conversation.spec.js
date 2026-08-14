@@ -212,6 +212,13 @@ test('naming a conversation is what promotes it out of the evictable tier', asyn
   await expect(page.locator('#conversations .conversation-card')).toContainText('the auth rewrite');
 });
 
+test('conversation management actions keep their intended order', async ({page}) => {
+  await openCard(page);
+  await expect(page.locator('#convView .conv-roster-actions button')).toHaveText([
+    'Delete', 'Copy', 'Duplicate', 'Rename', 'Add pane',
+  ]);
+});
+
 test('a live pane can be added to a conversation from the conversation', async ({page}) => {
   await openCard(page);
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);

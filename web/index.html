@@ -9606,18 +9606,16 @@
         ? '<p class="conv-tier-note">Filed automatically, and dropped first when space runs out. ' +
           'Rename it to keep it for good.</p>' : '';
       return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
-        `<button onclick="renameConversation()">Rename</button>` +
+        // Destructive action first, followed by the two ways to preserve the grouping, then edits.
+        `<button class="conv-del arm-btn" onclick="armButton(this, 'Delete?', deleteConversation)"` +
+        ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button class="arm-btn" onclick="armButton(this, 'Duplicate?', duplicateConversation)"` +
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
         `Duplicate</button>` +
+        `<button onclick="renameConversation()">Rename</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
         ` onclick="convToggleAdd()">Add pane</button>` +
-        // Last, and the only one here that ends something. The words are not what goes: a
-        // conversation is a roster and a name, and deleting one unreferences transcripts rather
-        // than erasing them — which is what D2's floor has always meant by removal.
-        `<button class="conv-del arm-btn" onclick="armButton(this, 'Delete?', deleteConversation)"` +
-        ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
         `</div>${chips}${tier}</div>`;
     }
 
