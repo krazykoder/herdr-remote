@@ -8419,8 +8419,8 @@
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
       const mineLive = agents.find(a => a.pane_id === activePane);
-      const composing = ok && document.activeElement === document.getElementById('termInput') && mineLive;
-      const center = composing
+      const targetShown = ok && bottomDockOpen() && mineLive;
+      const center = targetShown
         ? `<span class="pair-target" title="Typing to ${escapeHtml(paneLabel(mineLive))}">` +
           `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
           `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
@@ -8432,7 +8432,9 @@
       strip.innerHTML =
         // Switch sits first, on the left: it is the control reached most often, and the thumb
         // is already there from the back button above it.
-        (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
+        (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" ` +
+          `onpointerdown="if(document.activeElement===document.getElementById('termInput'))event.preventDefault()" ` +
+          `onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
         center +
         (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
@@ -8467,7 +8469,9 @@
     function switchToPartner() {
       const pair = activePane ? pairFor(pairs, activePane) : null;
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
+      const keepComposer = document.activeElement === document.getElementById('termInput');
       openTerminal(partnerOf(pair, activePane).pane_id);
+      if (keepComposer) document.getElementById('termInput').focus();
       if (window.cue) cue('page');
     }
 
