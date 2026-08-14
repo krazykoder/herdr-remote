@@ -5997,7 +5997,15 @@
     }
     // The ceilings. IndexedDB's budget is a share of free disk rather than 5 MB, so these are set
     // by what a thread is still readable at rather than by what fits.
+    //
+    // MEMBER_MAX is a ceiling on *recording* members, and always was a statement about the view —
+    // past this a joint thread stops being one. A conversation continued across several respawns
+    // accumulates ended members that cost nothing to draw, so the roster's own cap is separate and
+    // far larger. The index is localStorage, where the roster is what a member actually costs
+    // (~120 bytes); the transcripts are IndexedDB, which is a different store and a different
+    // budget.
     const CONV_ENTRY_MAX = 5000, CONV_MEMBER_MAX = 8, CONV_CONV_MAX = 200, CONV_TRANSCRIPT_MAX = 500;
+    const CONV_ROSTER_MAX = 200;
 
     // A corrupt blob is no conversations, never a half-index — the contract parsePairs already
     // holds to, and for the same reason: a store that outlives the panes it describes will one day
@@ -6007,7 +6015,9 @@
         const d = JSON.parse(raw || '');
         if (!d || d.version !== 1 || !Array.isArray(d.items)) return [];
         return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
-          .map(c => Object.assign({}, c, { members: c.members.slice(0, CONV_MEMBER_MAX) }))
+          // The roster, not the recording cap: an ended member is the record of a session that
+          // happened, and truncating it here would delete history on the next read of the index.
+          .map(c => Object.assign({}, c, { members: c.members.slice(0, CONV_ROSTER_MAX) }))
           .slice(0, CONV_CONV_MAX);
       } catch (e) { return []; }
     }
@@ -6019,18 +6029,30 @@
       return entries.length > cap ? entries.slice(entries.length - cap) : entries;
     }
 
-    // What to drop when there are too many transcripts. Unreferenced first: a transcript no
-    // conversation names is the only thing here nobody asked to keep. Then oldest `touched` among
-    // the rest — so naming a conversation is what protects its history, which is the promise the
-    // name makes.
-    function evictOrder(records, referenced, max) {
+    // What to drop when there are too many transcripts, and what may never be dropped at all.
+    //
+    // A transcript a *named* conversation holds is a floor, not a preference: the record outliving
+    // the panes that wrote it is the whole feature, and silently deleting one to stay under a
+    // ceiling is the single failure this model cannot absorb. So `kept` is removed from the pool
+    // entirely, and a cap reached with everything kept drops nothing — the caller says so out loud
+    // instead.
+    //
+    // Everything else is ordered by how much anyone asked for it: a transcript no conversation
+    // names at all, then one only an auto conversation holds, then oldest `touched` within each.
+    // That is the tier split — what the user named is permanent, what the app started on its own
+    // is book-keeping — and it is what lets recording be on by default without growing forever.
+    function evictOrder(records, referenced, max, kept) {
       const keep = max || CONV_TRANSCRIPT_MAX;
       if (records.length <= keep) return [];
-      const named = k => !!(referenced && referenced.has(k));
-      return records.slice()
-        .sort((a, b) => (named(a.key) ? 1 : 0) - (named(b.key) ? 1 : 0)
+      const held = k => !!(kept && kept.has(k));
+      const auto = k => !!(referenced && referenced.has(k));
+      const pool = records.filter(r => !held(r.key));
+      // Over the ceiling on kept records alone. Nothing here is the right thing to delete.
+      const over = records.length - keep;
+      return pool.slice()
+        .sort((a, b) => (auto(a.key) ? 1 : 0) - (auto(b.key) ? 1 : 0)
           || (a.touched || 0) - (b.touched || 0))
-        .slice(0, records.length - keep)
+        .slice(0, Math.min(over, pool.length))
         .map(r => r.key);
     }
     // Several members, one thread. A stable merge on `seen`: each member's own entries keep the
@@ -6270,9 +6292,33 @@
       return out;
     }
 
+    // The two tiers, as key sets. A conversation the user named is permanent and its transcripts
+    // are a floor; one the recorder started on its own is book-keeping, and is what stays
+    // evictable so that recording everything by default cannot become a storage problem. Naming an
+    // auto conversation is the whole promotion — there is no keep switch and no archive.
+    function convKept() {
+      const out = new Set();
+      for (const c of loadConvIndex()) if (!c.auto) for (const m of c.members || []) out.add(m.key);
+      return out;
+    }
+
+    // Said once per page, not once per eviction pass: a ceiling reached with nothing droppable is
+    // a standing condition, and repeating it every read would be the only thing on screen.
+    let convFullSaid = false;
+
+    function convEvictable(all, referenced, kept, max) {
+      const drop = evictOrder(all, referenced, max, kept);
+      const over = all.length - (max || CONV_TRANSCRIPT_MAX);
+      if (over > 0 && drop.length < over && !convFullSaid) {
+        convFullSaid = true;
+        showToast('Every recording is in a named conversation — nothing was deleted to make room.');
+      }
+      return drop;
+    }
+
     function convFallbackTrim(all) {
-      const keys = evictOrder(Object.keys(all).map(k => all[k]), convReferenced(),
-        CONV_FALLBACK_TRANSCRIPTS);
+      const keys = convEvictable(Object.keys(all).map(k => all[k]), convReferenced(),
+        convKept(), CONV_FALLBACK_TRANSCRIPTS);
       for (const k of keys) delete all[k];
     }
 
@@ -6282,7 +6328,7 @@
       try {
         const read = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
         const all = await idbReq(read.getAll());
-        const drop = evictOrder(all, convReferenced());
+        const drop = convEvictable(all, convReferenced(), convKept());
         if (!drop.length) return;
         const write = db.transaction(CONV_DB_STORE, 'readwrite').objectStore(CONV_DB_STORE);
         await Promise.all(drop.map(k => idbReq(write.delete(k))));

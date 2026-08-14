@@ -44,7 +44,7 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessage
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
-               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX'];
+               'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
   + slice('    // --- Final message detection ---', '    // --- Conversation recorder (pure) --- end')
@@ -55,7 +55,8 @@ const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessa
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
-       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX} = ctx.__out;
+       CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
+       CONV_ROSTER_MAX} = ctx.__out;
 
 const NOW = 1755000000000;
 
@@ -412,11 +413,22 @@ test('a named conversation may be empty, but malformed entries are dropped', () 
   assert.deepStrictEqual(ids(index(items)), ['c1']);
 });
 
-test('membership is capped, and the cap does not drop the conversation', () => {
+test('the roster is capped far above the recording cap, and keeps ended members', () => {
+  // MEMBER_MAX is a ceiling on how many panes record at once — a statement about the view. An
+  // ended member costs a label and draws history, and a conversation continued across several
+  // respawns collects them, so truncating the roster to MEMBER_MAX here would delete sessions that
+  // happened on the next read of the index.
   const members = Array.from({length: 20}, (_, i) => ({key: 'local|w1:p' + i + '|claude|/work'}));
   const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
-  assert.strictEqual(conv.members.length, CONV_MEMBER_MAX);
+  assert.strictEqual(conv.members.length, 20);
   assert.strictEqual(conv.name, 'auth');
+  assert.ok(CONV_ROSTER_MAX > CONV_MEMBER_MAX);
+});
+
+test('a roster past even that ceiling is trimmed rather than dropping the conversation', () => {
+  const members = Array.from({length: CONV_ROSTER_MAX + 5}, (_, i) => ({key: 'k' + i}));
+  const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
+  assert.strictEqual(conv.members.length, CONV_ROSTER_MAX);
 });
 
 test('a transcript past its ceiling loses its oldest entries, not its newest', () => {
@@ -440,6 +452,26 @@ test('eviction drops what nobody named before anything anyone did', () => {
 test('with everything referenced, the oldest touched goes first', () => {
   const all = [{key: 'a', touched: 3}, {key: 'b', touched: 1}, {key: 'c', touched: 2}];
   assert.deepStrictEqual(dropped(all, new Set(['a', 'b', 'c']), 1), ['b', 'c']);
+});
+
+test('a transcript a named conversation holds is never evicted', () => {
+  // The floor the whole model rests on: the record outliving the panes that wrote it is the
+  // feature, so deleting one to stay under a ceiling is the failure it cannot absorb.
+  const rec = (key, touched) => ({key: key, touched: touched});
+  const all = [rec('a', 1), rec('b', 2), rec('c', 3)];
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'b', 'c']), 1, new Set(['a'])), ['b', 'c']);
+});
+
+test('a ceiling reached with everything named drops nothing at all', () => {
+  const all = [{key: 'a', touched: 1}, {key: 'b', touched: 2}];
+  assert.deepStrictEqual(dropped(all, new Set(['a', 'b']), 1, new Set(['a', 'b'])), []);
+});
+
+test('what nobody named goes before what only the recorder named', () => {
+  // The tier split: auto conversations are book-keeping, and they are what stays evictable so
+  // that recording by default cannot grow forever.
+  const all = [{key: 'auto', touched: 1}, {key: 'loose', touched: 9}];
+  assert.deepStrictEqual(dropped(all, new Set(['auto']), 1, new Set()), ['loose']);
 });
 
 test('nothing is evicted while there is room', () => {

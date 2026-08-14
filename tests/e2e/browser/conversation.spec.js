@@ -103,6 +103,54 @@ test('the index is what says a transcript is kept, and it is read synchronously'
   expect(JSON.parse(raw).items[0].name).toBe('new authentication feature');
 });
 
+test('a named conversation keeps its record when the store is full', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  // Fill the store past its ceiling with transcripts nobody named, then run the same eviction pass
+  // a write runs. The named record is a floor: deleting it to make room is the one failure this
+  // feature cannot absorb, so the loose ones go and it stays.
+  const left = await page.evaluate(async k => {
+    for (let i = 0; i < 6; i++) {
+      await convPut({key: 'loose' + i, label: 'x', first: 1, touched: 1, entries:
+        [{who: 'agent', text: 'noise', at: 1, at_src: 'read'}]});
+    }
+    const db = await openConvDB();
+    const all = await idbReq(db.transaction('transcripts', 'readonly')
+      .objectStore('transcripts').getAll());
+    // A ceiling of 2 against 7 records, one of which is named.
+    const drop = convEvictable(all, convReferenced(), convKept(), 2);
+    return {drop: drop, named: drop.includes(k), total: all.length};
+  }, key);
+  expect(left.total).toBe(7);
+  expect(left.named).toBe(false);
+  expect(left.drop.length).toBe(5);
+});
+
+test('a store full of named records is left alone, and says so', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  const toast = await page.evaluate(async () => {
+    // A second record, and the conversation names it too — so every transcript in the store is
+    // held by a name and the ceiling has nothing it is allowed to take.
+    await convPut({key: 'k2', label: 'x', first: 1, touched: 1,
+      entries: [{who: 'agent', text: 'also kept', at: 1, at_src: 'read'}]});
+    const items = loadConvIndex();
+    items[0].members.push({key: 'k2', added: Date.now(), label: 'x'});
+    saveConvIndex(items);
+    const db = await openConvDB();
+    const all = await idbReq(db.transaction('transcripts', 'readonly')
+      .objectStore('transcripts').getAll());
+    const drop = convEvictable(all, convReferenced(), convKept(), 1);
+    return {drop: drop.length, kept: all.length,
+            said: document.getElementById('toast').textContent};
+  });
+  expect(toast.kept).toBe(2);
+  expect(toast.drop).toBe(0);
+  expect(toast.said).toMatch(/nothing was deleted/i);
+});
+
 test('a pane in no conversation is not recorded at all', async ({page}) => {
   // Reading a pane is not filing it. Nothing is written until someone names a conversation.
   await open(page);
