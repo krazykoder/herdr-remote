@@ -853,6 +853,7 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   await page.evaluate(() => {
     pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
       recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    agents.find(a => a.label === 'Architect 1').status = 'working';
   });
   await read(page);
   await page.locator('#quickActions .qa-conv').click();
@@ -867,10 +868,11 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   await expect(page.locator('#transferSheet .transfer-head .who')).toHaveCSS('justify-content', 'center');
   const dot = await page.evaluate(() => {
     const c = getComputedStyle(document.getElementById('transferDot'));
-    return {fill: c.backgroundColor, size: c.width};
+    return {fill: c.backgroundColor, size: c.width, beat: c.animationName};
   });
   expect(dot.size).toBe('8px');
   expect(dot.fill).not.toBe('rgba(0, 0, 0, 0)');
+  expect(dot.beat).toBe('pulse');
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
