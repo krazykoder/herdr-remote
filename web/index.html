@@ -2105,6 +2105,24 @@
       color: var(--muted);
     }
 
+    /* The pane whose thread this is. Same mark in the same place, without the affordance — the
+       row is not offering something it will refuse. */
+    .conv-roster .conv-eye.reading {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      opacity: 0.45;
+    }
+
+    /* In the pane the panel sits inside the thread, under its head, rather than under a sticky
+       header — the thread is the scrolling element there and has no header of its own to hang off. */
+    #convThread .conv-panel {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: none;
+    }
+
     /* Folded out of the thread, still in the conversation. Dimmed rather than struck through: it
        is a reading state, and nothing about it is a deletion. */
     .conv-roster-row.hidden-member .who {
@@ -7650,12 +7668,24 @@
       // Filtered in the composer rather than in the renderer: picks, Summary and the count are all
       // positions in the list that was drawn, so the list that was drawn has to be the list they
       // index.
-      const entries = composed.entries, all = composed.all;
+      // The same per-conversation filter the standalone view reads. The open pane is exempt from
+      // it: this is its thread, and a pane that hid itself would be reading an empty screen with no
+      // obvious way back.
+      const hidden = convHidden(conv.id);
+      const shows = e => (e.key || key) === key || !hidden.has(e.key || key);
+      const entries = hidden.size ? composed.entries.filter(shows) : composed.entries;
+      const all = hidden.size ? composed.all.filter(shows) : composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
+      // While the panel is open it is this conversation the actions act on. convViewId is "the
+      // conversation being managed" and not "the one the standalone view is showing" — the two
+      // views are never on screen at once, so one variable answers for both.
+      if (convPaneRoster) convViewId = conv.id;
       box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length,
-        joint ? entries.length : -1, convsForPane(a)) +
-        (joint ? convMembersHtml(thread, recs) : '') + (entries.length
+        joint ? entries.length : -1, convsForPane(a), true) +
+        (convPaneRoster
+          ? `<div class="conv-panel" id="convPaneRoster">${convRosterHtml(conv, recs, hidden, key)}</div>`
+          : (joint ? convMembersHtml(thread, recs) : '')) + (entries.length
         ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
@@ -7711,7 +7741,7 @@
     // on screen — the index is written after a fold, so it is a message behind for exactly as long
     // as it takes this to run. A joint thread has every member's entries on screen already and
     // passes -1 to say so.
-    function convHeadHtml(conv, key, count, total, mine) {
+    function convHeadHtml(conv, key, count, total, mine, manage) {
       const n = total >= 0 ? total : (conv.members || []).reduce(
         (t, m) => t + (count >= 0 && m.key === key ? count : (m.messages || 0)), 0);
       // A select and not a tap-to-cycle: cycling hides how many groupings this pane is in, and the
@@ -7722,7 +7752,16 @@
           mine.map(c => `<option value="${escapeHtml(c.id)}"${c.id === conv.id ? ' selected' : ''}>` +
             `${escapeHtml(c.name)}</option>`).join('') + '</select>'
         : `<span class="name">${escapeHtml(conv.name)}</span>`;
-      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+      // The same roster and the same actions the standalone view owns, reachable from the pane
+      // that is recording into them — and only while the thread is what is on screen, because the
+      // rows have no conversation to manage.
+      const who = manage
+        ? `<button class="who-btn" onclick="toggleConvPaneRoster()"` +
+          ` aria-expanded="${convPaneRoster ? 'true' : 'false'}" aria-controls="convPaneRoster"` +
+          ` aria-label="Who is in this conversation, and what to do with it">` +
+          `${(conv.members || []).length} pane${(conv.members || []).length === 1 ? '' : 's'} ▾</button>`
+        : '';
+      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span>${who}</div>`;
     }
 
     // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
@@ -9247,12 +9286,28 @@
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
       convStandaloneHtml = '';
+      renderConvManage();
+    }
+
+    // Whichever of the two views is on screen. Same roster, same actions; only the frame differs,
+    // and each of these returns immediately when its own view is not up.
+    function renderConvManage() {
       renderConvStandalone(false);
+      renderConvView();
     }
 
     function toggleConvRoster() {
       convRosterOpen = !convRosterOpen;
       renderConvStandalone(false);
+    }
+
+    // The pane's own copy of that disclosure. Separate state: closing the panel in one view must
+    // not close it in the other, and the two are never on screen together.
+    let convPaneRoster = false;
+
+    function toggleConvPaneRoster() {
+      convPaneRoster = !convPaneRoster;
+      renderConvView();
     }
     // What the standalone view last drew, so Copy and Start again read the same thread the reader
     // is looking at rather than fetching it a second time and getting a different one.
@@ -9266,7 +9321,7 @@
     // member is recording or ended, and that is derived (D1). This pulls what that member said out
     // of the thread and stops its transcript being referenced, so it is worded as what it does and
     // asked twice.
-    function convRosterHtml(conv, recs, hidden) {
+    function convRosterHtml(conv, recs, hidden, reading) {
       const live = new Set(agents.map(x => convMemberKey(x)));
       const off = hidden || new Set();
       const rows = (conv.members || []).map((m, i) => {
@@ -9277,9 +9332,12 @@
           // Folding a member out of the thread, and nothing more. Beside the name because that is
           // what it acts on, and pressed rather than checked because the row already says which
           // state it is in by how it is drawn.
-          `<button class="conv-eye" data-key="${escapeHtml(m.key)}" aria-pressed="${out ? 'true' : 'false'}"` +
-          ` onclick="toggleConvHidden(this.dataset.key)"` +
-          ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>` +
+          // Not on the pane whose thread this is: hiding it would leave the reader on an empty
+          // screen with the way back on the thing they just hid.
+          (m.key === reading ? '<span class="conv-eye reading" aria-hidden="true">◉</span>'
+            : `<button class="conv-eye" data-key="${escapeHtml(m.key)}" aria-pressed="${out ? 'true' : 'false'}"` +
+              ` onclick="toggleConvHidden(this.dataset.key)"` +
+              ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
           `<span class="dot" style="background:${convTint(i)}"></span>` +
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
           agentBadge((rec.spawn || {}).agent || '') +
@@ -9463,7 +9521,17 @@
       saveConvIndex(items);
       renderConversations();
       // Straight into the copy: the next thing the user does is add the member they made it for.
-      openConversation(copy.id);
+      // From a pane that means switching that pane's thread to it rather than leaving the pane —
+      // the copy holds this pane, so it is a grouping the pane can be read under.
+      const a = document.getElementById('convView').style.display === 'none' && activePane
+        ? paneOf(activePane) : null;
+      if (a && (copy.members || []).some(m => m.key === convMemberKey(a))) {
+        convViewId = copy.id;
+        convSetView(a, copy.id);
+        renderConvBar();
+      } else {
+        openConversation(copy.id);
+      }
       showToast(`Copied to "${copy.name}".`);
     }
 
@@ -9475,10 +9543,10 @@
 
     async function convToggleAdd() {
       convAdding = !convAdding;
-      if (!convAdding) { convPickRecs = []; renderConvStandalone(false); return; }
-      renderConvStandalone(false);
+      if (!convAdding) { convPickRecs = []; renderConvManage(); return; }
+      renderConvManage();
       convPickRecs = await convAll();
-      if (convAdding) renderConvStandalone(false);
+      if (convAdding) renderConvManage();
     }
 
     // A member built from a record instead of from a pane: the session has ended, so there is no

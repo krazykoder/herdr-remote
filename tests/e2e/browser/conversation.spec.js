@@ -1373,6 +1373,70 @@ test('a conversation read on its own uses the whole width', async ({page}) => {
   expect(w.msg).toBeCloseTo(w.box - 2 * parseFloat(w.pad), 0);
 });
 
+test('a pane reading a thread can manage the conversation from it', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  // Only with the thread on screen: the rows have no conversation to manage.
+  await expect(page.locator('#convThread .who-btn')).toHaveCount(0);
+  await page.evaluate(() => { toggleConvView(); });
+  const who = page.locator('#convThread .who-btn');
+  await expect(who).toHaveText('1 pane ▾');
+  await expect(page.locator('#convPaneRoster')).toHaveCount(0);
+  await who.click();
+  await expect(page.locator('#convPaneRoster .conv-roster-row')).toHaveCount(1);
+  // The same actions the standalone view owns, acting on the conversation this pane is reading.
+  page.once('dialog', d => d.accept('named from the pane'));
+  await page.locator('#convPaneRoster .conv-roster-actions button', {hasText: 'Rename'}).click();
+  await expect(page.locator('#convThread .conv-head .name')).toHaveText('named from the pane');
+  expect(await page.evaluate(() => loadConvIndex()[0].name)).toBe('named from the pane');
+});
+
+test('the pane reading a thread is the one member it cannot hide', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: 'the other one', touched: Date.now(),
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'said by the other one', at: Date.now(), at_src: 'state'}]});
+    convViewId = 'c1';
+    convEdit(c => { c.members = c.members.concat({key: 'ghost', added: 2, label: 'the other one'}); });
+    toggleConvView();
+    toggleConvPaneRoster();
+  });
+  await expect(page.locator('#convThread')).toContainText('said by the other one');
+  // The open pane's row offers no switch at all, so there is no way to end up reading an empty
+  // screen with the way back on the thing you just hid.
+  await expect(page.locator('#convPaneRoster .conv-roster-row', {hasText: 'Architect 1'})
+    .locator('button.conv-eye')).toHaveCount(0);
+  await expect(page.locator('#convPaneRoster .conv-roster-row', {hasText: 'Architect 1'})
+    .locator('.conv-eye.reading')).toHaveCount(1);
+
+  await page.locator('#convPaneRoster .conv-roster-row', {hasText: 'the other one'})
+    .locator('.conv-eye').click();
+  await expect(page.locator('#convThread')).not.toContainText('said by the other one');
+  // The pane's own words stay, and the filter is the same one the standalone view reads.
+  await expect(page.locator('#convThread .conv-msg').first()).toContainText('Ready.');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('herdr_conv_hidden'))))
+    .toEqual({c1: ['ghost']});
+});
+
+test('duplicating from a pane keeps the reader in the pane, on the copy', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(() => { toggleConvView(); toggleConvPaneRoster(); });
+  await page.locator('#convPaneRoster .conv-roster-actions button', {hasText: 'Duplicate'}).click();
+  // Still in the pane — the copy holds this pane, so it is a grouping the pane can be read under.
+  await expect(page.locator('#convView')).toBeHidden();
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#convThread select.name')).toHaveValue(
+    await page.evaluate(() => loadConvIndex()[0].id));
+  await expect(page.locator('#convThread select.name option'))
+    .toHaveText(['new authentication feature (copy)', 'new authentication feature']);
+});
+
 // A pane may be in any number of conversations — the store never stopped it, and grouping is a
 // view over one transcript rather than a copy of it. These are about which grouping the pane's own
 // thread is showing.
