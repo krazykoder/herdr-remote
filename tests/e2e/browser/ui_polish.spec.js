@@ -154,6 +154,39 @@ test('Summary never lands on an arrow, at any phone width', async ({page}) => {
   }
 });
 
+test('QUIT and CLS fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  const fire = page.locator('#fireBtn'), quit = page.locator('#quitBtn'), cls = page.locator('#clsBtn');
+  // Wide: unchanged. The fold exists for the width it is not needed at.
+  await expect(fire).toBeHidden();
+  await expect(quit).toBeVisible();
+
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({width, height: 844});
+    await expect(fire, `f() missing at ${width}`).toBeVisible();
+    await expect(quit, `QUIT still in the row at ${width}`).toBeHidden();
+    await expect(cls).toBeHidden();
+    // The header is what this buys: nothing may run off the edge of it.
+    const over = await page.evaluate(() => {
+      const h = document.querySelector('#terminalView .term-header'), b = h.getBoundingClientRect();
+      return [...h.querySelectorAll('button, .fire-menu')].map(e => e.getBoundingClientRect())
+        .filter(r => r.width && (r.left < b.left - 0.5 || r.right > b.right + 0.5)).length;
+    });
+    expect(over, `something runs off the header at ${width}`).toBe(0);
+  }
+
+  await fire.click();
+  await expect(quit).toBeVisible();
+  await expect(cls).toBeVisible();
+  // One tap only arms, exactly as it does in the row.
+  await quit.click();
+  await expect(quit).toHaveText('QUIT?');
+  // And closing the fold takes the arm with it — the promise was about a button about to vanish.
+  await page.locator('#termTitle').click();
+  await expect(page.locator('#fireMenu')).toBeHidden();
+  await expect(quit).toHaveText('QUIT');
+});
+
 test('Option+Tab walks the tab strip on a wide screen', async ({page}) => {
   // The fake herdr's w1 is the one Space with two tabs in it.
   await page.locator('.chip-strip', {hasText: 'Spaces'}).locator('.chip').nth(1).click();

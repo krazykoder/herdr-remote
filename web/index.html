@@ -1519,6 +1519,49 @@
       }
     }
 
+    /* Wide enough, and the two sit in the header exactly as they always did: display:contents
+       takes the wrapper out of the flex line so the header's own gap spaces them. */
+    .fire-wrap { display: contents; }
+    .fire-menu { display: flex; gap: 8px; }
+    .fire-toggle { display: none; }
+
+    /* Narrow, and they fold behind one control. Neither is frequent — both take two taps and one
+       throws away the agent's context — so a tap to reach them is the right price for a header
+       that fits. Same breakpoint as the rest of the layout. */
+    @media (max-width: 767px) {
+      .fire-wrap {
+        display: flex;
+        position: relative;
+        flex-shrink: 0;
+      }
+
+      .fire-toggle {
+        display: inline-flex;
+        font-family: 'SF Mono', 'Menlo', monospace;
+        font-size: 0.7rem;
+      }
+
+      .fire-menu {
+        display: none;
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        z-index: 20;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+
+      .fire-menu.open { display: flex; }
+
+      /* Room for the armed label, and a target worth tapping once the row is not paying for it. */
+      .fire-menu .cls-btn { min-width: 92px; }
+    }
+
     /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
        rather than the header, whose other children must stay in normal flow. */
     .term-menu-wrap {
@@ -3421,11 +3464,21 @@
         aria-expanded="false" aria-controls="convPaneRoster"
         aria-label="Who is in this conversation, and what to do with it"></button>
       <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
-           them are not undoable. See armFire. -->
-      <button class="refresh-btn cls-btn" id="quitBtn" onclick="armQuit()"
-        aria-label="Quit what is running in this pane">QUIT</button>
-      <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
-        aria-label="Clear this pane">CLS</button>
+           them are not undoable. See armFire.
+           One pair of buttons, two layouts: side by side where the header has the room, and behind
+           f() where it does not. Moved rather than duplicated, because arming is state on the
+           element — two copies of QUIT would be two arms, and only one of them counting down. -->
+      <div class="fire-wrap">
+        <button class="refresh-btn fire-toggle" id="fireBtn" onclick="toggleFireMenu()"
+          aria-haspopup="true" aria-expanded="false"
+          aria-label="Quit or clear this pane">f()</button>
+        <div class="fire-menu" id="fireMenu">
+          <button class="refresh-btn cls-btn" id="quitBtn" onclick="armQuit()"
+            aria-label="Quit what is running in this pane">QUIT</button>
+          <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
+            aria-label="Clear this pane">CLS</button>
+        </div>
+      </div>
       <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -8407,6 +8460,19 @@
         : 'This pane has no Project, so the strip shows the others that have none either.';
     }
 
+    // f() — the fold QUIT and CLS live behind on a narrow header. Open state is the class, so the
+    // media query alone decides whether the fold exists at all.
+    function toggleFireMenu() { setFireMenu(!document.getElementById('fireMenu').classList.contains('open')); }
+
+    function setFireMenu(open) {
+      document.getElementById('fireMenu').classList.toggle('open', open);
+      document.getElementById('fireBtn').setAttribute('aria-expanded', String(open));
+      // An arm is a promise about the next tap, and the button carrying it is about to be hidden.
+      if (!open) { disarmQuit(); disarmClear(); }
+    }
+
+    function closeFireMenu() { if (document.getElementById('fireMenu').classList.contains('open')) setFireMenu(false); }
+
     function closeTermMenu() {
       document.getElementById('termMenu').style.display = 'none';
       document.getElementById('termMenuBtn').setAttribute('aria-expanded', 'false');
@@ -8415,8 +8481,11 @@
     // Dismiss on any click outside the menu and its button, and on Escape.
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
+      if (!e.target.closest('.fire-wrap')) closeFireMenu();
     });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTermMenu(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closeTermMenu(); closeFireMenu(); }
+    });
 
     function fingerprint(a, role) {
       return {
@@ -9784,6 +9853,7 @@
       // The view this pane was last read in, restored with it — after activePane is set, which is
       // what it reads.
       renderConvView();
+      closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
       disarmAbort();
@@ -9796,6 +9866,7 @@
     function closeTerminal() {
       activePane = null; clearInterval(refreshInterval);
       syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
+      closeFireMenu();
       disarmClear();
       disarmQuit();
       disarmAbort();
@@ -10123,6 +10194,7 @@
 
     function armClear() {
       armFire('clsBtn', () => {
+        closeFireMenu();
         const line = isShell(activePane) ? 'clear' : '/clear';
         sendLine(line);
         // The screen the pane repaints after a clear is the live frame; the backlog behind it is
@@ -10134,6 +10206,7 @@
 
     function armQuit() {
       armFire('quitBtn', () => {
+        closeFireMenu();
         const line = isShell(activePane) ? 'exit' : '/quit';
         sendLine(line);
         showToast(`Sent ${line}`);

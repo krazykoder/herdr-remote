@@ -1384,8 +1384,9 @@ test('a pane reading a thread can manage the conversation from it', async ({page
   // In the pane's own header, left of QUIT — the same control the conversation view carries, in
   // the same place relative to the thread it opens onto.
   await expect(who).toHaveText('1 pane ▾');
-  const header = page.locator('#terminalView .term-header');
-  expect(await header.evaluate(h => [...h.children].map(c => c.id).join(','))).toContain('paneConvWho,quitBtn');
+  expect(await page.evaluate(() =>
+    document.getElementById('paneConvWho').nextElementSibling.contains(document.getElementById('quitBtn'))))
+    .toBe(true);
   await expect(page.locator('#convPaneRoster')).toBeHidden();
   await who.click();
   await expect(page.locator('#convPaneRoster .conv-roster-row')).toHaveCount(1);
