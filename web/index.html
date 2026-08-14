@@ -402,8 +402,7 @@
       scroll-padding: 0 12px;
     }
 
-    body.terminal-open .agent-tabs,
-    body.conversation-open .agent-tabs {
+    body.terminal-open .agent-tabs {
       display: flex;
     }
 
@@ -1732,33 +1731,25 @@
       z-index: 2;
     }
 
-    /* The strip sits at the foot of the view and stays there while the thread scrolls under it —
-       the same job the tab bar does at the top of a pane, at the end of the thumb rather than the
-       end of the reach. */
+    /* Conversation tabs occupy pane tabs' exact slot in the shared bottom header. A second strip
+       above it would make two rows of tabs say the same kind of thing. */
     .conv-strip {
-      position: sticky;
-      bottom: 0;
-      z-index: 2;
-      display: flex;
-      gap: 6px;
-      /* Pushed to the bottom even when the thread is short: a strip floating mid-screen under two
-         messages reads as part of the thread. */
-      margin-top: auto;
-      padding: 6px 12px;
-      background: var(--bg);
-      border-top: 1px solid var(--border);
+      display: none;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
       overflow-x: auto;
       overflow-y: hidden;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
-      /* A fling past the last tab otherwise chains to the page, where Chrome on macOS reads a
-         horizontal swipe as navigate-back. */
       overscroll-behavior-x: none;
+      scroll-behavior: smooth;
       scroll-snap-type: x proximity;
     }
 
-    .conv-strip:empty {
-      display: none;
+    body.conversation-open .conv-strip:not(:empty) {
+      display: flex;
     }
 
     .conv-strip::-webkit-scrollbar {
@@ -1771,15 +1762,29 @@
       gap: 5px;
       flex: none;
       scroll-snap-align: start;
-      max-width: 46vw;
-      min-height: 32px;
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
+      max-width: 132px;
+      min-height: 44px;
+      padding: 0;
+      border: none;
       background: none;
-      color: var(--muted);
-      font-size: 0.65rem;
       cursor: pointer;
+      font: inherit;
+    }
+
+    .conv-strip .conv-tab .pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 7px;
+      box-shadow: inset 0 0 0 1px var(--border);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
     }
 
     .conv-strip .conv-tab .name {
@@ -1788,10 +1793,11 @@
       white-space: nowrap;
     }
 
-    .conv-strip .conv-tab[aria-current="true"] {
-      border-color: var(--blue);
-      color: var(--text);
-      background: var(--surface);
+    .conv-strip .conv-tab[aria-current="true"] .pill {
+      color: var(--bg);
+      background: var(--blue);
+      box-shadow: inset 0 0 0 1px var(--blue);
+      font-weight: 700;
     }
 
     .conv-strip .conv-tab .dot {
@@ -3208,6 +3214,8 @@
     <h1>herdr</h1>
     <!-- One badge per live agent, selectable like tabs. Filled by renderAgentTabs. -->
     <div class="agent-tabs" id="agentTabs"></div>
+    <!-- Replaces pane tabs while a standalone conversation is open. -->
+    <div class="conv-strip" id="convStrip"></div>
     <div class="nav-group">
       <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3361,10 +3369,6 @@
     <div class="conv-panel" id="convViewRoster" hidden></div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
-    <!-- The conversations, as tabs, so moving between them does not mean going back to the list
-         and finding your place in it again. Same list and same order as the landing page, down to
-         the auto ones being there only when they are shown there. -->
-    <div class="conv-strip" id="convStrip"></div>
   </div>
 
   <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
@@ -9545,9 +9549,9 @@
         `<button class="conv-tab" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` aria-current="${r.c.id === convViewId ? 'true' : 'false'}"` +
         ` onclick="openConversation(this.dataset.convId)">` +
-        `<span class="dot${r.pulse}" style="background:${r.dot}" aria-hidden="true"></span>` +
+        `<span class="pill"><span class="dot${r.pulse}" style="background:${r.dot}" aria-hidden="true"></span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
-        (r.c.auto ? '<span class="tier">auto</span>' : '') + '</button>').join('');
+        (r.c.auto ? '<span class="tier">auto</span>' : '') + '</span></button>').join('');
       const open = el.querySelector('[aria-current="true"]');
       if (open) open.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }

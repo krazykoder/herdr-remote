@@ -124,15 +124,19 @@ test('a card opens the conversation itself, not a pane', async ({page}) => {
   // Read-only: a bubble here is not a selection, so it carries no tick.
   await expect(page.locator('#convViewThread .conv-pick')).toHaveCount(0);
 
-  // A conversation is not a terminal, but it still needs the same bottom navigation: otherwise
-  // closing the terminal hides the agent tabs and moves the chrome where the thumb cannot reach it.
+  // Conversation tabs replace pane tabs in the shared bottom header. A separate strip would make
+  // two tab rows compete for the same thumb space.
   const bottom = await page.evaluate(() => {
     const header = document.querySelector('.header').getBoundingClientRect();
     const status = document.getElementById('statusBar').getBoundingClientRect();
-    return {tabs: getComputedStyle(document.getElementById('agentTabs')).display,
+    return {paneTabs: getComputedStyle(document.getElementById('agentTabs')).display,
+      convTabs: getComputedStyle(document.getElementById('convStrip')).display,
+      stripInHeader: document.getElementById('convStrip').parentElement.classList.contains('header'),
       headerBottom: header.bottom, statusTop: status.top};
   });
-  expect(bottom.tabs).toBe('flex');
+  expect(bottom.paneTabs).toBe('none');
+  expect(bottom.convTabs).toBe('flex');
+  expect(bottom.stripInHeader).toBe(true);
   expect(bottom.headerBottom).toBeLessThanOrEqual(bottom.statusTop);
 
   // And back where it came from.
