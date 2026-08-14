@@ -7493,9 +7493,9 @@
         // spelled out.
         const mark = e.draft ? '<span class="conv-state">draft</span>' : '';
         const head = bar || time ? `<span class="conv-who">${bar}${time}${mark}</span>` : '';
-        // The wash is the member's hue at low alpha, exactly as the tab strip mixes it. Only in
-        // the joint thread: one member needs no telling apart from itself.
-        const side = paired && e.member === 1 ? ' conv-right' : '';
+        // The pane being read is always the right side. Stored member order is conversation
+        // history, not a reading preference, and can change when a pair is created or reopened.
+        const side = paired && key === me.key ? ' conv-right' : '';
         // Told apart by having no fill at all rather than by a different one: an unfilled bubble
         // against a wall of washed ones is unmistakable at a glance, on any of the eleven themes,
         // and it needs no colour of its own to say "this is not settled yet".

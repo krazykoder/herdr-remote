@@ -859,10 +859,10 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   expect(new Set(layout.map(m => m.width)).size).toBe(1);
   expect(layout[0].color).toBe('var(--blue)');       // scratch is codex
   expect(layout[1].color).toBe('var(--agent-claude)');
-  expect(layout[0].right).toBe('flex-end');
-  expect(layout[1].right).toBe('flex-start');
+  expect(layout[0].right).toBe('flex-start');
+  expect(layout[1].right).toBe('flex-end');
   expect(layout[2].user).toBe(true);
-  expect(layout[2].right).toBe('flex-start');         // prompt sent to Architect 1
+  expect(layout[2].right).toBe('flex-end');           // prompt sent to Architect 1
   // The user's own text carries one colour of its own, and it is not any agent's.
   await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
