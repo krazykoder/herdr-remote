@@ -2685,6 +2685,22 @@
       white-space: nowrap;
     }
 
+    .pair-strip .pair-target {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .pair-strip .pair-target .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* Last child of the pane: its separator has to face the other way. */
     .pair-strip.at-bottom {
       border-bottom: none;
@@ -8402,6 +8418,14 @@
       // Falls back to the pinned name, then the pane ID, so the button is never blank.
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
+      const mineLive = agents.find(a => a.pane_id === activePane);
+      const composing = ok && document.activeElement === document.getElementById('termInput') && mineLive;
+      const center = composing
+        ? `<span class="pair-target" title="Typing to ${escapeHtml(paneLabel(mineLive))}">` +
+          `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
+          `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
+          `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${agentBadge(mineLive.agent)}</span>`
+        : `<span class="pair-name">${escapeHtml(pair.name)}</span>`;
       // Rebuilt wholesale, so the placement class has to be reapplied with it.
       strip.className = 'pair-strip' + (ok ? '' : ' stale') +
         (currentPairPlace() === 'bottom' ? ' at-bottom' : '');
@@ -8409,7 +8433,7 @@
         // Switch sits first, on the left: it is the control reached most often, and the thumb
         // is already there from the back button above it.
         (ok ? `<button class="switch" title="Switch to ${escapeHtml(partnerName)} (⌘/Ctrl+Shift+P)" onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
-        `<span class="pair-name">${escapeHtml(pair.name)}</span>` +
+        center +
         (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
       strip.style.display = 'flex';
@@ -9567,7 +9591,12 @@
 
     // Typing wins over browsing: a dock and the on-screen keyboard together leave almost no pane
     // visible, and the user who just tapped the composer wants to read what they are answering.
-    document.getElementById('termInput').addEventListener('focus', closeDocks);
+    document.getElementById('termInput').addEventListener('focus', () => {
+      closeDocks();
+      renderPairStrip();
+    });
+    // Let a pair-strip button receive its click before replacing the focused-composer marker.
+    document.getElementById('termInput').addEventListener('blur', () => setTimeout(renderPairStrip));
 
     // Clearing is destructive and sits next to two controls that are not, so it takes two taps.
     // The armed state expires on its own — a stray first tap must not leave a live trigger behind.

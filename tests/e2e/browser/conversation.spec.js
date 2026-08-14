@@ -895,6 +895,22 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   expect(dot.beat).toBe('pulse');
 });
 
+test('a focused composer names its paired typing target in the strip center', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    renderPairStrip();
+  });
+  await expect(page.locator('#pairStrip .pair-target')).toHaveCount(0);
+  await page.locator('#termInput').focus();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('claude');
+  await page.evaluate(() => document.getElementById('termInput').blur());
+  await expect(page.locator('#pairStrip .pair-target')).toHaveCount(0);
+  await expect(page.locator('#pairStrip .pair-name')).toBeVisible();
+});
+
 test('conversation text has its own menu font control', async ({page}) => {
   await open(page);
   await join(page);
