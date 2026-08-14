@@ -459,8 +459,15 @@ test('an ended session can be started again, and the new pane joins as a new mem
   await tapWire(page);
   await expect(page.locator('#convView .conv-roster-row.gone')).toHaveCount(1);
 
-  page.once('dialog', d => d.accept());
-  await page.locator('#convView .conv-again').click();
+  // Two taps, because the second one starts a real session on a real host. The first says where
+  // it will land — the drain cannot carry a sentence, so the toast does.
+  const again = page.locator('#convView .conv-again');
+  await again.click();
+  await expect(again).toHaveText('Start again?');
+  await expect(page.locator('#toast')).toContainText('new claude session in herdr-remote');
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
+
+  await again.click();
   await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
     .toHaveLength(1);
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));

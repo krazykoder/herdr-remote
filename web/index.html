@@ -2171,7 +2171,8 @@
     /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than
        one that lives in the markup. Longer drain — see ARM_MS: these are aimed at off a panel,
        not pressed by a thumb already resting on them. */
-    .arm-btn[data-armed="1"] {
+    .arm-btn[data-armed="1"],
+    .term-menu .menu-item.arm-btn[data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
       background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
@@ -2179,10 +2180,23 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .arm-btn[data-armed="1"] {
+      .arm-btn[data-armed="1"],
+      .term-menu .menu-item.arm-btn[data-armed="1"] {
         background: var(--orange);
         animation: none;
       }
+    }
+
+    /* A class rather than the inline styles it used to carry: an inline background outranks every
+       rule, including the armed one. */
+    .palette-del {
+      background: none;
+      border: none;
+      border-radius: 6px;
+      padding: 2px 6px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      cursor: pointer;
     }
 
     /* Borderless and ahead of the colour dot: it acts on the row, and a third bordered button per
@@ -7824,7 +7838,7 @@
       // Under the pane's own header, not inside the thread: the same control in the same place as
       // the conversation view's, and drawn separately so an arriving message cannot rewrite the
       // roster under a reader who has just opened it.
-      renderConvPaneChrome(conv, recs, hidden, key);
+      renderConvPaneChrome(conv, recs, hidden, key, entries);
       box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length,
         joint ? entries.length : -1, convsForPane(a)) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
@@ -8927,7 +8941,9 @@
 
     function unpair() {
       const pair = pairFor(pairs, activePane);
-      if (!pair || !confirm(`Remove the pair "${pair.name}"?`)) return;
+      if (!pair) return;
+      // The arm is what asked; the menu it was armed in is still open behind it.
+      closeTermMenu();
       pairs = pairs.filter(p => p.id !== pair.id);
       savePairs();
       render();
@@ -8984,7 +9000,8 @@
       // working, and pair management is neither frequent nor something to hit by accident.
       menu.innerHTML =
         `<button class="menu-item" role="menuitem" onclick="closeTermMenu(); openPairDialog(activePane)">Edit pair</button>` +
-        `<button class="menu-item danger" role="menuitem" onclick="closeTermMenu(); unpair()">Unpair…</button>`;
+        `<button class="menu-item danger arm-btn" role="menuitem"` +
+        ` onclick="armButton(this, 'Unpair?', unpair)">Unpair…</button>`;
     }
 
     // Renames the pane in herdr itself, not just in this browser. A frontend-only alias would
@@ -9199,7 +9216,7 @@
 
     function deleteShortcut(i) {
       const s = termShortcuts[i];
-      if (!s || !confirm(`Delete "${s.label}"?`)) return;
+      if (!s) return;
       termShortcuts.splice(i, 1);
       saveTermShortcuts();
       refreshPalette();
@@ -9479,9 +9496,14 @@
     // a minute would take a reader's tap target out from under their finger.
     let convPaneRosterHtml = '';
 
-    function renderConvPaneChrome(conv, recs, hidden, key) {
+    function renderConvPaneChrome(conv, recs, hidden, key, entries) {
       const who = document.getElementById('paneConvWho'), panel = document.getElementById('convPaneRoster');
       const n = (conv.members || []).length;
+      // The panel's actions read the thread that was drawn — Copy writes it out, Start again reads
+      // a member's spawn from it. Same variables as the standalone view's, for the same reason
+      // convViewId is: the two are never on screen together.
+      convViewRecs = recs;
+      convViewEntries = entries;
       who.hidden = false;
       who.textContent = `${n} pane${n === 1 ? '' : 's'} ▾`;
       who.setAttribute('aria-expanded', convPaneRoster ? 'true' : 'false');
@@ -9538,8 +9560,8 @@
           (on ? `<button class="conv-open" data-key="${escapeHtml(m.key)}"` +
             ` onclick="openConvMemberPane(this.dataset.key)"` +
             ` aria-label="Open this member's pane">Open</button>` : '') +
-          (!on && canRespawn(rec.spawn) ? `<button class="conv-again" data-key="${escapeHtml(m.key)}"` +
-            ` onclick="convRespawn(this.dataset.key)"` +
+          (!on && canRespawn(rec.spawn) ? `<button class="conv-again arm-btn" data-key="${escapeHtml(m.key)}"` +
+            ` onclick="convArmRespawn(this, this.dataset.key)"` +
             ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
           `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
           ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
@@ -9606,20 +9628,32 @@
     // convMemberKey, which means a new transcript (D3). That is what stops a recycled pane id
     // inheriting a dead session's words, and the joint view's time merge is what makes the two
     // read as one thread across the seam.
+    // What the first tap says, because the second one starts a real session on a real host and a
+    // drain cannot carry a sentence. The relay takes a new session's cwd from the Project and
+    // never from the client, so the recorded cwd is *shown* rather than sent: if the Project has
+    // been repointed since, the two disagree, and pretending they agree is the one thing this
+    // must not do.
+    function respawnNote(key) {
+      const rec = convViewRecs.find(r => r.key === key), spawn = rec && rec.spawn;
+      if (!canRespawn(spawn)) return '';
+      const project = projects.find(p => p.id === spawn.project_id) || {};
+      const where = agents.find(x => x.project_id === spawn.project_id && x.cwd);
+      const moved = where && spawn.cwd && where.cwd !== spawn.cwd
+        ? ` It ran in ${spawn.cwd}; that Project now points at ${where.cwd}.` : '';
+      return `Tap again to start a new ${spawn.agent} session in ${project.label || 'this Project'}.${moved}`;
+    }
+
+    function convArmRespawn(btn, key) {
+      // Said on the arm, not on the fire: by the second tap the session is already starting.
+      if (armedEl !== btn) { const note = respawnNote(key); if (note) showToast(note); }
+      armButton(btn, 'Start again?', () => convRespawn(key));
+    }
+
     function convRespawn(key) {
       const conv = loadConvIndex().find(c => c.id === convViewId);
       const rec = convViewRecs.find(r => r.key === key);
       const spawn = rec && rec.spawn;
       if (!ws || !conv || !canRespawn(spawn)) return;
-      const project = projects.find(p => p.id === spawn.project_id);
-      // The relay takes a new session's cwd from the Project and never from the client, so the
-      // recorded cwd is shown rather than sent: if the Project has been repointed since, the two
-      // disagree, and pretending they agree is the one thing this must not do.
-      const where = agents.find(x => x.project_id === spawn.project_id && x.cwd);
-      const moved = where && spawn.cwd && where.cwd !== spawn.cwd
-        ? `\n\nIt ran in ${spawn.cwd}. That Project now points at ${where.cwd}.` : '';
-      if (!confirm(`Start a new ${spawn.agent} session in ${project.label} and continue ` +
-        `"${conv.name}"?${moved}`)) return;
       // herdr recycles workspace IDs, so a stale one cannot be trusted to name the workspace the
       // session was in. New tab only where that workspace is live on that host right now.
       const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
@@ -10828,8 +10862,8 @@
           : paletteMode === 'prompts' ? `insertShortcut(${c.idx})`
             : `runShortcut(${c.idx})`;
         const del = paletteMode === 'terminal'
-          ? `<button aria-label="Delete ${escapeHtml(c.cmd)}" onclick="event.stopPropagation();deleteShortcut(${c.idx})"
-        style="background:none;border:none;color:var(--muted);font-size:0.9rem;cursor:pointer">✕</button>` : '';
+          ? `<button class="palette-del arm-btn" aria-label="Delete ${escapeHtml(c.cmd)}"
+        onclick="event.stopPropagation();armButton(this, 'Delete?', () => deleteShortcut(${c.idx}))">✕</button>` : '';
         return `<div role="button" tabindex="0" onclick="${act}" onkeydown="if(event.key==='Enter')${act}" style="padding:10px 12px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:2px;transition:background 0.15s" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background=''">
     <span style="font-family:monospace;font-weight:600;font-size:0.85rem;${c.danger ? 'color:var(--red)' : 'color:var(--blue)'}">${escapeHtml(armed ? `Run ${c.cmd}?` : c.cmd)}</span>
     <span style="flex:1;font-size:0.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.desc)}</span>${del}
