@@ -1,7 +1,8 @@
 # Spec — Composing conversations out of recordings
 
 **Date:** 2026-08-13
-**Status:** Proposed.
+**Status:** **Implemented** — `web/index.html`, `tests/test_conversation.js`,
+`tests/e2e/browser/conversation.spec.js`. Built 2026-08-14, in the order S1, S2, S3.
 **Scope:** `web/index.html` only. No relay change, no new WebSocket message, no new env var, no
 change to what is recorded or when.
 **Builds on:** [Conversation Mode](2026-08-13_conversation_mode_spec.md) and the permanence model

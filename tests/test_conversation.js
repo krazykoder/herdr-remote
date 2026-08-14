@@ -43,7 +43,7 @@ const ctx = vm.createContext({
 const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
-               'parseConvIndex', 'capEntries', 'evictOrder',
+               'parseConvIndex', 'capEntries', 'evictOrder', 'convCopyName',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   slice('// --- P3 pair logic (pure) --- start', '// --- P3 pair logic (pure) --- end')
@@ -54,7 +54,7 @@ vm.runInContext(
 const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
-       parseConvIndex, capEntries, evictOrder,
+       parseConvIndex, capEntries, evictOrder, convCopyName,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -202,6 +202,18 @@ test('a sent prompt that also sits far up the scrollback splits at its echo', ()
   assert.deepStrictEqual(texts(backfillEntries(first.history, NOW)), ['go', 'Older answer.']);
   assert.deepStrictEqual(texts(sentTurnEntries(first.turn, stored, NOW, NOW - 1)),
     ['Newer answer.']);
+});
+
+test('a copy is named apart from what it was copied from', () => {
+  assert.strictEqual(convCopyName('the release', []), 'the release (copy)');
+  // The second copy is the third grouping of the same work, and two rows called the same is a list
+  // nobody can pick from.
+  assert.strictEqual(convCopyName('the release', ['the release', 'the release (copy)']),
+    'the release (copy 2)');
+  // Copying a copy does not stack the suffix.
+  assert.strictEqual(convCopyName('the release (copy 2)', ['the release (copy)']),
+    'the release (copy 2)');
+  assert.ok(convCopyName('x'.repeat(80), []).length <= 64);
 });
 
 // A reload arms the turn clock at the reconnect, so `end` is newer than anything stored and the

@@ -1785,6 +1785,21 @@
       white-space: nowrap;
     }
 
+    /* The picker a pane in more than one conversation gets. Sized and coloured as the name it
+       replaces — it is the same word in the same place, and only the caret says it can be changed. */
+    select.name {
+      max-width: 60%;
+      border: 0;
+      background: none;
+      font: inherit;
+      font-weight: 600;
+      color: var(--text);
+      padding: 2px 0;
+      /* A tap target on a phone, without the row growing to meet it. */
+      min-height: 28px;
+      cursor: pointer;
+    }
+
     /* Who is in this conversation. One row until tapped, because it is reference rather than
        reading — and the row is where a conversation whose panes have all exited says what it was. */
     .conv-members {
@@ -1919,6 +1934,9 @@
 
     .conv-roster-actions {
       display: flex;
+      /* Four actions do not fit a phone on one row, and a button pushed off the edge is a button
+         that does not exist. */
+      flex-wrap: wrap;
       gap: 6px;
       padding-top: 4px;
     }
@@ -1943,6 +1961,32 @@
 
     .conv-roster-add .conv-none {
       font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    /* The ended sessions in the picker, under their own heading — "which pane is running" and
+       "which recording exists" are different questions, and a flat list of chips would ask them as
+       one. */
+    .conv-roster-add .conv-pick-head {
+      flex-basis: 100%;
+      margin: 4px 0 0;
+      font-size: 0.6rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .conv-roster-add .conv-chip.past {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      /* Dimmer than a live pane, and it has to stay legible: this is a real choice, not a disabled
+         one. */
+      opacity: 0.85;
+    }
+
+    .conv-roster-add .conv-chip .ago {
+      font-size: 0.6rem;
       color: var(--muted);
     }
 
@@ -6463,6 +6507,18 @@
       }
       return { entries: out, removed: removed };
     }
+
+    // A copy's name, against the names already taken. "(copy)", then "(copy 2)" — the second copy
+    // of a thing is the third grouping of it, and a list holding two rows called the same is a list
+    // nobody can pick from.
+    function convCopyName(name, taken) {
+      const base = (name || 'Conversation').replace(/ \(copy( \d+)?\)$/, '');
+      const used = new Set(taken || []);
+      for (let n = 1; ; n++) {
+        const next = `${base} (copy${n > 1 ? ' ' + n : ''})`.slice(0, 64);
+        if (!used.has(next)) return next;
+      }
+    }
     // --- Conversation recorder (pure) --- end
 
     // The pending transfer, and where a classified send waits for the recorder to find it. Both
@@ -6612,6 +6668,21 @@
         const tx = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
         const got = await Promise.all(want.map(k => idbReq(tx.get(k))));
         return got.filter(Boolean);
+      } catch (e) { return []; }
+    }
+
+    // Every transcript this browser holds, for the one screen that has to offer them as choices
+    // rather than render them. Read when the picker opens and never on the poll path — this is the
+    // only scan of the store outside eviction, and it stays that way.
+    async function convAll() {
+      const db = await openConvDB();
+      if (!db) {
+        const all = convFallbackAll();
+        return Object.keys(all).map(k => all[k]).filter(Boolean);
+      }
+      try {
+        const read = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
+        return (await idbReq(read.getAll())) || [];
       } catch (e) { return []; }
     }
 
@@ -6910,7 +6981,7 @@
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return false;
       if (convMemberKey(a) === key) return true;
-      const conv = convsForPane(a)[0];
+      const conv = convViewConv(a);
       return !!conv && convViewOn(a) && convJointOn() &&
         pairedConvMembers(a, conv).some(m => m.key === key);
     }
@@ -7122,15 +7193,41 @@
       return !!(key && convViews()[key]);
     }
 
+    // Which of a pane's conversations its thread is showing. The stored value is the conversation's
+    // id; versions before the pane could be in more than one wrote `1`, which still reads as on and
+    // means "the first". A stored id that names nothing this pane is in any more falls back the
+    // same way — a stale preference must never make a recorded pane look empty.
+    function convViewConv(a) {
+      const mine = convsForPane(a);
+      if (!mine.length) return null;
+      const want = convViews()[convMemberKey(a)];
+      return mine.find(c => c.id === want) || mine[0];
+    }
+
+    function convSetView(a, id) {
+      const key = convMemberKey(a), views = convViews();
+      if (id) views[key] = id; else delete views[key];
+      try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
     function toggleConvView() {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
-      const key = convMemberKey(a), views = convViews();
-      if (views[key]) delete views[key]; else views[key] = 1;
-      try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
-      catch (e) { /* private mode: this session only */ }
+      const on = convViewOn(a), conv = on ? null : convViewConv(a);
+      convSetView(a, on ? '' : ((conv && conv.id) || 1));
       renderConvBar();
       if (window.cue) cue('page');
+    }
+
+    // The thread's own picker, for a pane in more than one conversation. Reading the same pane under
+    // two groupings is the whole point of a grouping being a view, and index order — which is
+    // creation order — is not a preference anybody expressed.
+    function selectConvView(id) {
+      const a = activePane ? paneOf(activePane) : null;
+      if (!a) return;
+      convSetView(a, id);
+      renderConvView();
     }
 
     // Not everything in a thread is a settled fact about what was said. Two kinds are not:
@@ -7344,7 +7441,7 @@
     async function renderConvView() {
       const wrap = document.getElementById('termWrap'), box = document.getElementById('convThread');
       const a = activePane ? paneOf(activePane) : null;
-      const conv = a ? convsForPane(a)[0] : null;
+      const conv = a ? convViewConv(a) : null;
       const on = !!conv && convViewOn(a);
       wrap.classList.toggle('conv-on', on);
       box.hidden = !on;
@@ -7388,7 +7485,8 @@
       const entries = composed.entries, all = composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
-      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length, joint ? entries.length : -1) +
+      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length,
+        joint ? entries.length : -1, convsForPane(a)) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
         ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
         : (all.length
@@ -7445,11 +7543,18 @@
     // on screen — the index is written after a fold, so it is a message behind for exactly as long
     // as it takes this to run. A joint thread has every member's entries on screen already and
     // passes -1 to say so.
-    function convHeadHtml(conv, key, count, total) {
+    function convHeadHtml(conv, key, count, total, mine) {
       const n = total >= 0 ? total : (conv.members || []).reduce(
         (t, m) => t + (count >= 0 && m.key === key ? count : (m.messages || 0)), 0);
-      return `<div class="conv-head"><span class="name">${escapeHtml(conv.name)}</span>` +
-        `<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+      // A select and not a tap-to-cycle: cycling hides how many groupings this pane is in, and the
+      // count is the information. One conversation draws the name it always drew.
+      const name = (mine || []).length > 1
+        ? `<select class="name" onchange="selectConvView(this.value)"` +
+          ` aria-label="Which conversation this pane's thread is showing">` +
+          mine.map(c => `<option value="${escapeHtml(c.id)}"${c.id === conv.id ? ' selected' : ''}>` +
+            `${escapeHtml(c.name)}</option>`).join('') + '</select>'
+        : `<span class="name">${escapeHtml(conv.name)}</span>`;
+      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
     // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
@@ -8954,10 +9059,23 @@
       // already recording elsewhere, which bring their own transcript with them (D3).
       const taken = new Set((conv.members || []).map(m => m.key));
       const free = agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)));
+      // And the sessions that have already ended, which is what a conversation assembled after the
+      // fact is made of. Newest first: a picker is ordered by what you are most likely to want.
+      const now = Date.now();
+      const past = convPickRecs
+        .filter(r => !taken.has(r.key) && !live.has(r.key) && (r.entries || []).length)
+        .sort((a, b) => (b.touched || 0) - (a.touched || 0))
+        .slice(0, CONV_PICK_MAX);
       const chips = !convAdding ? '' : `<div class="conv-roster-add">` + (free.length
         ? free.map(x => `<button class="conv-chip" data-key="${escapeHtml(convMemberKey(x))}"` +
             ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}</button>`).join('')
-        : '<span class="conv-none">Every live pane is already in this conversation.</span>') + '</div>';
+        : '<span class="conv-none">Every live pane is already in this conversation.</span>') +
+        (past.length ? `<span class="conv-pick-head">Recorded</span>` + past.map(r =>
+          `<button class="conv-chip past" data-key="${escapeHtml(r.key)}"` +
+          ` onclick="convJoinRecord(this.dataset.key)">${escapeHtml(r.label || 'Former pane')}` +
+          agentBadge((r.spawn || {}).agent || '') +
+          `<span class="ago">${escapeHtml(convSpan(now - (r.touched || now)))}</span></button>`
+        ).join('') : '') + '</div>';
       // The tier, said where the button that changes it is. "How do I make this one mine" is the
       // question an auto record raises, and the answer is one word on the button below it.
       const tier = conv.auto
@@ -8966,6 +9084,9 @@
       return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
         `<button onclick="renameConversation()">Rename</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
+        `<button onclick="duplicateConversation()"` +
+        ` aria-label="Copy this conversation so panes can be added without changing this one">` +
+        `Duplicate</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
         ` onclick="convToggleAdd()">Add pane</button></div>${chips}${tier}</div>`;
     }
@@ -9076,15 +9197,63 @@
       convEdit(c => { c.name = name; delete c.auto; });
     }
 
-    function convToggleAdd() {
+    // A grouping is a view over transcripts, so a copy of one costs a row in the index and not a
+    // word in the database. That is what makes "A and B, then A, B and C, and compare" a thing the
+    // user can do at all: editing the original would destroy the reading being compared against.
+    //
+    // The copy is named, never auto. Making one is an assertion that this grouping matters, which is
+    // exactly what D4 defines the named tier to be — and it stops the copy being evicted out from
+    // under the comparison it was made for.
+    function duplicateConversation() {
+      const items = loadConvIndex(), conv = items.find(c => c.id === convViewId);
+      if (!conv) return;
+      const copy = {
+        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        name: convCopyName(conv.name, items.map(c => c.name)),
+        created: Date.now(),
+        members: (conv.members || []).map(m => Object.assign({}, m)),
+      };
+      items.unshift(copy);
+      saveConvIndex(items);
+      renderConversations();
+      // Straight into the copy: the next thing the user does is add the member they made it for.
+      openConversation(copy.id);
+      showToast(`Copied to "${copy.name}".`);
+    }
+
+    // What the picker offers besides the live panes, read once when it opens. Held rather than
+    // re-read on every redraw: the standalone view repaints on every snapshot, and a store scan on
+    // the poll path is what this deliberately is not.
+    let convPickRecs = [];
+    const CONV_PICK_MAX = 60;
+
+    async function convToggleAdd() {
       convAdding = !convAdding;
+      if (!convAdding) { convPickRecs = []; renderConvStandalone(false); return; }
       renderConvStandalone(false);
+      convPickRecs = await convAll();
+      if (convAdding) renderConvStandalone(false);
+    }
+
+    // A member built from a record instead of from a pane: the session has ended, so there is no
+    // paneLabel to ask and the record's own label is the only name it has left.
+    function convJoinRecord(key) {
+      const rec = convPickRecs.find(r => r.key === key);
+      if (!rec) return;
+      convAdding = false;
+      convPickRecs = [];
+      // No CONV_MEMBER_MAX check: that caps panes *recording* at once, and this one has stopped.
+      convEdit(conv => {
+        conv.members = (conv.members || []).concat(
+          { key: key, added: Date.now(), label: rec.label || '' });
+      });
     }
 
     function convJoinPane(key) {
       const pane = agents.find(x => convMemberKey(x) === key);
       if (!pane) return;
       convAdding = false;
+      convPickRecs = [];
       convEdit(conv => {
         if (convRecordingMembers(conv).length >= CONV_MEMBER_MAX) {
           showToast(`"${conv.name}" already has ${CONV_MEMBER_MAX} live panes.`);

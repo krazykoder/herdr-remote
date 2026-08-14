@@ -39,6 +39,23 @@ const read = (page, text = PANE) => page.evaluate(async text => {
   await recordPane(activePane, paneRows);
 }, text);
 
+// Hold a pane at a status the fake herdr never reports. Setting it on the `agents` array alone
+// loses the race with the 3s poll, which replaces that array wholesale — so the snapshot itself is
+// what gets rewritten, on the way in and every time.
+const forceStatus = (page, label, status) => page.evaluate(([label, status]) => {
+  const orig = ws.onmessage;
+  ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'agents') {
+      for (const a of d.agents) if (a.label === label) a.status = status;
+      return orig({data: JSON.stringify(d)});
+    }
+    return orig(e);
+  };
+  const a = agents.find(x => x.label === label);
+  if (a) a.status = status;
+}, [label, status]);
+
 const held = (page, key) => page.evaluate(async k => (await convGet([k]))[0] || null, key);
 const tapWire = page => page.evaluate(() => {
   window.__sent = [];
@@ -921,7 +938,7 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   await read(page);
   // After the read and not before: read() forces the open pane to `done`, which is the status the
   // transfer sheet would then have drawn.
-  await page.evaluate(() => { agents.find(a => a.label === 'Architect 1').status = 'working'; });
+  await forceStatus(page, 'Architect 1', 'working');
   await page.locator('#quickActions .qa-conv').click();
   // First bubble belongs to scratch, while Architect 1 remains the open pane.
   await page.locator('#convThread .conv-msg').first().locator('.conv-pick').click();
@@ -1031,6 +1048,150 @@ test('the prune never drops a recording member to make room', async ({page}) => 
   // Every live pane stays, even though the ended ones it is holding above the cap are newer.
   expect(kept.recording).toBe(kept.live);
   expect(kept.total).toBe(20);
+});
+
+test('a conversation can be duplicated, and the copy is nobody\'s auto record', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].auto = true;
+    saveConvIndex(items);
+    renderConvStandalone(false);
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Duplicate'}).click();
+  const out = await page.evaluate(() => {
+    const items = loadConvIndex();
+    return {names: items.map(c => c.name), autos: items.map(c => !!c.auto),
+      rosters: items.map(c => c.members.map(m => m.key)), open: convViewId};
+  });
+  // Two groupings over the same transcripts. The copy is named, because making one is the
+  // assertion that this grouping matters (D4) — and an evictable copy would not survive the
+  // comparison it was made for.
+  expect(out.names).toEqual(['new authentication feature (copy)', 'new authentication feature']);
+  expect(out.autos).toEqual([false, true]);
+  expect(out.rosters[0]).toEqual(out.rosters[1]);
+  // And the view followed, because the next thing to do is add the pane it was copied for.
+  expect(out.open).toBe(await page.evaluate(() => loadConvIndex()[0].id));
+  await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature (copy)');
+});
+
+test('a session that has already ended can be added from its recording', async ({page}) => {
+  await openCard(page);
+  // A pane this browser recorded and that is not running now — the whole reason to assemble a
+  // conversation after the fact.
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: 'yesterday\'s codex', touched: Date.now() - 7200000,
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'Shipped the migration.', at: Date.now() - 7200000,
+        at_src: 'state'}]});
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  const chip = page.locator('#convView .conv-chip.past');
+  await expect(chip).toHaveText(/yesterday's codex/);
+  await expect(page.locator('#convView .conv-pick-head')).toHaveText('Recorded');
+  await chip.click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
+  // Its words are in the thread, merged into the chronology rather than copied anywhere.
+  await expect(page.locator('#convViewThread')).toContainText('Shipped the migration.');
+  expect(await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key)))
+    .toContain('ghost');
+});
+
+test('the picker does not offer a pane the conversation already holds', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  // The open pane is already a member and its transcript is in the store, so it must appear in
+  // neither group — the live chips or the recorded ones.
+  const keys = await page.locator('#convView .conv-chip').evaluateAll(
+    els => els.map(e => e.dataset.key));
+  const mine = await page.evaluate(() => convMemberKey(paneOf(activePane)));
+  expect(keys).not.toContain(mine);
+});
+
+test('three members read by colour, name and badge, with no left or right', async ({page}) => {
+  await open(page);
+  await page.evaluate(async () => {
+    const key = convMemberKey(paneOf(activePane));
+    for (const k of ['m2', 'm3']) {
+      await convPut({key: k, label: k, touched: Date.now(), spawn: {agent: 'codex'},
+        entries: [{who: 'agent', text: 'said by ' + k, at: Date.now(), at_src: 'state'}]});
+    }
+    // Membership before the read: recording is bound to the conversation, so a pane in none of
+    // them records nothing.
+    saveConvIndex([{id: 'c1', name: 'three of us', created: 1, members: [
+      {key, added: 1, label: 'Architect 1'}, {key: 'm2', added: 2}, {key: 'm3', added: 3}]}]);
+  });
+  await read(page);
+  const dots = await page.evaluate(async () => {
+    toggleConvView();
+    await renderConvView();
+    return Array.from(document.querySelectorAll('#convThread .conv-msg .conv-who .dot'))
+      .map(d => d.style.background);
+  });
+  // Sides are a pair's affordance and stop at two members; past that colour, name and badge are
+  // what say who spoke.
+  await expect(page.locator('#convThread .conv-msg.conv-right')).toHaveCount(0);
+  await expect(page.locator('#convThread')).toContainText('said by m2');
+  await expect(page.locator('#convThread')).toContainText('said by m3');
+  expect(new Set(dots).size).toBe(3);
+});
+
+// A pane may be in any number of conversations — the store never stopped it, and grouping is a
+// view over one transcript rather than a copy of it. These are about which grouping the pane's own
+// thread is showing.
+const twoConvs = page => page.evaluate(() => {
+  const key = convMemberKey(paneOf(activePane));
+  saveConvIndex([
+    {id: 'c1', name: 'new authentication feature', created: 1,
+     members: [{key, added: 1, label: 'Architect 1'}]},
+    {id: 'c2', name: 'the release', created: 2, members: [{key, added: 2, label: 'Architect 1'}]},
+  ]);
+  return key;
+});
+
+test('a pane in two conversations picks which one its thread shows', async ({page}) => {
+  await open(page);
+  await twoConvs(page);
+  await read(page);
+  await page.evaluate(() => { toggleConvView(); });
+  const pick = page.locator('#convThread select.name');
+  await expect(pick).toHaveValue('c1');
+  await expect(pick.locator('option')).toHaveText(['new authentication feature', 'the release']);
+  await pick.selectOption('c2');
+  await expect(pick).toHaveValue('c2');
+  // And it survives the redraw a poll brings, which is what makes it a preference rather than a
+  // click.
+  await read(page);
+  await expect(page.locator('#convThread select.name')).toHaveValue('c2');
+});
+
+test('a stored conversation the pane has left falls back rather than showing nothing', async ({page}) => {
+  await open(page);
+  await twoConvs(page);
+  await read(page);
+  await page.evaluate(() => {
+    const a = paneOf(activePane);
+    convSetView(a, 'c2');
+    // The grouping is deleted from under the preference, which is what removing a member or
+    // dropping a conversation does.
+    saveConvIndex(loadConvIndex().filter(c => c.id !== 'c2'));
+    renderConvView();
+  });
+  await expect(page.locator('#convThread .conv-head .name')).toHaveText('new authentication feature');
+  await expect(page.locator('#convThread .conv-msg').first()).toContainText('Ready.');
+});
+
+test('a thread switched on before the picker existed still opens', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  // `1` is what every version before this one stored, and it has to keep meaning "on, the first".
+  await page.evaluate(k => {
+    localStorage.setItem('herdr_conv_view', JSON.stringify({[k]: 1}));
+    renderConvView();
+  }, key);
+  await expect(page.locator('#convThread .conv-head .name')).toHaveText('new authentication feature');
+  await expect(page.locator('#convThread select.name')).toHaveCount(0);
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
