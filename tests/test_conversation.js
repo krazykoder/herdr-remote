@@ -429,6 +429,8 @@ test('a roster past even that ceiling is trimmed rather than dropping the conver
   const members = Array.from({length: CONV_ROSTER_MAX + 5}, (_, i) => ({key: 'k' + i}));
   const [conv] = parseConvIndex(index([{id: 'c1', name: 'auth', members: members}]));
   assert.strictEqual(conv.members.length, CONV_ROSTER_MAX);
+  assert.strictEqual(conv.members[0].key, 'k5', 'oldest ended sessions leave first');
+  assert.strictEqual(conv.members.at(-1).key, 'k204', 'new live session stays recorded');
 });
 
 test('a transcript past its ceiling loses its oldest entries, not its newest', () => {

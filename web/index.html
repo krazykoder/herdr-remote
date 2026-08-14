@@ -6017,7 +6017,7 @@
         return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
           // The roster, not the recording cap: an ended member is the record of a session that
           // happened, and truncating it here would delete history on the next read of the index.
-          .map(c => Object.assign({}, c, { members: c.members.slice(0, CONV_ROSTER_MAX) }))
+          .map(c => Object.assign({}, c, { members: c.members.slice(-CONV_ROSTER_MAX) }))
           .slice(0, CONV_CONV_MAX);
       } catch (e) { return []; }
     }
