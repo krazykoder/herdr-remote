@@ -227,13 +227,18 @@ test('a live pane can be added to a conversation from the conversation', async (
 test('a member removed is asked about first, and takes its words with it', async ({page}) => {
   const key = await openCard(page);
   await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(2);
-  // Declined: an accidental tap on the one control here that loses history changes nothing.
-  page.once('dialog', d => d.dismiss());
-  await page.locator('#convView .conv-drop').click();
+  // One tap only arms, and says what the second will do. An accidental tap on the one control
+  // here that loses history changes nothing.
+  const drop = page.locator('#convView .conv-drop');
+  await drop.click();
+  await expect(drop).toHaveText('Remove?');
+  await expect(drop).toHaveAttribute('data-armed', '1');
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);
+  // And an arm left alone expires rather than waiting to be pressed.
+  await expect(drop).toHaveText('Remove', {timeout: 4000});
 
-  page.once('dialog', d => d.accept());
-  await page.locator('#convView .conv-drop').click();
+  await drop.click();
+  await drop.click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(0);
   await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(0);
   // The record is still on disk — removal unreferences a transcript, it does not delete one.
@@ -1081,7 +1086,9 @@ test('a conversation can be duplicated, and the copy is nobody\'s auto record', 
     saveConvIndex(items);
     renderConvStandalone(false);
   });
-  await page.locator('#convView .conv-roster-actions button', {hasText: 'Duplicate'}).click();
+  const dup1084 = page.locator('#convView .conv-roster-actions button', {hasText: 'Duplicate'});
+  await dup1084.click();
+  await dup1084.click();
   const out = await page.evaluate(() => {
     const items = loadConvIndex();
     return {names: items.map(c => c.name), autos: items.map(c => !!c.auto),
@@ -1446,7 +1453,9 @@ test('duplicating from a pane keeps the reader in the pane, on the copy', async 
   await join(page);
   await read(page);
   await page.evaluate(() => { toggleConvView(); toggleConvPaneRoster(); });
-  await page.locator('#convPaneRoster .conv-roster-actions button', {hasText: 'Duplicate'}).click();
+  const dup1449 = page.locator('#convPaneRoster .conv-roster-actions button', {hasText: 'Duplicate'});
+  await dup1449.click();
+  await dup1449.click();
   // Still in the pane — the copy holds this pane, so it is a grouping the pane can be read under.
   await expect(page.locator('#convView')).toBeHidden();
   await expect(page.locator('#convThread')).toBeVisible();

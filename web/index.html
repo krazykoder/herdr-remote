@@ -2162,6 +2162,23 @@
       border-color: var(--blue);
     }
 
+    /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than
+       one that lives in the markup. Longer drain — see ARM_MS: these are aimed at off a panel,
+       not pressed by a thumb already resting on them. */
+    .arm-btn[data-armed="1"] {
+      color: var(--bg);
+      border-color: transparent;
+      background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
+      animation: arm-drain 2.5s linear forwards;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .arm-btn[data-armed="1"] {
+        background: var(--orange);
+        animation: none;
+      }
+    }
+
     /* Borderless and ahead of the colour dot: it acts on the row, and a third bordered button per
        row would read as a third action of the same weight as Remove. */
     .conv-roster .conv-eye {
@@ -8520,9 +8537,19 @@
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
       if (!e.target.closest('.fire-wrap')) closeFireMenu();
+      // The pane's roster panel is a disclosure hung off the header, and a tap on the thread
+      // behind it is a tap on the thing it is covering.
+      if (convPaneRoster && !e.target.closest('#convPaneRoster') && !e.target.closest('#paneConvWho')) {
+        toggleConvPaneRoster();
+      }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { closeTermMenu(); closeFireMenu(); }
+      if (e.key === 'Escape') {
+        closeTermMenu();
+        closeFireMenu();
+        disarmButton();
+        if (convPaneRoster) toggleConvPaneRoster();
+      }
     });
 
     function fingerprint(a, role) {
@@ -9492,8 +9519,8 @@
           (!on && canRespawn(rec.spawn) ? `<button class="conv-again" data-key="${escapeHtml(m.key)}"` +
             ` onclick="convRespawn(this.dataset.key)"` +
             ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
-          `<button class="conv-drop" data-key="${escapeHtml(m.key)}"` +
-          ` onclick="convRemoveMember(this.dataset.key)"` +
+          `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
+          ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
           ` aria-label="Remove this member from the conversation">Remove</button></div>`;
       }).join('');
       // Candidates are the live panes this conversation does not already name — including panes
@@ -9530,7 +9557,7 @@
       return `<div class="conv-roster">${rows}<div class="conv-roster-actions">` +
         `<button onclick="renameConversation()">Rename</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
-        `<button onclick="duplicateConversation()"` +
+        `<button class="arm-btn" onclick="armButton(this, 'Duplicate?', duplicateConversation)"` +
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
         `Duplicate</button>` +
         `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
@@ -9723,9 +9750,12 @@
       const conv = loadConvIndex().find(c => c.id === convViewId);
       const m = conv && (conv.members || []).find(x => x.key === key);
       if (!m) return;
-      if (!confirm(`Remove "${m.label || 'this member'}" from "${conv.name}"?\n\n` +
-        'What it said leaves the thread, and its transcript stops being kept.')) return;
       convEdit(c => { c.members = (c.members || []).filter(x => x.key !== key); });
+      // The modal that used to ask said what leaving costs. The drain asks instead, and cannot
+      // carry a sentence, so the sentence lands after — it is the part the user has to know, and
+      // the tap it would have interrupted has already happened.
+      showToast(`Removed "${m.label || 'this member'}" — its words leave the thread, ` +
+        'and its transcript stops being kept.');
     }
 
     // The tab bar at the foot of the conversation view. Rebuilt only when what it says changed:
@@ -10216,6 +10246,42 @@
       delete btn.dataset.armed;
       btn.textContent = ARM_LABELS[id];
     }
+
+    // The same two taps, for a button a render drew. armFire cannot serve these: it is keyed by
+    // element id against a table of labels, and these buttons are rebuilt from innerHTML with no
+    // id worth having. So the arm hangs off the element, and only one is ever armed — a second
+    // arm disarms the first, because two buttons both claiming the next tap is not a promise.
+    //
+    // 2.5s rather than the header's 1.5s. That window is short because QUIT sits under the thumb
+    // for as long as a pane is open; these are reached by opening a panel and aiming, and a
+    // deadline that expires while you are still moving teaches people to double-tap blind.
+    const ARM_MS = 2500;
+    let armedEl = null, armedTimer = 0;
+
+    function armButton(btn, label, run) {
+      if (armedEl === btn) { disarmButton(); run(); return; }
+      disarmButton();
+      armedEl = btn;
+      btn.dataset.armLabel = btn.textContent;
+      btn.dataset.armed = '1';
+      btn.textContent = label;
+      // Disarms itself rather than waiting to be pressed again — the same reason the header's does.
+      armedTimer = setTimeout(disarmButton, ARM_MS);
+    }
+
+    function disarmButton() {
+      clearTimeout(armedTimer);
+      const btn = armedEl;
+      armedEl = null;
+      if (!btn) return;
+      btn.textContent = btn.dataset.armLabel;
+      delete btn.dataset.armed;
+      delete btn.dataset.armLabel;
+    }
+
+    // Anywhere else, and the arm is off: a tap that lands somewhere else is a tap that was not
+    // the second half of this pair.
+    document.addEventListener('click', (e) => { if (e.target !== armedEl) disarmButton(); }, true);
 
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
