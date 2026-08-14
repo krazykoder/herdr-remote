@@ -978,12 +978,20 @@ async def event_push():
             await broadcast(update)
 
 
-async def process_request(connection, request, require_token=True):
+async def process_request(connection, request, require_token=True, serve_app=False):
     """Handle HTTP POST on the same port as WebSocket.
 
     `require_token` comes from the listener that accepted this connection, not from a global.
     It gates the whole HTTP surface — the WebSocket upgrade, GET / serving the web app, and the
     event-push endpoint below — because they all arrive through here.
+
+    `serve_app` comes from the same place, and is on for the LAN listener only. The app's files —
+    index.html, src/*.js, the built bundle, the manifest and the icons — are a LAN convenience:
+    on the same network you open the relay's own address and get the page. Off the LAN the page
+    comes from where it is hosted (GitHub Pages) and the tunnel carries the socket and nothing
+    else, so publishing the file surface through it widens what an ingress can reach for no gain.
+    A token still gates the tunnel; this is the second wall, and the one that does not depend on a
+    secret staying secret.
     """
     from websockets.http11 import Response
     from websockets.datastructures import Headers
@@ -1049,8 +1057,42 @@ async def process_request(connection, request, require_token=True):
             headers = Headers([("Access-Control-Allow-Origin", "*")])
             return Response(200, "OK", headers, b"ok\n")
 
-    # Serve web app for GET / or GET /index.html
     path = (request.path or "/").split("?")[0]
+
+    # Everything below to the VAPID key is the app's own files, and none of it is served off the
+    # LAN. The API surface — the WebSocket upgrade above, the push endpoint above, and the VAPID
+    # key below — is unchanged on both listeners: a hosted app reaching this relay over the tunnel
+    # needs all three and none of these.
+    name = path.lstrip("/")
+    if serve_app:
+        served = _serve_web_file(path, name)
+        if served is not None:
+            return served
+
+    # Serve VAPID public key
+    if path == "/api/vapid-public-key":
+        body = json.dumps({"publicKey": VAPID_PUBLIC_KEY}).encode()
+        headers = Headers([
+            ("Content-Type", "application/json"),
+            ("Access-Control-Allow-Origin", "*"),
+        ])
+        return Response(200, "OK", headers, body)
+
+    # Fallback for unmatched paths
+    headers = Headers([("Access-Control-Allow-Origin", "*")])
+    return Response(404, "Not Found", headers, b"not found\n")
+
+
+def _serve_web_file(path, name):
+    """The app's files by name, or None when the path names none of them.
+
+    Split out of process_request so the LAN-only gate is one branch around one call rather than a
+    condition repeated over four blocks — a file surface that is off for the tunnel in three
+    places and on in the fourth is exactly the bug this shape prevents.
+    """
+    from websockets.http11 import Response
+    from websockets.datastructures import Headers
+
     if path in ("/", "/index.html"):
         index_path = os.path.join(WEB_DIR, "index.html")
         if os.path.isfile(index_path):
@@ -1062,10 +1104,9 @@ async def process_request(connection, request, require_token=True):
             ])
             return Response(200, "OK", headers, body)
 
-    # The rest of web/, by name. An allowlist rather than a directory walk: this handler answers
-    # the tunnel as well as the LAN, and any route that turns a request path into a filesystem
-    # path is one `..` away from serving the repo.
-    name = path.lstrip("/")
+    # The rest of web/, by name. An allowlist rather than a directory walk: LAN-only is not a
+    # reason to relax it — any route that turns a request path into a filesystem path is one `..`
+    # away from serving the repo, and every device on the network reaches this.
     if name in STATIC_FILES:
         ctype, extra = STATIC_FILES[name]
         file_path = os.path.join(WEB_DIR, name)
@@ -1101,18 +1142,7 @@ async def process_request(connection, request, require_token=True):
                     body = f.read()
                 return Response(200, "OK", Headers([("Content-Type", ctype), *extra]), body)
 
-    # Serve VAPID public key
-    if path == "/api/vapid-public-key":
-        body = json.dumps({"publicKey": VAPID_PUBLIC_KEY}).encode()
-        headers = Headers([
-            ("Content-Type", "application/json"),
-            ("Access-Control-Allow-Origin", "*"),
-        ])
-        return Response(200, "OK", headers, body)
-
-    # Fallback for unmatched paths
-    headers = Headers([("Access-Control-Allow-Origin", "*")])
-    return Response(404, "Not Found", headers, b"not found\n")
+    return None
 
 
 async def handle_client(ws, listener="lan"):
@@ -1483,7 +1513,8 @@ async def main():
 
     servers = [await serve(
         functools.partial(handle_client, listener="lan"), LAN_BIND, WS_PORT,
-        process_request=functools.partial(process_request, require_token=LAN_REQUIRES_TOKEN),
+        process_request=functools.partial(
+            process_request, require_token=LAN_REQUIRES_TOKEN, serve_app=True),
     )]
     log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST) auth=%s agent-starts=%s",
              LAN_BIND, WS_PORT, "token" if LAN_REQUIRES_TOKEN else "none",

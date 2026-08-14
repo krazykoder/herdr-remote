@@ -150,7 +150,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_RELAY_TOKEN` | Shared secret. Guards every listener unless `HERDR_LAN_OPEN=1` exempts the LAN one |
 | `HERDR_LAN_BIND` | LAN listener bind address (default: `0.0.0.0`). Set to one interface to stay off VPNs and container bridges |
 | `HERDR_LAN_OPEN` | `1` runs the LAN listener with no token — local mode. Explicit by design |
-| `HERDR_EXTERNAL_PORT` | Loopback-only second listener for a tunnel to terminate on. Always requires a token; unset = no external listener |
+| `HERDR_EXTERNAL_PORT` | Loopback-only second listener for a tunnel to terminate on. Always requires a token; unset = no external listener. **Serves the API only** — the WebSocket, the push endpoint and the VAPID key. `index.html`, `src/*.js`, `dist/` and the icons are answered by the LAN listener alone, so the page comes from where it is hosted and the tunnel carries the socket |
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
 | `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
