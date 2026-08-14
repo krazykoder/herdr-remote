@@ -59,8 +59,7 @@ It exists for a shared venv, editor/LSP, and tests — `uv run relay/<script>.py
 # contract — run it after a herdr upgrade.
 .venv313/bin/python tests/e2e/e2e_pane_slots.py
 
-# Frontend logic. Each extracts a block from web/index.html and runs it in a vm context,
-# so the single-file app keeps its no-build-step property.
+# Frontend logic, against the modules in web/src/*.js in a vm context.
 node --test tests/*.js
 
 # The app in a real browser, against a relay backed by the fake herdr in tests/e2e/bin. Covers
@@ -69,12 +68,19 @@ npm ci && npx playwright install chromium        # first run only
 npx playwright test
 ```
 
-`package.json` is test-only — the web app still ships as one file, no build step, no runtime
-dependencies. Use the vm-slice suites for pure logic; reach for Playwright when the failure you
-care about is "the page is broken".
+The app still **ships** as one file with no runtime dependencies, but it is no longer **written**
+as one: `web/index.html` holds the markup and CSS and loads `web/src/*.js` as plain scripts, and
+`scripts/build.py` inlines them into `web/dist/index.html` for deploy. Use the vm-slice suites for
+pure logic; reach for Playwright when the failure you care about is "the page is broken".
 
-Editing `web/` needs only a browser reload — the relay reads `index.html` from disk on every
-GET and serves it `no-cache`. Editing `relay/` needs a relay restart.
+Editing `web/` needs only a browser reload — the relay reads `index.html` and `src/*.js` from disk
+on every GET and serves them `no-cache`, so there is no build in the edit loop. `make build` is for
+deploy, and `/dist/` in a browser is how you look at what it produced. Editing `relay/` needs a
+relay restart.
+
+**The scripts are plain, not modules, so the order of the `<script src>` tags in `index.html` is
+the program.** Nothing enforces it — a module that reads another's binding at load time breaks at
+boot if the tags are reordered. The `app_smoke.spec.js` boot tests are the guard.
 
 `tests/e2e/bin/` holds a fake `herdr` and a fake `ssh`. The fake ssh sets `HERDR_FAKE_HOST`
 and execs locally, which is what lets one machine present two hosts — the only way to
@@ -107,7 +113,8 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/herdr_relay.py` | WebSocket+HTTP relay server | Python (websockets, zeroconf) |
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
-| `web/index.html` | Mobile/desktop web app (single file) | HTML/CSS/JS |
+| `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 26 script modules) | HTML/CSS/JS |
+| `scripts/build.py` | Inlines the modules into the single-file `web/dist/index.html` | Python (stdlib) |
 | `herdi-mac/` | macOS menu bar app | Swift (SPM) |
 | `herdi-ios/` | iOS app with widgets + Live Activities | Swift (XcodeGen) |
 
@@ -160,7 +167,7 @@ cd herdi-ios && xcodegen generate
 
 ## Web App
 
-The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, agent-icon detection, and a
+The web app ships as a single self-contained HTML file — `web/dist/index.html`, built from `web/index.html` (markup and CSS) plus `web/src/*.js` by `scripts/build.py`. No runtime dependencies and no framework; the build is one stdlib script that concatenates and escapes `</script`. It includes 11 color themes, a mobile terminal keyboard, PWA support, agent-icon detection, and a
 line ruler for picking a range of pane lines with a finger.
 
 ## WebSocket Protocol
@@ -173,11 +180,14 @@ Messages are JSON with a `type` field:
 
 ## Deployment
 
-- Web app → GitHub Pages: `make deploy-web` (or `./web/deploy.sh`) publishes `web/` to
-  `https://eagerkoder.github.io/mini/`. Manual, using your own git credentials — no token lives in
+- Web app → GitHub Pages: `make deploy-web` (or `./web/deploy.sh`) builds and publishes
+  `web/dist/` to `https://eagerkoder.github.io/mini/`. Manual, using your own git credentials — no token lives in
   this repo. The script owns `mini/` and only `mini/`; the target repo's root is never touched.
   Override with `HERDR_PAGES_REPO`, `HERDR_PAGES_BRANCH`, `HERDR_PAGES_SUBDIR`.
-- Web app → Cloudflare Pages: push to main deploys `web/`. Still wired up; the two are independent.
+- Web app → Cloudflare Pages: push to main deploys `web/`. Still wired up, and since the split it
+  publishes the *modular* form — `index.html` plus `src/*.js`, which works on a static host but is
+  not the single file GitHub Pages gets. Point it at `web/dist` with a `python3 scripts/build.py`
+  build command to make the two agree.
 - macOS app: `herdi-mac/build.sh` produces `dist/Herdi.app`
 
 **A page served over HTTPS cannot open a `ws://` socket.** From `eagerkoder.github.io` the relay
