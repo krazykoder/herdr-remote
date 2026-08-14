@@ -369,6 +369,11 @@
       if (asked) {
         convRecoverKey = '';
         convRecoverReport(wrote, dropped, held.gap);
+      } else if (dropped) {
+        // T2 is invisible by construction — no toast, no redraw. This is the one thing it may not
+        // stay quiet about: history the transcript had no room for is a fact about the ceiling, and
+        // a recovery that silently kept less than it found would look like one that found less.
+        convRecoverReport(wrote, dropped, false);
       }
       // The thread draws the draft as well as the record, so a poll that added nothing can still
       // have changed what is on screen.
@@ -520,6 +525,25 @@
     // A request, not a bound: the relay clamps it (§2.7). Flat rather than `paneHistoryMax()` —
     // that setting is how much scrollback to *draw in the pane*, and a T2 read is never drawn.
     const DEEP_LINES = 5000;
+    // Or everything the relay will give, for someone who would rather pay the read once than find
+    // the gap later and press the button. Off by default because T2 fires unasked, on every member,
+    // possibly on a phone over cellular — a cost nobody chose is the one that has to be the small
+    // one. The setting is how you choose it. §2.7's sentinel means "full" tracks the relay's own
+    // ceiling rather than naming a number here.
+    const CONV_DEEP_KEY = 'herdr_conv_deep';
+
+    function convDeepAll() {
+      try { return localStorage.getItem(CONV_DEEP_KEY) === 'full'; } catch (e) { return false; }
+    }
+
+    function setConvDeepAll(on) {
+      try { localStorage.setItem(CONV_DEEP_KEY, on ? 'full' : 'day'); }
+      catch (e) { /* private mode: session-only */ }
+      document.getElementById('deepPick').value = on ? 'full' : 'day';
+    }
+
+    function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
+
     let convSawSnapshot = false;
 
     // Once per snapshot, and it declines on almost all of them.
@@ -558,9 +582,9 @@
         // The open pane cannot take this path: its reply lands on the draw branch, which would
         // replace the rows under the reader's finger. It gets Load more to the same depth instead
         // (§2.5), and T1 does the recording.
-        if (a.pane_id === activePane) { paneLines = DEEP_LINES; refreshPane(); continue; }
-        ws.send(JSON.stringify(
-          { type: 'read_pane', pane_id: a.pane_id, lines: DEEP_LINES, source: 'recent-unwrapped' }));
+        if (a.pane_id === activePane) { paneLines = convDeepLines(); refreshPane(); continue; }
+        ws.send(JSON.stringify({ type: 'read_pane', pane_id: a.pane_id,
+          lines: convDeepLines(), source: 'recent-unwrapped' }));
       }
     }
 

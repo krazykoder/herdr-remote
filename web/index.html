@@ -3401,6 +3401,20 @@
     </div>
 
     <div class="setting-group">
+      <label for="deepPick">Conversation recovery</label>
+      <select id="deepPick" onchange="setConvDeepAll(this.value === 'full')">
+        <option value="day">A day of history</option>
+        <option value="full">Everything the relay has</option>
+      </select>
+      <div class="hint">How much a conversation reads back when you return to it after being away
+        for more than fifteen minutes. Nothing is fetched while you are connected, and neither
+        setting is what the pane draws — this is the record, not the screen. Everything is one read
+        per agent at whatever depth your relay allows, which on a phone over cellular is worth
+        knowing about; a day is 5,000 lines. Recover history in a pane's ⋯ menu always fetches
+        everything, whichever this says.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>

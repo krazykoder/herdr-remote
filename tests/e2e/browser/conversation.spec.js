@@ -1978,6 +1978,33 @@ test('a real outage recovers the members nobody had open', async ({page}) => {
   ]);
 });
 
+test('set to everything, the same outage asks for everything', async ({page}) => {
+  // The setting exists because the choice is not the app's to make: a read nobody asked for is
+  // small by default, and someone who would rather pay it once than find the gap later says so.
+  await open(page);
+  await join(page);
+  await read(page);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await page.evaluate(() => setConvDeepAll(true));
+  await tapWire(page);
+  await wasAway(page, 40 * 60 * 1000);
+  await snapshot(page);
+  // The sentinel, not a number: the relay clamps it to whatever it is configured for (§2.7).
+  await expect.poll(() => page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'read_pane' && m.pane_id !== activePane)))
+    .toEqual([{type: 'read_pane', pane_id: mate.pane, lines: 1e9, source: 'recent-unwrapped'}]);
+});
+
+test('the recovery depth is remembered, and the picker shows what it is', async ({page}) => {
+  await open(page);
+  expect(await page.evaluate(() => document.getElementById('deepPick').value)).toBe('day');
+  await page.evaluate(() => setConvDeepAll(true));
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => document.getElementById('deepPick').value))
+    .toBe('full');
+  expect(await page.evaluate(() => convDeepLines())).toBe(1e9);
+});
+
 test('a member written moments ago has nothing worth a read', async ({page}) => {
   await open(page);
   await join(page);

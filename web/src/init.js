@@ -14,6 +14,7 @@
     syncBottomDock();
     setDictationEnabled(dictationOn());  // hidden unless asked for, and where there is no speech recognition
     document.getElementById('historyPick').value = String(paneHistoryMax());
+    setConvDeepAll(convDeepAll());
     loadTermShortcuts();
     syncPromptsBtn();  // no pane is open yet, so this labels the button for an agent
   

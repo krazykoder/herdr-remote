@@ -176,6 +176,18 @@ Then, per member that passes — conversation member, transcript exists, agent p
 send { type: 'read_pane', pane_id, lines: DEEP_LINES, source: 'recent-unwrapped' }
 ```
 
+**The depth is a setting, and 5000 is only its floor.** *Conversation recovery* in Settings —
+`A day of history` (default) or `Everything the relay has` — chooses between `DEEP_LINES` and
+`READ_LINES_ASK`. The default is the small one because T2 fires unasked, on every member, possibly
+on a phone over cellular: a cost nobody chose has to be the small one. Someone who would rather pay
+the full read once than find the gap later and press the button says so once, in one place, and T3
+is unaffected — the button always fetches everything, whichever the setting says.
+
+One consequence to hold: T2 is otherwise invisible by construction, and at full depth it can reach
+`CONV_ENTRY_MAX`. A capacity shortfall (§2.8) is therefore reported even on the silent path. It is
+the one thing that recovery may not stay quiet about — a recovery that kept less than it found
+would look like one that found less.
+
 `DEEP_LINES` flat, **not** `min(DEEP_LINES, paneHistoryMax())`. The two were coupled in an earlier
 draft and should not be: `paneHistoryMax()` is how much scrollback the user wants *drawn in the
 pane*, and a T2 read is never drawn. Someone who sets 2000 to keep a phone light has said nothing
