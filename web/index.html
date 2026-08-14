@@ -1824,8 +1824,14 @@
       scroll-snap-type: x proximity;
     }
 
-    body.conversation-open .conv-strip:not(:empty) {
+    body.conversation-open .conv-strip:not(:empty),
+    body.terminal-open.conv-tabs .conv-strip:not(:empty) {
       display: flex;
+    }
+
+    /* One row of tabs, whichever kind it is holding. */
+    body.terminal-open.conv-tabs .agent-tabs {
+      display: none;
     }
 
     .conv-strip::-webkit-scrollbar {
@@ -3627,6 +3633,7 @@
             <option value="project">This project only</option>
             <option value="all">Every live pane</option>
             <option value="pairs">Every pair</option>
+            <option value="convs">Conversations</option>
           </select>
           <div id="tabScopeHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
@@ -4644,7 +4651,7 @@
     // turns it into a row to scroll rather than one to tap. 'all' is the old behaviour, kept.
     // 'pairs' is the third: the strip becomes the pairs themselves.
     const TAB_SCOPE_KEY = 'herdr_tab_scope';
-    const TAB_SCOPES = ['project', 'all', 'pairs'];
+    const TAB_SCOPES = ['project', 'all', 'pairs', 'convs'];
     function tabScope() {
       const v = localStorage.getItem(TAB_SCOPE_KEY);
       return TAB_SCOPES.includes(v) ? v : 'project';
@@ -4718,6 +4725,13 @@
 
     function renderAgentTabs() {
       const el = document.getElementById('agentTabs');
+      // Conversations in the pane tabs' slot, when that is the setting. Not two strips: the header
+      // has one row for tabs, and a second saying the same kind of thing is how a bar stops being
+      // read. On the landing page there is nothing to leave, so the pane strip is not drawn there
+      // either and this changes nothing.
+      const convTabs = tabScope() === 'convs' && !!activePane;
+      document.body.classList.toggle('conv-tabs', convTabs);
+      if (convTabs) { renderConvStrip(); return; }
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
       // One order for agents and terminals, not an agent block followed by a terminal block. The
@@ -7740,6 +7754,9 @@
     function renderConvBar() {
       renderQuickActions();
       renderConvView();
+      // Which conversation the pane is reading is what the strip marks current, when the strip is
+      // holding conversations. Diffed by its own signature, so this costs nothing when it is not.
+      renderConvStrip();
     }
 
     // A render can be overtaken by the next one while it waits on the database, and the loser
@@ -8501,6 +8518,11 @@
       const el = document.getElementById('tabScopeHint');
       const scope = tabScope();
       if (scope === 'all') { el.textContent = 'Every live agent and terminal.'; return; }
+      if (scope === 'convs') {
+        el.textContent = 'Conversations instead of panes. A tab this pane is in switches its ' +
+          'thread; any other opens the conversation on its own.';
+        return;
+      }
       if (scope === 'pairs') {
         const n = pairs.filter(p => pairHealth(p, agents).state === 'healthy').length;
         el.textContent = n
@@ -9770,8 +9792,9 @@
       // The open conversation is always a tab, even when the reader has the auto ones hidden — a
       // strip that cannot show what is on screen is worse than one carrying an extra tab, which is
       // the rule the pane strip already follows for the open pane.
-      const list = shown.some(c => c.id === convViewId)
-        ? shown : shown.concat(loadConvIndex().filter(c => c.id === convViewId));
+      const here = convCurrentId();
+      const list = shown.some(c => c.id === here)
+        ? shown : shown.concat(loadConvIndex().filter(c => c.id === here));
       const live = new Set(agents.map(x => convMemberKey(x)));
       const rows = list.map(c => {
         const on = (c.members || []).map(m => agents.find(a => live.has(m.key) && convMemberKey(a) === m.key))
@@ -9781,19 +9804,45 @@
         return { c: c, dot: lead ? statusColor(lead) : 'var(--muted)',
           pulse: lead && lead.status === 'working' ? ' pulse' : '' };
       });
+      const now = convCurrentId();
       const sig = rows.map(r => `${r.c.id}|${r.c.name}|${r.c.auto ? 'a' : '-'}|${r.dot}|${r.pulse}`)
-        .join(' /// ') + ` @@ ${convViewId}`;
+        .join(' /// ') + ` @@ ${now}`;
       if (sig === convStripSig) return;
       convStripSig = sig;
       el.innerHTML = rows.map(r =>
         `<button class="conv-tab" data-conv-id="${escapeHtml(r.c.id)}"` +
-        ` aria-current="${r.c.id === convViewId ? 'true' : 'false'}"` +
-        ` onclick="openConversation(this.dataset.convId)">` +
+        ` aria-current="${r.c.id === now ? 'true' : 'false'}"` +
+        ` onclick="convTabPick(this.dataset.convId)">` +
         `<span class="pill"><span class="dot${r.pulse}" style="background:${r.dot}" aria-hidden="true"></span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         (r.c.auto ? '<span class="tier">auto</span>' : '') + '</span></button>').join('');
       const open = el.querySelector('[aria-current="true"]');
       if (open) open.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
+    // Which tab is the one you are looking at. Two views ask it: the standalone one is showing a
+    // conversation outright, and a pane is showing whichever of its own it last read.
+    function convCurrentId() {
+      if (document.body.classList.contains('conversation-open')) return convViewId;
+      const a = activePane ? paneOf(activePane) : null;
+      const conv = a && convViewOn(a) ? convViewConv(a) : null;
+      return conv ? conv.id : '';
+    }
+
+    // A tab is a conversation, and where it opens depends on whether the pane on screen is in it.
+    // Switching the pane's own thread beats leaving the pane: the composer, the rows and the
+    // ruler are all still there, and the reader asked for a different grouping, not a different
+    // screen.
+    function convTabPick(id) {
+      const a = document.body.classList.contains('conversation-open') || !activePane
+        ? null : paneOf(activePane);
+      const conv = loadConvIndex().find(c => c.id === id);
+      if (a && conv && (conv.members || []).some(m => m.key === convMemberKey(a))) {
+        convSetView(a, id);
+        renderConvBar();
+        return;
+      }
+      openConversation(id);
     }
 
     // The whole record, every member, from the store alone. `bottom` scrolls to the newest on the
