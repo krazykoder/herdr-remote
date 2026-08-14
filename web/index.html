@@ -1716,10 +1716,93 @@
       overflow: visible;
     }
 
+    /* Full width, unlike the pane's thread. There the 86% leaves room for the other half of a pair
+       to sit opposite; here nothing is opposite anything — the view is the record, read straight
+       down, and the margin would be dead space on a phone. */
+    #convViewThread .conv-msg {
+      width: 100%;
+    }
+
     .conv-view-top {
       position: sticky;
       top: 0;
       z-index: 2;
+    }
+
+    /* The strip sits at the foot of the view and stays there while the thread scrolls under it —
+       the same job the tab bar does at the top of a pane, at the end of the thumb rather than the
+       end of the reach. */
+    .conv-strip {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      display: flex;
+      gap: 6px;
+      /* Pushed to the bottom even when the thread is short: a strip floating mid-screen under two
+         messages reads as part of the thread. */
+      margin-top: auto;
+      padding: 6px 12px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      /* A fling past the last tab otherwise chains to the page, where Chrome on macOS reads a
+         horizontal swipe as navigate-back. */
+      overscroll-behavior-x: none;
+      scroll-snap-type: x proximity;
+    }
+
+    .conv-strip:empty {
+      display: none;
+    }
+
+    .conv-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .conv-strip .conv-tab {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex: none;
+      scroll-snap-align: start;
+      max-width: 46vw;
+      min-height: 32px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: none;
+      color: var(--muted);
+      font-size: 0.65rem;
+      cursor: pointer;
+    }
+
+    .conv-strip .conv-tab .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-strip .conv-tab[aria-current="true"] {
+      border-color: var(--blue);
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    .conv-strip .conv-tab .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: none;
+    }
+
+    /* The tier, the same word the card uses, at the size a tab can afford. */
+    .conv-strip .conv-tab .tier {
+      font-size: 0.55rem;
+      color: var(--muted);
+      opacity: 0.8;
     }
 
     .conv-view-head {
@@ -2036,10 +2119,13 @@
       color: var(--muted);
     }
 
-    .conv-roster-add .conv-chip.past {
-      display: inline-flex;
+    .conv-roster-add .conv-chip {
+      display: flex;
       align-items: center;
       gap: 6px;
+    }
+
+    .conv-roster-add .conv-chip.past {
       /* Dimmer than a live pane, and it has to stay legible: this is a real choice, not a disabled
          one. */
       opacity: 0.85;
@@ -3272,6 +3358,10 @@
     <div class="conv-panel" id="convViewRoster" hidden></div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
+    <!-- The conversations, as tabs, so moving between them does not mean going back to the list
+         and finding your place in it again. Same list and same order as the landing page, down to
+         the auto ones being there only when they are shown there. -->
+    <div class="conv-strip" id="convStrip"></div>
   </div>
 
   <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
@@ -9004,11 +9094,27 @@
 
     // The index already carries the only landing-page facts that do not require opening every
     // transcript: each member's count and newest message time. Live-ness comes from this snapshot.
+    // Which conversations the landing list shows, and in what order: newest message first, and the
+    // auto ones only when the reader has them switched on and only the newest CONV_LANDING_AUTO_MAX
+    // of those. The strip in the conversation view draws from this too — a tab bar that disagreed
+    // with the list it was opened from would be a second answer to the same question.
+    function convLandingList() {
+      const seenOf = c => Math.max(0, ...(c.members || []).map(m => Number(m.seen) || 0));
+      const countOf = c => (c.members || []).reduce((n, m) => n + (Number(m.messages) || 0), 0);
+      const by = (a, b) => seenOf(b) - seenOf(a) || countOf(b) - countOf(a);
+      const all = loadConvIndex().sort(by);
+      const autos = all.filter(c => c.auto);
+      return { all: all, autos: autos,
+        shown: all.filter(c => !c.auto)
+          .concat(convLandingAutoOn() ? autos.slice(0, CONV_LANDING_AUTO_MAX) : []).sort(by) };
+    }
+
     function renderConversations() {
       const el = document.getElementById('conversations');
       if (!el) return;
       const now = Date.now();
-      const rows = loadConvIndex().map(c => {
+      const list = convLandingList();
+      const rows = list.shown.map(c => {
         const members = c.members || [];
         const count = members.reduce((n, m) => n + (Number(m.messages) || 0), 0);
         const seen = Math.max(0, ...members.map(m => Number(m.seen) || 0));
@@ -9030,15 +9136,13 @@
           dot: lead ? statusColor(lead) : 'var(--muted)',
           pulse: lead && lead.status === 'working' ? ' pulse' : '',
         };
-      }).sort((a, b) => b.seen - a.seen || b.count - a.count);
-      const autos = rows.filter(r => r.c.auto), showAuto = convLandingAutoOn();
-      const shown = rows.filter(r => !r.c.auto).concat(showAuto ? autos.slice(0, CONV_LANDING_AUTO_MAX) : [])
-        .sort((a, b) => b.seen - a.seen || b.count - a.count);
+      });
+      const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
       const autoControl = autos.length
         ? `<button class="section-action" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
           `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
           `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
-      el.innerHTML = rows.length ? `<div class="section-header">Conversations${autoControl}</div>` + shown.map(r =>
+      el.innerHTML = list.all.length ? `<div class="section-header">Conversations${autoControl}</div>` + shown.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
@@ -9072,6 +9176,7 @@
       convViewId = id;
       convStandaloneHtml = '';
       convRosterHtmlLast = '';
+      convStripSig = '';
       convRosterOpen = false;
       convAdding = false;
       openPanel('convView');
@@ -9193,9 +9298,14 @@
         .filter(r => !taken.has(r.key) && !live.has(r.key) && (r.entries || []).length)
         .sort((a, b) => (b.touched || 0) - (a.touched || 0))
         .slice(0, CONV_PICK_MAX);
-      const chips = !convAdding ? '' : `<div class="conv-roster-add">` + (free.length
+      // Both groups are the same kind of choice — a session, by name, with the harness it runs —
+      // so they are the same chip. What differs is the heading above them and, for one that has
+      // ended, how long ago it last said anything.
+      const chips = !convAdding ? '' : `<div class="conv-roster-add">` +
+        `<span class="conv-pick-head">Running</span>` + (free.length
         ? free.map(x => `<button class="conv-chip" data-key="${escapeHtml(convMemberKey(x))}"` +
-            ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}</button>`).join('')
+            ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}` +
+            agentBadge(x.agent || '') + '</button>').join('')
         : '<span class="conv-none">Every live pane is already in this conversation.</span>') +
         (past.length ? `<span class="conv-pick-head">Recorded</span>` + past.map(r =>
           `<button class="conv-chip past" data-key="${escapeHtml(r.key)}"` +
@@ -9399,6 +9509,44 @@
       convEdit(c => { c.members = (c.members || []).filter(x => x.key !== key); });
     }
 
+    // The tab bar at the foot of the conversation view. Rebuilt only when what it says changed:
+    // it is on the poll path, and rewriting it every three seconds would throw away the reader's
+    // sideways scroll and the tab they were about to press.
+    let convStripSig = '';
+
+    function renderConvStrip() {
+      const el = document.getElementById('convStrip');
+      if (!el) return;
+      const shown = convLandingList().shown;
+      // The open conversation is always a tab, even when the reader has the auto ones hidden — a
+      // strip that cannot show what is on screen is worse than one carrying an extra tab, which is
+      // the rule the pane strip already follows for the open pane.
+      const list = shown.some(c => c.id === convViewId)
+        ? shown : shown.concat(loadConvIndex().filter(c => c.id === convViewId));
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      const rows = list.map(c => {
+        const on = (c.members || []).map(m => agents.find(a => live.has(m.key) && convMemberKey(a) === m.key))
+          .filter(Boolean);
+        const lead = on.find(a => a.status === 'blocked') || on.find(a => a.status === 'working')
+          || on.find(a => attentionKind(a) === 'done') || on[0];
+        return { c: c, dot: lead ? statusColor(lead) : 'var(--muted)',
+          pulse: lead && lead.status === 'working' ? ' pulse' : '' };
+      });
+      const sig = rows.map(r => `${r.c.id}|${r.c.name}|${r.c.auto ? 'a' : '-'}|${r.dot}|${r.pulse}`)
+        .join(' /// ') + ` @@ ${convViewId}`;
+      if (sig === convStripSig) return;
+      convStripSig = sig;
+      el.innerHTML = rows.map(r =>
+        `<button class="conv-tab" data-conv-id="${escapeHtml(r.c.id)}"` +
+        ` aria-current="${r.c.id === convViewId ? 'true' : 'false'}"` +
+        ` onclick="openConversation(this.dataset.convId)">` +
+        `<span class="dot${r.pulse}" style="background:${r.dot}" aria-hidden="true"></span>` +
+        `<span class="name">${escapeHtml(r.c.name)}</span>` +
+        (r.c.auto ? '<span class="tier">auto</span>' : '') + '</button>').join('');
+      const open = el.querySelector('[aria-current="true"]');
+      if (open) open.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
     // The whole record, every member, from the store alone. `bottom` scrolls to the newest on the
     // way in; a redraw from the snapshot leaves the reader where they were.
     async function renderConvStandalone(bottom) {
@@ -9454,6 +9602,7 @@
       // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
       // reader's text selection with it mid-copy. Only a thread that actually changed is written.
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
+      renderConvStrip();
       if (bottom) view.scrollTop = view.scrollHeight;
     }
 

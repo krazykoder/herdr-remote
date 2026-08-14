@@ -1096,13 +1096,33 @@ test('a session that has already ended can be added from its recording', async (
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
   const chip = page.locator('#convView .conv-chip.past');
   await expect(chip).toHaveText(/yesterday's codex/);
-  await expect(page.locator('#convView .conv-pick-head')).toHaveText('Recorded');
+  await expect(page.locator('#convView .conv-pick-head').last()).toHaveText('Recorded');
   await chip.click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
   // Its words are in the thread, merged into the chronology rather than copied anywhere.
   await expect(page.locator('#convViewThread')).toContainText('Shipped the migration.');
   expect(await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key)))
     .toContain('ghost');
+});
+
+test('the picker names every session the same way, running or recorded', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: "yesterday's codex", touched: Date.now() - 7200000,
+      spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('#convView .conv-pick-head')).toHaveText(['Running', 'Recorded']);
+  // A live session is the same kind of choice as an ended one, so it is named the same way: the
+  // pane's label and the harness it runs, in the badge every other surface uses.
+  const live = page.locator('#convView .conv-chip:not(.past)', {hasText: 'scratch'});
+  await expect(live.locator('.badge')).toHaveText('codex');
+  await expect(page.locator('#convView .conv-chip.past .badge')).toHaveText('codex');
+  // Same chip, so the badge sits the same way in both.
+  for (const el of [live, page.locator('#convView .conv-chip.past')]) {
+    await expect(el).toHaveCSS('display', 'flex');
+    await expect(el).toHaveCSS('align-items', 'center');
+  }
 });
 
 test('the picker does not offer a pane the conversation already holds', async ({page}) => {
@@ -1250,6 +1270,92 @@ test('with every member hidden the view says so rather than looking empty', asyn
   await expect(page.locator('#convViewThread .conv-empty')).toContainText('Every member is hidden');
   // And the one action that needs a live pane goes, because there is no visible one to open.
   await expect(page.locator('#convViewOpen')).toBeHidden();
+});
+
+test('the conversation view carries the conversations as tabs', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([
+      {id: 'c1', name: 'new authentication feature', created: 1,
+       members: [{key, added: 1, label: 'Architect 1', seen: 3, messages: 2}]},
+      {id: 'c2', name: 'the release', created: 2, members: [{key, added: 2, seen: 9, messages: 5}]},
+      {id: 'c3', name: 'relay · Architect 1', created: 3, auto: true,
+       members: [{key, added: 3, seen: 5, messages: 1}]},
+    ]);
+    localStorage.setItem('herdr_conv_landing_auto', 'on');
+  });
+  // No read: recording would stamp all three with the same `seen`, and the order under test is
+  // the one the landing list sorts by.
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  const tabs = page.locator('#convStrip .conv-tab');
+  // Same list and same order as the landing page it was opened from — newest message first.
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.locator('.name')).toHaveText(
+    ['the release', 'relay · Architect 1', 'new authentication feature']);
+  await expect(tabs.nth(0)).toHaveAttribute('aria-current', 'true');
+  await expect(tabs.nth(1).locator('.tier')).toHaveText('auto');
+  // And a tab is how you move between them, without going back to the list.
+  await tabs.nth(2).click();
+  await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
+  await expect(page.locator('#convStrip .conv-tab[aria-current="true"] .name'))
+    .toHaveText('new authentication feature');
+});
+
+test('the strip hides the auto conversations exactly when the landing list does', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([
+      {id: 'c1', name: 'the release', created: 1, members: [{key, added: 1, seen: 9}]},
+      {id: 'c2', name: 'relay · Architect 1', created: 2, auto: true,
+       members: [{key, added: 2, seen: 5}]},
+    ]);
+    localStorage.setItem('herdr_conv_landing_auto', 'off');
+  });
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
+  await page.locator('#convView .back').click();
+  await page.locator('#conversations .section-action').click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
+  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(2);
+});
+
+test('an auto conversation opened while auto is hidden still gets its own tab', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([
+      {id: 'c1', name: 'the release', created: 1, members: [{key, added: 1, seen: 9}]},
+      {id: 'c2', name: 'relay · Architect 1', created: 2, auto: true,
+       members: [{key, added: 2, seen: 5}]},
+    ]);
+    localStorage.setItem('herdr_conv_landing_auto', 'off');
+    openConversation('c2');
+  });
+  // A strip that cannot show what is on screen is worse than one carrying an extra tab — the same
+  // rule the pane strip follows for the open pane.
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(2);
+  await expect(page.locator('#convStrip .conv-tab[aria-current="true"] .name'))
+    .toHaveText('relay · Architect 1');
+});
+
+test('a conversation read on its own uses the whole width', async ({page}) => {
+  await openCard(page);
+  const w = await page.evaluate(() => {
+    const box = document.getElementById('convViewThread');
+    const msg = box.querySelector('.conv-msg');
+    return {msg: msg.getBoundingClientRect().width, box: box.clientWidth,
+      pad: getComputedStyle(box).paddingLeft};
+  });
+  // Nothing sits opposite anything here — there is no pair and no side, so the width a pane's
+  // thread reserves for the other half is dead space.
+  expect(w.msg).toBeCloseTo(w.box - 2 * parseFloat(w.pad), 0);
 });
 
 // A pane may be in any number of conversations — the store never stopped it, and grouping is a
