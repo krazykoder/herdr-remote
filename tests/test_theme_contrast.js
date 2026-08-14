@@ -93,6 +93,21 @@ function names(selector) {
   return [...body.matchAll(/--([\w-]+):/g)].map(m => m[1]);
 }
 
+test('every custom property the stylesheet reads is one something sets', () => {
+  // A `var(--card)` that nothing declares is not a fallback, it is no declaration at all — the
+  // property is invalid and the element gets nothing. An overlay panel with no background reads as
+  // a rendering fault rather than as a missing token, which is why this is a test and not a lint.
+  const css = HTML.slice(HTML.indexOf('<style>'), HTML.indexOf('</style>'));
+  const used = new Set([...css.matchAll(/var\(\s*--([\w-]+)/g)].map(m => m[1]));
+  // Declared anywhere in the file, not only in the stylesheet: a handful are set per element from
+  // JS or from an inline style, which is exactly how a per-agent tint reaches its own bubble.
+  const set = new Set([...HTML.matchAll(/--([\w-]+)\s*:/g)].map(m => m[1])
+    .concat([...HTML.matchAll(/setProperty\(\s*['"]--([\w-]+)/g)].map(m => m[1])));
+  for (const name of used) {
+    assert.ok(set.has(name), `--${name} is read by the stylesheet and set by nothing`);
+  }
+});
+
 test('every custom property the light theme overrides exists in the dark one', () => {
   const declared = new Set(names(':root'));
   for (const name of names(':root[data-theme="light"]')) {

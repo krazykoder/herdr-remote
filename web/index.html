@@ -1779,7 +1779,9 @@
     /* Hangs under the header rather than pushing the thread down: opening it is a glance at who is
        here, and a thread that jumps a hundred pixels loses the reader's place. */
     .conv-panel {
-      background: var(--card);
+      /* Opaque, and the thread scrolls under it: a panel you can read the thread through is a
+         panel that reads as a rendering fault. */
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 8px 12px;
       box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
@@ -5309,10 +5311,9 @@
         if (conv) {
           conv.members = (conv.members || []).concat(convMemberOf(a));
           saveConvIndex(items);
-          const key = convMemberKey(a), views = convViews();
-          views[key] = conv.id;
-          try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
-          catch (e) { /* private mode: this session only */ }
+          // This conversation and not merely "on": the new pane is a member of exactly one so far,
+          // but a respawn into a grouping the user chose must open on that grouping.
+          convSetView(a, conv.id);
         }
         openTerminal(a.pane_id);
         showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} joined "${conv.name}".`
