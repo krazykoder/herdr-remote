@@ -1165,6 +1165,16 @@ test('a pane in two conversations picks which one its thread shows', async ({pag
   await expect(page.locator('#convThread select.name')).toHaveValue('c2');
 });
 
+test('opening a selected card keeps that conversation on its live pane', async ({page}) => {
+  await open(page);
+  await twoConvs(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#convThread select.name')).toHaveValue('c2');
+});
+
 test('a stored conversation the pane has left falls back rather than showing nothing', async ({page}) => {
   await open(page);
   await twoConvs(page);

@@ -5242,7 +5242,7 @@
           conv.members = (conv.members || []).concat(convMemberOf(a));
           saveConvIndex(items);
           const key = convMemberKey(a), views = convViews();
-          views[key] = 1;
+          views[key] = conv.id;
           try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
           catch (e) { /* private mode: this session only */ }
         }
@@ -9017,8 +9017,8 @@
       if (!live) return;
       // The thread panel, on, so the pane opens showing the conversation rather than its rows.
       const key = convMemberKey(live), views = convViews();
-      if (!views[key]) {
-        views[key] = 1;
+      if (views[key] !== conv.id) {
+        views[key] = conv.id;
         try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
         catch (e) { /* private mode: this session only */ }
       }
