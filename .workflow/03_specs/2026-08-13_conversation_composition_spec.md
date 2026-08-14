@@ -188,3 +188,27 @@ oldest running session — worth stating plainly, because it is easy to read the
 a "primary". There is no primary. A pair partner is something the pane's own thread adds once it is
 open (`pairedConvMembers`), not something this picks. Either route sets the pane's per-pane
 conversation preference to this conversation, so a pane in several opens on the one you came from.
+
+---
+
+## 10. S5 — The same chrome in the pane (added 2026-08-14)
+
+§9 left the pane's thread alone. It should not have: a pane reading a conversation is the place
+most of the roster's actions are wanted from, and reaching them meant leaving the pane for the
+standalone view and coming back.
+
+The control is **the same control, in the same place relative to the thread it opens onto** —
+`#paneConvWho`, a `.who-btn` in the pane's `.term-header` immediately left of QUIT, opening
+`#convPaneRoster` inside `.term-wrap`, absolutely positioned over the top of the thread. Not in the
+thread's own head, which scrolls with the words and put a piece of chrome inside the content.
+
+- **Visible only while the thread is on screen.** The rows have no conversation to manage, so
+  `renderConvView`'s off path hides the button, empties the panel and closes it. Leaving the pane
+  goes through the same path.
+- **`convPaneRoster` is separate state from `convRosterOpen`.** The two views are never up together
+  and closing one must not close the other.
+- **The panel is diffed on its own**, like the standalone view's: `renderConvView` runs on every
+  poll and rebuilding open rows three times a minute takes a tap target out from under a finger.
+- **The panel's contents are `convRosterHtml` unchanged** — the same roster, the same Rename,
+  Duplicate, Copy and Add pane, acting on `convViewId`, which the pane render points at the
+  conversation it is showing.

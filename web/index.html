@@ -1850,8 +1850,9 @@
       display: flex;
     }
 
-    /* Who is in this conversation, as a disclosure rather than a block above every thread. */
-    .conv-view-head .who-btn {
+    /* Who is in this conversation, as a disclosure rather than a block above every thread. The
+       same control in both headers, because it opens the same panel onto the same conversation. */
+    .who-btn {
       font-size: 0.7rem;
       padding: 4px 8px;
       border-radius: 6px;
@@ -1863,7 +1864,7 @@
       min-height: 28px;
     }
 
-    .conv-view-head .who-btn[aria-expanded="true"] {
+    .who-btn[aria-expanded="true"] {
       border-color: var(--blue);
       color: var(--blue);
     }
@@ -2115,12 +2116,16 @@
       opacity: 0.45;
     }
 
-    /* In the pane the panel sits inside the thread, under its head, rather than under a sticky
-       header — the thread is the scrolling element there and has no header of its own to hang off. */
-    #convThread .conv-panel {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: none;
+    /* In the pane the header is outside the scroller, so the panel needs no sticky of its own —
+       it hangs off the top of the thread it covers. */
+    #convPaneRoster {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 6;
+      max-height: 70%;
+      overflow-y: auto;
     }
 
     /* Folded out of the thread, still in the conversation. Dimmed rather than struck through: it
@@ -3410,6 +3415,11 @@
            is still on screen and this one is free to say something else. -->
       <span class="dot" id="paneDot"></span>
       <span class="title" id="termTitle"></span>
+      <!-- Only while the thread is what is on screen: the rows have no conversation to manage.
+           Left of QUIT, so the two undoable things stay a thumb from the two that are not. -->
+      <button class="who-btn" id="paneConvWho" onclick="toggleConvPaneRoster()" hidden
+        aria-expanded="false" aria-controls="convPaneRoster"
+        aria-label="Who is in this conversation, and what to do with it"></button>
       <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
            them are not undoable. See armFire. -->
       <button class="refresh-btn cls-btn" id="quitBtn" onclick="armQuit()"
@@ -3527,6 +3537,10 @@
     <!-- Pair strip — absent unless the active pane belongs to a pair -->
     <div class="pair-strip" id="pairStrip" style="display:none"></div>
     <div class="term-wrap" id="termWrap">
+      <!-- The same roster and actions the conversation view owns, opened by the same button in
+           the header above it. Over the thread rather than above it, for the reason .conv-panel
+           gives: a thread that jumps a hundred pixels loses the reader's place. -->
+      <div class="conv-panel" id="convPaneRoster" hidden></div>
       <div class="term-content" id="termContent"></div>
       <!-- The same pane, read as a thread. A sibling of the rows rather than a replacement for
            them: switching views is a re-render of what is already in memory, and nothing about
@@ -7633,6 +7647,7 @@
       box.hidden = !on;
       if (!on) {
         box.innerHTML = '';
+        hideConvPaneRoster();
         convViewToken++;
         // Picks were bubbles, and they filled the same selection bar the rows fill, so they leave
         // with the thread. Only then: this runs on every recorded read, and clearing unasked would
@@ -7681,11 +7696,13 @@
       // conversation being managed" and not "the one the standalone view is showing" — the two
       // views are never on screen at once, so one variable answers for both.
       if (convPaneRoster) convViewId = conv.id;
+      // Under the pane's own header, not inside the thread: the same control in the same place as
+      // the conversation view's, and drawn separately so an arriving message cannot rewrite the
+      // roster under a reader who has just opened it.
+      renderConvPaneChrome(conv, recs, hidden, key);
       box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length,
-        joint ? entries.length : -1, convsForPane(a), true) +
-        (convPaneRoster
-          ? `<div class="conv-panel" id="convPaneRoster">${convRosterHtml(conv, recs, hidden, key)}</div>`
-          : (joint ? convMembersHtml(thread, recs) : '')) + (entries.length
+        joint ? entries.length : -1, convsForPane(a)) +
+        (joint ? convMembersHtml(thread, recs) : '') + (entries.length
         ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
@@ -7741,7 +7758,7 @@
     // on screen — the index is written after a fold, so it is a message behind for exactly as long
     // as it takes this to run. A joint thread has every member's entries on screen already and
     // passes -1 to say so.
-    function convHeadHtml(conv, key, count, total, mine, manage) {
+    function convHeadHtml(conv, key, count, total, mine) {
       const n = total >= 0 ? total : (conv.members || []).reduce(
         (t, m) => t + (count >= 0 && m.key === key ? count : (m.messages || 0)), 0);
       // A select and not a tap-to-cycle: cycling hides how many groupings this pane is in, and the
@@ -7752,16 +7769,7 @@
           mine.map(c => `<option value="${escapeHtml(c.id)}"${c.id === conv.id ? ' selected' : ''}>` +
             `${escapeHtml(c.name)}</option>`).join('') + '</select>'
         : `<span class="name">${escapeHtml(conv.name)}</span>`;
-      // The same roster and the same actions the standalone view owns, reachable from the pane
-      // that is recording into them — and only while the thread is what is on screen, because the
-      // rows have no conversation to manage.
-      const who = manage
-        ? `<button class="who-btn" onclick="toggleConvPaneRoster()"` +
-          ` aria-expanded="${convPaneRoster ? 'true' : 'false'}" aria-controls="convPaneRoster"` +
-          ` aria-label="Who is in this conversation, and what to do with it">` +
-          `${(conv.members || []).length} pane${(conv.members || []).length === 1 ? '' : 's'} ▾</button>`
-        : '';
-      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span>${who}</div>`;
+      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
     // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
@@ -9308,6 +9316,33 @@
     function toggleConvPaneRoster() {
       convPaneRoster = !convPaneRoster;
       renderConvView();
+    }
+
+    // The button and its panel, which live in the pane header rather than in the thread. The panel
+    // is diffed on its own: renderConvView runs on every poll, and rebuilding open rows three times
+    // a minute would take a reader's tap target out from under their finger.
+    let convPaneRosterHtml = '';
+
+    function renderConvPaneChrome(conv, recs, hidden, key) {
+      const who = document.getElementById('paneConvWho'), panel = document.getElementById('convPaneRoster');
+      const n = (conv.members || []).length;
+      who.hidden = false;
+      who.textContent = `${n} pane${n === 1 ? '' : 's'} ▾`;
+      who.setAttribute('aria-expanded', convPaneRoster ? 'true' : 'false');
+      panel.hidden = !convPaneRoster;
+      const html = convPaneRoster ? convRosterHtml(conv, recs, hidden, key) : '';
+      if (html !== convPaneRosterHtml) { panel.innerHTML = html; convPaneRosterHtml = html; }
+    }
+
+    // Leaving the thread takes the panel with it — it acts on a conversation the pane is no longer
+    // showing, and the header behind it belongs to the rows.
+    function hideConvPaneRoster() {
+      const who = document.getElementById('paneConvWho'), panel = document.getElementById('convPaneRoster');
+      who.hidden = true;
+      panel.hidden = true;
+      panel.innerHTML = '';
+      convPaneRosterHtml = '';
+      convPaneRoster = false;
     }
     // What the standalone view last drew, so Copy and Start again read the same thread the reader
     // is looking at rather than fetching it a second time and getting a different one.

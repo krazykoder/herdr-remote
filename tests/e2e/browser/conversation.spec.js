@@ -1378,18 +1378,36 @@ test('a pane reading a thread can manage the conversation from it', async ({page
   await join(page);
   await read(page);
   // Only with the thread on screen: the rows have no conversation to manage.
-  await expect(page.locator('#convThread .who-btn')).toHaveCount(0);
+  const who = page.locator('#paneConvWho');
+  await expect(who).toBeHidden();
   await page.evaluate(() => { toggleConvView(); });
-  const who = page.locator('#convThread .who-btn');
+  // In the pane's own header, left of QUIT — the same control the conversation view carries, in
+  // the same place relative to the thread it opens onto.
   await expect(who).toHaveText('1 pane ▾');
-  await expect(page.locator('#convPaneRoster')).toHaveCount(0);
+  const header = page.locator('#terminalView .term-header');
+  expect(await header.evaluate(h => [...h.children].map(c => c.id).join(','))).toContain('paneConvWho,quitBtn');
+  await expect(page.locator('#convPaneRoster')).toBeHidden();
   await who.click();
   await expect(page.locator('#convPaneRoster .conv-roster-row')).toHaveCount(1);
+  // Hanging off the bottom of the header, over the thread rather than pushing it down — the same
+  // shape the conversation view's panel has.
+  const box = await page.evaluate(() => {
+    const b = e => document.getElementById(e).getBoundingClientRect();
+    return {panel: b('convPaneRoster'), head: b('termWrap'), thread: b('convThread')};
+  });
+  expect(box.panel.top).toBeCloseTo(box.head.top, 0);
+  expect(box.panel.width).toBeCloseTo(box.head.width, 0);
+  expect(box.thread.top).toBeCloseTo(box.head.top, 0);
   // The same actions the standalone view owns, acting on the conversation this pane is reading.
   page.once('dialog', d => d.accept('named from the pane'));
   await page.locator('#convPaneRoster .conv-roster-actions button', {hasText: 'Rename'}).click();
   await expect(page.locator('#convThread .conv-head .name')).toHaveText('named from the pane');
   expect(await page.evaluate(() => loadConvIndex()[0].name)).toBe('named from the pane');
+  // Back to the rows takes both with it: the panel acts on a conversation that is no longer what
+  // the pane is showing.
+  await page.evaluate(() => { toggleConvView(); });
+  await expect(who).toBeHidden();
+  await expect(page.locator('#convPaneRoster')).toBeHidden();
 });
 
 test('the pane reading a thread is the one member it cannot hide', async ({page}) => {
