@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
-               'parseConvIndex', 'capEntries', 'evictOrder', 'convCopyName',
+               'parseConvIndex', 'capEntries', 'fitPrepend', 'evictOrder', 'convCopyName',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -50,7 +50,7 @@ vm.runInContext(
 const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
-       parseConvIndex, capEntries, evictOrder, convCopyName,
+       parseConvIndex, capEntries, fitPrepend, evictOrder, convCopyName,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -477,6 +477,50 @@ test('a transcript past its ceiling loses its oldest entries, not its newest', (
   assert.strictEqual(kept[9].text, 'm29');
   // Under the ceiling it is the same array, so the common case allocates nothing.
   assert.strictEqual(capEntries(entries, 100), entries);
+});
+
+// The other half of the ceiling. `capEntries` keeps the newest, so the front of the union it trims
+// is exactly where backfilled history lands — and a recovery that fed it an unfitted union would
+// delete the history it just recovered, plus part of the record, in one statement.
+const runOf = (n, tag) => Array.from({length: n}, (_, i) => ({who: 'agent', text: tag + i}));
+
+test('a prepend takes the room left over and displaces nothing', () => {
+  // 6 stored, 2 arriving, ceiling 10: two of the ten slots are spoken for by the append.
+  const fitted = fitPrepend(runOf(30, 'old'), 6, 2, 10);
+  assert.strictEqual(fitted.length, 2);
+  // Its newest end, because the entry it joins is the transcript's current oldest and trimming the
+  // other end would open a hole between them.
+  assert.deepStrictEqual(fitted.map(e => e.text), ['old28', 'old29']);
+});
+
+test('a full transcript takes no prepend at all rather than shedding its record', () => {
+  assert.strictEqual(fitPrepend(runOf(5, 'old'), 10, 0, 10).length, 0);
+  // And over-full, which a lowered ceiling can produce out of a record written under a higher one.
+  assert.strictEqual(fitPrepend(runOf(5, 'old'), 12, 1, 10).length, 0);
+});
+
+test('a prepend that fits is passed through whole, allocating nothing', () => {
+  const before = runOf(3, 'old');
+  assert.strictEqual(fitPrepend(before, 4, 1, 10), before);
+});
+
+test('what fits is never trimmed again by the cap it was fitted to', () => {
+  // The pair as recordPaneNow composes it: fit, then concat, then cap. The second step must find
+  // nothing left to do, or the fitting was for nothing.
+  const before = runOf(30, 'old'), stored = runOf(6, 'kept'), add = runOf(2, 'new');
+  const fitted = fitPrepend(before, stored.length, add.length, 10);
+  const union = fitted.concat(stored, add);
+  assert.strictEqual(union.length, 10);
+  assert.strictEqual(capEntries(union, 10), union, 'the cap trims none of what was fitted');
+});
+
+test('an append at the ceiling still slides the window, as an ordinary turn does', () => {
+  // Not an oversight: a recovered turn must not behave differently from a live one because the
+  // words arrived late. Only the prepend is protected.
+  const full = runOf(10, 'kept');
+  const grown = capEntries([].concat(full, runOf(2, 'new')), 10);
+  assert.deepStrictEqual(grown.slice(-2).map(e => e.text), ['new0', 'new1']);
+  assert.strictEqual(grown[0].text, 'kept2', 'the oldest two left, as they always have');
 });
 
 test('eviction drops what nobody named before anything anyone did', () => {

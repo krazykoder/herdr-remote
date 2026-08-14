@@ -315,6 +315,25 @@
       return entries.length > cap ? entries.slice(entries.length - cap) : entries;
     }
 
+    // How much of a *prepend* fits, given what it must not displace.
+    //
+    // `capEntries` keeps the newest, so the front of the array it trims is exactly where backfilled
+    // history goes. Handing it the union unfitted would delete the recovered messages and part of
+    // the stored record in the same statement — history destroyed in the name of recovering it. So
+    // the prepend takes only the room left over, keeping its newest end: the entry it joins is the
+    // transcript's current oldest, and trimming the other end would open a hole between them.
+    //
+    // An *append* is deliberately not treated this way. Messages at the end slide the window forward
+    // the way every turn already does, and a recovered turn must not behave differently from a live
+    // one because the words arrived late.
+    function fitPrepend(before, kept, add, max) {
+      const room = (max || CONV_ENTRY_MAX) - kept - add;
+      if (room <= 0) return [];
+      // Same array when it fits, which is every ordinary read: this runs on the first read of every
+      // pane, not only on a recovery.
+      return room >= before.length ? before : before.slice(before.length - room);
+    }
+
     // What to drop when there are too many transcripts, and what may never be dropped at all.
     //
     // A transcript a *named* conversation holds is a floor, not a preference: the record outliving

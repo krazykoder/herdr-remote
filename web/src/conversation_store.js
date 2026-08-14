@@ -318,7 +318,10 @@
         const old = tagUserEntries(convStamped(before, label, a.agent || ''), loadOutbox(), now);
         const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), old.outbox, now);
         saveOutbox(tagged.outbox);
-        held.entries = capEntries(old.entries.concat(held.entries, tagged.entries));
+        // The prepend is fitted to the room the record leaves it, rather than handed to `capEntries`
+        // — which trims from the front, which is where a prepend lands (§2.8).
+        const fitted = fitPrepend(old.entries, held.entries.length, tagged.entries.length);
+        held.entries = capEntries(fitted.concat(held.entries, tagged.entries));
         held.label = label;
         held.touched = now;
         held.spawn = convSpawn(a, now);
