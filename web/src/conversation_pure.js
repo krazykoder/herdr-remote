@@ -104,9 +104,13 @@
     // nothing is compared: everything on screen was said before this browser was watching, and the
     // order plus "older than now" is all that can honestly be said about it. This is the one write
     // that is not an event, and it happens once per pane (§5.2).
-    function backfillEntries(fresh, now) {
-      const ms = fresh || [];
-      return ms.map((m, i) => convEntry(m, now, { at: now - (ms.length - i), at_src: 'backfill' }));
+    // `base` is what the run has to sit under: `now` for a first read, and the oldest entry already
+    // stored for a run recovered from above it (§2.1). Ordering is the whole of what these stamps
+    // claim, and a joint thread sorts by them — so a prepend dated in the seconds before `now` would
+    // sort *after* the history it was prepended to.
+    function backfillEntries(fresh, now, base) {
+      const ms = fresh || [], end = base || now;
+      return ms.map((m, i) => convEntry(m, now, { at: end - (ms.length - i), at_src: 'backfill' }));
     }
 
     // A send can win the race to the store before the pane's first read, and more than one can:
@@ -203,6 +207,63 @@
         return convKey(entries[i].text) === convKey(closing.text) ? [] : ms;
       }
       return ms;
+    }
+
+    // What a window holds on either side of what the transcript already holds.
+    //
+    // This is not the fold that was removed in `ac28992`. The fold matched the stored tail against
+    // every 3s read and appended whatever did not match, which is a comparison it had to win on
+    // every tick. This asks one question per side — where in this window does the record's own
+    // newest (or oldest) message sit — and takes what falls beyond it. It runs only on a window
+    // deeper than any this transcript was recorded from, and it is idempotent on the same window:
+    // the anchor is found, nothing is beyond it, nothing is written.
+    //
+    // **A window that cannot locate the record's end contributes nothing on that side.** That is a
+    // `/clear`, a scrollback shallower than the record, or a message whose text changed — none of
+    // them a reason to guess, and all of them cases where guessing writes the record twice.
+    //
+    // Where the anchor's text appears more than once, the occurrence chosen is always the one that
+    // recovers *less*: the newest for the append, the oldest for the prepend. A run that is short by
+    // a few messages is a smaller wrong than a run that duplicates what is already recorded, because
+    // the record is permanent and the duplicate is in it forever.
+    function deepEntries(fresh, stored, now) {
+      const ms = fresh || [], entries = stored || [];
+      const out = { before: [], add: [], gap: false };
+      if (!ms.length || !entries.length) return out;
+
+      // Above the record: the newest agent entry, because an agent message is the one thing a pane
+      // says that this app never wrote itself — a prompt it sent is in the record before any read.
+      let newest = -1;
+      for (let i = entries.length - 1; i >= 0 && newest < 0; i--) {
+        if (entries[i].who === 'agent') newest = i;
+      }
+      if (newest >= 0) {
+        const key = convKey(entries[newest].text);
+        let at = -1;
+        for (let i = ms.length - 1; i >= 0 && at < 0; i--) {
+          if (ms[i].who === 'agent' && convKey(ms[i].text) === key) at = i;
+        }
+        if (at < 0) {
+          out.gap = true;
+        } else {
+          // A prompt committed at the send sits after that anchor already, and its echo is in the
+          // window. Same rule `sentTurnEntries` applies for the same reason, over the entries the
+          // record holds past the anchor rather than over the sends alone.
+          const said = new Set(entries.slice(newest + 1)
+            .filter(e => e.who === 'user').map(e => convKey(e.text)));
+          const add = ms.slice(at + 1).filter(m => !(m.who === 'user' && said.has(convKey(m.text))));
+          out.add = backfillEntries(add, now);
+        }
+      }
+
+      // Below it: the oldest entry of any kind, since a transcript can begin on either speaker.
+      const oldest = entries[0], okey = convKey(oldest.text);
+      let first = -1;
+      for (let i = 0; i < ms.length && first < 0; i++) {
+        if (ms[i].who === oldest.who && convKey(ms[i].text) === okey) first = i;
+      }
+      if (first > 0) out.before = backfillEntries(ms.slice(0, first), now, convAt(oldest));
+      return out;
     }
 
     // One turn appended. `end` is the transition that ended it, which is also what dates the

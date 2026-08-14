@@ -292,12 +292,18 @@
       if (held.backfilled === undefined) {
         held.backfilled = held.entries.some(e => e.at_src !== 'sent');
       }
+      // A pane mid-turn has an unfinished block at the end of it, and that is a draft rather than
+      // history — it goes to the draft slot below with everything else live. A record only ever
+      // extends, so a half-written message committed here would stay half-written forever.
+      const body = working && fresh.length && fresh[fresh.length - 1].who === 'agent'
+        ? fresh.slice(0, -1) : fresh;
+      // A window deeper than any this transcript has been recorded from — Load more, or the button
+      // (§2.2). Not a comparison against the last read: it is a watermark, so the 3s poll can never
+      // reach this branch however many times it runs.
+      const deep = held.backfilled && rows.length > (held.depth || 0);
       let before = [], add = [];
       if (!held.backfilled) {
-        // The first read. A pane mid-turn has an unfinished block at the end of it, and that is a
-        // draft rather than history — it goes to the draft slot below with everything else live.
-        const body = working && fresh.length && fresh[fresh.length - 1].who === 'agent'
-          ? fresh.slice(0, -1) : fresh;
+        // The first read.
         const first = splitFirstRead(body, held.entries);
         before = backfillEntries(first.history, now);
         // A local send has its own event and timestamp. Its pane echo opens the current turn,
@@ -305,6 +311,15 @@
         if (first.turn.length) add = sentTurnEntries(first.turn, held.entries, now, end);
         if (body.length) held.backfilled = true;
         if (add.length) held.lastTurn = end;
+      } else if (deep) {
+        // History this browser was not connected for, out of a read it already paid for. Ahead of
+        // the turn branch and not beside it: what a deep window holds past the record's own newest
+        // message *includes* the turn that just ended, so running both would write it twice.
+        const found = deepEntries(body, held.entries, now);
+        before = found.before;
+        add = found.add;
+        if (found.gap) held.gap = true;
+        if (add.length && end) held.lastTurn = end;
       } else if (end > (held.lastTurn || 0)) {
         // A turn ended since the last one this transcript recorded. Reads of the same turn after
         // this one find `lastTurn` already at `end` and append nothing, so the turn-end read and
@@ -314,10 +329,19 @@
         if (add.length) held.lastTurn = end;
       }
       convNoteDraft(key, working ? fresh[fresh.length - 1] : null, a, now);
+      // The watermark moves on the read, not on what the read produced: a deeper window that added
+      // nothing has still been recorded from, and asking it again would add nothing again.
+      if (deep || held.backfilled) held.depth = Math.max(held.depth || 0, rows.length);
       if (before.length || add.length) {
         const old = tagUserEntries(convStamped(before, label, a.agent || ''), loadOutbox(), now);
         const tagged = tagUserEntries(convStamped(add, label, a.agent || ''), old.outbox, now);
         saveOutbox(tagged.outbox);
+        // A break the deep read could not close is drawn above the next thing recorded after it —
+        // the window that missed the anchor had nothing to hang it on (§2.1).
+        if (held.gap && tagged.entries.length) {
+          tagged.entries[0] = Object.assign({}, tagged.entries[0], { gap: true });
+          held.gap = false;
+        }
         // The prepend is fitted to the room the record leaves it, rather than handed to `capEntries`
         // — which trims from the front, which is where a prepend lands (§2.8).
         const fitted = fitPrepend(old.entries, held.entries.length, tagged.entries.length);

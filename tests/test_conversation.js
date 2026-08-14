@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
-               'parseConvIndex', 'capEntries', 'fitPrepend', 'evictOrder', 'convCopyName',
+               'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -50,7 +50,7 @@ vm.runInContext(
 const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
-       parseConvIndex, capEntries, fitPrepend, evictOrder, convCopyName,
+       parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -521,6 +521,87 @@ test('an append at the ceiling still slides the window, as an ordinary turn does
   const grown = capEntries([].concat(full, runOf(2, 'new')), 10);
   assert.deepStrictEqual(grown.slice(-2).map(e => e.text), ['new0', 'new1']);
   assert.strictEqual(grown[0].text, 'kept2', 'the oldest two left, as they always have');
+});
+
+// --- The deep window ---
+//
+// A pane read deeper than it has ever been recorded from holds turns nobody was connected for. The
+// question is never "which of these look new" — that was the fold, and it lost — but "where in this
+// window does the record's own newest message sit".
+const FOUR_TURNS = [
+  '❯ q1', '', '⏺ A1.', '',
+  '❯ q2', '', '⏺ A2.', '',
+  '❯ q3', '', '⏺ A3.', '',
+  '❯ q4', '', '⏺ A4.', '',
+  '❯',
+];
+const FIRST_TWO = FOUR_TURNS.slice(0, 8).concat(['❯']);
+const LAST_TWO = FOUR_TURNS.slice(8);
+const LATER = NOW + 600000;
+
+test('a deeper window gives up the turns that ended while nobody was connected', () => {
+  const stored = backfill(FIRST_TWO, NOW);
+  const found = deepEntries(msgs(FOUR_TURNS), stored, LATER);
+  assert.deepStrictEqual(texts(found.add), ['q3', 'A3.', 'q4', 'A4.']);
+  assert.strictEqual(found.before.length, 0);
+  assert.strictEqual(found.gap, false);
+  // Nobody watched any of it happen, and the thread says so with a tilde rather than a clock.
+  assert.ok(Array.from(found.add).every(e => e.at_src === 'backfill'));
+  assert.ok(Array.from(found.add).every((e, i, all) => !i || convAt(all[i - 1]) < convAt(e)));
+});
+
+test('a window the record cannot be located in writes nothing and says a break happened', () => {
+  // /clear, a scrollback shallower than the record, or an anchor whose text changed. All three
+  // would be written twice by a guess, and the record is permanent.
+  const stored = backfill(['❯ elsewhere', '', '⏺ Different pane entirely.', '', '❯'], NOW);
+  const found = deepEntries(msgs(FOUR_TURNS), stored, LATER);
+  assert.strictEqual(found.add.length, 0);
+  assert.strictEqual(found.before.length, 0);
+  assert.strictEqual(found.gap, true);
+});
+
+test('history above the first read is prepended, dated under what it joins', () => {
+  // The pane was read late: the transcript starts mid-session and the scrollback above it is real.
+  const stored = backfill(LAST_TWO, NOW);
+  const found = deepEntries(msgs(FOUR_TURNS), stored, LATER);
+  assert.deepStrictEqual(texts(found.before), ['q1', 'A1.', 'q2', 'A2.']);
+  assert.strictEqual(found.add.length, 0, 'the anchor is the last thing in the window');
+  // Ordering is all these stamps claim, and a joint thread sorts by them — dated `now` they would
+  // sort after the history they were prepended to.
+  assert.ok(Array.from(found.before).every(e => convAt(e) < convAt(stored[0])));
+});
+
+test('the same window twice is one recovery, without a watermark to stop it', () => {
+  // What makes the manual button safe to bypass every gate: idempotence, not the guard.
+  const stored = backfill(FIRST_TWO, NOW);
+  const first = deepEntries(msgs(FOUR_TURNS), stored, LATER);
+  const grown = stored.concat(Array.from(first.add));
+  const again = deepEntries(msgs(FOUR_TURNS), grown, LATER + 1000);
+  assert.strictEqual(again.add.length, 0);
+  assert.strictEqual(again.before.length, 0);
+  assert.strictEqual(again.gap, false);
+});
+
+test('an anchor said twice picks the occurrence that recovers less', () => {
+  // Duplicating what is already recorded is the worse of the two wrongs, so the newest occurrence
+  // wins on the append side and a short recovery is the price.
+  const said = FOUR_TURNS.map(r => (r === '⏺ A3.' ? '⏺ A2.' : r));
+  const found = deepEntries(msgs(said), backfill(FIRST_TWO, NOW), LATER);
+  assert.deepStrictEqual(texts(found.add), ['q4', 'A4.']);
+});
+
+test('a prompt this app already committed is not recovered as well', () => {
+  // The send wrote it with an exact clock before the pane was ever read at this depth; its echo in
+  // the window is the same prompt.
+  const stored = backfill(FIRST_TWO, NOW)
+    .concat([{who: 'user', text: 'q3', at: NOW + 1, at_src: 'sent', seen: NOW + 1}]);
+  const found = deepEntries(msgs(FOUR_TURNS), stored, LATER);
+  assert.deepStrictEqual(texts(found.add), ['A3.', 'q4', 'A4.']);
+});
+
+test('nothing stored and nothing read are both nothing recovered', () => {
+  assert.strictEqual(deepEntries(msgs(FOUR_TURNS), [], LATER).add.length, 0);
+  assert.strictEqual(deepEntries([], backfill(FIRST_TWO, NOW), LATER).gap, false);
 });
 
 test('eviction drops what nobody named before anything anyone did', () => {
