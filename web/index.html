@@ -2524,7 +2524,7 @@
        an outline alone is not enough to say which of two views is showing. */
     .quick-actions .qa-nav button.qa-conv {
       min-width: 0;
-      width: 22px;
+      width: 34px;
       height: 22px;
       padding: 0;
       border-radius: 11px;
@@ -7128,6 +7128,18 @@
     // arming it. D4's auto tier is what keeps that from becoming a storage problem.
     const CONV_AUTO_KEY = 'herdr_conv_auto', CONV_AUTO_SEEN_KEY = 'herdr_conv_auto_seen';
     const CONV_AUTO_SEEN_MAX = 500;
+    const CONV_LANDING_AUTO_KEY = 'herdr_conv_landing_auto', CONV_LANDING_AUTO_MAX = 10;
+
+    function convLandingAutoOn() {
+      try { return localStorage.getItem(CONV_LANDING_AUTO_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvLandingAuto() {
+      try { localStorage.setItem(CONV_LANDING_AUTO_KEY, convLandingAutoOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      renderConversations();
+    }
 
     function convAutoOn() {
       try { return localStorage.getItem(CONV_AUTO_KEY) !== 'off'; }
@@ -8752,7 +8764,14 @@
           pulse: lead && lead.status === 'working' ? ' pulse' : '',
         };
       }).sort((a, b) => b.seen - a.seen || b.count - a.count);
-      el.innerHTML = rows.length ? `<div class="section-header">Conversations</div>` + rows.map(r =>
+      const autos = rows.filter(r => r.c.auto), showAuto = convLandingAutoOn();
+      const shown = rows.filter(r => !r.c.auto).concat(showAuto ? autos.slice(0, CONV_LANDING_AUTO_MAX) : [])
+        .sort((a, b) => b.seen - a.seen || b.count - a.count);
+      const autoControl = autos.length
+        ? `<button class="section-action" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
+          `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
+          `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
+      el.innerHTML = rows.length ? `<div class="section-header">Conversations${autoControl}</div>` + shown.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +

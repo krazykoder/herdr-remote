@@ -334,6 +334,24 @@ test('a live conversation carries its agent’s own dot, pulse and all', async (
   expect(shown.card.beat).toBe('pulse');
 });
 
+test('landing keeps auto conversations optional and bounded', async ({page}) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    const named = {id: 'named', name: 'named', created: 1, members: []};
+    const autos = Array.from({length: 12}, (_, i) =>
+      ({id: 'auto' + i, name: 'auto' + i, created: i + 2, members: [], auto: true}));
+    localStorage.removeItem(CONV_LANDING_AUTO_KEY);
+    saveConvIndex([named].concat(autos));
+    toggleSection('conversations', true);
+    renderConversations();
+  });
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
+  await expect(page.locator('#conversations .section-action')).toHaveText('Show auto (12)');
+  await page.locator('#conversations .section-action').click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(11);
+  await expect(page.locator('#conversations .section-action')).toHaveText('Hide auto (12)');
+});
+
 test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openCard(page);
@@ -663,12 +681,14 @@ test('on a phone, the menu scrolls and conversation controls keep the nav to one
   await page.setViewportSize({width: 320, height: 400});
   const nav = await page.locator('#quickActions .qa-nav').evaluate(el => ({
     children: el.children.length,
+    conversationWidth: Math.round(el.querySelector('.qa-conv').getBoundingClientRect().width),
     rows: [...el.children].map(child => {
       const r = child.getBoundingClientRect();
       return Math.round(r.y);
     }),
   }));
   expect(nav.children).toBe(3);
+  expect(nav.conversationWidth).toBe(34);
   expect(Math.max(...nav.rows) - Math.min(...nav.rows)).toBeLessThanOrEqual(1);
 
   await page.locator('#termMenuBtn').click();
