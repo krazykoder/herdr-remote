@@ -1114,6 +1114,8 @@ test('a conversation can be duplicated, and the copy is nobody\'s auto record', 
 
 test('a conversation deleted ends the grouping and keeps the words', async ({page}) => {
   const key = await openCard(page);
+  await page.evaluate(key => localStorage.setItem('herdr_conv_view',
+    JSON.stringify({[key]: 'c1', anotherPane: 'another conversation'})), key);
   const del = page.locator('#convView .conv-del');
   // One tap arms, and the record is still there.
   await del.click();
@@ -1125,6 +1127,8 @@ test('a conversation deleted ends the grouping and keeps the words', async ({pag
   // The view it was read in goes with it, and so does its per-conversation reading state.
   await expect(page.locator('#convView')).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem('herdr_conv_hidden'))).toBe('{}');
+  expect(await page.evaluate(() => localStorage.getItem('herdr_conv_view')))
+    .toBe(JSON.stringify({anotherPane: 'another conversation'}));
   // But not the transcript: a conversation is a roster and a name, and deleting one unreferences
   // words rather than erasing them.
   expect((await held(page, key)).entries.length).toBe(2);

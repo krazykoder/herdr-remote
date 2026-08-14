@@ -3588,7 +3588,7 @@
           <!-- Another one of these, beside this one, without answering the dialog again.
                renderTermMenuState names the agent and hides it when it cannot be started. -->
           <button class="menu-item arm-btn" role="menuitem" id="menuDuplicate" hidden
-            onclick="armButton(this, 'Duplicate?', duplicatePane)">Duplicate</button>
+            onclick="armButton(this, 'Duplicate?', () => { closeTermMenu(); duplicatePane(); })">Duplicate</button>
           <!-- One item for both jobs: membership is a list the user edits, so joining an existing
                conversation and naming a new one are the same sheet. renderTermMenuState writes the
                text, because "start one" and "you are in one" are different offers. -->
@@ -5623,8 +5623,6 @@
     function duplicatePane() {
       const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
       if (!ws || !canDuplicate(a)) return;
-      // Armed in the menu, so the menu is still open behind the second tap.
-      closeTermMenu();
       const tab = !!a.workspace_id;
       const msg = {
         type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
@@ -9829,6 +9827,10 @@
       const hidden = convHiddenAll();
       delete hidden[conv.id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(hidden)); }
+      catch (e) { /* private mode: this session only */ }
+      const views = convViews();
+      for (const key in views) if (views[key] === conv.id) delete views[key];
+      try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
       catch (e) { /* private mode: this session only */ }
       convStandaloneHtml = '';
       renderConversations();
