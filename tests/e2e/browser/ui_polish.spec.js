@@ -154,18 +154,23 @@ test('Summary never lands on an arrow, at any phone width', async ({page}) => {
   }
 });
 
-test('QUIT and CLS fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
+test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   const fire = page.locator('#fireBtn'), quit = page.locator('#quitBtn'), cls = page.locator('#clsBtn');
+  const refresh = page.locator('#refreshBtn');
   // Wide: unchanged. The fold exists for the width it is not needed at.
   await expect(fire).toBeHidden();
   await expect(quit).toBeVisible();
+  await expect(refresh).toBeVisible();
+  // Icon only in the row — the word belongs to the menu, where an icon says nothing.
+  await expect(page.locator('.fire-label')).toBeHidden();
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({width, height: 844});
     await expect(fire, `f() missing at ${width}`).toBeVisible();
     await expect(quit, `QUIT still in the row at ${width}`).toBeHidden();
     await expect(cls).toBeHidden();
+    await expect(refresh, `Refresh still in the row at ${width}`).toBeHidden();
     // The header is what this buys: nothing may run off the edge of it.
     const over = await page.evaluate(() => {
       const h = document.querySelector('#terminalView .term-header'), b = h.getBoundingClientRect();
@@ -178,6 +183,19 @@ test('QUIT and CLS fold behind f() on a phone, and sit in the row on a desktop',
   await fire.click();
   await expect(quit).toBeVisible();
   await expect(cls).toBeVisible();
+  await expect(refresh).toBeVisible();
+  await expect(page.locator('.fire-label')).toHaveText('Refresh');
+  // A menu, read down its left edge: one column, one left edge, one width.
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button')]
+    .map(b => { const r = b.getBoundingClientRect(); return [r.left, r.width, r.top]; }));
+  expect(rows.length).toBe(3);
+  expect(new Set(rows.map(r => r[0])).size, 'the rows share a left edge').toBe(1);
+  expect(new Set(rows.map(r => r[1])).size, 'the rows share a width').toBe(1);
+  expect(rows[0][2] < rows[1][2] && rows[1][2] < rows[2][2], 'stacked, not a row').toBe(true);
+  // And it says a menu opens, rather than looking like one more action in the row.
+  expect(await fire.evaluate(b =>
+    getComputedStyle(b, '::after').content.replace(/"/g, ''))).toBe('▾');
+  await expect(fire).toHaveAttribute('aria-expanded', 'true');
   // One tap only arms, exactly as it does in the row.
   await quit.click();
   await expect(quit).toHaveText('QUIT?');
