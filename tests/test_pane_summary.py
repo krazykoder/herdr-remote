@@ -65,6 +65,21 @@ class FinalMessage(unittest.TestCase):
         self.assertEqual(final_message(rows, "agy"), (37, 37))
         self.assertEqual(rows[37], "  OK")
 
+    def test_agy_wrapped_tool_call_still_opens_the_message_under_it(self):
+        # agy wraps its own tool-call lines and the continuation lands back in column 0 with no
+        # glyph on it, so the marker above the closing message is two lines up rather than one.
+        # Read off a live pane on 2026-08-14, where a long run's closing summary was being missed.
+        rows = fixture("pane_agy_wrapped.txt")
+        self.assertEqual(rows[5], "expand)")
+        self.assertEqual(final_message(rows, "agy"), (7, 9))
+
+    def test_agy_wrapped_prompt_is_not_a_reply(self):
+        # A prompt too long for the pane continues indented, which is the shape of a reply. Only
+        # the missing blank line tells them apart.
+        rows = fixture("pane_agy_wrapped.txt")
+        self.assertEqual(rows[2], "  and report what passed")
+        self.assertEqual(final_message(rows[:4] + [">"], "agy"), None)
+
     def test_opencode_draws_no_boundary_so_nothing_is_guessed(self):
         # Its reasoning and its answer are both prose behind the same bar, and it prints nothing in
         # column 0 for a block to start on. Declared off rather than found empty.

@@ -220,6 +220,25 @@ test('agy: the request is ruled, and the reply below it is not', () => {
   assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
 });
 
+// agy wraps its own lines, on both sides of the transcript, and each wrap breaks the positional
+// rule in its own way. A tool call too long for the pane continues in column 0 with no glyph on
+// it, so the marker above the closing message is two lines up rather than one; a prompt too long
+// for the pane continues *indented*, which is the exact shape of a reply. Read off the live panes
+// `AGY3.7- arch` and `Agy - Architect 5` on 2026-08-14, where the closing summary of a long run
+// was the message being missed.
+test('agy: a wrapped tool call still opens the message under it', () => {
+  const rows = fixture('pane_agy_wrapped.txt');
+  assert.equal(rows[5], 'expand)');            // the continuation, in column 0 and not a marker
+  assert.deepEqual(find(rows, 'agy'), [7, 9]);
+  assert.deepEqual(ctx.turnSummaries(rows, 'agy'), [[7, 9]]);
+});
+
+test('agy: the second line of a wrapped prompt is the user, not a reply', () => {
+  const rows = fixture('pane_agy_wrapped.txt');
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'agy')), [1, 2, 12]);
+  assert.equal(ctx.blockContaining(rows, 'agy', 2), null);
+});
+
 test('agy: a request answered with a command alone has no closing message', () => {
   const rows = [
     '────────────────────',

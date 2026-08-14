@@ -136,6 +136,22 @@
     // line that agy itself printed. `opens` is that last clause and it is load-bearing — without
     // it the shell command line that launched agy opens a block and its startup banner is read as
     // the pane's first message.
+    //
+    // The column-0 line above is not always the marker, though: agy wraps its own tool-call lines
+    // and the continuation lands back in column 0 with no glyph on it —
+    //
+    //     ● Bash(git commit -m "Refactor frontend JS into functional...) (ctrl+o to
+    //     expand)
+    //
+    // — so the run of column-0 lines is walked back to the marker that opened it. Checking only
+    // the nearest one dropped every message agy wrapped a tool call above, including the closing
+    // one, which is the message the whole feature exists to find.
+    //
+    // The prompt gutter wraps too, and its continuation is indented rather than column-0, which
+    // makes it indistinguishable from a reply by shape alone. A blank line is what tells them
+    // apart: agy answers a prompt through a tool call or a thought, never off the next row, so an
+    // indented line touching a `>` is the rest of what the user typed. Without this the second
+    // line of every multi-line prompt is read as an agent message and taken out of the blue rule.
     function startsBlock(rows, g, i) {
       const row = rows[i] || '';
       if (g.speaker) return gutterOf(row, g) === g.speaker;
@@ -143,7 +159,14 @@
       for (let j = i - 1; j >= 0; j--) {
         const above = rows[j] || '';
         if (!above.trim()) continue;
-        return /^\S/.test(above) && (!g.opens || g.opens.includes(above[0]));
+        if (!g.opens) return /^\S/.test(above);
+        const gap = j < i - 1;
+        for (let k = j; k >= 0; k--) {
+          const line = rows[k] || '';
+          if (!line.trim() || !/^\S/.test(line)) return false;
+          if (g.opens.includes(line[0])) return gap || !(g.user || []).includes(line[0]);
+        }
+        return false;
       }
       return false;     // nothing above it, so nothing opened it
     }

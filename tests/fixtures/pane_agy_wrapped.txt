@@ -1,0 +1,15 @@
+────────────────────────────────────────────────────────────
+> run the full validation pipeline
+  and report what passed
+
+● Bash(npm run build && ./.venv313/bin/python -m unittest ...) (ctrl+o to
+expand)
+
+  ### Summary of the run
+
+  Every suite passed and the bundle built.
+
+──────────────────────────────────────────────────────────────────────────────────
+>
+──────────────────────────────────────────────────────────────────────────────────
+? for shortcuts

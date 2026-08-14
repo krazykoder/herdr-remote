@@ -121,6 +121,19 @@ def starts_block(rows, g, i):
     answer is positional: the first indented line under a column-0 line that agy itself printed.
     `opens` is that last clause and it is load-bearing — without it the shell command that launched
     agy opens a block and its startup banner is read as the pane's first message.
+
+    The column-0 line above is not always the marker, though: agy wraps its own tool-call lines and
+    the continuation lands back in column 0 with no glyph on it —
+
+        ● Bash(git commit -m "Refactor frontend JS into functional...) (ctrl+o to
+        expand)
+
+    — so the run of column-0 lines is walked back to the marker that opened it.
+
+    The prompt gutter wraps too, and its continuation is indented rather than column-0, which makes
+    it indistinguishable from a reply by shape alone. A blank line is what tells them apart: agy
+    answers a prompt through a tool call or a thought, never off the next row, so an indented line
+    touching a `>` is the rest of what the user typed.
     """
     row = rows[i] or "" if i < len(rows) else ""
     if g.get("speaker"):
@@ -132,7 +145,16 @@ def starts_block(rows, g, i):
         if not above.strip():
             continue
         opens = g.get("opens")
-        return bool(above[:1].strip()) and (not opens or above[0] in opens)
+        if not opens:
+            return bool(above[:1].strip())
+        gap = j < i - 1
+        for k in range(j, -1, -1):
+            line = rows[k] or ""
+            if not line.strip() or not line[:1].strip():
+                return False
+            if line[0] in opens:
+                return gap or line[0] not in (g.get("user") or [])
+        return False
     return False        # nothing above it, so nothing opened it
 
 
