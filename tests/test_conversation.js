@@ -40,7 +40,7 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
+const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'evictOrder',
@@ -51,7 +51,7 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in index.html therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, backfillEntries, splitFirstRead, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
+const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, evictOrder,
@@ -174,6 +174,34 @@ test('a first read keeps a sent prompt in place and appends its completed reply'
   assert.deepStrictEqual(texts(history.concat(stored, reply)),
     ['first question', 'First answer.', 'second question', 'Second answer.']);
   assert.strictEqual(reply[0].at_src, 'state');
+});
+
+test('two sends before a first read cost neither its prompt nor its reply', () => {
+  // Both prompts reached the store before the pane was ever read, so both echoes are already
+  // entries and the older reply is not scrollback.
+  const rows = ['\u276f old business', '', '\u23fa Older answer.', '',
+                '\u276f first question', '', '\u23fa First answer.', '',
+                '\u276f second question', '', '\u23fa Second answer.', '', '\u276f'];
+  const stored = [{who: 'user', text: 'first question', at: NOW - 20, at_src: 'sent'},
+                  {who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
+  const first = splitFirstRead(paneMessages(rows, 'claude'), stored);
+  const history = backfillEntries(first.history, NOW);
+  const reply = sentTurnEntries(first.turn, stored, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(history), ['old business', 'Older answer.'],
+    'the seam is the oldest sent prompt, so neither prompt is filed twice');
+  assert.deepStrictEqual(texts(reply), ['First answer.', 'Second answer.']);
+  assert.strictEqual(reply[0].at_src, 'read', 'only the closing message carries the transition');
+  assert.strictEqual(reply[1].at_src, 'state');
+});
+
+test('a sent prompt that also sits far up the scrollback splits at its echo', () => {
+  const rows = ['\u276f go', '', '\u23fa Older answer.', '',
+                '\u276f go', '', '\u23fa Newer answer.', '', '\u276f'];
+  const stored = [{who: 'user', text: 'go', at: NOW - 10, at_src: 'sent'}];
+  const first = splitFirstRead(paneMessages(rows, 'claude'), stored);
+  assert.deepStrictEqual(texts(backfillEntries(first.history, NOW)), ['go', 'Older answer.']);
+  assert.deepStrictEqual(texts(sentTurnEntries(first.turn, stored, NOW, NOW - 1)),
+    ['Newer answer.']);
 });
 
 // A reload arms the turn clock at the reconnect, so `end` is newer than anything stored and the

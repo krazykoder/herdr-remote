@@ -4780,6 +4780,9 @@
         shells = Array.isArray(msg.shells) ? msg.shells : [];
         // Before the render, so a pane's first snapshot and the card for it arrive together.
         convAutoJoin();
+        // Which member is ended is a question only a snapshot answers, so the prune rides on one.
+        // It writes nothing on the polls where nothing has outgrown the cap, which is all of them.
+        convPruneAuto();
         render();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
@@ -6177,18 +6180,42 @@
       return ms.map((m, i) => convEntry(m, now, { at: now - (ms.length - i), at_src: 'backfill' }));
     }
 
-    // A send can win the race to the store before the pane's first read. Its echoed prompt is not
-    // history: keep the older prefix as backfill and let the turn event append its reply after the
-    // exact sent entry. Only the newest stored prompt is consulted.
+    // A send can win the race to the store before the pane's first read, and more than one can:
+    // nothing makes the user wait for a read between two prompts. Every one of them is already an
+    // entry, so none of their echoes is history — and neither is anything the agent said after the
+    // oldest of them. The seam is that oldest echo; the prefix above it is backfill.
     function splitFirstRead(fresh, stored) {
-      const ms = fresh || [], last = (stored || [])[(stored || []).length - 1];
-      if (!last || last.who !== 'user' || last.at_src !== 'sent') return { history: ms, turn: [] };
-      for (let i = ms.length - 1; i >= 0; i--) {
-        if (ms[i].who === 'user' && convKey(ms[i].text) === convKey(last.text)) {
-          return { history: ms.slice(0, i), turn: ms.slice(i) };
+      const ms = fresh || [];
+      const sent = (stored || [])
+        .filter(e => e.who === 'user' && e.at_src === 'sent').map(e => convKey(e.text));
+      let seam = -1;
+      for (const key of sent) {
+        // Newest occurrence, which is how a single send has always been matched: a prompt that
+        // also appears far up the scrollback must not swallow the history above it.
+        for (let i = ms.length - 1; i >= 0; i--) {
+          if (ms[i].who === 'user' && convKey(ms[i].text) === key) {
+            if (seam < 0 || i < seam) seam = i;
+            break;
+          }
         }
       }
-      return { history: ms, turn: [] };
+      return seam < 0 ? { history: ms, turn: [] }
+        : { history: ms.slice(0, seam), turn: ms.slice(seam) };
+    }
+
+    // The tail below that seam, as entries. Not `turnEntries`: that keeps the last agent block
+    // alone, which is right for a turn that just ended and wrong here — two sends means two
+    // replies, and the older one is not scrollback either. What it drops is the echoes, which the
+    // sends already committed.
+    //
+    // The replies below the first echo are dated `now`, so the thread shows both prompts and then
+    // both replies rather than interleaving them. That is what the store can honestly say: the
+    // sends carry exact clocks and the replies were all first seen at this read.
+    function sentTurnEntries(fresh, stored, now, end) {
+      const sent = new Set((stored || [])
+        .filter(e => e.who === 'user' && e.at_src === 'sent').map(e => convKey(e.text)));
+      return stampTurn((fresh || [])
+        .filter(m => !(m.who === 'user' && sent.has(convKey(m.text)))), now, end);
     }
 
     // The turn that just ended, out of the window read when it ended: the agent's closing message,
@@ -6255,7 +6282,12 @@
     // finished, and `read` is the honest stamp for "this is when it was found".
     function turnEntries(fresh, stored, now, end, recover) {
       const picked = turnMessages(fresh);
-      const add = newTurnMessages(stored, recover ? recoveredTurn(stored, picked) : picked);
+      return stampTurn(newTurnMessages(stored, recover ? recoveredTurn(stored, picked) : picked),
+        now, end);
+    }
+
+    // `end` dates the closing message and nothing else — every other line was first seen now.
+    function stampTurn(add, now, end) {
       return add.map((m, i) => convEntry(m, now, m.who === 'agent' && i === add.length - 1 && end
         ? { at: end, at_src: 'state' } : { at: now, at_src: 'read' }));
     }
@@ -6331,7 +6363,7 @@
     // (~120 bytes); the transcripts are IndexedDB, which is a different store and a different
     // budget.
     const CONV_ENTRY_MAX = 5000, CONV_MEMBER_MAX = 8, CONV_CONV_MAX = 200, CONV_TRANSCRIPT_MAX = 500;
-    const CONV_ROSTER_MAX = 200;
+    const CONV_ROSTER_MAX = 200, CONV_AUTO_ROSTER_MAX = 20;
 
     // A corrupt blob is no conversations, never a half-index — the contract parsePairs already
     // holds to, and for the same reason: a store that outlives the panes it describes will one day
@@ -6752,7 +6784,7 @@
         before = backfillEntries(first.history, now);
         // A local send has its own event and timestamp. Its pane echo opens the current turn,
         // rather than becoming an older copy of the same prompt.
-        if (first.turn.length && end) add = turnEntries(first.turn, held.entries, now, end);
+        if (first.turn.length && end) add = sentTurnEntries(first.turn, held.entries, now, end);
         if (body.length) held.backfilled = true;
         if (add.length) held.lastTurn = end;
       } else if (end > (held.lastTurn || 0)) {
@@ -7228,6 +7260,32 @@
         JSON.stringify(seen.slice(-CONV_AUTO_SEEN_MAX))); }
       catch (e) { /* private mode: this session only */ }
       renderConversations();
+    }
+
+    // The other half of D4. A named conversation's roster grows without limit — the user asserted
+    // that record mattered, and an ended member is a session that happened. An auto one was never
+    // asserted by anybody, and a pane respawned daily would otherwise carry every session it ever
+    // had in a ~5 MB store shared with fourteen other keys.
+    //
+    // Recording members are never touched, however many there are: what gives way is the oldest
+    // *ended* ones, which is also what unreferences their transcripts and lets evictOrder reclaim
+    // the words. Nothing here depends on the recorder being switched on — the tier is the question,
+    // and a respawn adds a member either way.
+    function convPruneAuto() {
+      if (!agents.length) return;
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      let changed = false;
+      const items = loadConvIndex().map(c => {
+        const members = c.members || [];
+        if (!c.auto || members.length <= CONV_AUTO_ROSTER_MAX) return c;
+        const drop = new Set(members.filter(m => !live.has(m.key))
+          .sort((a, b) => (a.added || 0) - (b.added || 0))
+          .slice(0, members.length - CONV_AUTO_ROSTER_MAX));
+        if (!drop.size) return c;
+        changed = true;
+        return Object.assign({}, c, { members: members.filter(m => !drop.has(m)) });
+      });
+      if (changed) saveConvIndex(items);
     }
 
     // A pair can predate conversations, leaving each pane with its own recorded thread. Read

@@ -218,6 +218,25 @@ test('every session records itself, into a conversation named for the pane', asy
   expect(items.some(c => c.name.includes('amp'))).toBe(false);
 });
 
+test('the default recorder records, without anybody joining anything', async ({page}) => {
+  await autoOn(page);
+  // The whole of D5 end to end: open a pane, read it, and the words are kept — no dialog, no
+  // membership edit, nothing the user had to remember before the thing worth keeping happened.
+  await open(page);
+  await read(page);
+  const out = await page.evaluate(async () => {
+    const conv = convsForPane(paneOf(activePane))[0];
+    const rec = (await convGet([convMemberKey(paneOf(activePane))]))[0];
+    return {name: conv.name, auto: !!conv.auto, texts: rec.entries.map(e => e.text)};
+  });
+  expect(out.auto).toBe(true);
+  expect(out.name).toBe('relay · Architect 1');
+  expect(out.texts[0]).toMatch(/^Ready\. Name the change\./);
+  // And it is on screen in the thread, which is the only part of this the user ever sees.
+  await page.evaluate(() => { toggleConvView(); });
+  await expect(page.locator('#convThread .conv-msg').first()).toContainText('Ready.');
+});
+
 test('a pane is filed once ever, so removing it does not undo itself', async ({page}) => {
   await autoOn(page);
   await page.goto('/');
@@ -952,6 +971,47 @@ test('an auto conversation says how to make it permanent', async ({page}) => {
   page.once('dialog', d => d.accept('mine now'));
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Rename'}).click();
   await expect(page.locator('#convView .conv-tier-note')).toHaveCount(0);
+});
+
+test('an auto conversation sheds its oldest ended sessions, and a named one never does', async ({page}) => {
+  await open(page);
+  const counts = await page.evaluate(async () => {
+    const live = convMemberKey(paneOf(activePane));
+    // Thirty sessions that have exited, plus the one still recording. The named conversation is
+    // the control: the same roster, the tier the only difference.
+    const ended = Array.from({length: 30}, (_, i) => ({key: 'gone' + i, added: i, label: 'old'}));
+    saveConvIndex([
+      {id: 'auto', name: 'auto one', created: 1, auto: true, members: ended.concat({key: live, added: 99})},
+      {id: 'kept', name: 'named one', created: 1, members: ended.concat({key: live, added: 99})},
+    ]);
+    convPruneAuto();
+    const by = Object.fromEntries(loadConvIndex().map(c => [c.id, c.members]));
+    return {
+      auto: by.auto.length, named: by.kept.length,
+      // The live pane survives whatever else goes, and what goes is the oldest.
+      autoLive: by.auto.some(m => m.key === live),
+      oldestGone: !by.auto.some(m => m.key === 'gone0'),
+      newestKept: by.auto.some(m => m.key === 'gone29'),
+    };
+  });
+  expect(counts).toEqual({auto: 20, named: 31, autoLive: true, oldestGone: true, newestKept: true});
+});
+
+test('the prune never drops a recording member to make room', async ({page}) => {
+  await open(page);
+  const kept = await page.evaluate(async () => {
+    const live = agents.map(a => convMemberKey(a)).filter(Boolean);
+    saveConvIndex([{id: 'auto', name: 'auto one', created: 1, auto: true,
+      members: live.map((key, i) => ({key, added: i}))
+        .concat(Array.from({length: 25}, (_, i) => ({key: 'gone' + i, added: 100 + i})))}]);
+    convPruneAuto();
+    const members = loadConvIndex()[0].members;
+    return {live: live.length, recording: members.filter(m => live.includes(m.key)).length,
+      total: members.length};
+  });
+  // Every live pane stays, even though the ended ones it is holding above the cap are newer.
+  expect(kept.recording).toBe(kept.live);
+  expect(kept.total).toBe(20);
 });
 
 test('conversation text has its own menu font control', async ({page}) => {
