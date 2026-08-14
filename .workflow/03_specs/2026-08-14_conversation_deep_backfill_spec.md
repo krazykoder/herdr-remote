@@ -291,6 +291,49 @@ already applies. Not taken.
   and the correct place for it. T2 does not participate: it asks for `DEEP_LINES`, a real number,
   precisely because it fires without anyone pressing anything.
 
+### 2.8 Capacity — a prepend never evicts
+
+`CONV_ENTRY_MAX` is 5000 **entries**, and `capEntries` keeps the newest by dropping from the front
+(`conversation_pure.js:313`). `recordPaneNow` caps one concatenation:
+
+```js
+held.entries = capEntries(old.entries.concat(held.entries, tagged.entries));
+```
+
+`old.entries` is the prepend. The front of that array is exactly the recovered history, so the trim
+lands on it first. That is the hazard, and it is specific to one of the two paths:
+
+- **Append** — messages after the anchor go at the end, and the cap slides the window forward. That
+  is what every ordinary turn already does: a transcript at the cap sheds its oldest on the next turn
+  the agent finishes, and has since recording shipped. A recovered turn must not behave differently
+  from a live one because the words arrived late.
+- **Prepend** — messages older than the oldest stored entry go where the trim is. Left alone,
+  `Recover history` on a full transcript would fetch old history, write it, and have `capEntries`
+  delete it in the same statement, taking part of the existing record with it. The button would
+  destroy history in the name of recovering it.
+
+So: **a prepend never evicts.** It takes only the room left under the cap by the record it must not
+displace, keeping its **newest** end so no hole opens between what is recovered and what was already
+stored:
+
+```js
+// Room the prepend may use, after everything it must not displace.
+function fitPrepend(before, kept, add, max) {
+  const room = (max || CONV_ENTRY_MAX) - kept - add;
+  return room <= 0 ? [] : before.slice(Math.max(0, before.length - room));
+}
+```
+
+`capEntries` still runs over the union, unchanged — with nothing of the prepend left for it to reach.
+
+This is not a deep-backfill rule. The first read's `before` slot has always been a prepend, so the
+guard belongs at the one point both paths pass through, not on the new one.
+
+**Said out loud, never silently.** A T3 recovery that could not fit all of what it found reports it:
+`Recovered 12 messages; 40 older ones did not fit.` No room at all is
+`This transcript is full — older messages could not be added.` Both are the same class of report as
+`Nothing new to recover.` — a button that adds nothing must say why.
+
 ---
 
 ## 3. What this does not do
@@ -318,11 +361,10 @@ already applies. Not taken.
   relay's ceiling if that is lower, SSH-backed for remote panes. Bounded by conversation membership and by the
   15-minute gate. Strictly once per member per recovery — `held.depth` enforces it even if the gate
   leaks. T1 adds no read beyond Load more; T3 adds one read the user explicitly requested.
-- **`CONV_ENTRY_MAX` needs a policy before implementation.** The cap is 5000 *entries*, not lines,
-  and `Recover history` may now ask for a relay-configured depth far beyond 10000 lines. Calling
-  `capEntries` on that union would silently remove the oldest existing transcript entries, violating
-  the permanence model. A deep backfill must preserve the existing record and report a capacity
-  limit rather than discard it; the exact storage policy is the first implementation decision.
+- **`CONV_ENTRY_MAX`, settled in §2.8.** The cap is 5000 *entries*, not lines, and `Recover history`
+  may ask for a relay-configured depth far beyond 10000 of them. `capEntries` trims from the front,
+  which is where the prepend lands — so a prepend is fitted to the room left over and reported when
+  it does not fit, while an append keeps the ordinary sliding window every turn already has.
 - **A pane recycled onto a stale transcript.** Already handled — `convMemberKey` includes host,
   pane_id, agent and cwd for exactly this reason, and a recycled id does not match.
 - **`visible` panes.** A pane on the live frame after `/clear` is refused by `convRecordable` before
@@ -356,8 +398,9 @@ No recovery constant in the app names the relay's maximum. §2.7 is why.
 - Messages older than the oldest stored entry are prepended, and do not duplicate the anchor.
 - A duplicated anchor inside the window selects the newest occurrence. Pinned as a *known* choice,
   not asserted as correct.
-- A deep backfill that would exceed `CONV_ENTRY_MAX` preserves every pre-existing entry and reports
-  the capacity limit; it never silently lets `capEntries` discard history.
+- A prepend that would exceed `CONV_ENTRY_MAX` keeps its newest end and drops no stored entry; a
+  prepend with no room at all writes nothing. Neither reaches `capEntries` (§2.8).
+- An append at the cap still slides the window, exactly as an ordinary turn does.
 
 **T2, browser (`tests/e2e/browser/conversation.spec.js`):**
 
@@ -400,8 +443,9 @@ exactly one turn and does not double-write alongside a deep backfill of the same
 
 ## 7. Order of work
 
-1. Decide and test the `CONV_ENTRY_MAX` policy above. This must protect existing records before any
-   deep union can reach `capEntries`.
+1. `fitPrepend` (§2.8), with pure tests, applied to the prepend `recordPaneNow` already builds. It
+   protects the existing record before any deep union can reach `capEntries`, and it is a fix to the
+   first-read path whether or not the rest of this spec is built.
 2. `held.depth` + the watermark guard in `recordPaneNow`. Inert on its own — it only ever declines.
 3. `deepEntries`, pure, with the T1 unit tests. At this point Load more closes gaps and nothing else
    has changed.
