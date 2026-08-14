@@ -77,10 +77,11 @@ that this spec cannot reach.
 
 ---
 
-## 2. The mechanism — one function, two triggers
+## 2. The mechanism — one function, three triggers
 
-One new pure step, `deepEntries(fresh, stored)`, and one guard on when it runs. Both triggers feed
-the same function; they differ only in who caused the read.
+One new pure step, `deepEntries(fresh, stored)`, and one guard on when it runs. All three triggers
+feed the same function; they differ only in who caused the read — the user scrolling (T1), an outage
+the app noticed (T2), or the user asking outright (T3).
 
 ### 2.1 `deepEntries` — anchor, then append what follows
 
@@ -112,11 +113,18 @@ Consequences worth stating:
 
 - The 3s poll at 200 lines never fires it. Neither does the 1000-line ceiling
   (`POLL_MAX_LINES`), once passed.
-- Load more to 5000 fires it once. Load more again to 10000 fires it once more.
+- Load more to 700 fires it once; again to 1200 fires it once more. Each new depth, once.
 - Total invocations per transcript per session ≈ how many times Load more was pressed. Bounded by
   hand, not by clock.
 - Coming back to the tail resets `paneLines` to 200 (`dictation.js:207`) but **must not** reset
   `held.depth`. The watermark is about what has been *recorded*, not about what is on screen.
+
+**The watermark is a cost guard, not a correctness guard.** `deepEntries` is idempotent on the same
+window: the anchor is found, nothing follows it, nothing is appended; the oldest entry is found,
+nothing precedes it, nothing is prepended. Run it twice on identical rows and the second run writes
+zero. That is what makes §2.6's manual button safe to bypass the watermark — an explicit request is
+never declined for being a repeat, exactly as `refreshPane(auto)` never skips a read someone asked
+for.
 
 ### 2.3 Trigger T1 — the user pulled history (free)
 
@@ -133,8 +141,8 @@ T1 covers the pane in front of you. It does not cover the eight members of a con
 were never opened this session. For those, one read has to be issued.
 
 **Gated on an actual outage.** A healthy connected session pulls nothing: if the socket never
-dropped and no time was lost, there is no gap to close and a speculative 10000-line read is pure
-cost. Two conditions, both required:
+dropped and no time was lost, there is no gap to close and a speculative deep read is pure cost. Two
+conditions, both required:
 
 1. **A gap in coverage.** Either
    - a fresh page — the first `agents` snapshot where `!prevStatuses[pane_id]`
@@ -151,7 +159,7 @@ cost. Two conditions, both required:
 Then, per member that passes — conversation member, transcript exists, agent profile known:
 
 ```
-lines = min(gap > DEEP_LONG_MS ? DEEP_LINES_LONG : DEEP_LINES, paneHistoryMax())
+lines = min(DEEP_LINES, paneHistoryMax())
 send { type: 'read_pane', pane_id, lines, source: 'recent-unwrapped' }
 ```
 
@@ -161,6 +169,53 @@ what "seamless" means here: not a fast redraw, but no redraw at all.
 
 **Once per member per recovery.** `held.depth` makes a repeat a no-op even if the guard is wrong,
 which is the property to test first.
+
+**One threshold and one depth, deliberately.** An earlier draft had a two-tier ladder — 10 minutes
+to trigger, and a deeper read past a 2-hour gap. Both numbers are gone:
+
+- **15 minutes is the single trigger.** Two hours is not a disconnection, it is a different working
+  session, and by then the gap is the thing you came back to read. Fifteen minutes is roughly the
+  shortest gap in which an agent finishes more turns than the one the existing recovery already
+  handles, which is the exact condition this spec exists for. Below it, nothing is missed that is
+  worth a read.
+- **The second depth tier bought nothing.** `paneHistoryMax()` is the ceiling and defaults to 5000,
+  so `min(10000, paneHistoryMax())` and `min(5000, paneHistoryMax())` are the same read for every
+  user who has not changed the setting. A tier that is invisible at the default is a constant
+  pretending to be a policy. One depth, ceilinged by the user's own setting, and §2.6 is how someone
+  who wants more asks for it.
+
+### 2.6 Trigger T3 — the manual button
+
+Automatic recovery is bounded by gates that can be wrong: a gap under 15 minutes that still lost
+turns, an outage the browser never registered as one, a member whose `touched` was refreshed by a
+draft. The answer to a heuristic that can miss is not a looser heuristic — it is a button.
+
+**`Recover history` in the pane's `⋯` menu**, beside `Remove duplicates`, which is the precedent it
+copies in every respect: a transcript repair, hidden unless it applies, that reports what it did.
+
+- **Shown when** the pane is a conversation member, has a transcript, and its agent has a profile.
+  Hidden otherwise — the same test `menuConvDedupe` uses (`terminal.js:409`).
+- **Does** what §2.5 already specifies for the active pane, which is why this is nearly free:
+
+  ```js
+  paneLines = paneHistoryMax();
+  refreshPane();
+  ```
+
+  The reply arrives on the normal draw path, T1 records it, and the history appears above the pane
+  exactly as Load more puts it there.
+- **Bypasses both gates.** No outage test, no `held.touched` test, and no watermark — an explicit
+  request is never declined for being a repeat (§2.2). Idempotence, not the guard, is what keeps a
+  second press harmless.
+- **Reaches the ceiling in one press**, rather than `historyStep()` at a time. That is the difference
+  between this and Load more, and it is the reason to have it as well as a scroll: recovering a
+  member from `paneHistoryMax()` of 50000 is ten taps of Load more.
+- **Says what happened**, like dedupe does: `Recovered 4 messages.` / `Nothing new to recover.` /
+  `Could not find where the record left off — the gap is marked in the thread.` The third is the
+  missed anchor, and saying so is what stops a silent no-op reading as a broken button.
+
+**Not armed.** The two-tap drain is for destructive and irreversible actions. This one only ever
+adds, and its worst outcome is that it adds nothing.
 
 ### 2.5 The active pane under T2
 
@@ -192,8 +247,8 @@ the special case costs nothing.
 
 - **No per-conversation streams.** A pane has one transcript; every conversation holding it shows the
   same words. Unchanged.
-- **No speculative deep reads.** Nothing fires on a healthy connection, on a short flap, or on a
-  member whose transcript was written moments ago. The deferred design's worst cost — one 50000-line
+- **No speculative deep reads.** Nothing fires on a healthy connection, on a flap, on a gap under 15
+  minutes, or on a member whose transcript was written moments ago. The deferred design's worst cost — one 50000-line
   SSH-backed read per stale member per page load, on a machine with several remotes — does not exist
   in this one.
 - **No fold.** Nothing is matched on the poll path. Normal durable writes stay event-identified.
@@ -209,9 +264,11 @@ the special case costs nothing.
   still a guess. Mitigation is unchanged from the deferred doc: miss → append nothing, mark the gap.
   Worth noting the exposure is *lower* here than in the fold, because the anchor is consulted once
   per new depth rather than once per tick.
-- **T2's read cost**, per recovery: one read per stale conversation member, at 5000–10000 lines,
-  SSH-backed for remote panes. Bounded by conversation membership and by the outage gate. Strictly
-  once per member per recovery — `held.depth` enforces it even if the gate leaks.
+- **T2's read cost**, per recovery: one read per stale conversation member, at `DEEP_LINES` capped
+  by `paneHistoryMax()`, SSH-backed for remote panes. Bounded by conversation membership and by the
+  15-minute gate. Strictly once per member per recovery — `held.depth` enforces it even if the gate
+  leaks. T1 and T3 add no reads at all: one is a read the user already made, the other a read the
+  user asked for.
 - **`CONV_ENTRY_MAX` is not a problem, checked rather than assumed.** The cap is 5000 *entries*, and
   entries are messages: a 10000-line window yields tens of them. `capEntries` trims from the front,
   so a pathological transcript could still shed its oldest — but nothing a deep read adds approaches
@@ -228,14 +285,13 @@ the special case costs nothing.
 
 | Name | Value | Why |
 |---|---|---|
-| `DEEP_AWAY_MS` | 10 min | Below this nothing meaningful was missed. Kills flap-triggered reads. |
-| `DEEP_LONG_MS` | 2 h | Above this, reach deeper. |
-| `DEEP_LINES` | 5000 | The default `paneHistoryMax()`, and about a working day of one pane. |
-| `DEEP_LINES_LONG` | 10000 | For an overnight gap. Ceiling is still `paneHistoryMax()`. |
+| `DEEP_AWAY_MS` | **15 min** | The only threshold. Below it nothing worth a read was missed; a flap costs nothing. §2.4. |
+| `DEEP_LINES` | 5000 | One depth. The default `paneHistoryMax()`, roughly a working day of one pane. |
 | `held.depth` | — | Deepest recorded window, per transcript. New persisted field; absent reads as 0. |
 
-`paneHistoryMax()` is the ceiling on both depths. It is the user's own setting and a recovery has no
-business exceeding what they asked the app to fetch.
+`paneHistoryMax()` is the ceiling — the user's own setting, and a recovery has no business exceeding
+what they asked the app to fetch. It is also the answer to "5000 is not enough for me": raise the
+setting, or press `Recover history`, which goes straight to it.
 
 ---
 
@@ -257,6 +313,8 @@ business exceeding what they asked the app to fetch.
 - Socket down 40 min, back up, no reload → exactly one deep read per stale member, and none for a
   member whose transcript is fresh.
 - Socket down 3 s → no deep read at all.
+- Socket down 14 min → no deep read. Socket down 16 min → one per stale member. The threshold is
+  pinned, not approximated.
 - Healthy connected session across many snapshots → no deep read at all.
 - A fresh page load with stale members → one deep read each, and the recovered turns land in the
   thread.
@@ -264,6 +322,16 @@ business exceeding what they asked the app to fetch.
   deliberately deepens it, where it behaves exactly as Load more does.
 - A member that is not in any conversation, or has no transcript, or whose agent has no profile, is
   never deep-read.
+
+**T3, browser (same suite):**
+
+- `Recover history` is hidden on a pane with no transcript, on a pane no conversation names, and on
+  a pane whose agent has no profile; shown on one that has all three.
+- It reads to `paneHistoryMax()` in one press, regardless of the current `paneLines`.
+- Pressed twice in a row it appends nothing the second time, and says so — idempotence proved
+  through the UI and not only in the unit slice.
+- Pressed on a member the automatic gates declined (gap under `DEEP_AWAY_MS`) it still recovers.
+- A missed anchor reports the gap rather than reporting success or nothing at all.
 
 **Regression:** the existing single-turn recovery (`turnSeeded` → `recoveredTurn`) still writes
 exactly one turn and does not double-write alongside a deep backfill of the same window.
@@ -275,8 +343,13 @@ exactly one turn and does not double-write alongside a deep backfill of the same
 1. `held.depth` + the watermark guard in `recordPaneNow`. Inert on its own — it only ever declines.
 2. `deepEntries`, pure, with the T1 unit tests. At this point Load more closes gaps and nothing else
    has changed.
-3. `wsDownSince` + the T2 gate and the per-member read. Browser tests.
-4. The active-pane variant of T2.
+3. **`Recover history` in the `⋯` menu (T3).** Three lines of handler over step 2, and it is what
+   makes the feature usable before either gate is written — a gap you can see becomes a gap you can
+   close, deliberately, on the pane you are looking at.
+4. `wsDownSince` + the T2 gate and the per-member read. Browser tests.
+5. The active-pane variant of T2, which is step 3's handler under a different caller.
 
-Steps 1–2 are the whole user-visible win for the pane in front of you, cost nothing on the wire, and
-are worth shipping before 3–4 are written.
+Steps 1–3 are the whole user-visible win for the pane in front of you, cost nothing on the wire, and
+are worth shipping before 4–5 are written. Step 4 is the only part that issues reads nobody asked
+for, and it is the only part whose gates can be wrong — which is why the button precedes it rather
+than backstopping it.
