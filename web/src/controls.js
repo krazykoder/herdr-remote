@@ -20,8 +20,8 @@
     // The danger shortcuts in the palette keep the longer window — those are picked off a list
     // that has to be read first, not aimed at a button already under the thumb.
     const SHORTCUT_ARM_MS = 8000;
-    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc', resendBtn: 'Resend' };
-    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0, resendBtn: 0 };
+    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc' };
+    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0 };
 
     // The two-tap arm, once. The label says what the second tap will do, because a button that
     // only changes colour when armed does not say what it is armed to send.
@@ -87,7 +87,6 @@
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
     function disarmAbort() { disarmFire('abortBtn'); }
-    function disarmResend() { disarmFire('resendBtn'); }
 
     // Sent as a line, not as keys: this is the pane's own command in both cases. No agentSlash
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands
@@ -164,10 +163,9 @@
       if (again) btn.title = `Load this pane's last message into the composer: ${again.slice(0, 80)}`;
     }
 
-    // A resend is a composer prefill, never a direct write. The visible draft is the gate in pane
-    // mode; preserving one is more important than replacing it with an older message.
-    function armResend() { armFire('resendBtn', resendLast); }
-
+    // One tap, unlike the buttons it sits beside. Those arm because what they do cannot be taken
+    // back; this one fills a text box you can still edit, empty or send, and a draft already there
+    // is refused rather than overwritten — there is nothing here for a second tap to protect.
     function resendLast() {
       const again = lastSentText[activePane];
       if (!again) return;

@@ -468,7 +468,7 @@
       document.getElementById('fireMenu').classList.toggle('open', open);
       document.getElementById('fireBtn').setAttribute('aria-expanded', String(open));
       // An arm is a promise about the next tap, and the button carrying it is about to be hidden.
-      if (!open) { disarmQuit(); disarmClear(); disarmResend(); }
+      if (!open) { disarmQuit(); disarmClear(); }
     }
 
     function closeFireMenu() { if (document.getElementById('fireMenu').classList.contains('open')) setFireMenu(false); }

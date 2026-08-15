@@ -932,7 +932,6 @@
       closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
-      disarmResend();
       disarmAbort();
       disarmShortcut();
       disarmCtrl();
@@ -950,7 +949,6 @@
       closeFireMenu();
       disarmClear();
       disarmQuit();
-      disarmResend();
       disarmAbort();
       disarmShortcut();
       disarmCtrl();

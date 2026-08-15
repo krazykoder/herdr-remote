@@ -727,19 +727,52 @@
       font-weight: 500;
     }
 
-    #paneBandwidthRows { display: grid; gap: 4px; font: 0.62rem monospace; }
-
-    .pane-bandwidth-row {
+    /* The same table the intervals above are, turned on its side: there the metric names run down
+       the left and time runs across, here the pane names run down the left and the same three
+       metrics run across. One grid, so a pane's Total sits under the word Total and the numbers
+       form columns that can be read down. */
+    #paneBandwidthRows {
       display: grid;
-      grid-template-columns: minmax(110px, 1fr) repeat(4, auto);
-      gap: 6px;
+      grid-template-columns: minmax(96px, 1fr) repeat(4, minmax(52px, auto));
+      gap: 4px;
       align-items: center;
-      color: var(--muted);
+      font: 0.62rem monospace;
     }
 
-    .pane-bandwidth-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .pane-bandwidth-head,
+    .pane-bandwidth-row { display: contents; }
+
+    .pane-bandwidth-head span {
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .pane-bandwidth-head span:first-child { text-align: left; }
+
+    /* Right-aligned, because a column of byte counts is read by its magnitude and ragged right
+       hides an order of magnitude. The names stay put while the numbers scroll. */
+    .pane-bandwidth-row span {
+      color: var(--muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .pane-bandwidth-name {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .pane-bandwidth-row .pane-bandwidth-total { color: var(--text); }
     .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
-    .pane-bandwidth-empty { color: var(--muted); }
+    .pane-bandwidth-empty { grid-column: 1 / -1; color: var(--muted); }
 
     /* Settings */
     .settings {
@@ -4006,9 +4039,10 @@
 
     <div class="setting-group">
       <label class="toggle-option"><input type="checkbox" id="bandwidthOn" onchange="setBandwidthOn(this.checked)"> Track WebSocket payload data</label>
-      <div class="hint">Shows sent, received and total payload bytes in Activity. Saved interval
-        buckets are newest first; quiet time adds no zero bucket. WebSocket frame and TLS overhead are not
-        available to the page.</div>
+      <div class="hint">Shows sent, received and total payload bytes in Activity, newest interval
+        first. Quiet time adds no bucket, so a gap in the record is time nothing was on the wire
+        rather than a row of zeroes. Kept on this device until it is cleared. WebSocket frame and
+        TLS overhead are not available to the page.</div>
       <label for="bandwidthStep">Bucket</label>
       <select id="bandwidthStep" onchange="setBandwidthStep(Number(this.value))">
         <option value="1">1 minute</option>
@@ -4024,7 +4058,12 @@
       </select>
       <div class="hint">A narrower bucket is closer to live, a wider one is easier to read across
         hours. Changing the bucket clears what has been collected: it is already cut on the old
-        boundaries. Changing how much is kept only changes how far back the table draws.</div>
+        boundaries. Changing how much is shown only changes how far back the table draws.</div>
+      <!-- Neutral, not the group's green primary: throwing data away is not the thing this panel
+           wants you to do, it is the thing it owes you a way to do. -->
+      <button class="nav-key" onclick="clearBandwidth()">Clear recorded data</button>
+      <div class="hint">Turning tracking off stops collecting; what was already recorded stays on
+        this device until this throws it away. Per-pane totals go with it.</div>
     </div>
 
     <div class="setting-group">
@@ -4070,8 +4109,8 @@
     <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
       <h2><span id="bandwidthTitle">Data exchange</span><span class="bandwidth-total now" id="bandwidthTotal"></span></h2>
       <div id="bandwidthRows"></div>
-      <section class="pane-bandwidth" aria-label="Open agent pane payload data">
-        <h3>Open agent panes · last ping · total · sent · received</h3>
+      <section class="pane-bandwidth" aria-label="Per-pane payload data">
+        <h3>Per pane, since its first read</h3>
         <div id="paneBandwidthRows"></div>
       </section>
     </section>
@@ -4180,7 +4219,7 @@
             aria-label="Quit what is running in this pane">QUIT</button>
           <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
             aria-label="Clear this pane">CLS</button>
-          <button class="refresh-btn cls-btn" id="resendBtn" onclick="armResend()" hidden
+          <button class="refresh-btn" id="resendBtn" onclick="resendLast()" hidden
             aria-label="Load this pane's last message into the composer">Resend</button>
           <!-- Refresh rides with them. The pane polls itself every few seconds, so this is the
                button for the one state where it does not: past POLL_MAX_LINES the poll stops and

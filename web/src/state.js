@@ -22,6 +22,7 @@
     // collected; they do not invent a time or a zero-byte interval.
     const BANDWIDTH_STEPS = [1, 5, 10, 30, 60];   // minutes
     const BANDWIDTH_KEEPS = [12, 60];
+    const PANE_BANDWIDTH_KEEP_MS = 24 * 60 * 60 * 1000;
     let bandwidth = loadBandwidth();
     let paneBandwidth = loadPaneBandwidth();
     // Intentionally memory-only: reloading the page or losing the socket closes the partial chunk
@@ -98,9 +99,25 @@
     function setBandwidthOn(on) {
       try { localStorage.setItem(BANDWIDTH_KEY, on ? 'on' : 'off'); }
       catch (e) { /* private mode: session-only */ }
+      // Turning collection off closes the open interval rather than leaving it to be resumed later:
+      // a bucket that spans an hour of not looking, labelled with the minute it started, is a
+      // measurement of nothing. Turning it back on opens a fresh one.
+      if (!on) resetBandwidthBucket();
       const input = document.getElementById('bandwidthOn');
       if (input) input.checked = !!on;
       renderBandwidth();
+    }
+
+    // The counterpart of keeping it: what has been recorded stays on this device until it is either
+    // pushed off the end of the stack or thrown away here. Off only stops collecting.
+    function clearBandwidth() {
+      bandwidth = [];
+      paneBandwidth = {};
+      resetBandwidthBucket();
+      saveBandwidth();
+      savePaneBandwidth();
+      renderBandwidth();
+      showToast('Cleared the recorded payload data');
     }
 
     function bandwidthBytes(data) {
@@ -138,7 +155,14 @@
       const pane = paneBandwidth[paneId] || (paneBandwidth[paneId] = {sent: 0, received: 0, ping: at});
       pane[direction] += bandwidthBytes(data);
       if (direction === 'sent') pane.ping = at;
-      const keys = Object.keys(paneBandwidth).sort((a, b) => paneBandwidth[b].ping - paneBandwidth[a].ping);
+      // herdr reuses a pane_id once its pane is gone, and these totals are cumulative — a day-old
+      // entry inherited by a new agent would report another session's traffic under its name. A day
+      // is also longer than any pane worth attributing bytes to has been quiet for.
+      const stale = at - PANE_BANDWIDTH_KEEP_MS;
+      const keys = Object.keys(paneBandwidth)
+        .filter(key => { if (paneBandwidth[key].ping >= stale) return true;
+          delete paneBandwidth[key]; return false; })
+        .sort((a, b) => paneBandwidth[b].ping - paneBandwidth[a].ping);
       keys.slice(200).forEach(key => delete paneBandwidth[key]);
       savePaneBandwidth();
       const view = document.getElementById('timelineView');
@@ -146,6 +170,14 @@
     }
 
     function resetBandwidthBucket() { bandwidthOpen = null; }
+
+    // Which record, if any, is still being filled — the only place that knows it, because a bucket
+    // starts at the message that opened it rather than on a clock boundary, so no arithmetic over
+    // `at` can recover it. Read by the table to mark the one number that is still moving.
+    function bandwidthLiveAt() {
+      return bandwidthOpen && bandwidthOn() &&
+        Date.now() - bandwidthOpen.at < bandwidthBucketMs() ? bandwidthOpen.at : 0;
+    }
 
     function bandwidthBuckets() {
       const kept = bandwidth.slice().sort((a, b) => b.at - a.at).slice(0, bandwidthCount());

@@ -1294,14 +1294,18 @@ test('three members read by colour, name and badge, with no left or right', asyn
     toggleConvView();
     await renderConvView();
     return Array.from(document.querySelectorAll('#convThread .conv-msg .conv-who .dot'))
-      .map(d => d.style.background);
+      .map(d => ({fill: d.style.background, ring: d.style.boxShadow}));
   });
   // Sides are a pair's affordance and stop at two members; past that colour, name and badge are
   // what say who spoke.
   await expect(page.locator('#convThread .conv-msg.conv-right')).toHaveCount(0);
   await expect(page.locator('#convThread')).toContainText('said by m2');
   await expect(page.locator('#convThread')).toContainText('said by m3');
-  expect(new Set(dots).size).toBe(3);
+  // Two facts in one dot, and they are not the same fact: the ring is which member — three
+  // members, three rings — while the fill is that member's state now, which two panes that have
+  // both exited share. Reading identity off the fill would make this thread two colleagues.
+  expect(new Set(dots.map(d => d.ring)).size).toBe(3);
+  expect(new Set(dots.map(d => d.fill)).size).toBeLessThan(3);
 });
 
 test('the roster is a disclosure under the header, not a block above the thread', async ({page}) => {
@@ -3280,8 +3284,8 @@ test('Resend moves the last pane message into the composer without sending', asy
   await page.setViewportSize({width: 390, height: 844});
   await page.locator('#fireBtn').click();
   await expect(resend).toBeVisible();
-  await resend.click();
-  await expect(resend).toHaveText('Resend?');
+  // One tap: this fills a box you can still edit or empty, so there is nothing for an arm to
+  // protect — unlike the CLS and QUIT it sits beside, which cannot be taken back.
   await resend.click();
   // Pane mode gates the repeat through the ordinary composer: edit it or Send it yourself.
   await expect(page.locator('#termInput')).toHaveValue('run the tests');

@@ -168,16 +168,30 @@
       if (!panel || !rows) return;
       panel.hidden = !bandwidthOn();
       if (panel.hidden) return;
+      // Called from every snapshot, update and approval so the numbers keep up with the socket —
+      // which means most calls arrive with Activity off screen, where drawing is work nobody sees
+      // and an innerHTML rebuild of rows a reader is not looking at.
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display === 'none') return;
       const buckets = bandwidthBuckets();
       const size = bandwidthBucketMs();
+      const liveAt = bandwidthLiveAt();
       const title = document.getElementById('bandwidthTitle');
       if (title) {
         title.textContent = `Data exchange · ${bandwidthStepMin()} min buckets · ` +
           `latest ${bandwidthCount()}`;
       }
       const total = document.getElementById('bandwidthTotal');
-      if (total) total.textContent = `Total: ${(buckets.reduce((n, b) => n + b.sent + b.received, 0) /
-        (1024 * 1024)).toFixed(2)} MB`;
+      if (total) {
+        // The same scale the chips under it use. Fixed MB read "0.00 MB" for an hour of a quiet
+        // relay, which is a panel reporting that it is not measuring anything.
+        total.textContent = `Total: ${formatBandwidth(
+          buckets.reduce((n, b) => n + b.sent + b.received, 0))}`;
+        total.title = `Every interval drawn below, added up`;
+        // Green is what this panel uses for "still moving". A sum that includes an interval still
+        // being filled is; one over a stack that stopped an hour ago is not.
+        total.classList.toggle('now', !!liveAt);
+      }
       const kinds = [
         ['Total', b => b.sent + b.received],
         ['Sent', b => b.sent],
@@ -188,31 +202,35 @@
       // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
-      const sig = buckets.map(b => b.at || 'empty').join(',');
+      const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : []).join(',');
       if (rows.dataset.sig !== sig) {
         // One grid for the header and all three rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
         rows.style.gridTemplateColumns = `52px repeat(${buckets.length}, minmax(46px, 1fr))`;
-        const at = (b, i) => {
+        const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
-          const range = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
+          const day = start.toDateString() === new Date().toDateString() ? '' :
+            start.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ';
+          const range = day + `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
             end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
-          // The first bucket is newest because this is a stack, not a continuous timeline. Saying so
-          // is the difference between a small number and a number that has stopped moving.
-          return {range: range, live: i === 0 && b.at === Math.floor(Date.now() / size) * size,
-            clock: `${String(start.getHours()).padStart(2, '0')}:` +
+          // Live is the interval still being filled, which only the collector knows: a record starts
+          // at the message that opened it, not on a clock boundary, so its time cannot be compared
+          // against one. The stack survives a reload and can hold days, so a column outside today
+          // says which day — HH:MM alone would read as this morning.
+          return {range: range, live: b.at === liveAt,
+            clock: day + `${String(start.getHours()).padStart(2, '0')}:` +
               `${String(start.getMinutes()).padStart(2, '0')}`};
         };
         rows.innerHTML =
           `<div class="bandwidth-head"><span class="bandwidth-label"></span>` +
-          buckets.map((b, i) => { const t = at(b, i);
+          buckets.map(b => { const t = at(b);
             return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
               `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
           kinds.map(([label]) =>
             `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
-            `<div class="bandwidth-chips">${buckets.map((b, i) => { const t = at(b, i);
+            `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
             }).join('')}</div></div>`).join('');
@@ -224,19 +242,42 @@
         const chips = bars[r].querySelectorAll('.bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
+      // Only panes whose bytes were actually attributed. Every other agent would sit here reading
+      // 0 B, which is not "this pane is quiet" — it is "nothing about it named a pane", and a
+      // column of zeroes claiming otherwise is the one reading this table must not give.
       const paneRows = document.getElementById('paneBandwidthRows');
       if (!paneRows) return;
-      const live = agents.filter(a => a.agent);
-      paneRows.innerHTML = live.length ? live.map(a => {
-        const b = paneBandwidth[a.pane_id] || {sent: 0, received: 0, ping: 0};
-        const ping = b.ping ? new Date(b.ping).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : '—';
-        const total = b.sent + b.received;
-        return `<div class="pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
-          `<span class="pane-bandwidth-name"><span class="dot${a.status === 'working' ? ' pulse' : ''}" ` +
-          `style="background:${statusColor(a)}"></span>${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</span>` +
-          `<span title="Last pane poll">${ping}</span><span class="pane-bandwidth-total">${formatBandwidth(total)}</span>` +
-          `<span>${formatBandwidth(b.sent)}</span><span>${formatBandwidth(b.received)}</span></div>`;
-      }).join('') : '<span class="pane-bandwidth-empty">No open agent panes.</span>';
+      const seen = agents.filter(a => a.agent && paneBandwidth[a.pane_id]);
+      // Structure when the membership changes, numbers every time — the rule the chip row follows,
+      // for the same reason: this is redrawn on every message that lands.
+      const paneSig = seen.map(a => a.pane_id).join(',');
+      if (paneRows.dataset.sig !== paneSig) {
+        // The same three metrics the interval table names down its left edge, in the same order,
+        // so the two halves of this panel are one table read two ways: by time above, by pane here.
+        const head = `<div class="pane-bandwidth-head"><span>Pane</span><span>Last poll</span>` +
+          kinds.map(([label]) => `<span>${label}</span>`).join('') + `</div>`;
+        paneRows.innerHTML = seen.length ? head + seen.map(a =>
+          `<div class="pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
+          `<span class="pane-bandwidth-name"><span class="dot"></span>` +
+          `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</span>` +
+          `<span class="pane-bandwidth-ping" title="When this pane was last polled"></span>` +
+          `<span class="pane-bandwidth-total"></span>` +
+          `<span class="pane-bandwidth-sent"></span><span class="pane-bandwidth-recv"></span></div>`).join('')
+          : '<span class="pane-bandwidth-empty">No pane traffic recorded yet.</span>';
+        paneRows.dataset.sig = paneSig;
+      }
+      const paneCells = paneRows.querySelectorAll('.pane-bandwidth-row');
+      seen.forEach((a, i) => {
+        const row = paneCells[i];
+        const b = paneBandwidth[a.pane_id];
+        const dot = row.querySelector('.dot');
+        dot.style.background = statusColor(a);
+        dot.classList.toggle('pulse', a.status === 'working');
+        row.querySelector('.pane-bandwidth-ping').textContent = b.ping ? fmtAgo(new Date(b.ping)) : '—';
+        row.querySelector('.pane-bandwidth-total').textContent = formatBandwidth(b.sent + b.received);
+        row.querySelector('.pane-bandwidth-sent').textContent = formatBandwidth(b.sent);
+        row.querySelector('.pane-bandwidth-recv').textContent = formatBandwidth(b.received);
+      });
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
