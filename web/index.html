@@ -644,6 +644,9 @@
     }
 
     .bandwidth h2 {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
       margin: 0 0 8px;
       font-size: 0.75rem;
       color: var(--muted);
@@ -730,9 +733,10 @@
     .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
     .pane-bandwidth-ping { color: var(--muted); font-size: 0.56rem; }
 
-    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; }
     .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
     .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
+    #bandwidthPanes { margin-left: auto; }
 
     /* Settings */
     .settings {
@@ -4071,8 +4075,8 @@
         <button class="bandwidth-metric" data-bandwidth-metric="total" aria-pressed="true" onclick="setBandwidthMetric('total')">Total</button>
         <button class="bandwidth-metric" data-bandwidth-metric="sent" aria-pressed="false" onclick="setBandwidthMetric('sent')">Sent</button>
         <button class="bandwidth-metric" data-bandwidth-metric="received" aria-pressed="false" onclick="setBandwidthMetric('received')">Received</button>
-        <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button>
-      </span><span class="bandwidth-total now" id="bandwidthTotal"></span></h2>
+      </span><span class="bandwidth-total now" id="bandwidthTotal"></span>
+      <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
       <div id="bandwidthRows"></div>
     </section>
   </div>

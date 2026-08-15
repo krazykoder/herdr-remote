@@ -511,7 +511,6 @@
           : '';
         // Every agent bubble carries its label as well as its colour: two washes of one family are
         // not enough on a phone in sunlight, and past two members colour alone stops working.
-        const tint = convTint(e.member || 0);
         const key = e.key || me.key || '';
         const live = agents.find(x => convMemberKey(x) === key);
         // The harness the entry was recorded under, not the one running in that pane today: a
@@ -527,13 +526,12 @@
         // the one that spoke — in a joint thread "which colleague was this said to" is the question
         // the view exists to answer, and in a single-pane thread it is what keeps a prompt and the
         // reply to it under headers of the same shape rather than two different ones.
-        // Two facts in one dot: filled with the member's state now, like every other agent dot —
-        // a stopped pane has no live state left to claim — and ringed in the member's own colour,
-        // which is what said *which* member before the fill did. Losing the ring would leave two
-        // claude bubbles in one thread told apart by their labels alone.
+        // This is a status dot, so it carries only the member's state now. The bubble wash, name
+        // and badge already identify the speaker; a second colour ring made a working dot look
+        // like it had changed to an unrelated warning state.
         const dot = live ? statusColor(live) : 'var(--muted)';
         const who = `<span class="dot${live && live.status === 'working' ? ' pulse' : ''}" ` +
-          `style="background:${dot};box-shadow:0 0 0 1.5px ${tint}"></span>${name}${badge}`;
+          `style="background:${dot}"></span>${name}${badge}`;
         const bar = user ? [who, from].filter(Boolean).join(' · ') : who;
         // On every bubble, including a user's own in a single-pane thread, where it is the whole
         // header: a time you have to switch views to check is not one you can check an entry with.

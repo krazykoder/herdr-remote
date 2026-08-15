@@ -28,6 +28,7 @@
     let bandwidth = loadBandwidth();
     let paneBandwidth = loadPaneBandwidth();
     let bandwidthOpen = loadBandwidthOpen();
+    let bandwidthSaveTimer = null;
 
     function bandwidthOn() {
       try { return localStorage.getItem(BANDWIDTH_KEY) === 'on'; }
@@ -75,6 +76,23 @@
         else localStorage.removeItem(BANDWIDTH_OPEN_KEY);
       } catch (e) { /* private mode: session-only */ }
     }
+
+    // Payloads arrive every poll. Keep live values in memory and batch the synchronous storage
+    // write; pagehide flushes the small pending tail before a normal refresh.
+    function flushBandwidth() {
+      if (bandwidthSaveTimer) clearTimeout(bandwidthSaveTimer);
+      bandwidthSaveTimer = null;
+      saveBandwidth();
+      savePaneBandwidth();
+      saveBandwidthOpen();
+    }
+
+    function queueBandwidthSave() {
+      if (bandwidthSaveTimer) return;
+      bandwidthSaveTimer = setTimeout(flushBandwidth, 1000);
+    }
+
+    addEventListener('pagehide', flushBandwidth);
 
     function loadPaneBandwidth() {
       try {
@@ -146,7 +164,7 @@
       // Turning collection off closes the open interval rather than leaving it to be resumed later:
       // a bucket that spans an hour of not looking, labelled with the minute it started, is a
       // measurement of nothing. Turning it back on opens a fresh one.
-      if (!on) resetBandwidthBucket();
+      if (!on) { flushBandwidth(); resetBandwidthBucket(); }
       const input = document.getElementById('bandwidthOn');
       if (input) input.checked = !!on;
       renderBandwidth();
@@ -184,8 +202,7 @@
       bucket.last = at;
       bandwidth.sort((a, b) => b.at - a.at);
       bandwidth = bandwidth.slice(0, Math.max.apply(null, BANDWIDTH_KEEPS));
-      saveBandwidth();
-      saveBandwidthOpen();
+      queueBandwidthSave();
       // Whether the view is on screen, not which display mode it happens to use: PANELS decides
       // that, and a counter that stopped updating because a panel changed layout would be a
       // silent failure.
@@ -215,7 +232,7 @@
           delete paneBandwidth[key]; return false; })
         .sort((a, b) => paneBandwidth[b].ping - paneBandwidth[a].ping);
       keys.slice(200).forEach(key => delete paneBandwidth[key]);
-      savePaneBandwidth();
+      queueBandwidthSave();
       const view = document.getElementById('timelineView');
       if (view && view.style.display !== 'none') renderBandwidth();
     }

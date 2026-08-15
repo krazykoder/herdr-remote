@@ -1301,10 +1301,8 @@ test('three members read by colour, name and badge, with no left or right', asyn
   await expect(page.locator('#convThread .conv-msg.conv-right')).toHaveCount(0);
   await expect(page.locator('#convThread')).toContainText('said by m2');
   await expect(page.locator('#convThread')).toContainText('said by m3');
-  // Two facts in one dot, and they are not the same fact: the ring is which member — three
-  // members, three rings — while the fill is that member's state now, which two panes that have
-  // both exited share. Reading identity off the fill would make this thread two colleagues.
-  expect(new Set(dots.map(d => d.ring)).size).toBe(3);
+  // Status is the dot's only meaning; bubble wash, label and harness badge identify the speaker.
+  expect(dots.every(d => d.ring === '')).toBe(true);
   expect(new Set(dots.map(d => d.fill)).size).toBeLessThan(3);
 });
 
