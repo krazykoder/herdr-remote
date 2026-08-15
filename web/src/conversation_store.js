@@ -291,6 +291,24 @@
       // its history. Records written before this flag existed were all written from reads.
       if (held.backfilled === undefined) {
         held.backfilled = held.entries.some(e => e.at_src !== 'sent');
+        // The one moment a record written by the *previous* recorder is met by this one. That
+        // recorder folded every read against the stored tail, and a pane read as a `visible` frame
+        // came back with the terminal's breaks mid-word — so the same sentence normalized to a
+        // string the match had never seen and the whole screen was appended again. Those records
+        // still carry the copies; nothing written since can, because nothing since compares text.
+        //
+        // Repaired here and nowhere else, which is what keeps a lossy rule off a sound record:
+        // `convDedupe` calls a repeat within 200 entries a duplicate, and an agent that says
+        // "Done." twice inside 200 entries said it twice. Past this branch `backfilled` is set, so
+        // no transcript this recorder wrote is ever offered to it.
+        if (convTidyOn() && held.entries.length) {
+          const out = convDedupe(held.entries);
+          if (out.removed) {
+            held.entries = out.entries;
+            showToast(`Tidied an older transcript — removed ${out.removed} duplicate message`
+              + (out.removed > 1 ? 's' : ''));
+          }
+        }
       }
       // A pane mid-turn has an unfinished block at the end of it, and that is a draft rather than
       // history — it goes to the draft slot below with everything else live. A record only ever
@@ -547,6 +565,23 @@
     }
 
     function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
+
+    // Whether a transcript written by the previous recorder is repaired the first time this one
+    // opens it. On by default: those records carry duplicates by construction, and a record nobody
+    // repairs is one the duplicates stay in forever. Off is for anyone who would rather look at
+    // what is stored before anything edits it — `Remove duplicates` in the pane menu is then the
+    // same repair, on demand.
+    const CONV_TIDY_KEY = 'herdr_conv_tidy';
+
+    function convTidyOn() {
+      try { return localStorage.getItem(CONV_TIDY_KEY) !== 'off'; } catch (e) { return true; }
+    }
+
+    function setConvTidy(on) {
+      try { localStorage.setItem(CONV_TIDY_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: session-only */ }
+      document.getElementById('tidyPick').value = on ? 'on' : 'off';
+    }
 
     // How often a member nobody has opened is caught up on. Dormant panes are the only ones no
     // other trigger reaches — you are not looking at them, so nothing you do can pay for them —

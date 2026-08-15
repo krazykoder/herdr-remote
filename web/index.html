@@ -3428,6 +3428,19 @@
     </div>
 
     <div class="setting-group">
+      <label for="tidyPick">Tidy old transcripts</label>
+      <select id="tidyPick" onchange="setConvTidy(this.value === 'on')">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">Transcripts recorded by an earlier version could fold the same screen in
+        twice. On, each one is repaired the first time it is opened, and says how many copies it
+        removed. Only those: nothing recorded since can hold a duplicate, and the repair is never
+        run on a record that could not have one. Remove duplicates in a pane's ⋯ menu does the same
+        thing by hand.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>

@@ -209,6 +209,20 @@ on a read nobody asked about. From that one place:
 **Once per member per recovery.** A second trigger for a transcript already in flight is declined by
 `convRecovering`, and `held.depth` makes a repeat a no-op even if a guard is wrong.
 
+**Matching a reply to its request, without a request id.** `pane_content` carries no correlation
+field, so "deep" is the whole of what distinguishes the reply being waited for from any other read
+of the same pane — and a shallow reply landing first would resolve the recovery and report on its
+behalf. The reads that could race it are held off rather than told apart: the 3s poll cannot run
+above `POLL_MAX_LINES`, which a recovery puts the pane past on its first line, and `convReadTurnEnd`
+declines while one is pending (nothing is lost — the deep read is a superset of it).
+
+Adding the correlation field was tried and reverted. It is the right protocol shape and it costs one
+line in the relay, but the app is served from GitHub Pages while the relay runs on the user's own
+machine: their versions drift by design, and a browser waiting for an echo an older relay never
+sends never resolves a recovery at all — turning a cosmetic mis-report into a button that does
+nothing. The residual is that a turn-end read already in flight when a recovery is issued can still
+report early; it costs a slightly understated toast and nothing in the record.
+
 **Fifteen minutes is the single threshold.** Two hours is not a disconnection, it is a different
 working session, and by then the gap is the thing you came back to read. Fifteen minutes is roughly
 the shortest gap in which an agent finishes more turns than the existing one-turn recovery already
@@ -358,6 +372,32 @@ guard belongs at the one point both paths pass through, not on the new one.
 `Recovered 12 messages; 40 older ones did not fit.` No room at all is
 `This transcript is full — older messages could not be added.` Both are the same class of report as
 `Nothing new to recover.` — a button that adds nothing must say why.
+
+---
+
+### 2.9 Tidying what the previous recorder left
+
+Not part of recovery, and deliberately adjacent to it: the transcripts that hold duplicates are the
+ones written *before* the current recorder, by the version that folded every read against the stored
+tail. A pane read as a `visible` frame came back with the terminal's breaks mid-word, the same
+sentence normalized to a string the match had never seen, and the whole screen was appended again.
+
+`convDedupe` — the menu's `Remove duplicates` — is run automatically on exactly those records, once,
+the first time this recorder opens one, under *Tidy old transcripts* (on by default). It reports
+what it removed.
+
+**Why only those.** `convDedupe` calls a repeat within 200 *entries* a duplicate, and an agent that
+says "Done." twice inside 200 entries said it twice. That is a lossy rule, and the permanence model
+(D1–D5) says quietly deleting history is the one failure it cannot absorb. The gate is `backfilled`,
+which every record written by this recorder carries and no record written before it does — so a
+sound record is never handed to the rule. Past that branch the flag is set, so it runs once per
+record, ever.
+
+**Why not after every recovery.** A recovery that finds its anchor cannot produce a duplicate: it
+appends only what follows the anchor and prepends only what precedes the oldest entry, and where the
+anchor's text repeats it takes the occurrence that recovers *less* (§2.1). A recovery that misses its
+anchor writes nothing at all. So a dedupe pass over a recovered transcript has nothing correct to do
+and one lossy thing it could do by mistake.
 
 ---
 

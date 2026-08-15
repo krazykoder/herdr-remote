@@ -2096,3 +2096,62 @@ test('a recovery nobody can send says so instead of pretending', async ({page}) 
   await page.evaluate(() => { ws = {readyState: 3, send: () => {}}; recoverConvHistory(); });
   await expect(page.locator('#toast')).toContainText('Not connected');
 });
+
+// --- Tidying what the previous recorder left ---
+
+// A transcript as the folding recorder wrote one: the same screen in twice, and no `backfilled`
+// flag, which is what dates it to before this recorder existed.
+const legacy = (page, key) => page.evaluate(async k => {
+  const t = Date.now() - 60 * 60 * 1000;
+  const say = (who, text, i) => ({who: who, text: text, at: t + i, seen: t + i, at_src: 'backfill'});
+  await convPut({key: k, first: t, touched: t, entries: [
+    say('user', 'first question', 1), say('agent', 'First answer.', 2),
+    say('user', 'first question', 3), say('agent', 'First   answer.', 4),
+  ]});
+  convHeld.delete(k);
+}, key);
+
+test('a transcript from the folding recorder is repaired the first time it is opened',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await legacy(page, key);
+    await read(page);
+    // The wrapped copy goes and the first stays: the earliest copy is the transcript's chronology.
+    const texts = (await held(page, key)).entries.map(e => e.text);
+    expect(texts.filter(t => t === 'first question')).toHaveLength(1);
+    expect(texts).toContain('First answer.');
+    expect(texts).not.toContain('First   answer.');
+    await expect(page.locator('#toast')).toContainText('removed 2 duplicate messages');
+  });
+
+test('a record this recorder wrote is never offered to the repair', async ({page}) => {
+  // convDedupe calls a repeat within 200 entries a duplicate, and an agent that says "Done." twice
+  // inside 200 entries said it twice. The gate is `backfilled`, which every record written since
+  // carries — so a sound record is never handed to a lossy rule.
+  await open(page);
+  const key = await join(page);
+  await read(page, '❯ go\n\n⏺ Done.\n\n❯\n');
+  await page.evaluate(async k => {
+    const held = (await convGet([k]))[0];
+    held.entries.push({who: 'agent', text: 'Done.', at: Date.now(), seen: Date.now(),
+      at_src: 'state'});
+    convHeld.delete(k);
+    await convPut(held);
+  }, key);
+  await read(page, '❯ go\n\n⏺ Done.\n\n❯ again\n\n⏺ Done.\n\n❯\n');
+  expect((await held(page, key)).entries.filter(e => e.text === 'Done.').length)
+    .toBeGreaterThanOrEqual(2);
+});
+
+test('the repair can be turned off, and the setting is remembered', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(() => setConvTidy(false));
+  await legacy(page, key);
+  await read(page);
+  expect((await held(page, key)).entries.map(e => e.text)).toContain('First   answer.');
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => document.getElementById('tidyPick').value))
+    .toBe('off');
+});
