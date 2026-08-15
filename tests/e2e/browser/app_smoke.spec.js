@@ -50,6 +50,10 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
     {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
   await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].sent)).toBeGreaterThan(0);
   await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].received)).toBeGreaterThan(0);
+  await expect(page.locator('#bandwidthTotal')).toHaveText(/^Total: \d+\.\d{2} MB$/);
+  const paneRow = page.locator('#paneBandwidthRows [data-pane="w1:p1"]');
+  await expect(paneRow).toBeVisible();
+  await expect.poll(() => paneRow.locator('.pane-bandwidth-total').textContent()).not.toBe('0 B');
 
   await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(3);
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {

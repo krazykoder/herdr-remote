@@ -159,7 +159,7 @@
     function formatBandwidth(bytes) {
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     }
 
     function renderBandwidth() {
@@ -175,6 +175,9 @@
         title.textContent = `Data exchange · ${bandwidthStepMin()} min buckets · ` +
           `latest ${bandwidthCount()}`;
       }
+      const total = document.getElementById('bandwidthTotal');
+      if (total) total.textContent = `Total: ${(buckets.reduce((n, b) => n + b.sent + b.received, 0) /
+        (1024 * 1024)).toFixed(2)} MB`;
       const kinds = [
         ['Total', b => b.sent + b.received],
         ['Sent', b => b.sent],
@@ -221,6 +224,19 @@
         const chips = bars[r].querySelectorAll('.bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
+      const paneRows = document.getElementById('paneBandwidthRows');
+      if (!paneRows) return;
+      const live = agents.filter(a => a.agent);
+      paneRows.innerHTML = live.length ? live.map(a => {
+        const b = paneBandwidth[a.pane_id] || {sent: 0, received: 0, ping: 0};
+        const ping = b.ping ? new Date(b.ping).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'}) : '—';
+        const total = b.sent + b.received;
+        return `<div class="pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
+          `<span class="pane-bandwidth-name"><span class="dot${a.status === 'working' ? ' pulse' : ''}" ` +
+          `style="background:${statusColor(a)}"></span>${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</span>` +
+          `<span title="Last pane poll">${ping}</span><span class="pane-bandwidth-total">${formatBandwidth(total)}</span>` +
+          `<span>${formatBandwidth(b.sent)}</span><span>${formatBandwidth(b.received)}</span></div>`;
+      }).join('') : '<span class="pane-bandwidth-empty">No open agent panes.</span>';
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
@@ -282,7 +298,12 @@
       // Central wire accounting. Every caller goes through this socket, so instrumenting it here
       // catches polls, sends, pushes and commands without duplicating counters at each call site.
       const send = ws.send.bind(ws);
-      ws.send = data => { noteBandwidth('sent', data); return send(data); };
+      ws.send = data => {
+        noteBandwidth('sent', data);
+        try { const msg = JSON.parse(data); if (msg.type === 'read_pane') notePaneBandwidth(msg.pane_id, 'sent', data); }
+        catch (e) { /* non-JSON wire payloads have no pane identity */ }
+        return send(data);
+      };
       // Re-announcing the push subscription here rather than only at subscribe time is what makes
       // it survive the socket being down at the wrong moment — on a phone that is most of the time.
       ws.onopen = () => {
@@ -299,7 +320,12 @@
         setTimeout(connect, 3000);
       };
       ws.onerror = () => setStatus('disconnected');
-      ws.onmessage = (e) => { noteBandwidth('received', e.data); handleMessage(JSON.parse(e.data)); };
+      ws.onmessage = (e) => {
+        noteBandwidth('received', e.data);
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'pane_content') notePaneBandwidth(msg.pane_id, 'received', e.data);
+        handleMessage(msg);
+      };
     }
 
     // One update path for every status dot: the app header's and the term header's, so the
@@ -430,6 +456,7 @@
         // after an outage long enough to have missed turns.
         convRecoverOutage();
         render();
+        renderBandwidth();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
@@ -474,6 +501,7 @@
         }
         prevStatuses[update.pane_id] = update.status;
         render();
+        renderBandwidth();
         renderQuickActions();
         syncConvBadge();
       }
@@ -489,6 +517,7 @@
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
+        renderBandwidth();
         renderQuickActions();  // the approval buttons belong on screen the moment it blocks
         syncConvBadge();
       } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {

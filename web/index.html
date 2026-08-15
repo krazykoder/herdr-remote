@@ -650,6 +650,22 @@
       font-weight: 500;
     }
 
+    .bandwidth-total {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 2px 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font: 0.62rem monospace;
+      background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
+    .bandwidth-total.now {
+      border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+      background: color-mix(in srgb, var(--green) 8%, var(--bg));
+    }
+
     /* One grid holding the clock row and all three data rows, so the columns line up and the whole
        thing scrolls as one table. The rows and the chip strip are display: contents, which keeps
        the markup readable while every cell sits in the one grid. */
@@ -697,6 +713,33 @@
       border-color: color-mix(in srgb, var(--green) 55%, var(--border));
       background: color-mix(in srgb, var(--green) 8%, var(--bg));
     }
+
+    .pane-bandwidth {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .pane-bandwidth h3 {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 500;
+    }
+
+    #paneBandwidthRows { display: grid; gap: 4px; font: 0.62rem monospace; }
+
+    .pane-bandwidth-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) repeat(4, auto);
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+    }
+
+    .pane-bandwidth-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
+    .pane-bandwidth-empty { color: var(--muted); }
 
     /* Settings */
     .settings {
@@ -4025,8 +4068,12 @@
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
     <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
-      <h2 id="bandwidthTitle">Data exchange</h2>
+      <h2><span id="bandwidthTitle">Data exchange</span><span class="bandwidth-total now" id="bandwidthTotal"></span></h2>
       <div id="bandwidthRows"></div>
+      <section class="pane-bandwidth" aria-label="Open agent pane payload data">
+        <h3>Open agent panes · last ping · total · sent · received</h3>
+        <div id="paneBandwidthRows"></div>
+      </section>
     </section>
   </div>
 

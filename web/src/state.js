@@ -16,12 +16,14 @@
     // WebSocket payload bytes the browser can observe. Frame, TLS and transport overhead live below
     // this API and are deliberately not guessed at.
     const BANDWIDTH_KEY = 'herdr_bandwidth', BANDWIDTH_STEP_KEY = 'herdr_bandwidth_step',
-      BANDWIDTH_KEEP_KEY = 'herdr_bandwidth_keep', BANDWIDTH_DATA_KEY = 'herdr_bandwidth_data';
+      BANDWIDTH_KEEP_KEY = 'herdr_bandwidth_keep', BANDWIDTH_DATA_KEY = 'herdr_bandwidth_data',
+      PANE_BANDWIDTH_DATA_KEY = 'herdr_pane_bandwidth_data';
     // Buckets are a small persisted stack, not a continuous chart. Empty slots say no interval was
     // collected; they do not invent a time or a zero-byte interval.
     const BANDWIDTH_STEPS = [1, 5, 10, 30, 60];   // minutes
     const BANDWIDTH_KEEPS = [12, 60];
     let bandwidth = loadBandwidth();
+    let paneBandwidth = loadPaneBandwidth();
     // Intentionally memory-only: reloading the page or losing the socket closes the partial chunk
     // while its completed bytes stay in localStorage as history.
     let bandwidthOpen = null;
@@ -53,6 +55,19 @@
 
     function saveBandwidth() {
       try { localStorage.setItem(BANDWIDTH_DATA_KEY, JSON.stringify(bandwidth)); }
+      catch (e) { /* private mode: session-only */ }
+    }
+
+    function loadPaneBandwidth() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(PANE_BANDWIDTH_DATA_KEY) || '{}');
+        return saved && typeof saved === 'object' ? Object.fromEntries(Object.entries(saved).filter(([, b]) =>
+          b && Number.isFinite(b.sent) && Number.isFinite(b.received) && Number.isFinite(b.ping))) : {};
+      } catch (e) { return {}; }
+    }
+
+    function savePaneBandwidth() {
+      try { localStorage.setItem(PANE_BANDWIDTH_DATA_KEY, JSON.stringify(paneBandwidth)); }
       catch (e) { /* private mode: session-only */ }
     }
 
@@ -111,6 +126,21 @@
       // Whether the view is on screen, not which display mode it happens to use: PANELS decides
       // that, and a counter that stopped updating because a panel changed layout would be a
       // silent failure.
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display !== 'none') renderBandwidth();
+    }
+
+    // Only read_pane and pane_content name a pane. Shared snapshots stay in the global total: a
+    // browser cannot honestly assign their bytes to one agent.
+    function notePaneBandwidth(paneId, direction, data, now) {
+      if (!bandwidthOn() || !paneId) return;
+      const at = now || Date.now();
+      const pane = paneBandwidth[paneId] || (paneBandwidth[paneId] = {sent: 0, received: 0, ping: at});
+      pane[direction] += bandwidthBytes(data);
+      if (direction === 'sent') pane.ping = at;
+      const keys = Object.keys(paneBandwidth).sort((a, b) => paneBandwidth[b].ping - paneBandwidth[a].ping);
+      keys.slice(200).forEach(key => delete paneBandwidth[key]);
+      savePaneBandwidth();
       const view = document.getElementById('timelineView');
       if (view && view.style.display !== 'none') renderBandwidth();
     }
