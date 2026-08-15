@@ -44,10 +44,15 @@
       return out;
     }
 
+    // `at` is the chip's name in the thread — `@review`, `@test` — and the label is its name
+    // everywhere else. Two fields rather than one derived from the other: a label is prose and can
+    // be renamed without silently renaming the control the user has learned to tap.
     const SHORTCUTS = [
-      { label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
-      { label: 'Implement', text: 'Proceed to implement.' },
-      { label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+      { at: 'review', label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
+      { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
+      { at: 'test', label: 'Test',
+        text: 'Write the tests this needs, run them, and report what actually failed.' },
+      { at: 'architect', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
     ];
 
     // The terminal half of the same idea, and the opposite verb: an agent prompt is inserted into

@@ -93,6 +93,10 @@
         !rulerOn() || !paneProfile || paneProfile.messages === false || !paneRows.length;
       const on = rulerOn() && selA !== null && paneRows.length > 0;
       band.hidden = top.hidden = bot.hidden = bar.hidden = !on;
+      // The chips send on one tap, and a range dragged across pane rows is a guess at where a
+      // message starts — which is the whole reason the pane view keeps the prefilled composer as
+      // its checkpoint. drawConvSel puts them back when a thread is what made the selection.
+      document.getElementById('xferRow').hidden = true;
       if (!on) return;
       const { el } = lineGeom();
       const a = Math.min(selA, selB), b = Math.max(selA, selB);

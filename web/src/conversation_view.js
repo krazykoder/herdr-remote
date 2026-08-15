@@ -597,7 +597,8 @@
         // messages that arrives out of order is not the conversation the reader saw.
         if (on) texts.push(el.dataset.text || '');
       }
-      if (!texts.length) { bar.hidden = true; return; }
+      const chips = document.getElementById('xferRow');
+      if (!texts.length) { bar.hidden = true; chips.hidden = true; return; }
       selText = texts.join('\n\n');
       bar.hidden = false;
       document.getElementById('selCount').textContent =
@@ -605,6 +606,12 @@
       // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
       document.getElementById('selLearn').hidden = true;
       const pair = pairFor(pairs, activePane);
-      document.getElementById('selTransfer').hidden =
-        !pair || pairHealth(pair, agents).state !== 'healthy';
+      const healthy = !!pair && pairHealth(pair, agents).state === 'healthy';
+      document.getElementById('selTransfer').hidden = !healthy;
+      // Same gate as the sheet's button, and for the same reason: without a healthy pair there is
+      // no unambiguous target, and a chip that had to ask which one would be the step it removes.
+      // Rebuilt only when it is not there — this runs on every pick, and replacing the row would
+      // take a chip out from under a finger already on it.
+      chips.hidden = !healthy;
+      if (healthy && !chips.firstChild) chips.innerHTML = transferChipsHtml();
     }

@@ -4,6 +4,10 @@
     // continuous session to everything else. Cleared by the first snapshot after the reconnect,
     // which is the one place that has to read it.
     let wsDownSince = 0;
+    // The last text sent to each pane, for Resend. In memory and not persisted: a prompt worth
+    // repeating is one from the session you are in, and a button that fires a week-old transfer
+    // into a live agent on the first tap after a reload is a worse offer than no button.
+    const lastSentText = {};
     // Shell panes, from the same snapshot as `agents`. Empty against a relay with terminal mode
     // off, which sends no `shells` key at all — its presence is the feature gate.
     let shells = [];

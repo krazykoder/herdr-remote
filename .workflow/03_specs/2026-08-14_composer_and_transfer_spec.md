@@ -1,7 +1,7 @@
 # Spec — The composer, the transfer, and what a working pane looks like
 
 **Date:** 2026-08-14
-**Status:** Partially implemented — §§1–3 and §5; §4 deferred. Branch `feat/composer-and-transfer`.
+**Status:** Implemented. Branch `feat/composer-and-transfer`.
 **Classification:** Class B — additive, backward compatible. **No relay change, no wire change, no
 new message type.** §4 is the exception in intent but not in code: it changes what a tap means, not
 what goes on the wire.
@@ -34,13 +34,15 @@ ceiling, the client uses its documented compatible cap rather than requiring a n
 
 ### 1.1 Where the limit is
 
-Three caps, commonly mistaken for one:
+Three caps, commonly mistaken for one. As found:
 
 | Cap | Where | What it bounds |
 |---|---|---|
 | 4000 | `relay/herdr_relay.py:1292` | one `send_text` message on the wire |
 | `SEND_TEXT_MAX` = 4000 | `web/src/pairs_pure.js` | one outbound `send_text` chunk |
-| `CONV_TEXT_MAX` = 4000 | `web/src/conversation_pure.js:15` | one entry in a **transcript**, truncated with `…` |
+| `CONV_TEXT_MAX` = 4000 | `web/src/conversation_pure.js` | one entry in a **transcript**, truncated with `…` |
+
+Only the third moves (§1.3). The first two are the same number for the same reason and stay.
 
 A transferred selection is code or a diff. Both are routinely past 4000, and today the app refuses
 the send before it happens (`controls.js:130`) and `composeTransfer` refuses to build the payload at
@@ -148,16 +150,13 @@ way `tabScope() === 'project'` already scopes it to a Project.
 
 ---
 
-## 4. Direct transfer — decided, built last
+## 4. Direct transfer from the thread
 
-Not built in this pass. Recorded here because the decision is made and the constraint it breaks is
-one this project wrote down on purpose.
+**The rule:** `doTransfer` prefills the partner's composer and stops (`transfer.js`). The read before
+it lands is the checkpoint — the payload is about to be typed into *another agent's* session, and
+nothing else in the app is as expensive to get wrong.
 
-**The rule:** `doTransfer` prefills the partner's composer and stops (`transfer.js:52`). The read
-before it lands is the checkpoint — the payload is about to be typed into *another agent's* session,
-and nothing else in the app is as expensive to get wrong.
-
-**The decision: `@review`, `@architect`, `@prompt`, `@test` send directly, and only from the
+**The decision: `@review`, `@implement`, `@test`, `@architect` send directly, and only from the
 conversation view.** The pane view keeps the checkpoint.
 
 That is a deliberate bypass, and the reasoning is that the two views are not the same act:
@@ -171,11 +170,76 @@ That is a deliberate bypass, and the reasoning is that the two views are not the
 So the bypass is scoped to the view where the payload has already been read, and the checkpoint
 stays where the payload is still a guess.
 
-**Also in §4, when it is built:** `ESC` (already allowed — `Escape` is in the relay's `SAFE_KEYS`,
-so this is a button and nothing more) and `RESEND` (the last text sent to *this* pane, re-sent;
-`noteSent` is already the choke point where that could be recorded).
+### 4.1 The row
 
----
+A row of chips inside the selection bar, above its other controls — Copy and ✕ prepare, these send,
+and on a phone the two would wrap into each other. Drawn in the accent, because this is the only
+place in the app where one tap puts text into another agent.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  @review  @implement  @test  @architect  @as-is    ⋯     │   ← sends
+│  2 messages                          Copy   Transfer ›  ✕ │   ← prepares
+└──────────────────────────────────────────────────────────┘
+```
+
+- **The chips are the shortcut list.** `SHORTCUTS` gained an `at` field — `@review` — beside the
+  `label` the sheet already draws. Two fields rather than one derived from the other, so a label can
+  be renamed without silently renaming a control someone has learned to tap. A shortcut added to
+  that list is a chip, with nothing else edited.
+- **`@as-is`** sends the payload with no instruction. It is the plainest thing the row can do, so it
+  is not buried in the sheet with the rest.
+- **`⋯`** opens the sheet: the preview, the target's badge and the prefill-and-stop path. The row is
+  a shortcut for the common case, not a replacement for reading.
+
+### 4.2 The target, and why there is no picker
+
+The pair partner, which is what `doTransfer` has always used. The row carries **the same gate as the
+sheet's button** — a healthy pair — so it appears in exactly the cases where the target is already
+unambiguous, and a conversation with no pair keeps the sheet. A chip that had to ask which member it
+meant would be the step these exist to remove.
+
+Which pane is the *source* is the picked bubble's, not the open pane's — so picking the partner's
+message sends it back the other way. That is `claimTransfer`, shared with the sheet so the two can
+never disagree about who is being quoted.
+
+### 4.3 Not armed
+
+CLS, QUIT and Esc take two taps. Those fire from a button that sits under the thumb for as long as a
+pane is open; a chip needs a message picked first, and **the pick is the deliberate act** the arm
+would be duplicating. The toast names where it went, because a mis-tap is otherwise silent.
+
+Resend is armed, because nothing precedes it.
+
+### 4.4 The toast that would have covered it
+
+`doTransfer` opens the partner, and opening a stale pane starts a **loud** catch-up (§2.4 of the
+deep-backfill spec) whose toast lands on top of the send's. That trigger is loud because someone
+tapped a pane to read it — nobody tapped this one. `convQuietPane` marks exactly one activation as
+the app's own, and the confirmation of an irreversible send outranks a report on a read nobody asked
+for.
+
+### 4.5 Resend
+
+The last text sent to **this** pane, sent again, through `sendText` — so it is chunked, recorded and
+classified like anything else typed. In memory only: a prompt worth repeating is one from the
+session you are in, and a button that fires a week-old transfer into a live agent on the first tap
+after a reload is a worse offer than no button.
+
+Two taps (`armButton`), and offered only where there is something to repeat — the same rule Summary
+follows, for the same reason.
+
+### 4.6 Esc
+
+Already built and already correct: `abortWorking` in the status bar, two taps, visible only while
+the pane is working. A second Esc on the chip row would be a duplicate control for the same key, so
+there is none.
+
+### 4.7 Fixed along the way
+
+`composeTransfer` was being handed `mine.role`, and a pair built by the Start dialog carries a bare
+`recentFingerprint` with no role at all — so the receiving agent was told the text came from
+**"undefined"**. It now falls back to the pane's live label.
 
 ## 5. Landing at the end of what you switched to
 
@@ -200,8 +264,8 @@ place, and a reader who switches panes gets the end of the new one.
 
 ## 6. What none of this does
 
-- **No relay change.** §1 is a client-side split against the cap that is already there; §4's ESC
-  uses a key the relay already allows.
+- **No relay change.** §1 is a client-side split against the cap that is already there; §4 adds no
+  key the relay did not already allow.
 - **No wire change, no new message type.**
 - **No change to what is recorded, or when.** §1.3 changes how much of one message the record keeps;
   the events that write it are untouched.
@@ -233,9 +297,16 @@ place, and a reader who switches panes gets the end of the new one.
 8. With a thread open, the header row switches between the conversation's members.
 9. Switching to a pane lands at the newest bubble; switching to one with rows lands at the last row.
 10. Scrolling up in a thread and staying there is not undone by the next poll.
+11. A chip in the thread sends the picked message into the partner and submits it, in one tap.
+12. The same selection made on pane rows offers no chips — only the sheet.
+13. A pane with no healthy pair offers no chips.
+14. A direct transfer is recorded as `via: transfer`, not as something typed.
+15. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
+    has been sent nothing.
 
 ---
 
 ## 9. Order of work
 
 §5 (a bug), §2 (visual, self-contained), §1 (the send path), §3 (layout), then §4 in its own pass.
+All done.

@@ -48,6 +48,9 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     convThreadOn: () => threaded, convLastAgent: threaded ? 3 : -1, selectFinalConvMessage() {},
     // The strip's centre names the pane the composer types into, so the fold has to redraw it.
     renderPairStrip() {},
+    // Resend is offered only where there is something to repeat, and this suite owns the nav row
+    // rather than the composer that would have filled this in.
+    lastSentText: {}, escapeHtml: s => s,
   });
   el('convThread').hidden = !threaded;
   vm.runInContext(HISTORY, ctx);

@@ -271,6 +271,25 @@ test('the chunk size matches the cap the relay enforces', () => {
     'web/src/pairs_pure.js and herdr_relay.py disagree about the send_text cap');
 });
 
+test('a transfer never ends in a send, and exactly one function says otherwise', () => {
+  // The rule and its one documented bypass, asserted against the source because it is a rule about
+  // what a function may do rather than about what it returns. doTransfer is the checkpoint the
+  // pane view keeps; transferNow is the conversation view's decision to skip it (spec §4).
+  const body = TRANSFER.slice(TRANSFER.indexOf('function doTransfer'),
+                             TRANSFER.indexOf('function transferNow'));
+  assert.ok(!/\bsendText\(/.test(body), 'doTransfer must never end in a send');
+  assert.match(TRANSFER, /function transferNow[\s\S]*?sendText\(\)/);
+  // And the bypass is scoped: a chip in the pane view would be a one-tap send of a guess at where
+  // a message starts.
+  assert.match(TRANSFER, /function transferNow\(shortcutIndex\) \{\s*\n\s*if \(!convThreadOn\(\)\) return;/);
+});
+
+test('every shortcut has a chip name, and no two chips are the same', () => {
+  const ats = SHORTCUTS.map(s => s.at);
+  for (const at of ats) assert.match(at, /^[a-z][a-z0-9-]*$/, `"${at}" is not a chip name`);
+  assert.equal(new Set(ats).size, ats.length, 'two shortcuts claim the same @name');
+});
+
 test('shortcuts reference prompts by path and never inline their copy', () => {
   assert.ok(SHORTCUTS.length >= 3);
   for (const s of SHORTCUTS) {

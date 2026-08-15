@@ -691,7 +691,14 @@
     // makes it worth paying: you are about to read it. Loud, because you are looking at the pane
     // when it happens and a pane that suddenly grows ten thousand lines of scrollback should say
     // why.
+    // A pane the app moved to on the user's behalf rather than one they tapped. Set for exactly one
+    // activation, and read below: the trigger is loud because someone opened a pane to read it, and
+    // nobody opened this one.
+    let convQuietPane = '';
+
     async function convRecoverPane(paneId) {
+      const quiet = convQuietPane === paneId;
+      convQuietPane = '';
       const a = paneId ? paneOf(paneId) : null;
       if (!a || !profileFor(a.agent)) return;
       const key = convMemberKey(a);
@@ -700,7 +707,7 @@
       // Opened and closed again while IndexedDB answered: the read would land on a pane nobody is
       // looking at and redraw the one they moved to.
       if (activePane !== paneId) return;
-      convRecoverStart(a, true);
+      convRecoverStart(a, !quiet);
     }
 
     // T2b — the socket was down long enough to have missed turns, and the pane it was down over is

@@ -132,6 +132,7 @@
       // cannot tell a transfer from typing claims the user said what another agent said. The whole
       // text, not a chunk of it — what was sent is one message, however many the wire took.
       noteSent(i.value, paneId);
+      lastSentText[paneId] = i.value;
       // One message per chunk, then the single Enter that submits all of them. Nothing between the
       // chunks submits, so they land in the agent's composer as one text; the relay handles a
       // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
@@ -140,7 +141,25 @@
         ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: part }));
       ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
       i.value = ''; autoGrow(i);
+      renderQuickActions();   // the pane has a last send now, so Resend has something to offer
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);
+    }
+
+    // The same text again, through the same path — so it is chunked, recorded and classified like
+    // anything else typed. Two taps, because a duplicate prompt in a live agent is not undoable and
+    // this button sits where a thumb already is. `armFire` is the app's answer to that everywhere
+    // else it is true.
+    function resendLast(btn) {
+      const again = lastSentText[activePane];
+      if (!again) return;
+      // armButton and not armFire: this one is drawn by renderQuickActions from innerHTML, so it
+      // has no stable id for the header's table to key on.
+      armButton(btn, 'Resend?', () => {
+        const i = document.getElementById('termInput');
+        i.value = again;
+        autoGrow(i);
+        sendText();
+      });
     }
     function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
     function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }

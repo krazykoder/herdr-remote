@@ -2351,3 +2351,149 @@ test('with a thread up, the header row switches between that conversation’s me
     // projects, which is what makes it a conversation and not a directory.
     expect(before).not.toContain(mate.pane);
   });
+
+// --- Direct transfer from the thread (§4) ---
+//
+// The one place in the app where a tap sends into another agent's session with no checkpoint. The
+// pane view keeps the checkpoint, and the tests below are as much about that as about the chips.
+
+// The pair the chips need. Made against the same two panes joinBoth files together, so the thread
+// and the transfer target are the same partner.
+const pairBoth = page => page.evaluate(() => {
+  const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
+  pairs = [{id: 'p1', members: [recentFingerprint(mine), recentFingerprint(other)]}];
+  return other.pane_id;
+});
+
+// The source of a transfer is whoever wrote the picked message, and the target is that pane's
+// partner — so which bubble is picked decides which way it goes. Bubble 1 is this pane's.
+const pickBubble = async (page, i = 0) => {
+  await page.locator('#convThread .conv-msg').nth(i).locator('.conv-pick').click();
+  await expect(page.locator('#selBar')).toBeVisible();
+};
+
+test('a chip sends the picked message straight into the partner', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  const mate = await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page, 1);                                     // this pane's own message
+  await page.locator('#xferRow .xfer-chip').first().click();     // @review
+  const sent = await page.evaluate(() => window.__sent);
+  const text = sent.filter(m => m.type === 'send_text');
+  expect(text.length).toBeGreaterThan(0);
+  // Into the partner, not the pane the message came from.
+  for (const m of text) expect(m.pane_id).toBe(mate);
+  const body = text.map(m => m.text).join('');
+  expect(body).toContain('Review, edit, fix');
+  expect(body).toContain('Ready. Name the change.');
+  // Named by the pane it came from. A pair built by the Start dialog carries no role, and the
+  // receiving agent was being told the text came from "undefined".
+  expect(body).toContain('feedback from Architect 1:');
+  // And submitted — that is the whole of what makes this different from the sheet.
+  expect(sent.filter(m => m.type === 'send_keys' && m.keys[0] === 'Enter')).toHaveLength(1);
+  await expect(page.locator('#toast')).toContainText('Sent 1 message to scratch');
+});
+
+test('the chips are absent in the pane view, where a selection is still a guess',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await pairBoth(page);
+    // Never opened as a thread, so a selection here is a range dragged across rows.
+    await page.evaluate(() => { selA = 0; selB = 2; drawSel(); });
+    await expect(page.locator('#selBar')).toBeVisible();
+    await expect(page.locator('#xferRow')).toBeHidden();
+    // The sheet's button is what the pane view keeps.
+    await expect(page.locator('#selTransfer')).toBeVisible();
+  });
+
+test('a chip on a pane with no live partner is not offered at all', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await pickBubble(page);
+  // No pair, so no unambiguous target — and a chip that had to ask which one would be the step
+  // these exist to remove.
+  await expect(page.locator('#xferRow')).toBeHidden();
+});
+
+test('@as-is sends the payload with no instruction', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page);
+  await page.locator('#xferRow .xfer-chip.plain').click();
+  const body = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
+  expect(body).toContain('the other pane spoke first');
+  expect(body).not.toContain('Review, edit, fix');
+});
+
+test('a direct transfer is recorded as a transfer, not as something typed', async ({page}) => {
+  await open(page);
+  const [, other] = await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await pickBubble(page);
+  await page.locator('#xferRow .xfer-chip').first().click();
+  // The classifier runs at the send, against the pendingTransfer doTransfer left — a transcript
+  // that cannot tell a transfer from typing claims the user said what another agent said.
+  const mine = await page.evaluate(() => convMemberKey(paneOf(activePane)));
+  await expect.poll(async () => {
+    const rec = await held(page, mine);
+    const sent = (rec && rec.entries.filter(e => e.who === 'user')) || [];
+    return sent.length && sent[sent.length - 1].via;
+  }).toBe('transfer');
+});
+
+test('the ⋯ chip still opens the sheet, preview and all', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await pickBubble(page);
+  await page.locator('#xferRow .xfer-chip.more').click();
+  await expect(page.locator('#transferSheet')).toBeVisible();
+  await expect(page.locator('#transferPreview')).toContainText('the other pane spoke first');
+});
+
+test('Resend repeats the last thing sent to this pane, and takes two taps', async ({page}) => {
+  await open(page);
+  // Nothing sent yet, so nothing to repeat.
+  await expect(page.locator('#quickActions .qa-resend')).toHaveCount(0);
+  await page.evaluate(() => {
+    document.getElementById('termInput').value = 'run the tests';
+    sendText();
+  });
+  const resend = page.locator('#quickActions .qa-resend');
+  await expect(resend).toBeVisible();
+  await tapWire(page);
+  await resend.click();
+  // Armed, not fired: a duplicate prompt in a live agent is not undoable.
+  await expect(resend).toHaveText('Resend?');
+  expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+  await resend.click();
+  const body = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
+  expect(body).toBe('run the tests');
+});
+
+test('Resend is per pane, not one clipboard for all of them', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    document.getElementById('termInput').value = 'only this pane';
+    sendText();
+  });
+  await page.evaluate(() => openTerminal(agents.find(a => a.label === 'scratch').pane_id));
+  await expect(page.locator('#quickActions .qa-resend')).toHaveCount(0);
+});

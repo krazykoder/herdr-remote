@@ -2686,6 +2686,49 @@
       border-top: 1px solid var(--border);
       background: var(--surface);
       flex-shrink: 0;
+      /* The transfer chips are a full-width row above the rest, so the bar wraps rather than
+         scrolling the two into one line. */
+      flex-wrap: wrap;
+    }
+
+    /* One tap from here puts a message into another agent's session. The row is the only place in
+       the app where that is true, so it is the only place drawn in the accent — and it is above the
+       bar's other controls rather than beside them, because Copy and ✕ prepare and these send. */
+    .xfer-row {
+      display: flex;
+      gap: 6px;
+      width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+
+    .xfer-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .xfer-row[hidden] {
+      display: none;
+    }
+
+    .sel-bar .xfer-chip {
+      flex: 0 0 auto;
+      padding: 7px 11px;
+      min-height: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--blue);
+      background: var(--bg);
+      color: var(--blue);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    /* No instruction, and the overflow into the sheet. Neither is the thing the row is for. */
+    .sel-bar .xfer-chip.plain,
+    .sel-bar .xfer-chip.more {
+      border-color: var(--border);
+      color: var(--muted);
     }
 
     /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
@@ -3731,7 +3774,10 @@
         <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
       </div>
     </div>
+    <!-- The chips are a row of their own inside the bar, not more buttons beside Copy: they send,
+         and everything else on this bar prepares. On a phone the two would wrap into each other. -->
     <div class="sel-bar" id="selBar" hidden>
+      <div class="xfer-row" id="xferRow" hidden></div>
       <span class="count" id="selCount"></span>
       <span class="spacer"></span>
       <button onclick="learnSelection()" id="selLearn">Learn</button>
