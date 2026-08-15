@@ -264,9 +264,6 @@
     // The conversation the standalone view is showing, or null. Held rather than passed, because
     // the snapshot redraws it: live-ness is the one thing on that view that changes under it.
     let convViewId = null;
-    // One navigation origin, not browser history: only a pane opened from this standalone record
-    // gets a Back route to it. Ordinary tab and list jumps still return to the landing page.
-    let paneReturnConversation = null;
 
     // A card opens the conversation itself, and not a pane: the record is what the card names, and
     // it outlives every pane that wrote it. Read-only — the pane is one tap further on, for the
@@ -314,7 +311,9 @@
       // The thread panel, on, and showing *this* conversation: a pane in several would otherwise
       // open on whichever one it was last read under.
       convSetView(live, conv.id);
-      jumpToPane(live.pane_id, conv.id);
+      // No "return to this conversation" carried along: the conversation is the entry behind this
+      // one on the walk, and Back is that entry.
+      jumpToPane(live.pane_id);
     }
 
     let convStandaloneToken = 0, convStandaloneHtml = '', convAdding = false;
@@ -888,14 +887,11 @@
       if (shell && dictation) dictation.stop();
     }
 
-    function openTerminal(paneId, returnConversation) {
+    function openTerminal(paneId) {
       // Opening over an already-open pane leaves the old poller running otherwise, and every
       // switch adds another read_pane every 3s. Cleared here rather than in each caller, because
       // switchToPartner and the header chips both land straight on this without closing first.
       clearInterval(refreshInterval);
-      paneReturnConversation = returnConversation || null;
-      const back = document.getElementById('termBack');
-      if (back) back.setAttribute('aria-label', paneReturnConversation ? 'Back to conversation' : 'Back to agent list');
       activePane = paneId; paneLines = 200; userScrolledUp = false;
       paneSource = 'recent-unwrapped';  // a clear belongs to the pane it was made on
       noteRecent(paneId);
@@ -952,10 +948,6 @@
     }
 
     function closeTerminal() {
-      const returnConversation = paneReturnConversation;
-      paneReturnConversation = null;
-      const back = document.getElementById('termBack');
-      if (back) back.setAttribute('aria-label', 'Back to agent list');
       activePane = null; clearInterval(refreshInterval);
       syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
       closeFireMenu();
@@ -979,7 +971,4 @@
       document.getElementById('agentListView').style.display = '';
       paneStampAt = null;
       renderStatusBar();
-      if (returnConversation && loadConvIndex().some(c => c.id === returnConversation)) {
-        openConversation(returnConversation);
-      }
     }

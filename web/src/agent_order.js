@@ -1,8 +1,7 @@
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
-    // Settings and Activity are toggles onto wherever the user already was, not one-way doors.
-    // The pane they came from is remembered so a second tap puts it back; without this, leaving
-    // Settings always dumped them on the agent list and they had to find the pane again.
-    let panelReturnPane = null;
+    // Settings and Activity are toggles onto wherever the user already was, not one-way doors —
+    // and where that was is the previous entry on the walk. This used to be a private one-deep
+    // panelReturnPane, which could only remember a pane and could only remember one.
 
     // Every panel that takes the list's place, against the display mode it wants — adding one is a
     // line here rather than a line in each of the four functions below. Settings is display:none in
@@ -13,32 +12,43 @@
       for (const id in PANELS) document.getElementById(id).style.display = 'none';
     }
 
-    function panelIsOpen() {
-      return Object.keys(PANELS).some(id => document.getElementById(id).style.display !== 'none');
+    // Which panel is up, or '' for none. Read off the screen rather than tracked, so it cannot go
+    // stale against a view someone hid directly.
+    function openPanelId() {
+      return Object.keys(PANELS)
+        .find(id => document.getElementById(id).style.display !== 'none') || '';
     }
 
+    function panelIsOpen() { return !!openPanelId(); }
+
     function openPanel(id) {
-      // Only capture on the way in. Switching Settings → Activity must not overwrite the pane
-      // with the null that closing the terminal already left behind.
-      if (!panelIsOpen()) {
-        panelReturnPane = activePane;
-        if (activePane) closeTerminal();
-      }
+      // Only leave the pane on the way in. Switching Settings → Activity has no pane to close, and
+      // the walk already holds where the pane was.
+      if (!panelIsOpen() && activePane) closeTerminal();
+      // The conversation window pushes its own entry, naming the conversation rather than the
+      // panel — openConversation has done it by the time this runs.
+      if (id !== 'convView') notePanelNav(id);
       document.body.classList.toggle('conversation-open', id === 'convView');
       document.getElementById('agentListView').style.display = 'none';
       for (const p in PANELS) document.getElementById(p).style.display = p === id ? PANELS[p] : 'none';
+      syncNavBtns();
     }
 
-    function closePanel() {
+    // Leaving a panel is a step back, not a return to a remembered pane: the panel is an entry, so
+    // "where I was before this" is simply the one before it — and that survives opening a second
+    // panel on top of the first, which the old one-deep memory did not.
+    function closePanel() { goBack(); }
+
+    // The agent list, which is an entry too — it is where Back from the first pane of a session
+    // lands, and making it a destination rather than a special case is what lets one navGo answer
+    // every Back in the app.
+    function showLanding() {
+      noteLandingNav();
+      // closeTerminal puts the list up itself, and does the rest of the teardown a pane needs.
+      if (activePane) { closeTerminal(); return; }
       hidePanels();
       document.body.classList.remove('conversation-open');
-      const back = panelReturnPane;
-      panelReturnPane = null;
-      // The pane may have died while the panel was open; openTerminal falls back to the ID, so
-      // check the live snapshot first and land on the list rather than on a dead pane.
-      if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
-      else document.getElementById('agentListView').style.display = '';
-      // Leaving the conversation window moves where the walk stands, so its arrows are re-read.
+      document.getElementById('agentListView').style.display = '';
       syncNavBtns();
     }
 

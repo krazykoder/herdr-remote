@@ -5,6 +5,43 @@
     const NAV_MAX = 20;
     let navHistory = [], navIndex = -1, navigating = false;
 
+    // The browser's session history is the same walk, not a mirror of it: one cursor, held by the
+    // browser, so the phone's Back gesture and the `‹` button cannot end up pointing at different
+    // entries. Each of our entries carries a serial rather than an index, because the list drops
+    // its oldest entry at NAV_MAX and every index below it would shift under a state already
+    // written into the browser's stack.
+    let navSerials = [], navSerial = 0, navDetached = false;
+    function navBrowserHistory() {
+      return typeof window === 'object' && window && window.history &&
+        typeof window.history.pushState === 'function' ? window.history : null;
+    }
+
+    function navPushState() {
+      const api = navBrowserHistory();
+      if (!api) return;
+      const state = {herdrNav: navSerials[navIndex]};
+      // The first entry replaces rather than pushes, so Back off the landing page leaves the app
+      // the way Back off any first page does, instead of landing on a state we put there.
+      if (navHistory.length === 1) api.replaceState(state, '');
+      else api.pushState(state, '');
+      navDetached = false;   // whatever we had drifted past, this entry is ours again
+    }
+
+    // The gesture, the mouse button and the browser's own chrome all arrive here. Moving the cursor
+    // *to* the entry named in the state — rather than stepping — is what keeps one cursor: the
+    // browser has already moved, and this follows it.
+    //
+    // Guarded because these modules are also run as slices in a vm context, which has no window.
+    if (typeof addEventListener === 'function') addEventListener('popstate', e => {
+      const at = e.state && e.state.herdrNav;
+      const i = at == null ? -1 : navSerials.indexOf(at);
+      // A state older than NAV_MAX entries, or one another page wrote. We cannot show it, and we
+      // must not keep computing deltas against a cursor the browser has already moved off — so the
+      // walk stops driving the browser until the next visit re-anchors it.
+      if (i < 0) { navDetached = true; return; }
+      navShow(i);
+    });
+
     // A conversation window is a stop on this walk, not a place outside it. Reading a conversation,
     // opening a member's pane from it and then wanting the record back is the ordinary way round a
     // multi-agent thread, and until this the only way back was the pane's own Back — which lands on
@@ -13,23 +50,45 @@
     // Held in the same list, prefixed, rather than in a second one: back and forward are one order,
     // and two lists would have to be interleaved by a timestamp to answer "where was I" — which is
     // the list this already is.
-    const NAV_CONV = 'conv:';
+    // Everything you can be looking at is an entry, so one walk covers all of it rather than each
+    // destination growing its own one-deep memory of where it came from. Strings, not objects: the
+    // list is compared with `===` in three places and the entry never needs a payload — which view
+    // a pane is read in is a stored per-pane preference, so putting it in the entry would let a
+    // step back override a choice made after the entry was made.
+    //
+    //   'w1:p1'             a pane
+    //   'conv:<id>'         a conversation window
+    //   'panel:settingsView' a panel
+    //   'landing'           the agent list
+    const NAV_CONV = 'conv:', NAV_PANEL = 'panel:', NAV_LANDING = 'landing';
     function navIsConv(id) { return typeof id === 'string' && id.startsWith(NAV_CONV); }
     function navConvId(id) { return id.slice(NAV_CONV.length); }
+    function navIsPanel(id) { return typeof id === 'string' && id.startsWith(NAV_PANEL); }
+    function navPanelId(id) { return id.slice(NAV_PANEL.length); }
 
-    function noteVisit(paneId) {
-      if (navigating || navHistory[navIndex] === paneId) return;
-      navHistory = navPush(navHistory, navIndex, paneId, NAV_MAX);
+    function noteVisit(id) {
+      if (navigating || navHistory[navIndex] === id) return;
+      navHistory = navPush(navHistory, navIndex, id, NAV_MAX);
+      // The same push, on the same cursor and cap, so the two arrays stay index-for-index: the
+      // serial is what a browser history entry carries, because an index shifts under it every
+      // time the list drops its oldest entry.
+      navSerials = navPush(navSerials, navIndex, ++navSerial, NAV_MAX);
       navIndex = navHistory.length - 1;
+      navPushState();
+      syncNavBtns();
     }
 
     function noteConvNav(id) { noteVisit(NAV_CONV + id); }
+    function notePanelNav(id) { noteVisit(NAV_PANEL + id); }
+    function noteLandingNav() { noteVisit(NAV_LANDING); }
 
     // A conversation is alive while its record exists; a pane is alive while herdr reports it. Both
     // are skipped when they are not, so a step never lands on a record that was deleted or a pane
-    // that has exited.
+    // that has exited. A panel and the list are always reachable.
     function navAlive(id) {
-      return navIsConv(id) ? loadConvIndex().some(c => c.id === navConvId(id)) : !!paneOf(id);
+      if (navIsConv(id)) return loadConvIndex().some(c => c.id === navConvId(id));
+      if (navIsPanel(id) || id === NAV_LANDING) return true;
+      return !!paneOf(id);
     }
 
     function navTarget(step) {
@@ -37,23 +96,47 @@
       return navStep(navHistory, navIndex, step, navAlive, navHere());
     }
 
-    // Where the walk currently stands: the open pane, or the conversation window if that is what is
-    // on screen. Passed to navStep so a step never re-opens what is already open.
+    // Where the walk currently stands, read off the screen rather than remembered. Passed to
+    // navStep so a step never re-opens what is already open.
     function navHere() {
-      return convViewId && convDockOn() ? NAV_CONV + convViewId : activePane;
+      if (activePane) return activePane;
+      const panel = openPanelId();
+      if (panel === 'convView') return convViewId ? NAV_CONV + convViewId : NAV_LANDING;
+      return panel ? NAV_PANEL + panel : NAV_LANDING;
     }
 
+    // Returns whether there was anywhere to go, so a caller with its own fallback — the Back
+    // chevrons, which must always leave — can tell "stepped" from "nowhere to step".
     function navGo(step) {
       const i = navTarget(step);
-      if (i < 0) return;
+      if (i < 0) return false;
+      // The browser's own stack holds the cursor where it can, so `‹`, the phone's Back gesture and
+      // a mouse's back button are one action rather than two that can disagree. go() is
+      // asynchronous: popstate below is what actually opens the destination.
+      const api = navBrowserHistory();
+      if (api && !navDetached) api.go(i - navIndex);
+      else navShow(i);
+      return true;
+    }
+
+    function navShow(i) {
       navIndex = i;
       navigating = true;
       const id = navHistory[i];
-      try { navIsConv(id) ? openConversation(navConvId(id)) : openTerminal(id); }
-      finally { navigating = false; }
+      try {
+        if (navIsConv(id)) openConversation(navConvId(id));
+        else if (navIsPanel(id)) openPanel(navPanelId(id));
+        else if (id === NAV_LANDING) showLanding();
+        else openTerminal(id);
+      } finally { navigating = false; }
       syncNavBtns();
       if (window.cue) cue('page');
     }
+
+    // One Back for the whole app: the pane header's chevron, a panel's chevron and `‹` are the
+    // same step, so where Back lands is one answer rather than three that disagree the first time
+    // a pane is reached from the tab strip with a conversation still open.
+    function goBack() { if (!navGo(-1)) showLanding(); }
 
     // The walk's own controls live in the status bar, which is the one row on screen in every view —
     // the pane had arrows and the conversation window had none, and a walk that crosses both needs
@@ -68,6 +151,26 @@
         btn.title = btn.disabled ? '' : label;
         btn.setAttribute('aria-label', btn.disabled ? (step < 0 ? 'Back' : 'Forward') : label);
       });
+      syncBackLabel();
+    }
+
+    // The pane header's chevron is the same step as `‹`, so it says the same thing. Falls back to
+    // the list, which is where goBack lands when there is nowhere on the walk to step.
+    function syncBackLabel() {
+      const back = document.getElementById('termBack');
+      if (!back) return;
+      back.setAttribute('aria-label', navTarget(-1) < 0 ? 'Back to the agent list' : navLabel(-1));
+    }
+
+    // What a destination is called in a label. The panel names are the words on the buttons that
+    // open them, not the element IDs.
+    const NAV_NAMES = { settingsView: 'Settings', timelineView: 'Activity' };
+    function navName(id) {
+      if (id === NAV_LANDING) return 'the agent list';
+      if (navIsPanel(id)) return NAV_NAMES[navPanelId(id)] || navPanelId(id);
+      if (!navIsConv(id)) return paneLabel(paneOf(id)) || id;
+      const conv = loadConvIndex().find(c => c.id === navConvId(id));
+      return (conv && conv.name) || 'the conversation';
     }
 
     // What the arrow will land on, so the button says where it goes rather than "Previous session"
@@ -76,11 +179,9 @@
     function navLabel(step) {
       const i = navTarget(step);
       if (i < 0) return step < 0 ? 'Back' : 'Forward';
-      const id = navHistory[i];
-      if (!navIsConv(id)) return `${step < 0 ? 'Back to' : 'Forward to'} ${paneLabel(paneOf(id)) || id}`;
-      const conv = loadConvIndex().find(c => c.id === navConvId(id));
-      return `${step < 0 ? 'Back to' : 'Forward to'} ${(conv && conv.name) || 'the conversation'}`;
+      return `${step < 0 ? 'Back to' : 'Forward to'} ${navName(navHistory[i])}`;
     }
+
 
     const QA_KEY = 'herdr_quick_actions';
     function quickActionsOn() { return localStorage.getItem(QA_KEY) !== 'off'; }

@@ -275,10 +275,15 @@ test('a deleted conversation is stepped over rather than opened', async ({page})
   await page.locator('#convViewOpen').click();
   await expect(page.locator('#terminalView')).toBeVisible();
   await page.evaluate(() => saveConvIndex([]));
-  // The walk skips what no longer exists, the same way it skips a pane that has exited — and with
-  // nothing else behind it, the arrow says so by being disabled.
+  // The walk skips what no longer exists, the same way it skips a pane that has exited. Behind the
+  // deleted record is the pane this one is already on, which is skipped too — so Back carries on
+  // to the list rather than reopening what is on screen or landing on a record that is gone.
   await page.evaluate(() => syncNavBtns());
-  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+  const back = page.locator('#statusBar #navBack');
+  await expect(back).toHaveAttribute('aria-label', 'Back to the agent list');
+  await back.click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await expect(page.locator('#convView')).toBeHidden();
 });
 
 test('the composer fills from the top, and Send stays beside the line being written',

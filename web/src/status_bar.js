@@ -121,12 +121,11 @@
       }, { passive: false });
     }
 
-    // A jump is a destination, so it drops any panel the user was in and the pane it would
-    // have returned to — otherwise closing Settings later would yank them back to an older pane.
-    function jumpToPane(paneId, returnConversation) {
-      panelReturnPane = null;
+    // A jump is a destination, so the panel the user was in is left behind rather than closed back
+    // into — openTerminal pushes the pane onto the walk, and the panel stays where it was on it.
+    function jumpToPane(paneId) {
       hidePanels();
-      openTerminal(paneId, returnConversation);
+      openTerminal(paneId);
     }
 
     function toggleSettings() {

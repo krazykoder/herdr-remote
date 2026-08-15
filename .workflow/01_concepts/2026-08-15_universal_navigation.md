@@ -1,6 +1,7 @@
 # One walk over every destination
 
-*2026-08-15 · concept · proposal only, nothing here is built*
+*2026-08-15 · concept · **steps 1–4 are now built**; this document is kept as the reasoning behind
+them. What shipped differs from the plan below in one place only, noted under step 4.*
 
 ## What exists today
 
@@ -26,12 +27,15 @@ destinations belong in the one that exists**, and what the entries have to say.
 
 Concretely, three changes to `history.js`, in this order, each shippable alone:
 
-1. **A conversation is an entry.** *(now done — `NAV_CONV` prefix, `navAlive`, `navLabel`)*
+1. **A conversation is an entry.** *(done — `NAV_CONV` prefix, `navAlive`, `navLabel`)*
 2. **A panel is an entry** — Settings and Activity, which today are toggles with a `panelReturnPane`
    that is a one-deep private history doing the same job worse. Folding them in deletes that
-   variable rather than adding to it.
+   variable rather than adding to it. *(done — `NAV_PANEL`, `openPanelId`, and `panelReturnPane`
+   deleted. `closePanel` is now one line: `goBack()`.)*
 3. **The landing page is an entry**, which makes `closeTerminal` a `navGo` rather than a special
    case, and makes the phone's own Back gesture mappable onto the same list (see below).
+   *(done — `NAV_LANDING`, `showLanding`, and both Back chevrons now call one `goBack`.
+   `paneReturnConversation` went with it, as predicted below.)*
 
 ### Why not the shape in the proposal
 
@@ -103,6 +107,27 @@ half-mapped list is worse than an unmapped one, because Back would sometimes lea
 That is why it is step 4, not step 1 — and why it should not be attempted until 1–3 have been
 lived with. The PWA case in particular needs checking: in standalone display mode there is no
 browser chrome to reveal what Back is about to do.
+
+### What step 4 shipped as, and the one change from the plan
+
+`pushState` carries **a serial, not `navIndex`**. The list drops its oldest entry at `NAV_MAX`, and
+every index below the drop then shifts by one — under states already written into the browser's
+stack, which do not shift. `popstate` would have restored the wrong destination after the
+twenty-first visit of a session. So `navSerials` is pushed alongside `navHistory`, by the same
+`navPush` on the same cursor and cap, and the state holds `{herdrNav: <serial>}`; `popstate` looks
+it up with `indexOf`.
+
+That leaves one case the plan did not have an answer for: a state whose serial has aged out of our
+window, or one another page wrote. It cannot be shown, and worse, continuing to compute
+`history.go(i - navIndex)` against a cursor the browser has already moved off would put the two
+permanently out of step. `navDetached` covers it — the walk stops driving the browser and steps
+directly until the next `noteVisit` re-anchors it with a fresh `pushState`.
+
+The landing entry uses `replaceState`, not `pushState`, so Back off the list leaves the app in one
+press rather than spending one on a state of ours.
+
+**Still unchecked:** the PWA standalone case, and iOS Safari's edge-swipe against a page that is
+now pushing states. Both need a phone, not a test.
 
 ## What I would not do
 
