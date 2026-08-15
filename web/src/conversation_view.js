@@ -475,8 +475,11 @@
     function convClock(e) {
       const at = convAt(e);
       if (!at) return '';
-      const t = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      return convAtRank(e) ? t : '~' + t;
+      const date = new Date(at), today = new Date();
+      const day = date.toDateString() === today.toDateString() ? '' :
+        date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ';
+      const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return (convAtRank(e) ? '' : '~') + day + time;
     }
 
     // `self` is what an entry written before the recorder stamped its own label and harness falls
@@ -521,7 +524,11 @@
         // the one that spoke — in a joint thread "which colleague was this said to" is the question
         // the view exists to answer, and in a single-pane thread it is what keeps a prompt and the
         // reply to it under headers of the same shape rather than two different ones.
-        const who = `<span class="dot" style="background:${tint}"></span>${name}${badge}`;
+        // Bubble washes identify the conversation member; header dots report that member's state
+        // now, like every other agent dot. A stopped pane has no live state left to claim.
+        const dot = live ? statusColor(live) : 'var(--muted)';
+        const who = `<span class="dot${live && live.status === 'working' ? ' pulse' : ''}" ` +
+          `style="background:${dot}"></span>${name}${badge}`;
         const bar = user ? [who, from].filter(Boolean).join(' · ') : who;
         // On every bubble, including a user's own in a single-pane thread, where it is the whole
         // header: a time you have to switch views to check is not one you can check an entry with.

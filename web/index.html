@@ -1900,7 +1900,7 @@
        what is added to it and the text itself are one control — the border says which agent is
        about to receive it, so the answer is on the thing being written rather than beside it. */
     .conv-bubble {
-      margin: 8px;
+      margin: 4px 8px 8px;
       border: 1px solid var(--dock-accent, var(--border));
       border-radius: 18px;
       background: var(--surface);
@@ -1914,7 +1914,7 @@
       display: flex;
       align-items: flex-end;
       gap: 8px;
-      padding: 8px 8px 8px 12px;
+      padding: 4px 8px 8px 12px;
     }
 
     /* The field and its ghost, stacked. The ghost is the one that paints the block cursor. */
@@ -2942,9 +2942,9 @@
     .xfer-row {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
       width: 100%;
-      padding: 8px 10px;
+      padding: 6px 10px 4px;
       /* Hairline rather than a gap: one bubble divided into what it says and who it is for, not
          two boxes sharing a shadow. */
       border-bottom: 1px solid var(--border);
@@ -3963,20 +3963,21 @@
 
     <div class="setting-group">
       <label class="toggle-option"><input type="checkbox" id="bandwidthOn" onchange="setBandwidthOn(this.checked)"> Track WebSocket payload data</label>
-      <div class="hint">Shows sent, received and total payload bytes in Activity, for this browser
-        session. The newest bucket is the one filling now. WebSocket frame and TLS overhead are not
+      <div class="hint">Shows sent, received and total payload bytes in Activity. Saved interval
+        buckets are newest first; quiet time adds no zero bucket. WebSocket frame and TLS overhead are not
         available to the page.</div>
       <label for="bandwidthStep">Bucket</label>
       <select id="bandwidthStep" onchange="setBandwidthStep(Number(this.value))">
+        <option value="1">1 minute</option>
         <option value="5">5 minutes</option>
         <option value="10">10 minutes</option>
         <option value="30">30 minutes</option>
         <option value="60">60 minutes</option>
       </select>
-      <label for="bandwidthSpan">Keep</label>
-      <select id="bandwidthSpan" onchange="setBandwidthSpan(Number(this.value))">
-        <option value="1">1 hour</option>
-        <option value="5">5 hours</option>
+      <label for="bandwidthKeep">Show</label>
+      <select id="bandwidthKeep" onchange="setBandwidthKeep(Number(this.value))">
+        <option value="12">12 intervals</option>
+        <option value="60">60 intervals</option>
       </select>
       <div class="hint">A narrower bucket is closer to live, a wider one is easier to read across
         hours. Changing the bucket clears what has been collected: it is already cut on the old
@@ -4024,7 +4025,7 @@
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
     <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
-      <h2 id="bandwidthTitle">Data exchange · last hour</h2>
+      <h2 id="bandwidthTitle">Data exchange</h2>
       <div id="bandwidthRows"></div>
     </section>
   </div>
@@ -4074,9 +4075,9 @@
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-              oninput="autoGrow(this); syncConvCursor()" onkeydown="convInputKey(event)"
+              oninput="autoGrow(this); syncConvCursor(); stickConvLatest()" onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
-              onfocus="syncConvCursor()" onblur="syncConvCursor()"
+              onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
               onscroll="syncConvCursor()"></textarea>
           </div>
           <button class="send" id="convSendBtn" onclick="convSend()" aria-label="Send"><svg width="22" height="22"
@@ -4132,6 +4133,8 @@
             aria-label="Quit what is running in this pane">QUIT</button>
           <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
             aria-label="Clear this pane">CLS</button>
+          <button class="refresh-btn cls-btn" id="resendBtn" onclick="armResend()" hidden
+            aria-label="Load this pane's last message into the composer">Resend</button>
           <!-- Refresh rides with them. The pane polls itself every few seconds, so this is the
                button for the one state where it does not: past POLL_MAX_LINES the poll stops and
                a manual read is the only way to update. The icon alone says nothing in a menu, so

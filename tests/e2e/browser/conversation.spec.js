@@ -104,6 +104,34 @@ test('a pane in a conversation is recorded into the database', async ({page}) =>
   expect(rec.touched).toBeGreaterThan(0);
 });
 
+test('an older bubble clock includes its short date', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(([k, label]) => {
+    convHeld.set(k, {key: k, label: label, entries: [{who: 'agent', text: 'Yesterday.',
+      at: Date.now() - 24 * 60 * 60 * 1000, at_src: 'state'}]});
+    convSetView(paneOf(activePane), loadConvIndex()[0].id);
+    renderConvView();
+  }, [key, AGENT]);
+  await expect(page.locator('#convThread .conv-time')).toHaveText(/[A-Z][a-z]{2} \d{1,2} \d{1,2}:\d{2}/);
+});
+
+test('every bubble header dot reports its agent’s current state', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(async () => {
+    const a = paneOf(activePane);
+    a.status = 'blocked';
+    convSetView(a, loadConvIndex()[0].id);
+    await renderConvView();
+  });
+  const dots = page.locator('#convThread .conv-msg .conv-who .dot');
+  await expect(dots).toHaveCount(2);
+  expect(await dots.evaluateAll(all => all.map(dot => dot.style.background))).toEqual(
+    ['var(--dot-red)', 'var(--dot-red)']);
+});
+
 test('the landing page lists recorded conversations and their live members', async ({page}) => {
   await open(page);
   await join(page);
@@ -2376,6 +2404,21 @@ const openWindow = async page => {
   await expect(page.locator('#convView')).toBeVisible();
 };
 
+test('typing in the conversation composer keeps its newest bubble visible', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(k => {
+    convHeld.set(k, {key: k, label: 'Architect 1', entries: Array.from({length: 40}, (_, i) =>
+      ({who: 'agent', text: `message ${i}`, at: Date.now() - (40 - i) * 1000, at_src: 'state'}))});
+  }, key);
+  await openWindow(page);
+  await expect(page.locator('#convViewThread .conv-msg')).toHaveCount(40);
+  await page.locator('#convView').evaluate(view => { view.scrollTop = 0; });
+  await page.locator('#convInput').fill('reply');
+  await expect.poll(() => page.locator('#convView').evaluate(view =>
+    view.scrollHeight - view.scrollTop - view.clientHeight)).toBeLessThan(24);
+});
+
 // A third member, so the target row has something to choose between. Three agents in one
 // conversation is the case the row exists for.
 const joinThird = page => page.evaluate(async () => {
@@ -3211,24 +3254,29 @@ test('several members working at once each say so on their own newest bubble', a
   await expect(last.locator('.conv-badge.working')).toHaveCount(1);
 });
 
-test('Resend repeats the last thing sent to this pane, and takes two taps', async ({page}) => {
+test('Resend moves the last pane message into the composer without sending', async ({page}) => {
   await open(page);
   // Nothing sent yet, so nothing to repeat.
-  await expect(page.locator('#quickActions .qa-resend')).toHaveCount(0);
+  await expect(page.locator('#resendBtn')).toBeHidden();
   await page.evaluate(() => {
     document.getElementById('termInput').value = 'run the tests';
     sendText();
   });
-  const resend = page.locator('#quickActions .qa-resend');
-  await expect(resend).toBeVisible();
+  const resend = page.locator('#resendBtn');
   await tapWire(page);
+  await page.setViewportSize({width: 390, height: 844});
+  await page.locator('#fireBtn').click();
+  await expect(resend).toBeVisible();
   await resend.click();
-  // Armed, not fired: a duplicate prompt in a live agent is not undoable.
   await expect(resend).toHaveText('Resend?');
-  expect(await page.evaluate(() => window.__sent.length)).toBe(0);
   await resend.click();
-  const body = await page.evaluate(() =>
-    window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
+  // Pane mode gates the repeat through the ordinary composer: edit it or Send it yourself.
+  await expect(page.locator('#termInput')).toHaveValue('run the tests');
+  await expect(page.locator('#termInput')).toBeFocused();
+  expect(await page.evaluate(() => window.__sent.length)).toBe(0);
+  await page.locator('#termInput').press('Control+Enter');
+  const body = await page.evaluate(() => window.__sent.filter(m => m.type === 'send_text')
+    .map(m => m.text).join(''));
   expect(body).toBe('run the tests');
 });
 
@@ -3239,5 +3287,5 @@ test('Resend is per pane, not one clipboard for all of them', async ({page}) => 
     sendText();
   });
   await page.evaluate(() => openTerminal(agents.find(a => a.label === 'scratch').pane_id));
-  await expect(page.locator('#quickActions .qa-resend')).toHaveCount(0);
+  await expect(page.locator('#resendBtn')).toBeHidden();
 });

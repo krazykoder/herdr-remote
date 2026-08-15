@@ -32,31 +32,38 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
-test('Activity tracks local WebSocket payload bytes in twelve five-minute buckets', async ({page}) => {
+test('Activity tracks local WebSocket payload bytes in a newest-first interval stack', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
   // Off means no collection and no empty telemetry panel claiming an hour it did not observe.
   await page.locator('#navTimeline').click();
   await expect(page.locator('#bandwidth')).toBeHidden();
   await page.locator('#navSettings').click();
+  await expect(page.locator('#bandwidthStep')).toHaveValue('5');
   await page.locator('#bandwidthOn').check();
   await page.locator('#navTimeline').click();
   await expect(page.locator('#bandwidth')).toBeVisible();
+  await expect(page.locator('#bandwidthRows .bandwidth-chip')).toHaveCount(36);
 
   // A real request and its real relay reply exercise both central WebSocket hooks, rather than
   // testing the counters by calling them directly.
   await page.evaluate(() => ws.send(JSON.stringify(
     {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
-  await expect.poll(() => page.evaluate(() => bandwidthBuckets().at(-1).sent)).toBeGreaterThan(0);
-  await expect.poll(() => page.evaluate(() => bandwidthBuckets().at(-1).received)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].sent)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].received)).toBeGreaterThan(0);
 
   await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(3);
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
     await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
   }
   expect(await page.evaluate(() => {
-    const b = bandwidthBuckets().at(-1);
+    const b = bandwidthBuckets()[0];
     return b.sent + b.received;
   })).toBeGreaterThan(0);
+  // Records are a stack: a quiet interval is absent, never drawn as a fabricated zero column.
+  await page.evaluate(() => noteBandwidth('sent', 'older bucket', Date.now() - 30 * 60 * 1000));
+  await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(12);
+  expect(await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at))).toEqual(
+    await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at).slice().sort((a, b) => b - a)));
 
   // A second tap on Activity leaves it, which is what every other panel button does.
   await page.locator('#navTimeline').click();
@@ -73,9 +80,8 @@ test('the newest bucket is the one filling, and it is drawn while it fills', asy
   // and a stopped one is the whole reason to look.
   const times = page.locator('#bandwidthRows .bandwidth-time');
   await expect(times).toHaveCount(12);
-  await expect(times.last()).toHaveText('now');
-  await expect(times.last()).toHaveClass(/now/);
-  await expect(times.first()).toHaveText(/^\d\d:\d\d$/);
+  await expect(times.first()).toHaveText('now');
+  await expect(times.first()).toHaveClass(/now/);
 
   // And it is redrawn where it stands, without leaving Activity and coming back.
   const live = page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip.now');
@@ -83,6 +89,22 @@ test('the newest bucket is the one filling, and it is drawn while it fills', asy
   await page.evaluate(() => ws.send(JSON.stringify(
     {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
   await expect.poll(() => live.textContent()).not.toBe(before);
+});
+
+test('a reconnect starts a fresh payload bucket but retains history', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  await page.locator('#bandwidthOn').check();
+  await page.evaluate(() => ws.send(JSON.stringify(
+    {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).length)).toBe(1);
+  const first = await page.evaluate(() => bandwidthBuckets()[0].at);
+  await page.evaluate(() => ws.close());
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.evaluate(() => ws.send(JSON.stringify(
+    {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).length)).toBe(2);
+  expect(await page.evaluate(() => bandwidthBuckets()[0].at)).toBeGreaterThan(first);
 });
 
 test('the clock row and all three rows are one table in one scroller', async ({page}) => {
@@ -102,28 +124,25 @@ test('the clock row and all three rows are one table in one scroller', async ({p
   await expect(page.locator('#bandwidthRows')).toHaveCSS('overflow-x', 'auto');
 });
 
-test('the bucket and the span are settings, and the heading says which is in force',
+test('bucket and stack size are settings, and records survive reload',
   async ({page}) => {
     await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
     await page.locator('#navSettings').click();
     await page.locator('#bandwidthOn').check();
     await page.locator('#bandwidthStep').selectOption('30');
-    await page.locator('#bandwidthSpan').selectOption('5');
+    await page.locator('#bandwidthKeep').selectOption('60');
     await page.locator('#navTimeline').click();
-    // Five hours in half-hour steps is ten buckets, and the heading says so rather than leaving a
-    // reader to count chips to find out what one of them covers.
-    await expect(page.locator('#bandwidthTitle')).toHaveText('Data exchange · 30 min · last 5 hours');
-    await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(10);
-    await expect(page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip'))
-      .toHaveCount(10);
-    // Half-hour boundaries, not the five-minute ones the buckets were cut on before the change.
-    const clocks = await page.locator('#bandwidthRows .bandwidth-time').allTextContents();
-    for (const t of clocks.slice(0, -1)) expect(t).toMatch(/:(00|30)$/);
-    // And it survives a reload, like every other setting.
+    await expect(page.locator('#bandwidthTitle')).toHaveText('Data exchange · 30 min buckets · latest 60');
+    // Settings and collected buckets survive reload.
+    await page.evaluate(() => ws.send(JSON.stringify(
+      {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('herdr_bandwidth_data'))).not.toBeNull();
     await page.reload();
     await page.locator('#navSettings').click();
     await expect(page.locator('#bandwidthStep')).toHaveValue('30');
-    await expect(page.locator('#bandwidthSpan')).toHaveValue('5');
+    await expect(page.locator('#bandwidthKeep')).toHaveValue('60');
+    await page.locator('#navTimeline').click();
+    await expect(page.locator('#bandwidthRows .bandwidth-chip')).not.toHaveCount(0);
   });
 
 test('the compiled distribution single-file boots and connects', async ({page}) => {

@@ -172,9 +172,8 @@
       const size = bandwidthBucketMs();
       const title = document.getElementById('bandwidthTitle');
       if (title) {
-        const span = bandwidthSpanHr();
-        title.textContent = `Data exchange · ${bandwidthStepMin()} min · ` +
-          `last ${span === 1 ? 'hour' : span + ' hours'}`;
+        title.textContent = `Data exchange · ${bandwidthStepMin()} min buckets · ` +
+          `latest ${bandwidthCount()}`;
       }
       const kinds = [
         ['Total', b => b.sent + b.received],
@@ -186,19 +185,20 @@
       // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
-      const sig = buckets.map(b => b.at).join(',');
+      const sig = buckets.map(b => b.at || 'empty').join(',');
       if (rows.dataset.sig !== sig) {
         // One grid for the header and all three rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
         rows.style.gridTemplateColumns = `52px repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = (b, i) => {
+          if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
           const range = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
             end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
-          // The last bucket is the one being filled: it is a few minutes old at most, and saying so
+          // The first bucket is newest because this is a stack, not a continuous timeline. Saying so
           // is the difference between a small number and a number that has stopped moving.
-          return {range: range, live: i === buckets.length - 1,
+          return {range: range, live: i === 0 && b.at === Math.floor(Date.now() / size) * size,
             clock: `${String(start.getHours()).padStart(2, '0')}:` +
               `${String(start.getMinutes()).padStart(2, '0')}`};
         };
@@ -219,7 +219,7 @@
       const bars = rows.querySelectorAll('.bandwidth-row');
       kinds.forEach(([, value], r) => {
         const chips = bars[r].querySelectorAll('.bandwidth-chip');
-        buckets.forEach((b, i) => { chips[i].textContent = formatBandwidth(value(b)); });
+        buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
     }
 
@@ -294,6 +294,7 @@
         // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
+        resetBandwidthBucket();
         setStatus('disconnected');
         setTimeout(connect, 3000);
       };

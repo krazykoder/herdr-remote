@@ -115,6 +115,7 @@
     function renderQuickActions() {
       const qa = document.getElementById('quickActions');
       if (!activePane) { qa.innerHTML = ''; return; }
+      syncResend();
       const a = agents.find(x => x.pane_id === activePane);
       const blocked = a && a.status === 'blocked';
       // The nav row carries the fold control, so it also has to survive the bar being switched
@@ -151,23 +152,13 @@
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
         `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">💬</button>`
         : '';
-      // Offered only where there is something to repeat, for the reason Summary is conditional. An
-      // agent that dropped a prompt on a full context, a transfer that landed while the pane was
-      // mid-tool-call: the answer is the same text again, and retyping it on a phone is the part
-      // that does not happen. Per pane — the last thing sent to *this* one.
-      const again = lastSentText[activePane];
-      const resend = again
-        ? `<button class="qa-resend" onclick="resendLast(this)" ` +
-        `title="Send this pane the last thing you sent it: ${escapeHtml(again.slice(0, 80))}" ` +
-        `aria-label="Send this pane the last thing you sent it">Resend</button>`
-        : '';
       const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>${conv}</div>` +
         `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
-        `<div class="qa-right">${resend}${summary}` +
+        `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;
       let middle = '';

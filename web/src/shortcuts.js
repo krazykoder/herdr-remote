@@ -796,6 +796,7 @@
       const view = document.getElementById('convView');
       if (!view || view.style.display === 'none') return;
       const box = document.getElementById('convViewThread');
+      const stick = bottom || view.scrollTop + view.clientHeight >= view.scrollHeight - 24;
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
@@ -856,7 +857,7 @@
       syncDockPicks(entries.length);
       renderConvDock();
       renderConvStrip();
-      if (bottom) view.scrollTop = view.scrollHeight;
+      if (stick) view.scrollTop = view.scrollHeight;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
@@ -931,6 +932,7 @@
       closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
+      disarmResend();
       disarmAbort();
       disarmShortcut();
       disarmCtrl();
@@ -948,6 +950,7 @@
       closeFireMenu();
       disarmClear();
       disarmQuit();
+      disarmResend();
       disarmAbort();
       disarmShortcut();
       disarmCtrl();

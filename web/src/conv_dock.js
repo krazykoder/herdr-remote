@@ -281,6 +281,15 @@
       if (!input) return;
       input.focus();
       syncConvCursor();
+      stickConvLatest();
+    }
+
+    // The composer grows upward under the thread. Keep its newest bubble in view while writing;
+    // reading history still wins because this only runs after the writer explicitly focuses it.
+    function stickConvLatest() {
+      const view = document.getElementById('convView');
+      if (!view || view.style.display === 'none') return;
+      requestAnimationFrame(() => { view.scrollTop = view.scrollHeight; });
     }
 
     // The block cursor. A textarea's own caret is a hairline that disappears with focus, and this

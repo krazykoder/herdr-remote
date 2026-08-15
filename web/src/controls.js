@@ -20,8 +20,8 @@
     // The danger shortcuts in the palette keep the longer window — those are picked off a list
     // that has to be read first, not aimed at a button already under the thumb.
     const SHORTCUT_ARM_MS = 8000;
-    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc' };
-    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0 };
+    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc', resendBtn: 'Resend' };
+    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0, resendBtn: 0 };
 
     // The two-tap arm, once. The label says what the second tap will do, because a button that
     // only changes colour when armed does not say what it is armed to send.
@@ -87,6 +87,7 @@
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
     function disarmAbort() { disarmFire('abortBtn'); }
+    function disarmResend() { disarmFire('resendBtn'); }
 
     // Sent as a line, not as keys: this is the pane's own command in both cases. No agentSlash
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands
@@ -134,6 +135,7 @@
       // text, not a chunk of it — what was sent is one message, however many the wire took.
       noteSent(text, paneId);
       lastSentText[paneId] = text;
+      syncResend();
       // One message per chunk, then the single Enter that submits all of them. Nothing between the
       // chunks submits, so they land in the agent's composer as one text; the relay handles a
       // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
@@ -154,21 +156,27 @@
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);
     }
 
-    // The same text again, through the same path — so it is chunked, recorded and classified like
-    // anything else typed. Two taps, because a duplicate prompt in a live agent is not undoable and
-    // this button sits where a thumb already is. `armFire` is the app's answer to that everywhere
-    // else it is true.
-    function resendLast(btn) {
+    function syncResend() {
+      const btn = document.getElementById('resendBtn');
+      if (!btn) return;
+      const again = lastSentText[activePane];
+      btn.hidden = !again;
+      if (again) btn.title = `Load this pane's last message into the composer: ${again.slice(0, 80)}`;
+    }
+
+    // A resend is a composer prefill, never a direct write. The visible draft is the gate in pane
+    // mode; preserving one is more important than replacing it with an older message.
+    function armResend() { armFire('resendBtn', resendLast); }
+
+    function resendLast() {
       const again = lastSentText[activePane];
       if (!again) return;
-      // armButton and not armFire: this one is drawn by renderQuickActions from innerHTML, so it
-      // has no stable id for the header's table to key on.
-      armButton(btn, 'Resend?', () => {
-        const i = document.getElementById('termInput');
-        i.value = again;
-        autoGrow(i);
-        sendText();
-      });
+      const i = document.getElementById('termInput');
+      if (i.value.trim()) { showToast('Composer already has a draft. Send or clear it first.'); return; }
+      i.value = again;
+      autoGrow(i);
+      i.focus();
+      closeFireMenu();
     }
     function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
     function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }
