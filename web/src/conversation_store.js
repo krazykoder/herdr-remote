@@ -7,6 +7,18 @@
     //
     // No library and no build step: what follows is the browser's own database behind about sixty
     // lines of promise wrappers.
+    // The mark a conversation is shown by, drawn rather than typed. As an emoji it was whatever the
+    // platform's font decided — colour on Apple, monochrome elsewhere — and a variation selector
+    // does not reliably change that, so `color: var(--green)` was a request the font could refuse
+    // and on a phone it simply did. An inline SVG has no font in it: it is green because it takes
+    // currentColor, on every platform, and it is still markup rather than an image to load.
+    function convGlyph() {
+      return '<svg class="conv-glyph" viewBox="0 0 24 24" width="1em" height="1em" fill="none" ' +
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+        'aria-hidden="true"><path d="M20.5 11.5a8 8 0 0 1-8.5 8 8.6 8.6 0 0 1-3.9-.9L3.5 20l1.4-4.2' +
+        'A7.7 7.7 0 0 1 3.5 11.5a8 8 0 0 1 8.5-8 8 8 0 0 1 8.5 8z"/></svg>';
+    }
+
     const CONV_DB_NAME = 'herdr', CONV_DB_STORE = 'transcripts';
     const CONV_INDEX_KEY = 'herdr_conversations', CONV_FALLBACK_KEY = 'herdr_transcripts';
     // What the fallback keeps instead. It is sharing one 5 MB cap with everything else this app
@@ -871,7 +883,7 @@
         const msgs = (c.members || []).reduce((t, m) => t + (m.messages || 0), 0);
         const meta = `${n} member${n > 1 ? 's' : ''}` + (msgs ? ` · ${msgs} messages` : '');
         return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="toggleConvMember('${escapeHtml(c.id)}')">
-      <span class="kind conv-kind" aria-hidden="true">💬︎</span>
+      <span class="kind conv-kind">${convGlyph()}</span>
       <span class="info"><span class="name">${escapeHtml(c.name)}</span><span class="meta">${meta}</span></span>
       <span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
     </button>`;

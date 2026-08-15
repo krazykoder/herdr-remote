@@ -104,7 +104,18 @@ test('a conversation visited is in the same list, in the same order', async ({pa
   const names = await rows(page).locator('.name').allTextContents();
   expect(names[0]).toContain('a thread');
   expect(names[1]).toContain(AGENT);
-  await expect(rows(page).first().locator('.kind')).toHaveText('💬︎');
+  // Drawn, not typed: the mark is an SVG taking currentColor, so its colour is the stylesheet's
+  // and not the emoji font's — which is what "green" could not be while it was a codepoint.
+  await expect(rows(page).first().locator('.kind .conv-glyph')).toBeVisible();
+  const [mark, green] = await rows(page).first().locator('.kind').evaluate(el => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--green)';
+    el.appendChild(probe);
+    const pair = [getComputedStyle(el).color, getComputedStyle(probe).color];
+    probe.remove();
+    return pair;
+  });
+  expect(mark).toBe(green);
   await expect(rows(page).first().locator('.meta')).toContainText('1 pane · 1 live');
   // Only visited ones: every conversation is already one tap away on the landing page.
   await page.evaluate(() => {

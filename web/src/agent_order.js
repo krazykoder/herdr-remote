@@ -39,8 +39,15 @@
     // panel on top of the first, which the old one-deep memory did not.
     function closePanel() { goBack(); }
 
-    // The agent list is an exit, not a history entry. Header back buttons always land here.
+    // The agent list is an exit, not a history entry. Header back buttons always land here — and
+    // the browser is rewound to the entry the document was loaded on, so its own Back gesture does
+    // not still think it is standing on the pane that was just left.
     function showLanding() {
+      if (navRewind()) return;   // asynchronous; popstate calls landNow below
+      landNow();
+    }
+
+    function landNow() {
       // closeTerminal puts the list up itself, and does the rest of the teardown a pane needs.
       if (activePane) { closeTerminal(); return; }
       hidePanels();

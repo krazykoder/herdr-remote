@@ -401,7 +401,7 @@
         `</button>`;
     }
 
-    // The same row, saying what a conversation is instead of what a pane is doing: the 💬 the
+    // The same row, saying what a conversation is instead of what a pane is doing: the mark the
     // conversation sheet uses, the name, and how many panes wrote it. No status dot — a record has
     // no status, and the members that do have their own rows here.
     function recentConvRow(c) {
@@ -410,7 +410,7 @@
       const meta = `${n} pane${n === 1 ? '' : 's'}` + (live ? ` · ${live} live` : '');
       return `<button class="pair-pick${c.id === convViewId ? ' on' : ''}" ` +
         `onclick="closeRecentSheet(); openConversation('${escapeHtml(c.id)}')">` +
-        `<span class="kind conv-kind" aria-hidden="true">💬︎</span>` +
+        `<span class="kind conv-kind">${convGlyph()}</span>` +
         `<span class="info"><span class="name">${escapeHtml(c.name)}</span>` +
         `<span class="meta">${escapeHtml(meta)}</span></span>` +
         `</button>`;

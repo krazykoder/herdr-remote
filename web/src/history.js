@@ -19,11 +19,10 @@
     function navPushState() {
       const api = navBrowserHistory();
       if (!api) return;
-      const state = {herdrNav: navSerials[navIndex]};
-      // The first entry replaces rather than pushes, so Back off the landing page leaves the app
-      // the way Back off any first page does, instead of landing on a state we put there.
-      if (navHistory.length === 1) api.replaceState(state, '');
-      else api.pushState(state, '');
+      // Always a push, never a replace: the document's own entry is the landing page, which is not
+      // on the walk but is where the browser's Back has to be able to reach. Stamping our first
+      // destination onto it would make Back off that destination leave the app instead.
+      api.pushState({herdrNav: navSerials[navIndex]}, '');
       navDetached = false;   // whatever we had drifted past, this entry is ours again
     }
 
@@ -34,7 +33,17 @@
     // Guarded because these modules are also run as slices in a vm context, which has no window.
     if (typeof addEventListener === 'function') addEventListener('popstate', e => {
       const at = e.state && e.state.herdrNav;
-      const i = at == null ? -1 : navSerials.indexOf(at);
+      // No state at all is the entry the document was loaded on, which is the landing page. It is
+      // not a stop on the walk — nothing is behind the first destination — so the cursor sits
+      // before entry 0, from where Forward is a step of one and Back is nothing. Without this the
+      // phone's Back gesture out of the first pane opened would leave the screen exactly as it was.
+      if (at == null) {
+        navIndex = -1;
+        landNow();
+        syncNavBtns();
+        return;
+      }
+      const i = navSerials.indexOf(at);
       // A state older than NAV_MAX entries, or one another page wrote. We cannot show it, and we
       // must not keep computing deltas against a cursor the browser has already moved off — so the
       // walk stops driving the browser until the next visit re-anchors it.
@@ -134,6 +143,20 @@
 
     // Panels use the walk. Pane and conversation header chevrons deliberately return to the list.
     function goBack() { if (!navGo(-1)) showLanding(); }
+
+    // Exiting to the list is a rewind, not a step: the list is the entry the document was loaded
+    // on, so the browser goes back to *it* and the popstate above does the landing. Without this
+    // the chevron would put the list on screen while the browser's cursor stayed parked on the
+    // destination just left — and the next Back gesture would replay the one before it.
+    //
+    // False where there is no browser history to drive, which is also the vm slices; the caller
+    // lands directly instead.
+    function navRewind() {
+      const api = navBrowserHistory();
+      if (!api || navDetached || navIndex < 0) return false;
+      api.go(-(navIndex + 1));
+      return true;
+    }
 
     // The walk's own controls live in the status bar, which is the one row on screen in every view —
     // the pane had arrows and the conversation window had none, and a walk that crosses both needs
@@ -301,7 +324,7 @@
         ? `<button class="qa-conv${threaded ? ' on' : ''}" onclick="toggleConvView()" ` +
         `aria-pressed="${threaded}" ` +
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
-        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}"><span class="conv-kind">💬︎</span></button>`
+        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">${convGlyph()}</button>`
         : '';
       const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +

@@ -66,6 +66,35 @@ test('the browser holds the cursor, so its own Back is the same step as ‹', as
     'aria-label', new RegExp(`Back to ${AGENT}`));
 });
 
+test('the browser can go back out of the first destination, not just between them',
+  async ({page}) => {
+    await openPane(page);
+    // The landing page is not on the walk, so there is nothing behind this pane to step to — but
+    // the entry the document was loaded on is still there, and Back has to reach it. Without that
+    // the phone's Back gesture out of the first pane opened left the screen exactly as it was, and
+    // quietly put the app's cursor and the browser's out of step for everything after.
+    await page.goBack();
+    await expect(page.locator('#agentListView')).toBeVisible();
+    await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+    await page.goForward();
+    await expect(page.locator('#terminalView')).toBeVisible();
+  });
+
+test('leaving by the header chevron rewinds the browser too', async ({page}) => {
+  await openPane(page);
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#settingsView')).toBeVisible();
+  await page.locator('#navSettings').click();          // back onto the pane, one entry down
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  // The chevron is an exit, so the browser is standing where the screen is. A cursor left parked
+  // on the panel would answer the next Back gesture with the pane before it — from a screen the
+  // user had already left.
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+  expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
+});
+
 test('desktop < and > walk history without stealing composer input', async ({page}) => {
   await openPane(page);
   await page.locator('#navSettings').click();

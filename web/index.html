@@ -1402,8 +1402,17 @@
       font-size: 0.75rem;
     }
 
-    /* Text presentation makes the chat glyph obey the shared green in every browser. */
-    .conv-kind { color: var(--green); font-family: Arial, sans-serif; }
+    /* The conversation mark. An SVG that takes currentColor, so the green is this rule's to give
+       rather than the emoji font's to refuse. */
+    .conv-kind {
+      color: var(--green);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.05rem;
+    }
+
+    .conv-glyph { display: block; }
 
     .order-row .info,
     .pair-pick .info {
@@ -1663,14 +1672,19 @@
        the right price for a header that fits. Same breakpoint as the rest of the layout. */
     @media (max-width: 767px) {
       /* Phone thumbs reach the edges, while the home indicator lives under the centre. Keep the
-         walk's arrows out at the safe edges and leave Recent in the middle; time and state stay in
-         the DOM but do not spend this row's height. Esc remains beside Back when it is needed. */
+         walk's arrows out at the safe edges and leave Recent in the middle.
+         Two rows, not one: the change stamp and the Esc chip were absolutely positioned into the
+         bar's bottom padding, and that padding is 5px — so both landed on top of the arrows they
+         were meant to sit under. A stamp under the ‹ and an Esc chip over the › are not a footer,
+         they are a collision. The first row is theirs and costs 12px; the arrows own the second. */
       .status-bar {
-        position: relative;
         display: grid;
         grid-template-columns: 68px minmax(0, 1fr) 68px;
-        grid-template-areas: 'back recent forward';
-        gap: 0;
+        grid-template-areas:
+          'stamp stamp state'
+          'back  recent forward';
+        column-gap: 0;
+        row-gap: 2px;
         padding-left: max(8px, env(safe-area-inset-left, 0px));
         padding-right: max(8px, env(safe-area-inset-right, 0px));
       }
@@ -1680,11 +1694,13 @@
       .status-bar #recentBtn { grid-area: recent; justify-self: center; }
       .status-bar #navFwd { grid-area: forward; justify-self: end; width: 68px; min-height: 34px; margin-right: 10vw; }
 
-      /* Reuse the reserved safe-area padding as a tiny footer rather than adding a second row. */
+      /* Both ends of the top row, at the size of a caption rather than of a control — neither is
+         pressed, and the row exists so the arrows below it can have the whole width. Spanning two
+         columns each, meeting in the middle: the stamp grows to the right and the state grows to
+         the left, so the longer of the two takes the room the other is not using. */
       .status-bar .left {
-        position: absolute;
-        left: max(8px, env(safe-area-inset-left, 0px));
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 2px);
+        grid-area: stamp;
+        align-self: center;
         flex: none;
         min-height: 0;
         font-size: 0.5rem;
@@ -1693,15 +1709,11 @@
       .status-bar #statusBarRight { display: block; font-size: 0.5rem; }
 
       .status-bar .state {
-        position: absolute;
-        left: auto;
-        right: max(8px, env(safe-area-inset-right, 0px));
-        top: auto;
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 2px);
-        transform: none;
-        display: flex;
+        grid-area: state;
+        grid-column: 2 / 4;
+        align-self: center;
+        justify-content: flex-end;
         flex: none;
-        min-height: 0;
       }
 
       .fire-wrap {
@@ -3440,11 +3452,16 @@
       width: 34px;
       height: 22px;
       padding: 0;
+      /* The glyph inside is an SVG at 1em, so the button has to say what an em is here and centre
+         it — a bare text line-height leaves it sitting low in a 22px pill. */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border-radius: 11px;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--green);
-      font-size: 0.7rem;
+      font-size: 0.85rem;
       font-weight: 400;
       filter: none;
       opacity: 1;

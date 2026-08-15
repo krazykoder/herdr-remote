@@ -48,6 +48,8 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     // block below this one. Stubbed rather than sliced in: this suite owns the nav row, not the
     // recorder.
     convsForPane: () => convs, convViewOn: () => threaded, toggleConvView() {},
+    // The mark is drawn by the conversation store, which this slice does not load.
+    convGlyph: () => '<svg class="conv-glyph"></svg>',
     convThreadOn: () => threaded, convLastAgent: threaded ? 3 : -1, selectFinalConvMessage() {},
     // The strip's centre names the pane the composer types into, so the fold has to redraw it.
     renderPairStrip() {},
