@@ -21,6 +21,10 @@ async function tapWire(page) {
   });
 }
 const reads = page => page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
+// The pane's own opening read asks for 200 and can land after its first content does, when the
+// text was primed from the stored transcript — so tests about the *deep* read count only reads
+// deeper than a pane opens on. Counting every read would be counting that race.
+const deepReads = async page => (await reads(page)).filter(r => r.lines > 200);
 
 test.beforeEach(async ({page}) => {
   const errors = [];
@@ -96,13 +100,16 @@ test('a status that did not change reads nothing', async ({page}) => {
 test('a status change does not re-fetch a deep read', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
-  await page.evaluate(() => { paneLines = 20000; });
+  // The state a deep read is only ever reached from: scrolled up into the history. Without the
+  // flag the pane's own scroll-to-tail, which lands a beat after the first content does, takes the
+  // depth straight back to 200 and re-reads — and the test then measures that race, not the poll.
+  await page.evaluate(() => { paneLines = 20000; userScrolledUp = true; });
   await tapWire(page);
 
   await pushStatus(page, 'working');
   await page.waitForTimeout(500);
-  expect(await reads(page), 'scrollback does not change, so 20,000 lines were re-read for nothing')
-    .toEqual([]);
+  expect(await deepReads(page),
+    'scrollback does not change, so 20,000 lines were re-read for nothing').toEqual([]);
 });
 
 test('a deep read pauses the poll, and the tail turns it back on', async ({page}) => {
@@ -110,11 +117,14 @@ test('a deep read pauses the poll, and the tail turns it back on', async ({page}
   await expect(page.locator('#termContent')).toContainText('done.');
   // Stood in for rather than scrolled to: the fake herdr's pane is five lines, and what is under
   // test is the depth, not how the user reached it.
-  await page.evaluate(() => { paneLines = 20000; });
+  // The state a deep read is only ever reached from: scrolled up into the history. Without the
+  // flag the pane's own scroll-to-tail, which lands a beat after the first content does, takes the
+  // depth straight back to 200 and re-reads — and the test then measures that race, not the poll.
+  await page.evaluate(() => { paneLines = 20000; userScrolledUp = true; });
   await tapWire(page);
 
   await page.waitForTimeout(4000);   // more than one tick of the 3s interval
-  expect(await reads(page), 'the poll re-fetched 20,000 lines').toEqual([]);
+  expect(await deepReads(page), 'the poll re-fetched 20,000 lines').toEqual([]);
 
   // Back at the newest line. The handler is the real one; only the scroll is synthesised.
   await page.evaluate(() => {
@@ -130,12 +140,15 @@ test('a deep read pauses the poll, and the tail turns it back on', async ({page}
 test('the refresh button still reads at full depth while the poll is paused', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
-  await page.evaluate(() => { paneLines = 20000; });
+  // The state a deep read is only ever reached from: scrolled up into the history. Without the
+  // flag the pane's own scroll-to-tail, which lands a beat after the first content does, takes the
+  // depth straight back to 200 and re-reads — and the test then measures that race, not the poll.
+  await page.evaluate(() => { paneLines = 20000; userScrolledUp = true; });
   await tapWire(page);
 
   // Refresh lives in the f() menu at every width now.
   await page.locator('#fireBtn').click();
   await page.locator('button[aria-label="Refresh pane"]').click();
-  await expect.poll(() => reads(page).then(r => r.length)).toBe(1);
-  expect((await reads(page))[0].lines).toBe(20000);
+  await expect.poll(() => deepReads(page).then(r => r.length)).toBe(1);
+  expect((await deepReads(page))[0].lines).toBe(20000);
 });

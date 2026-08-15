@@ -95,15 +95,21 @@ test('leaving by the header chevron rewinds the browser too', async ({page}) => 
   expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
 });
 
-test('desktop < and > walk history without stealing composer input', async ({page}) => {
+test('desktop , and . walk history without stealing composer input', async ({page}) => {
   await openPane(page);
   await page.locator('#navSettings').click();
+  // Unshifted: the keys the arrows are printed on, which is the whole point of moving off < >.
+  await page.keyboard.press('Comma');
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.keyboard.press('Period');
+  await expect(page.locator('#settingsView')).toBeVisible();
+  // Shift held is still the same step — the arrows are what the keys are labelled with.
   await page.keyboard.press('Shift+Comma');
   await expect(page.locator('#terminalView')).toBeVisible();
   await page.keyboard.press('Shift+Period');
   await expect(page.locator('#settingsView')).toBeVisible();
   await page.locator('#settingsView input').first().focus();
-  await page.keyboard.press('Shift+Comma');
+  await page.keyboard.press('Comma');
   await expect(page.locator('#settingsView')).toBeVisible();
 });
 

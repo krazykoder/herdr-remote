@@ -3247,7 +3247,9 @@ test('the composer draws its own block cursor, and it is always there', async ({
   await expect(cursor).toHaveCount(1);
   await page.locator('#convInput').fill('ship it');
   await page.locator('#convInput').click();
-  const at = async () => (await cursor.boundingBox()).x;
+  // Measured through the locator, which re-resolves: the ghost is rewritten whenever the field is
+  // synced, so a box read against a node captured a moment earlier can find it already replaced.
+  const at = () => cursor.evaluate(el => el.getBoundingClientRect().x);
   const end = await at();
   // It follows the caret rather than sitting at the end of the box.
   await page.evaluate(() => {

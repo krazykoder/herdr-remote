@@ -212,6 +212,19 @@
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
       const panes = panesOn ? agents.filter(a => a.agent) : [];
+      // What the pane rows cannot account for: snapshots and pushes name no pane, and a pane that
+      // has exited keeps its bytes but loses its row. Without this the split silently fails to add
+      // up to the total above it, which reads as one of the two numbers being wrong.
+      const other = panes.length
+        ? `<div class="bandwidth-row" id="otherBandwidthRow">` +
+          `<span class="bandwidth-label">Shared</span>` +
+          `<div class="bandwidth-chips">${buckets.map(b => {
+            const range = b.empty ? 'No data' : '';
+            return `<span class="bandwidth-chip${b.at && b.at === liveAt ? ' now' : ''}" ` +
+              `title="${paneKind[1]}, not attributable to one pane${range ? ` — ${range}` : ''}">` +
+              `</span>`;
+          }).join('')}</div></div>`
+        : '';
       const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : [], metric,
         panes.map(a => a.pane_id)).join(',');
       if (rows.dataset.sig !== sig) {
@@ -251,7 +264,7 @@
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${paneKind[1]}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
-            }).join('')}</div></div>`).join('');
+            }).join('')}</div></div>`).join('') + other;
         rows.dataset.sig = sig;
       }
       // The numbers, written into the chips that are already there.
@@ -260,6 +273,8 @@
         const chips = bars[r].querySelectorAll('.bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
+      // Filled as the pane rows are read, so what is left over is exactly what they did not claim.
+      const claimed = buckets.map(() => 0);
       panes.forEach((a, i) => {
         const row = bars[i + kinds.length];
         const b = paneBandwidth[a.pane_id];
@@ -270,8 +285,17 @@
         const byAt = Object.fromEntries((b ? b.buckets : []).map(entry => [entry.at, entry]));
         const chips = row.querySelectorAll('.bandwidth-chip');
         buckets.forEach((bucket, j) => { const entry = byAt[bucket.at];
+          if (entry) claimed[j] += paneKind[2](entry);
           chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : ''; });
       });
+      const otherRow = panes.length ? bars[kinds.length + panes.length] : null;
+      if (otherRow) {
+        const chips = otherRow.querySelectorAll('.bandwidth-chip');
+        // Clamped: a pane row is written from its own record and the total from another, and a
+        // number below zero would be the panel reporting a rounding difference as traffic.
+        buckets.forEach((b, j) => { chips[j].textContent = b.empty ? '' :
+          formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j])); });
+      }
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code

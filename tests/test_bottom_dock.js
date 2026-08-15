@@ -23,6 +23,8 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
   const el0 = id => els[id];
   const el = id => els[id] || (els[id] =
     {id, innerHTML: '', style: {}, setAttribute() {}, scrollTop: 0, scrollHeight: 4000,
+     // The bar is only rewritten when its markup changed, and the last markup is remembered here.
+     dataset: {},
      classes: new Set(),
      get classList() {
        return {toggle: (c, on) => { on ? this.classes.add(c) : this.classes.delete(c); }};

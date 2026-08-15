@@ -110,6 +110,23 @@ test('the v folds the composer away and leaves the quick actions bar', async ({p
   await expect(page.locator('#quickActions .qa-fold')).toHaveText('v');
 });
 
+// The bar is re-rendered on every snapshot — a few times a minute with a pane open. Replacing the
+// row when nothing in it changed takes the button out from under the finger already on it, and the
+// tap lands on a node that is no longer in the document. That is what "the v is finicky" was.
+test('a poll that changes nothing leaves the fold button alone', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('.term-input')).toBeVisible();
+  const survives = await page.evaluate(() => {
+    const before = document.querySelector('#quickActions .qa-fold');
+    renderQuickActions();
+    return before === document.querySelector('#quickActions .qa-fold');
+  });
+  expect(survives, 'the fold button was replaced by a render that changed nothing').toBe(true);
+  // And it still repaints when the row does have something new to say.
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+});
+
 test('an open keys dock folds away with the rest of the stack', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await page.locator('#keysBtn').click();

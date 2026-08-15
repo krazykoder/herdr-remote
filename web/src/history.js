@@ -293,9 +293,19 @@
       btn.title = on ? 'Hide the quick actions bar' : 'Show the quick actions bar';
     }
 
+    // Rebuilt only when what it says changed. This runs on every snapshot, and replacing the row
+    // wholesale a few times a minute takes the fold button out from under the finger already on it —
+    // the tap then lands on a node that has left the document, which is a control that "does not
+    // always work". The conversation dock guards its own row the same way.
+    function setQuickActions(qa, html) {
+      if (qa.dataset.sig === html) return;
+      qa.innerHTML = html;
+      qa.dataset.sig = html;
+    }
+
     function renderQuickActions() {
       const qa = document.getElementById('quickActions');
-      if (!activePane) { qa.innerHTML = ''; return; }
+      if (!activePane) { setQuickActions(qa, ''); return; }
       syncResend();
       const a = agents.find(x => x.pane_id === activePane);
       const blocked = a && a.status === 'blocked';
@@ -305,7 +315,7 @@
       // An approval prompt is not a quick action the user chose to hide. Turning the bar off
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
-      if (!blocked && !showNav) { qa.innerHTML = ''; return; }
+      if (!blocked && !showNav) { setQuickActions(qa, ''); return; }
       const open = bottomDockOpen();
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
@@ -353,7 +363,7 @@
       }
       // Approvals first and on their own line, nav underneath: the row order is what puts the
       // thing that needs answering closest to the terminal it is about.
-      qa.innerHTML = middle + (showNav ? navRow : '');
+      setQuickActions(qa, middle + (showNav ? navRow : ''));
     }
 
     let paneLines = 200;

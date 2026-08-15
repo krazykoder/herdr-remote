@@ -67,8 +67,24 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   await page.locator('[data-bandwidth-metric="sent"]').click();
   await expect(page.locator('[data-bandwidth-metric="sent"]')).toHaveAttribute('aria-pressed', 'true');
 
+  // Three metric rows, one row per agent, and the remainder row under them.
   await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(
-    3 + await page.locator('#agents .agent').count());
+    4 + await page.locator('#agents .agent').count());
+  // The split adds up: most of the wire is snapshots, which name no pane and cannot be filed
+  // under one, so the agent rows alone never reach the total and Shared is what closes the gap.
+  const adds = await page.locator('#bandwidthRows').evaluate(rows => {
+    const bytes = t => { const [n, unit] = t.split(' ');
+      return Number(n) * (unit === 'MB' ? 1024 * 1024 : unit === 'KB' ? 1024 : 1); };
+    const cells = sel => [...rows.querySelectorAll(sel)].map(r =>
+      [...r.querySelectorAll('.bandwidth-chip')].map(c => c.textContent));
+    const [sent] = cells('.bandwidth-row:nth-child(3)');   // head, Total, Sent
+    const split = cells('.pane-bandwidth-row, #otherBandwidthRow');
+    return sent.map((t, i) => [bytes(t || '0 B'),
+      split.reduce((n, row) => n + bytes(row[i] || '0 B'), 0)]);
+  });
+  // Within a rounding step of the scale the panel prints at, not to the byte: the chips are what
+  // the reader adds up, and they are rounded before they are read.
+  for (const [total, split] of adds) expect(Math.abs(total - split)).toBeLessThanOrEqual(total * 0.02 + 64);
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
     await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
   }
