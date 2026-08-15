@@ -244,8 +244,13 @@
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
+        // The mark, then the live dot: what this card is, then how its panes are doing. The dot
+        // alone was doing both jobs, which is why a conversation card and an agent card opened the
+        // same way but did not read as different things.
+        // Dot, mark, name — the dot is the row's live state and reads first on every card in the
+        // list; the mark says what kind of thing the name belongs to.
         `<div class="conversation-title"><span class="dot${r.pulse}" style="background:${r.dot}"` +
-        ` aria-hidden="true"></span>` +
+        ` aria-hidden="true"></span><span class="conv-kind">${convGlyph()}</span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
         // not a marker the app writes into what they typed (D4).
@@ -807,6 +812,10 @@
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
+      // Written once per open rather than on every redraw: it never changes, and this runs on every
+      // recorded read of every member.
+      const mark = document.getElementById('convViewMark');
+      if (mark && !mark.firstChild) mark.innerHTML = convGlyph();
       const members = conv.members || [], hidden = convHidden(conv.id);
       const shown = members.filter(m => !hidden.has(m.key));
       const open = document.getElementById('convViewOpen');

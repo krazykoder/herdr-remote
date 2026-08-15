@@ -15,8 +15,10 @@
     // Which panel is up, or '' for none. Read off the screen rather than tracked, so it cannot go
     // stale against a view someone hid directly.
     function openPanelId() {
+      // Computed, not inline: settingsView is hidden by a stylesheet rule and carries no inline
+      // display until it has been opened once, so an inline read calls it open at boot.
       return Object.keys(PANELS)
-        .find(id => document.getElementById(id).style.display !== 'none') || '';
+        .find(id => getComputedStyle(document.getElementById(id)).display !== 'none') || '';
     }
 
     function panelIsOpen() { return !!openPanelId(); }

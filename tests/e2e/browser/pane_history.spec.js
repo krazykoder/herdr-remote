@@ -133,6 +133,8 @@ test('the refresh button still reads at full depth while the poll is paused', as
   await page.evaluate(() => { paneLines = 20000; });
   await tapWire(page);
 
+  // Refresh lives in the f() menu at every width now.
+  await page.locator('#fireBtn').click();
   await page.locator('button[aria-label="Refresh pane"]').click();
   await expect.poll(() => reads(page).then(r => r.length)).toBe(1);
   expect((await reads(page))[0].lines).toBe(20000);

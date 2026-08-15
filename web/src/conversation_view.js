@@ -31,7 +31,14 @@
       const mine = convsForPane(a);
       if (!mine.length) return null;
       const want = convViews()[convMemberKey(a)];
-      return mine.find(c => c.id === want) || mine[0];
+      // With nothing chosen, the widest record the user named. This used to be mine[0], which is
+      // index order — and a new conversation is prepended, so an auto pair record filed after a
+      // named one took the thread from it: the pane opened on its pair and every other member of
+      // the work was simply absent, with nothing on screen to say a wider thread existed.
+      // A named conversation is a statement and an auto one is a guess; among either, the one with
+      // more members is the one that says more. Ties keep index order, because sort is stable.
+      return mine.find(c => c.id === want) || mine.slice().sort((x, y) =>
+        (!!x.auto - !!y.auto) || ((y.members || []).length - (x.members || []).length))[0];
     }
 
     function convSetView(a, id) {

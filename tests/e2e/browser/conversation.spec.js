@@ -220,7 +220,11 @@ test('the live member is one tap on, in its own thread', async ({page}) => {
   // Opened on the thread and not on the rows: the conversation is what the reader was reading.
   await expect(page.locator('#convThread')).toBeVisible();
   await expect(page.locator('#convView')).toBeHidden();
+  // The chevron is a home button at every depth, and home is the near end of the walk — so the
+  // conversation is not behind it any more, it is the first step forward again.
   await page.locator('#termBack').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await page.locator('#navFwd').click();
   await expect(page.locator('#convView')).toBeVisible();
 });
 
@@ -1064,6 +1068,34 @@ const joinSeparatePair = page => page.evaluate(async () => {
     {id: 'c1', name: 'mine', created: Date.now(), members: [{key: mineKey, added: 1, label: 'Architect 1'}]},
     {id: 'c2', name: 'theirs', created: Date.now(), members: [{key: otherKey, added: 1, label: 'scratch'}]},
   ]);
+});
+
+test('a pane in a pair and a wider conversation opens on the wider one', async ({page}) => {
+  await open(page);
+  await page.evaluate(async () => {
+    const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
+    const mineKey = convMemberKey(mine), otherKey = convMemberKey(other);
+    pairs = [{id: 'p1', members: [recentFingerprint(mine), recentFingerprint(other)]}];
+    await convPut({key: 'm3', label: 'third', touched: Date.now(), spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'said by the third', at: Date.now(), at_src: 'state'}]});
+    // Index order is newest first, so the auto pair record sits ahead of the named one — which is
+    // exactly the arrangement a pair made after a conversation leaves behind.
+    saveConvIndex([
+      {id: 'pair', name: 'the pair', auto: true, created: 2, pair_id: 'p1', members: [
+        {key: mineKey, added: 2, label: 'Architect 1'}, {key: otherKey, added: 2, label: 'scratch'}]},
+      {id: 'wide', name: 'three of us', created: 1, members: [
+        {key: mineKey, added: 1, label: 'Architect 1'},
+        {key: otherKey, added: 1, label: 'scratch'},
+        {key: 'm3', added: 1, label: 'third'}]},
+    ]);
+  });
+  await read(page);
+  await page.evaluate(async () => { toggleConvView(); await renderConvView(); });
+  // The thread used to open on whichever conversation the index happened to list first, so a pane
+  // with a pair opened on its pair — and every other member of the work was absent, with nothing
+  // on screen saying a wider thread existed.
+  expect(await page.evaluate(() => convViewConv(paneOf(activePane)).id)).toBe('wide');
+  await expect(page.locator('#convThread')).toContainText('said by the third');
 });
 
 test('a conversation of two opens on the joint thread, both members in it', async ({page}) => {

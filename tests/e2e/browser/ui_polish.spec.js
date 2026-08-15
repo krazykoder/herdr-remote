@@ -177,8 +177,10 @@ test('Summary never lands on the walk, at any phone width', async ({page}) => {
     await page.setViewportSize({width, height: 844});
     const walk = await page.locator('#statusBar').evaluate(bar => {
       const box = node => { const {x, width, top} = node.getBoundingClientRect(); return {x, width, top}; };
+      // The .walk wrapper is display:contents on a phone — its children join the bar's own grid,
+      // so it has no box of its own and the group has to be measured from them.
       return {bar: box(bar), left: box(bar.querySelector('.left')),
-        state: box(bar.querySelector('.state')), group: box(bar.querySelector('.walk')),
+        state: box(bar.querySelector('.state')), mid: box(bar.querySelector('#recentBtn')),
         arrows: [...bar.querySelectorAll('.nav-btn')].map(box)};
     });
     const row = await page.locator('#quickActions .qa-nav').evaluate(el =>
@@ -191,23 +193,27 @@ test('Summary never lands on the walk, at any phone width', async ({page}) => {
       expect(b.x + b.width, `an arrow runs past the state at ${width}`)
         .toBeLessThanOrEqual(walk.state.x + walk.state.width);
     }
-    // The group is centred on the screen, not on what is left of the bar: the stamp beside it
+    // The group is centred on the screen, not on what is left of the bar: the stamp above it
     // changes on every read, and a control that drifted with it would not be findable by feel.
-    expect(Math.abs((walk.group.x + walk.group.width / 2) - (walk.bar.x + walk.bar.width / 2)),
+    const span = [Math.min(...walk.arrows.map(b => b.x)),
+      Math.max(...walk.arrows.map(b => b.x + b.width))];
+    const centre = walk.bar.x + walk.bar.width / 2;
+    expect(Math.abs((span[0] + span[1]) / 2 - centre),
       `the walk is off centre at ${width}`).toBeLessThan(2);
+    expect(Math.abs(walk.mid.x + walk.mid.width / 2 - centre),
+      `Recent is off centre at ${width}`).toBeLessThan(2);
   }
 });
 
-test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
+test('QUIT, CLS and Refresh fold behind f() at every width', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   const fire = page.locator('#fireBtn'), quit = page.locator('#quitBtn'), cls = page.locator('#clsBtn');
   const refresh = page.locator('#refreshBtn');
-  // Wide: unchanged. The fold exists for the width it is not needed at.
-  await expect(fire).toBeHidden();
-  await expect(quit).toBeVisible();
-  await expect(refresh).toBeVisible();
-  // Icon only in the row — the word belongs to the menu, where an icon says nothing.
-  await expect(page.locator('.fire-label')).toBeHidden();
+  // Wide, where the header has the room for all three, they are still behind the one control:
+  // the room is not a reason to leave QUIT a slip away from the button that is safe to press.
+  await expect(fire).toBeVisible();
+  await expect(quit).toBeHidden();
+  await expect(refresh).toBeHidden();
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({width, height: 844});
@@ -224,6 +230,8 @@ test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a 
     expect(over, `something runs off the header at ${width}`).toBe(0);
   }
 
+  // Back to a desktop, which is where the menu had no contents to check until now.
+  await page.setViewportSize({width: 1280, height: 800});
   await fire.click();
   await expect(quit).toBeVisible();
   await expect(cls).toBeVisible();

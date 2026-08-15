@@ -1017,6 +1017,17 @@
       font-weight: 600;
     }
 
+    /* Ahead of the dot and tighter to it than the row's gap: the two together are one badge —
+       what this is, and how it is doing — rather than two things spaced like two. */
+    .conversation-title .conv-kind {
+      flex: 0 0 auto;
+      margin-right: -4px;
+      font-size: 0.95rem;
+      /* Restated: the row sets color for the name, and a descendant selector beats the .conv-kind
+         rule that gives the mark its green. */
+      color: var(--green);
+    }
+
     /* The agent list's dot, at the agent list's size: this card stands in for the panes in it,
        so it says what they say and it pulses when they are working. */
     .conversation-title .dot {
@@ -1615,10 +1626,11 @@
       cursor: pointer;
     }
 
-    /* CLS and QUIT sit in the header next to Refresh, which is the one they are easiest to mean
+    /* CLS and QUIT sit in the f() menu next to Refresh, which is the one they are easiest to mean
        instead. Text and not icons: they send a line into a live pane, and a glyph nobody
        recognises is not the thing to put next to a button that is safe to press. Two taps
-       each — see armFire. The 42px floor keeps arming from shuffling the row. */
+       each — see armFire. Resend borrows the look without the arm: it only fills the composer.
+       The 42px floor is what is left for a header that stops folding them away. */
     .term-header .cls-btn {
       font-family: 'SF Mono', 'Menlo', monospace;
       font-size: 0.7rem;
@@ -1660,16 +1672,77 @@
       }
     }
 
-    /* Wide enough, and the three sit in the header exactly as they always did: display:contents
-       takes the wrapper out of the flex line so the header's own gap spaces them. */
-    .fire-wrap { display: contents; }
-    .fire-menu { display: flex; gap: 8px; }
-    .fire-toggle,
-    .fire-label { display: none; }
+    /* One control at every width. These used to unfold into the header on a desktop and hide
+       behind f() only on a phone — two layouts to keep right, and on the wide one QUIT and CLS sat
+       a mouse-slip from Refresh, which is the button they are easiest to mean instead. None of
+       them is frequent: two take two taps, one throws the agent's context away, and the pane
+       re-reads itself anyway. A deliberate tap to reach them is the right price everywhere. */
+    .fire-wrap {
+      display: flex;
+      position: relative;
+      flex-shrink: 0;
+    }
 
-    /* Narrow, and they fold behind one control. None is frequent — two take two taps, one throws
-       away the agent's context, and the pane re-reads itself anyway — so a tap to reach them is
-       the right price for a header that fits. Same breakpoint as the rest of the layout. */
+    /* Shaped like what it is. A bare glyph in a row of icon buttons reads as one more action;
+       the border and the caret say a menu opens, which is the same promise .who-btn makes two
+       buttons to the left of it. */
+    .term-header .fire-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      padding: 4px 8px;
+      min-height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .fire-toggle::after {
+      content: '▾';
+      font-family: system-ui, sans-serif;
+      font-size: 0.8rem;
+      line-height: 1;
+    }
+
+    .term-header .fire-toggle[aria-expanded="true"] {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .fire-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .fire-menu.open { display: flex; }
+
+    /* One column of rows rather than four icons in a popup: a menu is read down its left edge,
+       and the armed label needs the width anyway. */
+    .term-header .fire-menu button {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      min-width: 128px;
+      min-height: 34px;
+      padding: 4px 10px;
+      text-align: left;
+    }
+
+    .fire-label { display: inline; font-size: 0.7rem; }
+
+    /* Narrow, and the rest of the header folds too. Same breakpoint as the rest of the layout. */
     @media (max-width: 767px) {
       /* Phone thumbs reach the edges, while the home indicator lives under the centre. Keep the
          walk's arrows out at the safe edges and leave Recent in the middle.
@@ -1716,69 +1789,6 @@
         flex: none;
       }
 
-      .fire-wrap {
-        display: flex;
-        position: relative;
-        flex-shrink: 0;
-      }
-
-      /* Shaped like what it is. A bare glyph in a row of icon buttons reads as one more action;
-         the border and the caret say a menu opens, which is the same promise .who-btn makes two
-         buttons to the left of it. */
-      .term-header .fire-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        font-family: 'SF Mono', 'Menlo', monospace;
-        font-size: 0.7rem;
-        padding: 4px 8px;
-        min-height: 28px;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-      }
-
-      .fire-toggle::after {
-        content: '▾';
-        font-family: system-ui, sans-serif;
-        font-size: 0.8rem;
-        line-height: 1;
-      }
-
-      .term-header .fire-toggle[aria-expanded="true"] {
-        border-color: var(--blue);
-        color: var(--blue);
-      }
-
-      .fire-menu {
-        display: none;
-        position: absolute;
-        top: calc(100% + 6px);
-        right: 0;
-        z-index: 20;
-        flex-direction: column;
-        gap: 6px;
-        padding: 8px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-      }
-
-      .fire-menu.open { display: flex; }
-
-      /* One column of rows rather than three icons in a popup: a menu is read down its left edge,
-         and the armed label needs the width anyway. */
-      .term-header .fire-menu button {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 8px;
-        min-width: 128px;
-        min-height: 34px;
-        padding: 4px 10px;
-        text-align: left;
-      }
-      .fire-label { display: inline; font-size: 0.7rem; }
     }
 
     /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
@@ -2229,6 +2239,14 @@
       padding: 8px 12px;
       background: var(--bg);
       border-bottom: 1px solid var(--border);
+    }
+
+    /* Beside the name and out of the row's gap arithmetic: it is a mark, not a control, and a
+       64-character name still gets the width the ellipsis rule below assumes. */
+    .conv-view-head .conv-kind {
+      flex: 0 0 auto;
+      margin-right: -2px;
+      font-size: 0.95rem;
     }
 
     .conv-view-head .count {
@@ -4188,6 +4206,9 @@
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
         </svg></button>
+      <!-- The same mark the card carries, so the window and the card it was opened from say the
+           same thing about what is being read. -->
+      <span class="conv-kind" id="convViewMark"></span>
       <span class="title" id="convViewTitle"></span>
       <span class="count" id="convViewCount"></span>
       <button class="who-btn" id="convViewWho" onclick="toggleConvRoster()" aria-expanded="false"
@@ -4246,7 +4267,7 @@
          conversation window had nothing — one walk deserves one control, in the row that is
          always there. -->
     <span class="walk">
-      <button class="nav-btn" id="navBack" onclick="navGo(-1)" aria-label="Back">‹</button>
+      <button class="nav-btn" id="navBack" onclick="goBack()" aria-label="Back">‹</button>
       <button class="recent-btn" id="recentBtn" onclick="openRecentSheet()" aria-haspopup="dialog"
         aria-label="Recent panes">Recent ▴</button>
       <button class="nav-btn" id="navFwd" onclick="navGo(1)" aria-label="Forward">›</button>
@@ -4272,11 +4293,9 @@
       <button class="who-btn" id="paneConvWho" onclick="toggleConvPaneRoster()" hidden
         aria-expanded="false" aria-controls="convPaneRoster"
         aria-label="Who is in this conversation, and what to do with it"></button>
-      <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
-           them are not undoable. See armFire.
-           One pair of buttons, two layouts: side by side where the header has the room, and behind
-           f() where it does not. Moved rather than duplicated, because arming is state on the
-           element — two copies of QUIT would be two arms, and only one of them counting down. -->
+      <!-- Armed by the first tap: two of these are not undoable. See armFire.
+           Behind f() at every width. The room a desktop header has is not a reason to put QUIT
+           next to Refresh, which is the button a slip was aiming for. -->
       <div class="fire-wrap">
         <button class="refresh-btn fire-toggle" id="fireBtn" onclick="toggleFireMenu()"
           aria-haspopup="true" aria-expanded="false"
@@ -4286,13 +4305,15 @@
             aria-label="Quit what is running in this pane">QUIT</button>
           <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
             aria-label="Clear this pane">CLS</button>
-          <button class="refresh-btn" id="resendBtn" onclick="resendLast()" hidden
+          <!-- Styled like QUIT and CLS, but one tap: it only loads the text back into the
+               composer, and the composer's own send is the gate. Nothing leaves on this tap. -->
+          <button class="refresh-btn cls-btn" id="resendBtn" onclick="resendLast()" hidden
             aria-label="Load this pane's last message into the composer">Resend</button>
           <!-- Refresh rides with them. The pane polls itself every few seconds, so this is the
                button for the one state where it does not: past POLL_MAX_LINES the poll stops and
                a manual read is the only way to update. The icon alone says nothing in a menu, so
                the word appears with the fold. -->
-          <button class="refresh-btn" id="refreshBtn" onclick="closeFireMenu(); refreshPane()"
+          <button class="refresh-btn cls-btn" id="refreshBtn" onclick="closeFireMenu(); refreshPane()"
             aria-label="Refresh pane"><svg width="16" height="16"
               viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">

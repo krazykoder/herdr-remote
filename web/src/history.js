@@ -167,7 +167,8 @@
         const btn = document.getElementById(id);
         if (!btn) return;
         const label = navLabel(step);
-        btn.disabled = navTarget(step) < 0;
+        // ‹ is live wherever there is anywhere behind, and the list is behind everything.
+        btn.disabled = navTarget(step) < 0 && !(step < 0 && navHere() !== NAV_LANDING);
         btn.title = btn.disabled ? '' : label;
         btn.setAttribute('aria-label', btn.disabled ? (step < 0 ? 'Back' : 'Forward') : label);
       });
@@ -197,7 +198,10 @@
     // where the button is disabled anyway.
     function navLabel(step) {
       const i = navTarget(step);
-      if (i < 0) return step < 0 ? 'Back' : 'Forward';
+      // Behind the first destination is the list the document was loaded on — the browser's own
+      // Back leaves to it, so ‹ has to say the same thing rather than going dead one step early.
+      if (i < 0) return step < 0 ? (navHere() === NAV_LANDING ? 'Back' : 'Back to the agent list')
+        : 'Forward';
       return `${step < 0 ? 'Back to' : 'Forward to'} ${navName(navHistory[i])}`;
     }
 
