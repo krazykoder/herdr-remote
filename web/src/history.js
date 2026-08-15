@@ -230,7 +230,7 @@
     }
     // auto=true is the interval. Every other caller — the refresh button, Load more, a key that
     // was just sent — is a read someone asked for and is never skipped.
-    function refreshPane(auto) {
+    function refreshPane(auto, recoveryId) {
       if (auto) {
         if (paneLines > POLL_MAX_LINES) return;
         // Slack, because the tick that lands 4ms early is the same tick: without it an idle pane
@@ -240,6 +240,7 @@
       if (ws && activePane) {
         lastPaneRead = Date.now();
         ws.send(JSON.stringify(
-          { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+          { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource,
+            recovery_id: recoveryId }));
       }
     }

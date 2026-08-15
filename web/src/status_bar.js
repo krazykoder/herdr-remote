@@ -416,7 +416,7 @@
       } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {
         // A pane that is in a conversation, read because its turn just ended. Recorded, never
         // drawn: recordPane ignores any pane no conversation names, so a stray read is harmless.
-        if (convRecordable(msg)) recordPane(msg.pane_id, (msg.content || '').split('\n'));
+        if (convRecordable(msg)) recordPane(msg.pane_id, (msg.content || '').split('\n'), msg.recovery_id);
       } else if (msg.type === 'pane_content') {
         const el = document.getElementById('termContent');
         const prevHeight = el.scrollHeight;
@@ -453,7 +453,7 @@
         drawSel();
         // After the pane is drawn: recording must never be what a user waits on, and it runs on
         // the rows the read already produced.
-        if (convRecordable(msg)) recordPane(activePane, paneRows);
+        if (convRecordable(msg)) recordPane(activePane, paneRows, msg.recovery_id);
       }
     }
 
