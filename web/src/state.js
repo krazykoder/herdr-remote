@@ -1,4 +1,9 @@
     let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
+    // When the socket went down, or 0 while it is up. The only record this app has that it was away:
+    // `prevStatuses` survives a dropped socket, so a long outage with no reload looks like a
+    // continuous session to everything else. Cleared by the first snapshot after the reconnect,
+    // which is the one place that has to read it.
+    let wsDownSince = 0;
     // Shell panes, from the same snapshot as `agents`. Empty against a relay with terminal mode
     // off, which sends no `shells` key at all — its presence is the feature gate.
     let shells = [];

@@ -3401,6 +3401,46 @@
     </div>
 
     <div class="setting-group">
+      <label for="deepPick">Conversation recovery</label>
+      <select id="deepPick" onchange="setConvDeepAll(this.value === 'full')">
+        <option value="day">A day of history</option>
+        <option value="full">Everything the relay has</option>
+      </select>
+      <div class="hint">How much a conversation reads back when you return to it after being away
+        for more than fifteen minutes. Nothing is fetched while you are connected, and neither
+        setting is what the pane draws — this is the record, not the screen. Everything is one read
+        per agent at whatever depth your relay allows, which on a phone over cellular is worth
+        knowing about; a day is 5,000 lines. Recover history in a pane's ⋯ menu always fetches
+        everything, whichever this says.</div>
+    </div>
+
+    <div class="setting-group">
+      <label for="sweepPick">Background catch-up</label>
+      <select id="sweepPick" onchange="setConvSweep(this.value)">
+        <option value="1h">Every hour</option>
+        <option value="4h">Every four hours</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">How often conversations you have not opened are caught up on. A pane you do
+        open catches up the moment you open it, whatever this says, so this is only about the ones
+        you never look at — the other half of a joint thread, mostly. Off means those fill in when
+        you next open them.</div>
+    </div>
+
+    <div class="setting-group">
+      <label for="tidyPick">Tidy old transcripts</label>
+      <select id="tidyPick" onchange="setConvTidy(this.value === 'on')">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">Transcripts recorded by an earlier version could fold the same screen in
+        twice. On, each one is repaired the first time it is opened, and says how many copies it
+        removed. Only those: nothing recorded since can hold a duplicate, and the repair is never
+        run on a record that could not have one. Remove duplicates in a pane's ⋯ menu does the same
+        thing by hand.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -3556,6 +3596,10 @@
                pane that has one, and it counts before it asks. -->
           <button class="menu-item" role="menuitem" id="menuConvDedupe" hidden
             onclick="closeTermMenu(); removeConvDuplicates()">Remove duplicates</button>
+          <!-- Turns a gap you can see into a gap you can close: reads the pane as far back as the
+               relay allows and records what the transcript is missing. Only ever adds. -->
+          <button class="menu-item" role="menuitem" id="menuConvRecover" hidden
+            onclick="closeTermMenu(); recoverConvHistory()">Recover history</button>
           <button class="menu-item" role="menuitem" id="qaToggle"
             onclick="closeTermMenu(); toggleQuickActions()">Hide quick actions bar</button>
           <!-- Terminals only — renderTermMenuState shows it and writes its text. -->

@@ -72,6 +72,14 @@ class ReadDepthTests(unittest.TestCase):
         self.assertEqual(herdr_relay.read_pane_lines(0), 1)
         self.assertEqual(herdr_relay.read_pane_lines(-5), 1)
 
+    def test_a_sentinel_request_tracks_the_configured_ceiling(self):
+        old = herdr_relay.READ_LINES_MAX
+        try:
+            herdr_relay.READ_LINES_MAX = 200_000
+            self.assertEqual(herdr_relay.read_pane_lines(10 ** 9), 200_000)
+        finally:
+            herdr_relay.READ_LINES_MAX = old
+
     def test_anything_else_falls_back_rather_than_refusing(self):
         for raw in (None, "", "lots", "12; rm -rf ~", {"lines": 5}, 1.5e400):
             with self.subTest(raw=raw):

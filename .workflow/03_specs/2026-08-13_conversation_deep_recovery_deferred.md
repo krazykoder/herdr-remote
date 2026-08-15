@@ -1,7 +1,7 @@
 # Deferred proposal — Deep conversation recovery
 
 **Date:** 2026-08-13
-**Status:** **Deferred — do not implement yet.** Resume only on the evidence named in §5.
+**Status:** **Superseded, 2026-08-14**, by [Deep conversation backfill](2026-08-14_conversation_deep_backfill_spec.md). The §5 gate was met — real use produced multi-turn gaps across browser disconnections. The successor keeps this document's anchor rules and drops its trigger: the deep read it proposed to issue speculatively is one `loadMore()` already performs and already delivers to the recorder, so the §3 cost that justified deferring does not arise. Kept for the reasoning in §3, which is still the risk the design turns on.
 **Classification:** Class B — additive, backward compatible. No relay change, no wire change.
 **Builds on:** [Conversation Mode spec](2026-08-13_conversation_mode_spec.md) §5.2, the event
 recorder in `web/index.html`.

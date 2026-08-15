@@ -407,14 +407,18 @@
       const joint = document.getElementById('menuConvJoint');
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
+      const recover = document.getElementById('menuConvRecover');
       const final = document.getElementById('menuConvFinal');
       joint.hidden = true;
       convFont.hidden = true;
       dedupe.hidden = true;
+      recover.hidden = true;
       final.hidden = true;
       if (!conv.hidden) {
         const mine = convsForPane(a);
         dedupe.hidden = !mine.length;
+        // Same test: both repair a transcript, and neither means anything on a pane that has none.
+        recover.hidden = !mine.length;
         conv.textContent = mine.length ? `In "${mine[0].name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
         // A conversation of one has no joint thread to show, so the preference is not offered.

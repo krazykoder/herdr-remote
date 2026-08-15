@@ -1825,3 +1825,370 @@ test('leaving a thread keeps an existing ruler selection', async ({page}) => {
   expect(await page.evaluate(() => ({selA, selB, selText})))
     .toEqual({selA: 0, selB: 0, selText: kept});
 });
+
+// --- Recovering what was missed ---
+//
+// A browser that was closed, asleep, or off the network saw none of the turns that happened while
+// it was away, and the pane still holds them. These are about getting them into the record: the
+// free half, which is any read pulled deeper than the transcript was written from, and the button
+// for the times a gap is visible on screen and nothing automatic has closed it.
+
+// A claude pane of `n` turns, numbered so the assertions can name which ones came back.
+const turns = n => Array.from({length: n},
+  (_, i) => `❯ question ${i + 1}\n\n⏺ Answer ${i + 1}.\n`).join('\n') + '\n❯\n';
+
+test('a read pulled deeper records the turns nobody was connected for', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  // What the browser saw before it went away, and what the pane holds now.
+  await read(page, turns(2));
+  await read(page, turns(6));
+  const rec = await held(page, key);
+  expect(rec.entries.map(e => e.text)).toContain('Answer 6.');
+  expect(rec.entries.filter(e => e.who === 'agent').length).toBe(6);
+  // Once, however many times the same window is read back.
+  await read(page, turns(6));
+  expect((await held(page, key)).entries.length).toBe(12);
+});
+
+test('Recover history asks the relay for everything it has, and says what came back',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page, turns(2));
+    await tapWire(page);
+    await page.evaluate(() => recoverConvHistory());
+    // No ceiling of the app's own: the relay clamps this at whatever it is configured for, which is
+    // what lets an operator raise it without the app being edited.
+    const asked = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
+    expect(asked.at(-1).lines).toBe(1e9);
+    // The reply arrives on the ordinary draw path, and the recorder reports on the write it lands on.
+    await read(page, turns(6));
+    await expect(page.locator('#toast')).toContainText('Recovered 8 messages');
+    expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(6);
+  });
+
+test('a recovery that finds nothing new says so rather than nothing at all', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page, turns(2));
+  await page.evaluate(() => recoverConvHistory());
+  await read(page, turns(2));
+  await expect(page.locator('#toast')).toContainText('Nothing new to recover');
+});
+
+test('a window the record cannot be located in marks the break instead of guessing',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page, turns(2));
+    // /clear, or a scrollback that no longer reaches the record. Longer, so it is a deep read, and
+    // with nothing in it the transcript can be joined to.
+    await page.evaluate(() => recoverConvHistory());
+    await read(page, turns(6).replace(/Answer/g, 'Something else'));
+    await expect(page.locator('#toast')).toContainText('Could not find where the record left off');
+    // Nothing written, and the break remembered for the next thing that is.
+    expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(2);
+    expect((await held(page, key)).gap).toBe(true);
+  });
+
+test('the button is offered on a pane with a transcript and on no other', async ({page}) => {
+  await open(page);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvRecover')).toBeHidden();
+  await page.keyboard.press('Escape');
+  await join(page);
+  await read(page);
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvRecover')).toBeVisible();
+});
+
+// --- Coming back after being away (T2) ---
+//
+// T1 covers the pane in front of you and T3 is the button. What is left is the panes you are not
+// looking at, and every read this section issues is one nobody asked for — so most of what follows
+// is about the times it must not fire, and the rest is about it saying so when it does.
+
+// A second member with a record of its own, dated: what a partner's transcript looks like after an
+// afternoon of nobody opening it. Written straight at the store rather than through a read — this
+// pane is whatever harness the fake herdr gave it, and the question here is what recovery does with
+// an old record, not what the parser does with that harness's gutters.
+const partner = (page, stale) => page.evaluate(async stale => {
+  const other = agents.find(a => a.pane_id !== activePane && profileFor(a.agent));
+  const key = convMemberKey(other);
+  const items = loadConvIndex();
+  items[0].members.push({key: key, added: Date.now(), label: other.label});
+  saveConvIndex(items);
+  const then = Date.now() - stale;
+  await convPut({key: key, first: then, touched: then, label: other.label, depth: 200,
+    backfilled: true, entries: [{who: 'agent', text: 'Answered.', at: then, at_src: 'backfill',
+      seen: then}]});
+  convHeld.delete(key);
+  return {key: key, pane: other.pane_id};
+}, stale);
+
+// How old the open pane's own record is.
+const age = (page, key, stale) => page.evaluate(async ([k, stale]) => {
+  const held = (await convGet([k]))[0];
+  held.touched = Date.now() - stale;
+  held.recovered = 0;
+  convHeld.delete(k);
+  await convPut(held);
+}, [key, stale]);
+
+// The socket having been down, without taking the socket down: the app cannot tell the difference,
+// and a real 40-minute outage is not something a test can wait for.
+const wasAway = (page, ms) => page.evaluate(ms => { wsDownSince = ms ? Date.now() - ms : 0; }, ms);
+const snapshot = page => page.evaluate(() => handleMessage({type: 'agents', agents: agents}));
+const deepReads = page => page.evaluate(() =>
+  window.__sent.filter(m => m.type === 'read_pane' && m.lines > 1000));
+
+test('a session that never dropped pulls no history it was not asked for', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await age(page, key, 60 * 60 * 1000);
+  await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 0);
+  await snapshot(page);
+  // Every record is stale enough. Nothing was missed, so nothing is read: a healthy connected
+  // session is the case this must cost nothing at all.
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('a three-second flap is not an outage', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await age(page, key, 60 * 60 * 1000);
+  await tapWire(page);
+  await wasAway(page, 3000);
+  await snapshot(page);
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('an outage over the pane you are reading catches that pane up, and says so',
+  async ({page}) => {
+    // The one case no activation will ever fire for: the pane never went away, you did.
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    await age(page, key, 60 * 60 * 1000);
+    await tapWire(page);
+    await wasAway(page, 40 * 60 * 1000);
+    await snapshot(page);
+    await expect(page.locator('#toast')).toContainText('Catching up');
+    await expect.poll(() => page.evaluate(() => paneLines)).toBe(5000);
+  });
+
+test('opening a pane whose record went stale catches it up', async ({page}) => {
+  // The read is paid for by the one thing that makes it worth paying: someone is about to read it.
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await age(page, key, 60 * 60 * 1000);
+  await page.evaluate(() => closeTerminal());
+  await tapWire(page);
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#toast')).toContainText('Catching up');
+  await expect.poll(() => page.evaluate(() => paneLines)).toBe(5000);
+});
+
+test('opening a pane recorded moments ago costs nothing extra', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(() => closeTerminal());
+  await tapWire(page);
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  expect(await deepReads(page)).toEqual([]);
+  expect(await page.evaluate(() => paneLines)).toBe(200);
+});
+
+test('the background sweep catches up the members nobody opened, quietly', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await page.evaluate(() => convRecoverSweep());
+  await expect.poll(() => deepReads(page)).toEqual([
+    {type: 'read_pane', pane_id: mate.pane, lines: 5000, source: 'recent-unwrapped'},
+  ]);
+  // Nobody is watching a background read, and a toast for one would be an interruption reporting
+  // that nothing was interrupted.
+  await expect(page.locator('#toast')).toBeHidden();
+});
+
+test('the sweep leaves the open pane alone and does not repeat itself', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await age(page, key, 60 * 60 * 1000);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await tapWire(page);
+  await page.evaluate(() => convRecoverSweep());
+  await expect.poll(() => deepReads(page)).toHaveLength(1);
+  // The open pane is not in it: its reply would redraw the rows under the reader's finger, and it
+  // has two triggers of its own.
+  expect((await deepReads(page))[0].pane_id).toBe(mate.pane);
+  // And the attempt is remembered whether or not it found anything, or a quiet transcript would
+  // buy a read on every sweep forever.
+  await page.evaluate(async () => { window.__sent = []; await convRecoverSweep(); });
+  expect(await deepReads(page)).toEqual([]);
+});
+
+test('set to everything, the same catch-up asks for everything', async ({page}) => {
+  // The setting exists because the choice is not the app's to make: a read nobody asked for is
+  // small by default, and someone who would rather pay it once than find the gap later says so.
+  await open(page);
+  await join(page);
+  await read(page);
+  const mate = await partner(page, 60 * 60 * 1000);
+  await page.evaluate(() => setConvDeepAll(true));
+  await tapWire(page);
+  await page.evaluate(() => convRecoverSweep());
+  // The sentinel, not a number: the relay clamps it to whatever it is configured for (§2.7).
+  await expect.poll(() => deepReads(page)).toEqual([
+    {type: 'read_pane', pane_id: mate.pane, lines: 1e9, source: 'recent-unwrapped'},
+  ]);
+});
+
+test('both recovery settings are remembered, and the pickers show what they are',
+  async ({page}) => {
+    await open(page);
+    expect(await page.evaluate(() => document.getElementById('deepPick').value)).toBe('day');
+    expect(await page.evaluate(() => document.getElementById('sweepPick').value)).toBe('1h');
+    await page.evaluate(() => { setConvDeepAll(true); setConvSweep('off'); });
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => document.getElementById('deepPick').value))
+      .toBe('full');
+    expect(await page.evaluate(() => document.getElementById('sweepPick').value)).toBe('off');
+    expect(await page.evaluate(() => convDeepLines())).toBe(1e9);
+    // Off is off: no timer, so a member nobody opens fills in when someone finally does.
+    expect(await page.evaluate(() => convSweepTimer)).toBe(null);
+  });
+
+test('the turn-end read stands aside while a recovery is in flight', async ({page}) => {
+  // `pane_content` carries no request id, so a 200-line reply landing first is indistinguishable
+  // from the deep one being waited for. It is held off rather than told apart — and nothing is
+  // lost, because the deep read is a superset of it.
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  const pane = await page.evaluate(() => activePane);
+  await page.evaluate(() => closeTerminal());
+  await tapWire(page);
+  await page.evaluate(k => {
+    const a = agents.find(x => convMemberKey(x) === k);
+    convRecoverStart(a, false);
+    convReadTurnEnd(a.pane_id, 'idle');       // the turn that ended mid-recovery
+  }, key);
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane')))
+    .toEqual([{type: 'read_pane', pane_id: pane, lines: 5000, source: 'recent-unwrapped'}]);
+});
+
+test('a read already in flight when a recovery starts is not mistaken for its reply',
+  async ({page}) => {
+    // The one the guard above cannot cover: a 200-line turn-end read sent a moment *before* the
+    // recovery. Answering it as the deep reply is not a mis-counted toast — a window too shallow to
+    // hold the record's newest message misses the anchor, and a miss is written down as a gap in
+    // history that never happened. The watermark refuses it (§2.4).
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    await tapWire(page);
+    await page.evaluate(async k => {
+      const h = (await convGet([k]))[0];
+      h.depth = 5000;                          // this transcript has been read deeper than 200
+      convHeld.delete(k);
+      await convPut(h);
+    }, key);
+    await page.evaluate(k => convRecoverStart(paneOf(activePane), true), key);
+    await page.evaluate(() => recordPane(activePane, [
+      '⏺ Something else entirely.', '', '❯ ', '',
+    ]));
+    const stored = await held(page, key);
+    expect(stored.gap).toBeFalsy();
+    // Still waiting, so the deep reply behind it is the one that reports.
+    expect(await page.evaluate(k => convRecovering.has(k), key)).toBe(true);
+  });
+
+test('a recovery nobody can send says so instead of pretending', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(() => { ws = {readyState: 3, send: () => {}}; recoverConvHistory(); });
+  await expect(page.locator('#toast')).toContainText('Not connected');
+});
+
+// --- Tidying what the previous recorder left ---
+
+// A transcript as the folding recorder wrote one: the same screen in twice, and no `backfilled`
+// flag, which is what dates it to before this recorder existed.
+const legacy = (page, key) => page.evaluate(async k => {
+  const t = Date.now() - 60 * 60 * 1000;
+  const say = (who, text, i) => ({who: who, text: text, at: t + i, seen: t + i, at_src: 'backfill'});
+  await convPut({key: k, first: t, touched: t, entries: [
+    say('user', 'first question', 1), say('agent', 'First answer.', 2),
+    say('user', 'first question', 3), say('agent', 'First   answer.', 4),
+  ]});
+  convHeld.delete(k);
+}, key);
+
+test('a transcript from the folding recorder is repaired the first time it is opened',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await legacy(page, key);
+    await read(page);
+    // The wrapped copy goes and the first stays: the earliest copy is the transcript's chronology.
+    const texts = (await held(page, key)).entries.map(e => e.text);
+    expect(texts.filter(t => t === 'first question')).toHaveLength(1);
+    expect(texts).toContain('First answer.');
+    expect(texts).not.toContain('First   answer.');
+    await expect(page.locator('#toast')).toContainText('removed 2 duplicate messages');
+  });
+
+test('tidying a legacy transcript persists even when the read adds no messages', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await legacy(page, key);
+  await page.evaluate(async () => recordPane(activePane, []));
+  await page.evaluate(k => convHeld.delete(k), key);
+  const stored = await held(page, key);
+  expect(stored.backfilled).toBe(true);
+  expect(stored.entries.filter(e => e.text === 'first question')).toHaveLength(1);
+});
+
+test('a record this recorder wrote is never offered to the repair', async ({page}) => {
+  // convDedupe calls a repeat within 200 entries a duplicate, and an agent that says "Done." twice
+  // inside 200 entries said it twice. The gate is `backfilled`, which every record written since
+  // carries — so a sound record is never handed to a lossy rule.
+  await open(page);
+  const key = await join(page);
+  await read(page, '❯ go\n\n⏺ Done.\n\n❯\n');
+  await page.evaluate(async k => {
+    const held = (await convGet([k]))[0];
+    held.entries.push({who: 'agent', text: 'Done.', at: Date.now(), seen: Date.now(),
+      at_src: 'state'});
+    convHeld.delete(k);
+    await convPut(held);
+  }, key);
+  await read(page, '❯ go\n\n⏺ Done.\n\n❯ again\n\n⏺ Done.\n\n❯\n');
+  expect((await held(page, key)).entries.filter(e => e.text === 'Done.').length)
+    .toBeGreaterThanOrEqual(2);
+});
+
+test('the repair can be turned off, and the setting is remembered', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await page.evaluate(() => setConvTidy(false));
+  await legacy(page, key);
+  await read(page);
+  expect((await held(page, key)).entries.map(e => e.text)).toContain('First   answer.');
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => document.getElementById('tidyPick').value))
+    .toBe('off');
+});
