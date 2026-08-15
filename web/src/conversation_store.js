@@ -524,10 +524,9 @@
     // that setting is how much scrollback to *draw in the pane*, and a T2 read is never drawn.
     const DEEP_LINES = 5000;
     // Or everything the relay will give, for someone who would rather pay the read once than find
-    // the gap later and press the button. Off by default because T2 fires unasked, on every member,
-    // possibly on a phone over cellular — a cost nobody chose is the one that has to be the small
-    // one. The setting is how you choose it. §2.7's sentinel means "full" tracks the relay's own
-    // ceiling rather than naming a number here.
+    // the gap later and press the button. Automatic reads are small by default; the setting lets
+    // someone choose the relay's full allowance instead. §2.7's sentinel means "full" tracks the
+    // relay's own ceiling rather than naming a number here.
     const CONV_DEEP_KEY = 'herdr_conv_deep';
 
     function convDeepAll() {
@@ -539,8 +538,6 @@
       catch (e) { /* private mode: session-only */ }
       document.getElementById('deepPick').value = on ? 'full' : 'day';
     }
-
-    function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
 
     function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
 
