@@ -58,6 +58,38 @@
       document.getElementById(id).checked = on;
       repaintHighlights();
     }
+    // Autocorrect, autocapitalisation and spellcheck, as one switch, because a phone keyboard does
+    // all three or none. Off by default: this composer types into an agent's prompt, where a flag
+    // is not a typo, a path is not a sentence, and a capital letter the keyboard added to the front
+    // of one is a different path. It was on once, and what that cost was every command typed on a
+    // phone being quietly rewritten. Prose to an agent is the case for turning it back on, and
+    // that is what the setting is for.
+    const AUTOCORRECT_KEY = 'herdr_autocorrect';
+
+    function autocorrectOn() {
+      try { return localStorage.getItem(AUTOCORRECT_KEY) === 'on'; } catch (e) { return false; }
+    }
+
+    // One field, whatever the answer is for it. A shell's composer never gets it whatever the
+    // setting says — see syncComposerMode.
+    function applyAutocorrect(input, on) {
+      if (!input) return;
+      input.setAttribute('autocorrect', on ? 'on' : 'off');
+      input.setAttribute('autocapitalize', on ? 'sentences' : 'none');
+      input.spellcheck = !!on;
+    }
+
+    function setAutocorrect(on) {
+      try { localStorage.setItem(AUTOCORRECT_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: session-only */ }
+      const box = document.getElementById('autocorrectOn');
+      if (box) box.checked = !!on;
+      // Both composers, because both write to an agent and a setting that only reached one of them
+      // would be a setting nobody could trust.
+      syncComposerMode();
+      applyAutocorrect(document.getElementById('convInput'), on);
+    }
+
     function setUserHighlight(on) { setHighlight(USER_HIGHLIGHT_KEY, 'userHighlight', on); }
     function setSummaryHighlight(on) { setHighlight(SUMMARY_HIGHLIGHT_KEY, 'summaryHighlight', on); }
     document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);

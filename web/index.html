@@ -3950,6 +3950,15 @@
     </div>
 
     <div class="setting-group">
+      <label class="toggle-option"><input type="checkbox" id="autocorrectOn" onchange="setAutocorrect(this.checked)"> Autocorrect in the composer</label>
+      <div class="hint">Off by default. Both composers type into an agent's prompt, where a flag is
+        not a typo and a path is not a sentence — a keyboard that capitalises the first word of one
+        has changed it. On gives you the phone's own correction, capitalisation and spellcheck for
+        writing prose to an agent. A terminal's composer never takes it either way: there it is a
+        command line.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -4030,7 +4039,7 @@
           <div class="conv-field">
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
-              autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"
+              autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
               oninput="autoGrow(this); syncConvCursor()" onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
               onfocus="syncConvCursor()" onblur="syncConvCursor()"
@@ -4273,14 +4282,12 @@
         <button id="ctrlKeysBtn" onclick="toggleCtrlDock()" aria-label="Ctrl keys"
           style="border:1px solid var(--red);background:var(--bg);color:var(--red);font-weight:700;font-size:13px">^C</button>
       </div>
-      <!-- Autocorrect on, at the user's direction. It is the composer for prose sent to an agent
-           far more often than it is a command line, and the keyboard's own correction is worth
-           more than a literal transcription of every typo. Anything that must survive verbatim
-           still can: the Keys pad and the / palette do not pass through here.
-           These are the agent values. syncComposerMode turns all three off over a terminal, where
-           the composer *is* a command line — see it for why. -->
-      <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
-        autocapitalize="sentences" spellcheck="true"></textarea>
+      <!-- Off, which is what the markup says before any script runs: a composer that autocorrected
+           for one frame on a slow phone would have already capitalised the first word. The setting
+           turns it back on for prose, and syncComposerMode still refuses it over a terminal
+           whatever the setting says — see it for why. -->
+      <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
+        autocapitalize="none" spellcheck="false"></textarea>
       <div class="term-input-side">
         <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
             fill="currentColor" stroke="none">

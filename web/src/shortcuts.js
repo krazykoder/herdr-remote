@@ -272,6 +272,7 @@
       const conv = loadConvIndex().find(c => c.id === id);
       if (!conv) return;
       convViewId = id;
+      noteConvVisit(id);
       clearConvDock();
       convStandaloneHtml = '';
       convRosterHtmlLast = '';

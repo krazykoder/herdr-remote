@@ -46,15 +46,15 @@
     //
     // A shell wants none of them. `git commit` capitalised to `Git commit` is a command not found,
     // and autocorrect on a path or a flag is worse — it fails silently and looks like the shell
-    // misbehaved. The agent composer keeps all three: it carries prose far more often than it
-    // carries a command line, and there the keyboard is helping.
+    // misbehaved. An agent's composer carries the same paths and flags, so it starts with none of
+    // them either and the setting is what turns them on for prose.
     function syncComposerMode() {
       const input = document.getElementById('termInput');
       const shell = !!activePane && isShell(activePane);
       input.placeholder = enterSendsOn() && shell ? 'Type…  ⏎ sends' : 'Type…  ⌘/Ctrl+Enter sends';
-      input.setAttribute('autocorrect', shell ? 'off' : 'on');
-      input.setAttribute('autocapitalize', shell ? 'none' : 'sentences');
-      input.spellcheck = !shell;
+      // A shell is a command line and never gets soft input, whatever the setting says: a rewritten
+      // command is a wrong command, and there is no prose case over a terminal to weigh against it.
+      applyAutocorrect(input, autocorrectOn() && !shell);
     }
 
     // Whether the composer stack is folded away. Open by default, and remembered: someone reading

@@ -29,6 +29,38 @@ test.afterEach(async ({page}) => {
   expect(page.__errors, 'the page logged errors').toEqual([]);
 });
 
+test('the composers take no autocorrect until the setting says so', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).first().click();
+  const term = page.locator('#termInput');
+  // Off before a script has run and off after: an agent's composer carries paths and flags, and a
+  // keyboard that capitalises the first word of one has changed it.
+  await expect(term).toHaveAttribute('autocorrect', 'off');
+  await expect(term).toHaveAttribute('autocapitalize', 'none');
+  expect(await term.evaluate(el => el.spellcheck)).toBe(false);
+  await page.locator('#navSettings').click();
+  await page.locator('#autocorrectOn').check();
+  await page.locator('#navSettings').click();
+  await expect(term).toHaveAttribute('autocorrect', 'on');
+  await expect(term).toHaveAttribute('autocapitalize', 'sentences');
+  expect(await term.evaluate(el => el.spellcheck)).toBe(true);
+  // Remembered, and applied to the conversation window's composer as well — both write to an
+  // agent, and a setting that reached one of them would be a setting nobody could trust.
+  await page.reload();
+  await expect(page.locator('#autocorrectOn')).toBeChecked();
+  await expect(page.locator('#convInput')).toHaveAttribute('autocorrect', 'on');
+});
+
+test('a terminal composer refuses autocorrect however the setting is left', async ({page}) => {
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await page.evaluate(() => setAutocorrect(true));
+  // A shell is a command line: `git commit` capitalised is a command not found, and there is no
+  // prose case over a terminal to weigh against it.
+  await page.evaluate(() => openTerminal(shells[0].pane_id));
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await expect(page.locator('#termInput')).toHaveAttribute('autocorrect', 'off');
+  await expect(page.locator('#termInput')).toHaveAttribute('autocapitalize', 'none');
+});
+
 test('section headers carry their word and nothing else', async ({page}) => {
   const header = page.locator('#agents .section-header').first();
   await expect(header).toBeVisible();
@@ -186,7 +218,7 @@ test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a 
   await expect(refresh).toBeVisible();
   await expect(page.locator('.fire-label')).toHaveText('Refresh');
   // A menu, read down its left edge: one column, one left edge, one width.
-  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button')]
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button:not([hidden])')]
     .map(b => { const r = b.getBoundingClientRect(); return [r.left, r.width, r.top]; }));
   expect(rows.length).toBe(3);
   expect(new Set(rows.map(r => r[0])).size, 'the rows share a left edge').toBe(1);

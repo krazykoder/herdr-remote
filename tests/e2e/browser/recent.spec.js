@@ -88,6 +88,54 @@ test('terminals are in it too, and the row says which is which', async ({page}) 
   await expect(shell.locator('.meta')).toContainText('/work/charts/relay');
 });
 
+test('a conversation visited is in the same list, in the same order', async ({page}) => {
+  await openPane(page, AGENT);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([{id: 'c1', name: 'a thread', created: Date.now(),
+      members: [{key, added: 1, label: 'Architect 1'}]}]);
+  });
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await page.locator('#statusBar .recent-btn').click();
+  // The conversation was the last thing opened, so it is first — above the pane that was open
+  // before it. One order for both kinds: "where was I" has one answer.
+  const names = await rows(page).locator('.name').allTextContents();
+  expect(names[0]).toContain('a thread');
+  expect(names[1]).toContain(AGENT);
+  await expect(rows(page).first().locator('.kind')).toHaveText('💬');
+  await expect(rows(page).first().locator('.meta')).toContainText('1 pane · 1 live');
+  // Only visited ones: every conversation is already one tap away on the landing page.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items.push({id: 'c2', name: 'never opened', created: Date.now(), members: []});
+    saveConvIndex(items);
+  });
+  await page.locator('#recentSheet .pair-pick').first().click();
+  await page.locator('#statusBar .recent-btn').click();
+  expect(await rows(page).filter({hasText: 'never opened'}).count()).toBe(0);
+});
+
+test('a conversation row opens the conversation, not a pane', async ({page}) => {
+  await openPane(page, AGENT);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([{id: 'c1', name: 'a thread', created: Date.now(),
+      members: [{key, added: 1, label: 'Architect 1'}]}]);
+    openConversation('c1');
+  });
+  await expect(page.locator('#convView')).toBeVisible();
+  // Then a pane, so the conversation is not the most recent thing and the row has to be found.
+  await page.evaluate(o => openTerminal(agents.find(a => a.label === o).pane_id), OTHER);
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.locator('#statusBar .recent-btn').click();
+  await rows(page).filter({hasText: 'a thread'}).click();
+  await expect(page.locator('#recentSheet')).toBeHidden();
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewTitle')).toHaveText('a thread');
+});
+
 test('a row opens that pane and closes the sheet', async ({page}) => {
   await page.locator('#statusBar .recent-btn').click();
   await rows(page).filter({hasText: OTHER}).first().click();

@@ -50,7 +50,11 @@
       bucket[direction] += bandwidthBytes(data);
       const cutoff = at - (BANDWIDTH_BUCKETS - 1) * BANDWIDTH_BUCKET_MS;
       bandwidth = bandwidth.filter(b => b.at >= cutoff);
-      if (document.getElementById('timelineView')?.style.display === 'flex') renderBandwidth();
+      // Whether the view is on screen, not which display mode it happens to use: PANELS decides
+      // that, and a counter that stopped updating because a panel changed layout would be a
+      // silent failure.
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display !== 'none') renderBandwidth();
     }
 
     function bandwidthBuckets(now) {

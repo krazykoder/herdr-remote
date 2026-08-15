@@ -39,7 +39,7 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navStep: () => 0,
     paneOf: () => true,
-    navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},
+    navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {}, syncResend() {},
     syncComposerMode() {}, isShell: () => false,
     // The conversation switch reads membership and the per-pane view, both of which live in the
     // block below this one. Stubbed rather than sliced in: this suite owns the nav row, not the

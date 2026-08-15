@@ -295,14 +295,20 @@
 
     const RECENTS_KEY = 'herdr_recents';
     const MAX_RECENTS = 5;
+    // What is stored, against what the landing section draws. The section shows five panes; the
+    // switcher in the status bar orders everything that is running, and a five-entry log would have
+    // it forgetting the pane before last. Storing more costs nothing and the section still slices.
+    const RECENT_LOG = 24;
 
     function loadRecents() {
       try {
         const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]');
         // Version-one recents stored bare pane IDs. Drop them: herdr can reuse an ID for a
         // different session, and this is a convenience list, not data worth migrating unsafely.
-        return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.pane_id
-          && (x.agent || x.terminal)) : [];
+        // Conversations are in the same log, because "where was I" has one answer and it is in the
+        // order things were visited, not one order per kind of thing.
+        return Array.isArray(v) ? v.filter(x => x && typeof x === 'object'
+          && (x.conv || (x.pane_id && (x.agent || x.terminal)))) : [];
       } catch (e) { return []; }
     }
 
@@ -325,8 +331,18 @@
       const current = shell
         ? { pane_id: paneId, host: live[0].host || 'local', cwd: live[0].cwd || '', terminal: true }
         : recentFingerprint(live[0]);
-      const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, MAX_RECENTS);
+      const next = [current, ...loadRecents().filter(r => r.pane_id !== paneId)].slice(0, RECENT_LOG);
       localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+    }
+
+    // A conversation window opened is a visit, in the same log and the same order. Stored by id
+    // alone: a conversation is this browser's own record, so there is no session to fingerprint
+    // against and nothing another machine could reuse the id for.
+    function noteConvVisit(id) {
+      if (!id) return;
+      const next = [{conv: id}, ...loadRecents().filter(r => r.conv !== id)].slice(0, RECENT_LOG);
+      try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); }
+      catch (e) { /* private mode: this session only */ }
     }
 
     // --- The recent switcher ---
@@ -343,40 +359,71 @@
         + shells.filter(x => x.pane_id === p.pane_id).length === 1);
     }
 
-    function recentPanes() {
+    // Panes and conversations in one order, which is what makes this a switcher rather than two
+    // lists that happen to share a sheet: a reader who was last in a conversation window and before
+    // that in a pane wants those two in that order, not the panes first because they are panes.
+    //
+    // Conversations appear only once visited. A pane is offered whether or not this device has
+    // opened it — it is running, and something running that cannot be reached from here would be a
+    // hole — but every conversation is already one tap away on the landing page, and listing all of
+    // them would make the switcher a second copy of it.
+    function recentItems() {
       const log = loadRecents();
-      const rank = p => {
+      const paneRank = p => {
         const i = log.findIndex(r => recentMatchesPane(r, p, isShell(p.pane_id)));
         return i < 0 ? log.length : i;
       };
-      // Visited panes first, in visit order. The rest follow by when they last moved, which keeps
-      // the list a recent list rather than making it a second copy of the agent list — and a pane
-      // this device has never opened still has to be reachable from here.
-      return livePanes().map((p, i) => [p, i])
-        .sort((a, b) => rank(a[0]) - rank(b[0]) ||
-          (lastSeen[b[0].pane_id] || 0) - (lastSeen[a[0].pane_id] || 0) || a[1] - b[1])
-        .map(pair => pair[0]);
+      const convs = loadConvIndex();
+      const items = livePanes().map((p, i) => ({pane: p, rank: paneRank(p), seen: lastSeen[p.pane_id] || 0, i}));
+      log.forEach((r, at) => {
+        const conv = r.conv && convs.find(c => c.id === r.conv);
+        // A conversation deleted since it was visited is simply gone; the log is a convenience
+        // list, not a record, and it is rewritten by the next visit anyway.
+        if (conv) items.push({conv: conv, rank: at, seen: 0, i: items.length});
+      });
+      // Visited first in visit order; everything else after it by when it last moved, so the list
+      // stays a recent list rather than a second copy of the agent list.
+      return items.sort((a, b) => a.rank - b.rank || b.seen - a.seen || a.i - b.i);
+    }
+
+    function recentPaneRow(p) {
+      const shell = isShell(p.pane_id);
+      const seen = lastSeen[p.pane_id];
+      const meta = [p.project, shell ? (p.cwd || 'shell') : p.status,
+        seen ? fmtAgo(new Date(seen)) : ''].filter(Boolean).join(' · ');
+      return `<button class="pair-pick${p.pane_id === activePane ? ' on' : ''}" ` +
+        `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
+        `<span class="kind" aria-hidden="true">${shell ? '⬛' : '🤖'}</span>` +
+        `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
+        `${shell ? '' : agentBadge(p.agent)}</span>` +
+        `<span class="meta">${escapeHtml(meta)}</span></span>` +
+        `<span class="dot" style="background:${statusColor(p)}" aria-hidden="true"></span>` +
+        `</button>`;
+    }
+
+    // The same row, saying what a conversation is instead of what a pane is doing: the 💬 the
+    // conversation sheet uses, the name, and how many panes wrote it. No status dot — a record has
+    // no status, and the members that do have their own rows here.
+    function recentConvRow(c) {
+      const n = (c.members || []).length;
+      const live = (c.members || []).filter(m => agents.some(a => convMemberKey(a) === m.key)).length;
+      const meta = `${n} pane${n === 1 ? '' : 's'}` + (live ? ` · ${live} live` : '');
+      return `<button class="pair-pick${c.id === convViewId ? ' on' : ''}" ` +
+        `onclick="closeRecentSheet(); openConversation('${escapeHtml(c.id)}')">` +
+        `<span class="kind" aria-hidden="true">💬</span>` +
+        `<span class="info"><span class="name">${escapeHtml(c.name)}</span>` +
+        `<span class="meta">${escapeHtml(meta)}</span></span>` +
+        `</button>`;
     }
 
     function openRecentSheet() {
       const box = document.getElementById('recentList');
-      const list = recentPanes();
+      const list = recentItems();
       // Same row as the pair and conversation sheets: a list of things to pick reads as one when
       // every list in the app is picked from the same way.
-      box.innerHTML = list.length ? list.map(p => {
-        const shell = isShell(p.pane_id);
-        const seen = lastSeen[p.pane_id];
-        const meta = [p.project, shell ? (p.cwd || 'shell') : p.status,
-          seen ? fmtAgo(new Date(seen)) : ''].filter(Boolean).join(' · ');
-        return `<button class="pair-pick${p.pane_id === activePane ? ' on' : ''}" ` +
-          `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
-          `<span class="kind" aria-hidden="true">${shell ? '⬛' : '🤖'}</span>` +
-          `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
-          `${shell ? '' : agentBadge(p.agent)}</span>` +
-          `<span class="meta">${escapeHtml(meta)}</span></span>` +
-          `<span class="dot" style="background:${statusColor(p)}" aria-hidden="true"></span>` +
-          `</button>`;
-      }).join('') : '<p class="pair-empty">Nothing is running.</p>';
+      box.innerHTML = list.length
+        ? list.map(x => x.conv ? recentConvRow(x.conv) : recentPaneRow(x.pane)).join('')
+        : '<p class="pair-empty">Nothing is running.</p>';
       document.getElementById('recentSheet').style.display = 'block';
     }
 

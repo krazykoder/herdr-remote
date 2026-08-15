@@ -18,6 +18,7 @@
     setConvDeepAll(convDeepAll());
     setConvTidy(convTidyOn());
     setDockMru(dockMruOn());
+    setAutocorrect(autocorrectOn());
     setBandwidthOn(bandwidthOn());
     setConvSweep(localStorage.getItem('herdr_conv_sweep') || '1h');
     loadTermShortcuts();

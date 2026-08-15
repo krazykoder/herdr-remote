@@ -172,13 +172,28 @@
         ['Sent', b => b.sent],
         ['Received', b => b.received],
       ];
-      rows.innerHTML = kinds.map(([label, value]) => `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
-        `<div class="bandwidth-chips">${buckets.map((b, i) => {
-          const start = new Date(b.at), end = new Date(b.at + BANDWIDTH_BUCKET_MS);
-          const time = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
-            end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
-          return `<span class="bandwidth-chip" title="${label}, ${time}">${formatBandwidth(value(b))}</span>`;
-        }).join('')}</div></div>`).join('');
+      // The rows are built when the *window* moves, which is once every five minutes, and never
+      // for a number changing. Twelve chips at 38px overflow a phone, so this row scrolls — and it
+      // is redrawn on every message that lands, which with the poll is three times a minute. An
+      // innerHTML rebuild there would send a reader who had scrolled back to an earlier bucket to
+      // the left edge again, three times a minute. Same rule the dock's chip row follows.
+      const sig = buckets.map(b => b.at).join(',');
+      if (rows.dataset.sig !== sig) {
+        rows.innerHTML = kinds.map(([label]) =>
+          `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+          `<div class="bandwidth-chips">${buckets.map(b => {
+            const start = new Date(b.at), end = new Date(b.at + BANDWIDTH_BUCKET_MS);
+            const time = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
+              end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+            return `<span class="bandwidth-chip" title="${label}, ${time}"></span>`;
+          }).join('')}</div></div>`).join('');
+        rows.dataset.sig = sig;
+      }
+      // The numbers, written into the chips that are already there.
+      kinds.forEach(([, value], r) => {
+        const chips = rows.children[r].querySelectorAll('.bandwidth-chip');
+        buckets.forEach((b, i) => { chips[i].textContent = formatBandwidth(value(b)); });
+      });
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
