@@ -17,6 +17,7 @@
     document.getElementById('historyPick').value = String(paneHistoryMax());
     setConvDeepAll(convDeepAll());
     setConvTidy(convTidyOn());
+    setDockMru(dockMruOn());
     setConvSweep(localStorage.getItem('herdr_conv_sweep') || '1h');
     loadTermShortcuts();
     syncPromptsBtn();  // no pane is open yet, so this labels the button for an agent

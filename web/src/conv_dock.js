@@ -17,6 +17,57 @@
     // by the send that carries it.
     let dockTarget = '', dockPicks = [], dockPicked = new Set(), dockPickedOf = 0;
 
+    // Both rows scroll, and a phone shows their left end — so what was used last is put back there,
+    // because the thing used last is overwhelmingly the thing used next. Only use moves anything:
+    // everything else keeps the order it had, roster order for members and the shortcut list's
+    // order for chips, so the row is never reshuffled by a poll or by a message arriving.
+    //
+    // Off is a real preference and not a fallback. A row that holds still is a row you can reach
+    // for without looking, and someone who has learned where their agents sit has a better index
+    // than recency is.
+    const MRU_KEYS = {who: 'herdr_dock_who_mru', chip: 'herdr_dock_chip_mru'};
+    const DOCK_MRU_KEY = 'herdr_dock_mru';
+
+    function dockMruOn() {
+      try { return localStorage.getItem(DOCK_MRU_KEY) !== 'off'; } catch (e) { return true; }
+    }
+
+    function setDockMru(on) {
+      try { localStorage.setItem(DOCK_MRU_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+      const pick = document.getElementById('mruPick');
+      if (pick) pick.value = on ? 'on' : 'off';
+      if (convDockOn()) renderConvDock();
+    }
+
+    function dockMru(kind) {
+      try {
+        const d = JSON.parse(localStorage.getItem(MRU_KEYS[kind]) || '[]');
+        return Array.isArray(d) ? d : [];
+      } catch (e) { return []; }
+    }
+
+    // Recorded whatever the setting says. Turning the sort back on should pick up where the reader
+    // left off rather than starting from a row that has forgotten every agent they ever used.
+    function noteDockUse(kind, id) {
+      if (!id) return;
+      const list = dockMru(kind).filter(x => x !== id);
+      list.unshift(id);
+      try { localStorage.setItem(MRU_KEYS[kind], JSON.stringify(list.slice(0, 32))); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
+    // Stable: two entries neither of which has ever been used keep the order they came in. A sort
+    // that reordered the untouched ones would be shuffling a row nobody has taught anything.
+    function byDockMru(kind, list, idOf) {
+      if (!dockMruOn()) return list;
+      const mru = dockMru(kind);
+      const rank = x => { const i = mru.indexOf(idOf(x)); return i < 0 ? mru.length : i; };
+      return list.map((x, i) => [x, i])
+        .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+        .map(pair => pair[0]);
+    }
+
     function convDockOn() {
       const view = document.getElementById('convView');
       return !!view && view.style.display !== 'none';
@@ -29,8 +80,12 @@
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) return [];
       const hidden = convHidden(conv.id);
-      return (conv.members || []).filter(m => !hidden.has(m.key))
+      const live = (conv.members || []).filter(m => !hidden.has(m.key))
         .map(m => agents.find(a => convMemberKey(a) === m.key)).filter(Boolean);
+      // Sorted here rather than in the row, so the row, the list behind ▾ and the fallback target
+      // all read the membership in the same order — three places disagreeing about who is first is
+      // three answers to "who am I talking to".
+      return byDockMru('who', live, convMemberKey);
     }
 
     // Whoever wrote the picked messages. Two agents' messages are two conversations being quoted as
@@ -44,9 +99,10 @@
       return agents.find(a => convMemberKey(a) === keys.values().next().value) || null;
     }
 
-    // With a bubble picked the source is excluded — a message cannot be transferred to the pane that
-    // said it. Otherwise everyone is a candidate: the composer is addressing the conversation, and
-    // any member of it is someone you might be talking to.
+    // Who a message may be sent to. With a bubble picked that is everyone but the pane that said it
+    // — a message cannot be transferred back into its own session. The row still *draws* the whole
+    // membership (see dockRowHtml): a pick is a passing state, and a conversation that shed its
+    // members every time one was quoted would keep answering "who is in this" differently.
     function dockTargets() {
       const source = dockSource();
       const all = dockMembers();
@@ -70,6 +126,8 @@
 
     function setDockTarget(paneId) {
       dockTarget = paneId;
+      const a = agents.find(x => x.pane_id === paneId);
+      if (a) noteDockUse('who', convMemberKey(a));
       renderConvDock();
       if (window.cue) cue('tick');
     }
@@ -114,7 +172,8 @@
     // again takes it back out — so the row is the sentence being built rather than a menu of
     // mutually exclusive ones.
     function toggleDockChip(i) {
-      if (dockFill()) return insertDockShortcut(i);
+      noteDockUse('chip', SHORTCUTS[i].at);
+      if (dockFill()) { insertDockShortcut(i); renderConvDock(); return; }
       const at = dockPicks.indexOf(i);
       if (at >= 0) dockPicks.splice(at, 1); else dockPicks.push(i);
       renderConvDock();
@@ -170,11 +229,11 @@
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
       const all = dockMembers();
-      const list = dockTargets();
-      // Every candidate excluded — a bubble picked in a conversation of one — leaves the row still
-      // addressing the conversation, with nothing to transfer the pick to. Dropping it instead would
-      // take the composer's target away over a pick that is about to be undone.
-      const html = all.length ? dockRowHtml(list.length ? list : all, !list.length) : '';
+      // Always the whole membership. A pick narrows who may *receive* the message, never who is in
+      // the conversation, and a row that dropped the others while a bubble was picked took the
+      // reader's other choices away over a state one tap undoes. With every candidate excluded — a
+      // bubble picked in a conversation of one — there is simply nothing left to send it to.
+      const html = all.length ? dockRowHtml(all, !dockTargets().length) : '';
       row.hidden = !html;
       if (!html) { closeDockMenu(); row.dataset.sig = ''; }
       // Rebuilt only when what it says changed. This runs on every snapshot, and replacing the row
@@ -202,6 +261,16 @@
       bubble.style.setProperty('--dock-cursor', c || 'var(--text)');
     }
 
+    // A tap anywhere in the composer is a tap in the field. The send button and anything else with
+    // its own action keep theirs — this is only for the padding around the text.
+    function focusConvInput(e) {
+      if (e.target.closest && e.target.closest('button')) return;
+      const input = document.getElementById('convInput');
+      if (!input) return;
+      input.focus();
+      syncConvCursor();
+    }
+
     // The block cursor. A textarea's own caret is a hairline that disappears with focus, and this
     // is a box that types into terminals — so the caret is painted instead, on a ghost copy of the
     // text sitting exactly under the field. The character at the caret goes inside the block, and a
@@ -222,25 +291,37 @@
     }
 
     function dockRowHtml(list, noSend) {
-      const target = dockTargetOf(list);
+      const target = dockAddressed();
+      const source = dockSource();
       // One lit, the rest dimmed rather than hidden: which agents are in this conversation is
       // information, and a row that showed only the chosen one would answer a different question.
       // Named the way the pane header names one: the live dot, the label, and the harness badge.
       // Which agent is about to receive another agent's output is the fact worth being sure of, and
       // "scratch" alone does not say whether that is a codex or a claude.
-      const who = list.map(a =>
-        `<button class="xfer-who${a.pane_id === target ? ' on' : ''}" ` +
-        `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
-        `onclick="setDockTarget('${a.pane_id}')" aria-pressed="${a.pane_id === target}" ` +
-        `title="Talk to ${escapeHtml(paneLabel(a))}" aria-label="Talk to ${escapeHtml(paneLabel(a))}">` +
-        `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-        `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</button>`).join('');
+      //
+      // The member whose message is picked stays in the row, marked as the one it came from rather
+      // than removed: it is still in the conversation, it is still who you were reading, and a row
+      // that lost a pill on every pick would flicker its own membership.
+      const who = list.map(a => {
+        // Not marked when it is the only member there is: a conversation of one still types into
+        // the pane it is reading, and a pill drawn dead beside a composer that works would be lying.
+        const from = !!source && a.pane_id === source.pane_id && !noSend;
+        const name = escapeHtml(paneLabel(a));
+        return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}${from ? ' from' : ''}" ` +
+          `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
+          (from ? 'disabled ' : `onclick="setDockTarget('${a.pane_id}')" `) +
+          `aria-pressed="${a.pane_id === target}" ` +
+          `title="${from ? `${name} wrote the picked message` : `Talk to ${name}`}" ` +
+          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
+          `${name}${agentBadge(a.agent)}</button>`;
+      }).join('');
       // Numbered by the order they were chosen, because that order is what will be written and two
       // lit chips otherwise say nothing about which comes first. In fill mode nothing is lit at
       // all: the instruction is in the box where it can be read, so a second place saying it is on
       // would be saying it twice.
       const fill = dockFill();
-      const chips = SHORTCUTS.map((s, i) => {
+      const chips = byDockMru('chip', SHORTCUTS.map((s, i) => ({s, i})), x => x.s.at).map(({s, i}) => {
         const at = fill ? -1 : dockPicks.indexOf(i);
         return `<button class="xfer-chip${at >= 0 ? ' on' : ''}" onclick="toggleDockChip(${i})" ` +
           `aria-pressed="${at >= 0}" title="${escapeHtml(s.label)}" ` +
@@ -264,12 +345,27 @@
           `${escapeHtml(paneLabel(paneOf(target)) || target)}" ` +
           `aria-label="Send the picked messages">Send (${n}) ›</button>`
         : '';
-      // Only the chips scroll. @+ and Send are pinned, because a row of instructions long enough to
-      // push the send button off a phone would hide the one control the row is for — and @+ is the
-      // way back to the instructions that scrolled away, so it cannot scroll away itself.
-      return `<div class="xfer-who-row">${who}</div>` +
+      // Only the lists scroll. The buttons on the right are pinned, because a row long enough to
+      // push them off a phone would hide the controls the row is for — and each is the way back to
+      // what scrolled away, so neither can scroll away itself. The same shape on both lines: the
+      // things you choose from on the left, the way to see all of them on the right.
+      const to = escapeHtml(paneLabel(paneOf(target)) || target);
+      return `<div class="xfer-act"><div class="xfer-who-row">${who}</div>` +
+        // The same icon a pane wears in its header and on its card, so what the list holds is said
+        // by the button that opens it rather than by a caret that could open anything.
+        `<button class="xfer-who-more list" onclick="toggleWhoMenu()" ` +
+        `aria-expanded="${whoMenuOpen()}" ` +
+        `title="Every agent, as a list" aria-label="Every agent, as a list">` +
+        `${(paneOf(target) || {}).agent ? '🤖' : '⬛'}</button>` +
+        // The way out of the reading window and into the addressed pane itself. Beside the list it
+        // is chosen from, because "who am I talking to" and "take me there" are the same question
+        // asked twice.
+        (target ? `<button class="xfer-who-more open" onclick="openDockPane()" ` +
+          `title="Open ${to}'s terminal" aria-label="Open ${to}'s terminal">⇱</button>` : '') +
+        `</div>` +
         `<div class="xfer-act"><div class="xfer-chip-row">${chips}</div>` +
         `<button class="xfer-chip more" onclick="toggleDockMenu()" ` +
+        `aria-expanded="${dockMenuOpen()}" ` +
         `title="Every instruction, as a list" aria-label="Every instruction, as a list">@+</button>` +
         fillBtn + send + `</div>`;
     }
@@ -290,10 +386,56 @@
       syncDockHeight();
     }
 
-    // `@+` is the menu's own toggle: a second tap on the control that opened it closes it, which
-    // is also what keeps it out of the tap-outside-to-close rule below.
+    // The same members as a list, for a row that has scrolled past the edge of a phone and for
+    // reading a name that the pill cut off. It chooses the same target the pills do — the lit one is
+    // ticked, and the member whose message is picked is named but not choosable, exactly as in the
+    // row.
+    function openWhoMenu() {
+      const box = document.getElementById('whoMenu');
+      const target = dockAddressed();
+      const source = dockSource();
+      const noSend = !dockTargets().length;
+      box.innerHTML = dockMembers().map(a => {
+        const from = !!source && a.pane_id === source.pane_id && !noSend;
+        const on = a.pane_id === target;
+        const name = escapeHtml(paneLabel(a));
+        return `<button class="menu-item" role="menuitemradio" aria-checked="${on}" ` +
+          (from ? 'disabled ' : `onclick="pickDockTarget('${a.pane_id}')" `) +
+          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `<span class="tick">${on ? '✓' : ''}</span>` +
+          `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
+          `${name}${agentBadge(a.agent)}</button>`;
+      }).join('');
+      closeDockMenu('chipMenu');   // one list open at a time; two would cover the thread twice over
+      box.hidden = false;
+      syncDockHeight();
+    }
+
+    // Chosen from the list rather than the row, so the list has said what it was opened to say and
+    // closes behind the choice. The pills stay where they are — they are the row, not a menu.
+    function pickDockTarget(paneId) {
+      closeDockMenu('whoMenu');
+      setDockTarget(paneId);
+    }
+
+    // Into the addressed pane's terminal, not into its thread. The thread is what this window
+    // already is, and a reader leaving it is leaving it for the rows — the live frame, the
+    // keyboard, the approval buttons — so the pane's thread panel is turned off on the way.
+    function openDockPane() {
+      const live = agents.find(a => a.pane_id === dockAddressed());
+      if (!live) { showToast('That agent is no longer running.'); return; }
+      convSetView(live, '');
+      jumpToPane(live.pane_id);
+    }
+
+    // Each list's button is its own toggle: a second tap on the control that opened it closes it,
+    // which is also what keeps it out of the tap-outside-to-close rule below.
     function toggleDockMenu() {
-      if (dockMenuOpen()) closeDockMenu(); else openDockMenu();
+      if (dockMenuOpen()) closeDockMenu('chipMenu'); else openDockMenu();
+    }
+
+    function toggleWhoMenu() {
+      if (whoMenuOpen()) closeDockMenu('whoMenu'); else openWhoMenu();
     }
 
     function dockMenuOpen() {
@@ -301,9 +443,19 @@
       return !!box && !box.hidden;
     }
 
-    function closeDockMenu() {
-      const box = document.getElementById('chipMenu');
-      if (box && !box.hidden) { box.hidden = true; syncDockHeight(); }
+    function whoMenuOpen() {
+      const box = document.getElementById('whoMenu');
+      return !!box && !box.hidden;
+    }
+
+    // Named for one list or, with nothing named, for both — the callers that are leaving the
+    // conversation or have just sent something mean every list, not one of them.
+    function closeDockMenu(id) {
+      const ids = id ? [id] : ['chipMenu', 'whoMenu'];
+      for (const one of ids) {
+        const box = document.getElementById(one);
+        if (box && !box.hidden) { box.hidden = true; syncDockHeight(); }
+      }
     }
 
     // What the lit chips say, rewritten for the agent about to read them, in the order they were
@@ -419,9 +571,9 @@
       // bubbled click reached here the target would be detached from the document and `closest`
       // would say it came from nowhere, closing the menu on its own taps.
       document.addEventListener('click', e => {
-        if (!dockMenuOpen()) return;
-        if (e.target.closest && e.target.closest('#chipMenu, .xfer-chip')) return;
-        closeDockMenu();
+        if (!e.target.closest) return;
+        if (dockMenuOpen() && !e.target.closest('#chipMenu, .xfer-chip')) closeDockMenu('chipMenu');
+        if (whoMenuOpen() && !e.target.closest('#whoMenu, .xfer-who-more')) closeDockMenu('whoMenu');
       }, true);
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);

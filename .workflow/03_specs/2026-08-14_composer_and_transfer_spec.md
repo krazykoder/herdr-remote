@@ -189,8 +189,8 @@ The window is read top to bottom — header, thread, and the dock floating over 
 │    Architect 1  Ready. Name the change.             ✓    │     behind the dock
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐  │
-│  │ ● Architect 1   ○ amp                              │  │  ← who it goes to
-│  │ @review₁  @implement  @test₂    @+     Send (1) ›  │  │  ← what is added, and the send
+│  │ ● Architect 1   ○ amp                    🤖    ⇱   │  │  ← who it goes to, the list, the pane
+│  │ @review₁  @implement  @test₂  @+  ⤵    Send (1) ›  │  │  ← what is added, and the send
 │  │ ┌────────────────────────────────────────────┐     │  │
 │  │ │ looks good, ship it                    ( ➤ )│    │  │  ← the composer bubble
 │  │ └────────────────────────────────────────────┘     │  │
@@ -225,6 +225,15 @@ long prompt that a wall of boilerplate above it would bury. Switching modes clea
 armed in the other one: an instruction that is invisible in the mode you are now in must not travel
 on the next send. The setting is remembered.
 
+**The composer is the pane's composer.** Monospace, sized by the same `--input-font` control in the
+pane menu: writing to an agent from here is the same act as writing to it from its pane, and a
+monospace box is also what makes the drawn block exactly one character wide. The ghost is bound to
+the same rule — a ghost in a different face paints the block on the wrong character.
+
+**The whole bubble is the field.** A tap anywhere in the composer puts the caret in the text, the
+way tapping a message box on a phone does; buttons inside it keep their own taps. A field that has
+to be hit exactly is a field that is missed on a phone.
+
 **`@+` closes on a tap past it**, and on a second tap of `@+`. The listener is in the capture phase
 and excludes the chips — a chip's own handler rebuilds the list it was tapped in, so by the time a
 bubbled click arrived the target would be detached and the menu would close on its own taps.
@@ -256,11 +265,29 @@ than none.
 
 ### 4.2 The address row
 
-- **Every live member** of the conversation, in roster order (which is the order they joined). With
-  a bubble picked the *source* is excluded — a message cannot be transferred to the pane that said
-  it. The chosen one is lit and the rest are dimmed rather than hidden: which agents are in this
+- **Every live member** of the conversation, in roster order (which is the order they joined). The
+  chosen one is lit and the rest are dimmed rather than hidden: which agents are in this
   conversation is information, and a row that showed only the target would answer a different
   question.
+- **A pick never takes a member out of the row.** With a bubble picked the pane that wrote it cannot
+  *receive* it — a message cannot be transferred back into its own session — so it is marked as the
+  source (dashed, dimmed, disabled) rather than removed. A row that shed its members every time one
+  was quoted would answer "who is in this conversation" differently on every tap, and it would take
+  the reader's other choices away over a state one tap undoes. The mark is suppressed when it is the
+  only member there is: a pill drawn dead beside a composer that works would be lying.
+- **`🤖` opens the row as a list**, for a row that has scrolled past the edge of a phone and for a
+  name a pill cut off. Same members, same order, the lit one ticked, the source named but not
+  choosable. It wears the agent icon rather than a caret, because a caret could open anything. One
+  list at a time: opening it closes `@+`, and opening `@+` closes it.
+- **`⇱` opens the addressed pane's terminal**, not its thread — the thread is what this window
+  already is, and what a reader leaves it for is the rows, the keyboard and the approval buttons.
+  Beside the list it is chosen from, because "who am I talking to" and "take me there" are the same
+  question asked twice.
+- **The last agent written to comes back to the left**, when the sort is on. Both rows scroll and a
+  phone shows their left end, so what was used last is put where the thumb already is. Only *use*
+  moves anything — the rest hold the order they had, and neither a poll nor an arriving message ever
+  reorders the row. The order is remembered across reloads, and the sort applies to the row, the
+  list behind `🤖` and the fallback target alike, so all three read the membership the same way.
 - **A conversation is not a pair.** Membership is what makes an agent a target; no pair is consulted
   anywhere in this section. Three agents in one conversation is the case the row exists for.
 - **Sticky.** The target is not a property of a selection — it is who you are talking to. Having
@@ -288,6 +315,11 @@ than none.
 - **`@+`** opens the same instructions as a list — the full label rather than the `@name`, and the
   way back to a chip that has scrolled off a phone. It writes the same picks the chips do, and it is
   redrawn on every tap so it can never show stale ticks.
+- **Recency, the same as the pills.** The instruction last used moves to the left end, when the sort
+  is on. Turned off, both rows hold still: a row you can reach for without looking is a better index
+  than recency once you have learned where things sit. One setting governs both rows —
+  *Sort the conversation dock by use*, on by default — and what was learned is kept while it is off,
+  so turning it back on picks up where the reader left off rather than from nothing.
 - **Only the chips scroll.** `@+` and Send are pinned: a conversation long on instructions must
   never push the one control that sends off the edge, and `@+` is the way back to what scrolled.
 - **Send is the only filled control.** Picked chips are outlined in the accent; three chips in the
@@ -425,6 +457,16 @@ place, and a reader who switches panes gets the end of the new one.
     page measured rather than guessed.
 18. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
     has been sent nothing.
+19. A pick leaves every member in the row: the one that wrote it is marked and disabled, the others
+    stay one tap away, and choosing one before the pick still holds after it.
+20. `🤖` lists the same members in the same order and choosing there is the same choice; it and `@+`
+    are never open together; `⇱` opens the addressed pane's rows, not its thread.
+21. On a phone both rows are one line that scrolls sideways, with their right-hand buttons on
+    screen.
+22. The composer is monospace and follows the pane menu's text-size control, ghost included, and a
+    tap anywhere in it focuses the field.
+23. With the sort on, the agent and instruction last used are first in their rows, across a reload;
+    off, both rows hold their original order, and what was learned survives being turned off.
 
 ---
 

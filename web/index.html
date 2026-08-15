@@ -1817,8 +1817,11 @@
     .conv-ghost {
       width: 100%;
       box-sizing: border-box;
-      font-family: inherit;
-      font-size: 0.95rem;
+      /* The pane composer's face and size, from the same setting: this is the same act — writing a
+         message to an agent — and a monospace box is also what makes the block cursor exactly one
+         character wide. 16px by default keeps iOS from zooming on focus. */
+      font-family: monospace;
+      font-size: var(--input-font, 16px);
       line-height: 1.4;
       padding: 6px 0;
       white-space: pre-wrap;
@@ -2865,7 +2868,8 @@
       min-width: 0;
     }
 
-    .xfer-act .xfer-chip-row {
+    .xfer-act .xfer-chip-row,
+    .xfer-act .xfer-who-row {
       flex: 1 1 auto;
       min-width: 0;
     }
@@ -2906,6 +2910,14 @@
       opacity: 1;
     }
 
+    /* The member whose message is picked. Still named, still in the row, but not somewhere this
+       message can go — a transfer back into the session that wrote it is not a transfer. */
+    .xfer-row .xfer-who.from {
+      opacity: 0.35;
+      border-style: dashed;
+      cursor: default;
+    }
+
     /* Measured in the pill's own ems, so the pill scales as one piece — the same rule the thread's
        message headers follow. */
     .xfer-row .xfer-who .badge {
@@ -2922,7 +2934,8 @@
 
     /* An instruction, not a send. Chips are additive — two lit chips are two instructions, in the
        order they were tapped, which is why a second one wears its position. */
-    .xfer-row .xfer-chip {
+    .xfer-row .xfer-chip,
+    .xfer-row .xfer-who-more {
       flex: 0 0 auto;
       /* The same height as the pills above them: two rows of controls in one bubble that do not
          line up read as two bars that happened to be stacked. */
@@ -3011,6 +3024,21 @@
       display: inline-block;
       width: 1.2em;
       color: var(--blue);
+    }
+
+    /* The same live dot the pills and the pane header carry, so a name in the list and a name in
+       the row are recognisably the same agent. */
+    .chip-menu .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      margin-right: 6px;
+    }
+
+    .chip-menu .menu-item[disabled] {
+      opacity: 0.35;
+      cursor: default;
     }
 
     /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
@@ -3810,6 +3838,19 @@
     </div>
 
     <div class="setting-group">
+      <label for="mruPick">Sort the conversation dock by use</label>
+      <select id="mruPick" onchange="setDockMru(this.value === 'on')">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">In a conversation window, the agent you last wrote to and the instruction
+        you last used move to the left end of their rows. Both rows scroll, and the left end is what
+        a phone shows — so what you used last is where your thumb already is. Off holds the rows
+        still: members stay in the order they joined and instructions in the order the list defines,
+        which is the better index once you have learned where things sit.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -3871,13 +3912,16 @@
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
          modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
     <div class="conv-dock" id="convDock">
+      <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
       <!-- One bubble: who it goes to, what is added to it, and the message itself. Three stacked
            panels would read as three controls that happen to be near each other; this is one thing
            being addressed and written. Its border carries the chosen agent's colour. -->
       <div class="conv-bubble" id="convBubble">
         <div class="xfer-row" id="xferRow" hidden></div>
-        <div class="conv-composer" id="convComposer">
+        <!-- The whole bubble is the field: a tap anywhere in it puts the caret in the text, the way
+             tapping a message box on a phone does. Buttons inside it keep their own taps. -->
+        <div class="conv-composer" id="convComposer" onclick="focusConvInput(event)">
           <!-- The ghost mirrors the field's text under a transparent caret, so the block cursor is
                drawn rather than borrowed from the platform — see syncConvCursor. -->
           <div class="conv-field">
