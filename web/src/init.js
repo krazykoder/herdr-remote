@@ -10,6 +10,7 @@
     setConvFont(currentConvFont());
     applyWrapMode();
     placePairStrip();
+    watchDockHeight();   // the conversation window's floating dock measures itself from here on
     syncQaBtn();
     syncBottomDock();
     setDictationEnabled(dictationOn());  // hidden unless asked for, and where there is no speech recognition

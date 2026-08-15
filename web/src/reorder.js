@@ -300,10 +300,7 @@
           `onpointerdown="if(document.activeElement===document.getElementById('termInput'))event.preventDefault()" ` +
           `onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
         center +
-        // Not in a thread. There the transfer row above the bar is the path — it has a chosen
-        // target, and this button always takes the partner, so the two would disagree about where
-        // a message went. With nothing picked it could only have said "select some text" anyway.
-        (ok && !convThreadOn() ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
+        (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
       strip.style.display = 'flex';
       // Edit and Unpair live in the gear menu: the strip is for the two controls used while

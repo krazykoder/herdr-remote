@@ -15,6 +15,7 @@ const vm = require('node:vm');
 
 const PAIRS_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_pure.js'), 'utf8');
 const TRANSFER = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'transfer.js'), 'utf8');
+const CONV_DOCK = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'conv_dock.js'), 'utf8');
 const SETTINGS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'settings.js'), 'utf8');
 const START_DIALOG = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'start_dialog.js'), 'utf8');
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
@@ -263,7 +264,7 @@ test('transfer picks the prefix from the destination pane, not the source', () =
   assert.match(TRANSFER,
     /function transferInstruction\(picks, targetPaneId\) \{[\s\S]*?agentSlash\(SHORTCUTS\[i\]\.text, agentOf\(targetPaneId\)\)/);
   assert.match(TRANSFER, /transferInstruction\(shortcutIndex >= 0 \? \[shortcutIndex\] : \[\], partner\.pane_id\)/);
-  assert.match(TRANSFER, /transferInstruction\(transferPicks, target\)/);
+  assert.match(CONV_DOCK, /transferInstruction\(dockPicks, targetPaneId\)/);
 });
 
 // --- constants ---
@@ -278,22 +279,27 @@ test('the chunk size matches the cap the relay enforces', () => {
 
 test('a transfer never ends in a send, and exactly one function says otherwise', () => {
   // The rule and its one documented bypass, asserted against the source because it is a rule about
-  // what a function may do rather than about what it returns. doTransfer is the checkpoint the
-  // pane view keeps; transferNow is the conversation view's decision to skip it (spec §4).
-  const body = TRANSFER.slice(TRANSFER.indexOf('function doTransfer'),
-                             TRANSFER.indexOf('function transferNow'));
-  assert.ok(!/\bsendText\(/.test(body), 'doTransfer must never end in a send');
-  assert.match(TRANSFER, /function transferNow[\s\S]*?sendText\(\)/);
-  // And the bypass is scoped: a chip in the pane view would be a one-tap send of a guess at where
-  // a message starts.
-  assert.match(TRANSFER, /function transferNow\(\) \{\s*\n\s*if \(!convThreadOn\(\)\) return;/);
+  // what a function may do rather than about what it returns. Everything in transfer.js is the
+  // pane view's path and prefills a composer; convDockSend is the conversation window's decision
+  // to skip that checkpoint (spec §4), and it lives in its own file so the rule stays readable.
+  assert.ok(!/\bsendTextTo\(|\bsendText\(/.test(TRANSFER),
+    'the pane view\'s transfer must never end in a send');
+  assert.match(CONV_DOCK, /function convDockSend\(\)[\s\S]*?sendTextTo\(target,/);
+  // And the bypass is scoped: a payload here is a recorded bubble, which *is* the message. In the
+  // pane view it is a range dragged across rows — a guess at where a message starts.
+  assert.match(CONV_DOCK,
+    /querySelectorAll\('#convViewThread \.conv-msg\.picked'\)/);
+  assert.ok(!/#convThread/.test(CONV_DOCK), 'the dock must never reach into the pane\'s thread');
 });
 
-test('the thread\'s transfer row does not require a pair', () => {
+test('the conversation window\'s targets do not require a pair', () => {
   // A conversation of three with no pair recorded between any two of them is an ordinary thread,
-  // and the row exists to serve it. The sheet still needs one — it transfers to *the partner*.
-  assert.match(TRANSFER, /function transferNow[\s\S]*?claimTransfer\(false\)/);
+  // and the dock exists to serve it: membership is what makes an agent a target. The sheet still
+  // needs a pair — it transfers to *the partner*.
+  assert.ok(!/\bpairFor\(|\bpairHealth\(/.test(CONV_DOCK));
+  assert.match(CONV_DOCK, /function dockMembers\(\)[\s\S]*?\(conv\.members \|\| \[\]\)/);
   assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
+  assert.match(TRANSFER, /function claimTransfer[\s\S]*?pairHealth\(pair, agents\)\.state !== 'healthy'/);
 });
 
 test('every shortcut has a chip name, and no two chips are the same', () => {

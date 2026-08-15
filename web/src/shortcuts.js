@@ -268,6 +268,7 @@
       const conv = loadConvIndex().find(c => c.id === id);
       if (!conv) return;
       convViewId = id;
+      clearConvDock();
       convStandaloneHtml = '';
       convRosterHtmlLast = '';
       convStripSig = '';
@@ -828,7 +829,10 @@
       if (rosterHtml !== convRosterHtmlLast) { convRosterHtmlLast = rosterHtml; panel.innerHTML = rosterHtml; }
       panel.hidden = !convRosterOpen;
       const html = (entries.length
-        ? convEntriesHtml(entries, null, false, false)
+        // Same fallback the visibility filter above uses: a single-member thread's entries carry no
+        // key, and the dock reads a bubble's key to know who wrote it — an unkeyed bubble has no
+        // source and so no target to exclude.
+        ? convEntriesHtml(entries, {key: keys[0]}, false, 'toggleConvDockPick')
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +
             'messages only" off in the pane menu to see it.</p>'
@@ -839,6 +843,10 @@
       // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
       // reader's text selection with it mid-copy. Only a thread that actually changed is written.
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
+      // After the thread is on screen: the picks are painted onto its bubbles, and the dock's row
+      // says who is live and what is picked.
+      syncDockPicks(entries.length);
+      renderConvDock();
       renderConvStrip();
       if (bottom) view.scrollTop = view.scrollHeight;
     }

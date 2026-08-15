@@ -1736,9 +1736,15 @@
       flex-direction: column;
     }
 
+    /* Grows to fill the view so the dock below it is at the bottom of the screen and not halfway
+       up it: a conversation of three messages is the ordinary case, and a composer that floats in
+       the middle of an empty view reads as an unfinished layout. */
     #convViewThread {
-      flex: none;
+      flex: 1 0 auto;
       overflow: visible;
+      /* Room to scroll past the floating dock — measured, because the dock grows with the address
+         row, the instruction list and a composer that has been typed into. See syncDockHeight. */
+      padding-bottom: calc(var(--dock-h, 96px) + 8px);
     }
 
     /* Full width, unlike the pane's thread. There the 86% leaves room for the other half of a pair
@@ -1752,6 +1758,73 @@
       position: sticky;
       top: 0;
       z-index: 2;
+    }
+
+    /* The dock floats: sticky pins it to the bottom of the view, and the negative margin takes back
+       the space it would otherwise occupy, so the conversation scrolls behind it rather than
+       stopping above it. #convViewThread's padding is what lets the last bubble clear it. */
+    .conv-dock {
+      position: sticky;
+      bottom: 0;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      margin-top: calc(-1 * var(--dock-h, 96px));
+      /* Not a hard edge: the thread fades into the dock instead of sliding under a line, which is
+         what makes it read as depth rather than as two panels meeting. */
+      background: linear-gradient(to top, var(--bg) 68%, transparent);
+      pointer-events: none;   /* the fade is not a wall; the controls in it take their own taps */
+    }
+
+    .conv-dock[hidden] {
+      display: none;
+    }
+
+    .conv-dock > * {
+      pointer-events: auto;
+    }
+
+    /* The composer, drawn as what it is: the next bubble in the thread, elevated a little so it
+       reads as being in front of the conversation rather than beneath it. */
+    .conv-composer {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      margin: 8px;
+      padding: 8px 8px 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    }
+
+    .conv-composer textarea {
+      flex: 1;
+      min-width: 0;
+      max-height: 40vh;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.4;
+      resize: none;
+      outline: none;
+      padding: 6px 0;
+    }
+
+    .conv-composer .send {
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 50%;
+      background: var(--blue);
+      color: var(--bg);
+      cursor: pointer;
     }
 
     /* Conversation tabs occupy pane tabs' exact slot in the shared bottom header. A second strip
@@ -2691,15 +2764,16 @@
       flex-wrap: wrap;
     }
 
-    /* Send puts a message into another agent's session with no further confirmation. The row is
-       the only place in the app where that is true, so it is the only place drawn in the accent —
-       and it sits above the bar's other controls rather than beside them, because Copy and ✕
-       prepare and these send. Two lines: who, then what. */
+    /* The address line: who the composer is talking to, and what is added to what it sends. Two
+       lines — who, then what — sitting directly on top of the composer, because that is what they
+       modify. Only the conversation window has it; a pane's composer types into its pane. */
     .xfer-row {
       display: flex;
       flex-direction: column;
       gap: 6px;
       width: 100%;
+      padding: 8px 12px 0;
+      background: var(--bg);
     }
 
     .xfer-row[hidden] {
@@ -2739,7 +2813,7 @@
     /* The conversation's agents. The one that will receive it is lit; the rest are dimmed rather
        than hidden, because which agents are in this conversation is information and a row showing
        only the chosen one would answer a different question. */
-    .sel-bar .xfer-who {
+    .xfer-row .xfer-who {
       flex: 0 0 auto;
       display: flex;
       align-items: center;
@@ -2755,13 +2829,13 @@
       opacity: 0.55;
     }
 
-    .sel-bar .xfer-who.on {
+    .xfer-row .xfer-who.on {
       border-color: var(--text);
       color: var(--text);
       opacity: 1;
     }
 
-    .sel-bar .xfer-who .dot {
+    .xfer-row .xfer-who .dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
@@ -2770,7 +2844,7 @@
 
     /* An instruction, not a send. Chips are additive — two lit chips are two instructions, in the
        order they were tapped, which is why a second one wears its position. */
-    .sel-bar .xfer-chip {
+    .xfer-row .xfer-chip {
       flex: 0 0 auto;
       padding: 7px 11px;
       min-height: 34px;
@@ -2786,19 +2860,19 @@
     /* Lit, not filled. Send is the only filled thing on this row: three picked chips in the same
        solid blue as the button that fires them make four buttons that look equally like the
        action. Outline for chosen, fill for the one that sends. */
-    .sel-bar .xfer-chip.on {
+    .xfer-row .xfer-chip.on {
       border-color: var(--blue);
       color: var(--blue);
     }
 
-    .sel-bar .xfer-chip sub {
+    .xfer-row .xfer-chip sub {
       font-size: 0.6em;
       vertical-align: sub;
       margin-left: 2px;
       opacity: 0.8;
     }
 
-    .sel-bar .xfer-send {
+    .xfer-row .xfer-send {
       flex: 0 0 auto;
       padding: 7px 13px;
       min-height: 34px;
@@ -2820,8 +2894,11 @@
       max-height: 40vh;
       overflow-y: auto;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg);
+      border-radius: 14px;
+      /* The dock's own surface, not the thread's: this list floats over messages, and on --bg its
+         border is the only thing separating it from them. */
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
       padding: 4px;
     }
 
@@ -2832,10 +2909,22 @@
     /* Left-aligned, unlike the bar's buttons: this is a list being read down, and the ticks only
        line up under each other if the labels start in the same place. */
     .chip-menu .menu-item {
+      width: 100%;
+      min-height: 40px;
+      padding: 0 10px;
       justify-content: flex-start;
       text-align: left;
-      border-color: transparent;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.8rem;
       font-weight: 500;
+      cursor: pointer;
+    }
+
+    .chip-menu .menu-item:hover {
+      background: var(--border);
     }
 
     .chip-menu .tick {
@@ -3699,6 +3788,21 @@
     <div class="conv-panel" id="convViewRoster" hidden></div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
+    <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
+         modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
+    <div class="conv-dock" id="convDock">
+      <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
+      <div class="xfer-row" id="xferRow" hidden></div>
+      <div class="conv-composer" id="convComposer">
+        <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
+          autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"
+          oninput="autoGrow(this)" onkeydown="convInputKey(event)"></textarea>
+        <button class="send" id="convSendBtn" onclick="convSend()" aria-label="Send"><svg width="22" height="22"
+            viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg></button>
+      </div>
+    </div>
   </div>
 
   <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
@@ -3887,12 +3991,7 @@
         <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
       </div>
     </div>
-    <!-- The transfer row lives inside the bar but above it: who it goes to, what is added to it,
-         and Send. Everything else on this bar prepares — these send, and on a phone the two would
-         wrap into each other. -->
     <div class="sel-bar" id="selBar" hidden>
-      <div class="xfer-row" id="xferRow" hidden></div>
-      <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
       <span class="count" id="selCount"></span>
       <span class="spacer"></span>
       <button onclick="learnSelection()" id="selLearn">Learn</button>
@@ -4229,6 +4328,7 @@
   <script src="src/reorder.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
+  <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
   <script src="src/controls.js"></script>
   <script src="src/dictation.js"></script>

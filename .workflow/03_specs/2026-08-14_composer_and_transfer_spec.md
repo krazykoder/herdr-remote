@@ -150,89 +150,128 @@ way `tabScope() === 'project'` already scopes it to a Project.
 
 ---
 
-## 4. Direct transfer from the thread
+## 4. The conversation window's dock
 
-**The rule:** `doTransfer` prefills the partner's composer and stops (`transfer.js`). The read before
-it lands is the checkpoint — the payload is about to be typed into *another agent's* session, and
-nothing else in the app is as expensive to get wrong.
+**The surface:** `#convView` — the standalone conversation window, opened from a card on the landing
+page. Not `#convThread`, the thread a *pane* shows inside `terminalView`. The pane's thread already
+has a composer that knows where it is typing, and it is unchanged by this section.
 
-**The decision: the thread's own row sends directly, and only from the conversation view.** One
-tap on Send puts the picked messages, plus whatever instructions are lit, into the chosen agent. The
-pane view keeps the checkpoint.
+**The rule it bypasses:** `doTransfer` prefills the partner's composer and stops (`transfer.js`). The
+read before it lands is the checkpoint — the payload is about to be typed into *another agent's*
+session, and nothing else in the app is as expensive to get wrong.
 
-That is a deliberate bypass, and the reasoning is that the two views are not the same act:
+**The decision: the conversation window sends directly.** One tap on Send puts the picked messages,
+plus whatever instructions are lit, into the chosen agent. The pane view keeps the checkpoint.
+
+That is a deliberate bypass, and the reasoning is that the two are not the same act:
 
 - In the **pane view** you are selecting rows out of a terminal. The selection is a guess at where a
   message starts and ends, the ruler exists because that guess is hard, and the composer is where
   you find out you grabbed the prompt as well as the answer.
-- In the **conversation view** you are picking whole recorded messages. The bubble *is* the message.
-  There is no boundary to get wrong, and the checkpoint is re-reading something you just read.
+- In the **conversation window** you are picking whole recorded messages. The bubble *is* the
+  message. There is no boundary to get wrong, and the checkpoint is re-reading something you just
+  read.
 
-So the bypass is scoped to the view where the payload has already been read, and the checkpoint
-stays where the payload is still a guess.
+So the bypass is scoped to the surface where the payload has already been read, and the checkpoint
+stays where the payload is still a guess. `conv_dock.js` is that scope: it holds every part of this
+section, it never queries `#convThread`, and `transfer.js` never sends.
 
-### 4.1 The row
+### 4.1 A dockless editor with a bottom bubble
 
-Two lines inside the selection bar, above its other controls — Copy and ✕ prepare, these send, and
-on a phone the two would wrap into each other.
+The window is read top to bottom — header, thread, and the dock floating over the end of it:
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  ● scratch   ○ amp   ○ pi-3                              │   ← who it goes to
-│  @review₁  @implement  @test₂  @architect   @+  Send (2) ›│   ← what is added, and the send
-│  2 messages                                     Copy    ✕ │   ← prepares
+│  ‹  new authentication feature   4 messages  3 panes ▾   │
+│                                                          │
+│    scratch  the other pane spoke first              ✓    │
+│    amp      the third pane                          ✓    │  ← the thread, scrolling
+│    Architect 1  Ready. Name the change.             ✓    │     behind the dock
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ ● Architect 1   ○ amp                              │  │  ← who it goes to
+│  │ @review₁  @implement  @test₂    @+     Send (1) ›  │  │  ← what is added, and the send
+│  │ ┌────────────────────────────────────────────┐     │  │
+│  │ │ looks good, ship it                    ( ➤ )│    │  │  ← the composer bubble
+│  │ └────────────────────────────────────────────┘     │  │
+│  └────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────┘
 ```
 
-**The conversation view is a multi-agent window, and the row is where that shows.** A pair is only
-where the default target is read from; three agents in one conversation is an ordinary thread and
-the row serves it without one.
+**It floats.** `position: sticky; bottom: 0` with `margin-top: calc(-1 * var(--dock-h))`, so the
+thread runs *behind* it rather than ending above it, under a gradient to the page background. The
+composer is a rounded bubble, slightly raised — the same shape as a message, because that is what is
+being written. `--dock-h` is measured by a `ResizeObserver`, never guessed: the row, the `@+` list
+and a growing composer all change it, and a guessed number is either a gap under the last bubble or
+a bubble that cannot be scrolled to. `#convViewThread` grows to fill the window so that a
+conversation of three messages does not leave the composer floating halfway up an empty view.
 
-- **The who row** lists every *other* live member of the conversation — the source pane is excluded,
-  because a message cannot be transferred to the pane that said it. The chosen one is lit and the
-  rest are dimmed rather than hidden: which agents are in this conversation is information, and a
-  row that showed only the target would answer a different question.
+**The dock is absent only when nothing in the conversation is live.** That is the ordinary end state
+of a record, not a failure: the thread stays readable, and a composer that could only fail is worse
+than none.
+
+### 4.2 The address row
+
+- **Every live member** of the conversation, in roster order (which is the order they joined). With
+  a bubble picked the *source* is excluded — a message cannot be transferred to the pane that said
+  it. The chosen one is lit and the rest are dimmed rather than hidden: which agents are in this
+  conversation is information, and a row that showed only the target would answer a different
+  question.
+- **A conversation is not a pair.** Membership is what makes an agent a target; no pair is consulted
+  anywhere in this section. Three agents in one conversation is the case the row exists for.
+- **Sticky.** The target is not a property of a selection — it is who you are talking to. Having
+  chosen an agent you go on talking to it, message after message, until you choose another or leave
+  the conversation.
+- **Honest.** A target that exits, or that turns out to be the source of what is being transferred,
+  falls back to the first member rather than silently sending somewhere else.
+- **A conversation of one** still draws the row — it is who the composer is addressing — and a pick
+  there simply offers no Send, because there is nobody to transfer to.
+
+### 4.3 The chips
+
 - **The chips are the shortcut list.** `SHORTCUTS` gained an `at` field — `@review` — beside the
   `label` the sheet already draws. Two fields rather than one derived from the other, so a label can
   be renamed without silently renaming a control someone has learned to tap. A shortcut added to
   that list is a chip, with nothing else edited.
-- **Chips are additive.** `@review @test` is *both*, written in the order they were tapped, which is
-  why a second lit chip wears its position (`@test₂`). Tapping a lit chip takes it back out. The row
-  is the sentence being built, not a menu of mutually exclusive ones. `transferInstruction` joins the
+- **Additive.** `@review @test` is *both*, written in the order they were tapped, which is why a
+  second lit chip wears its position (`@test₂`). Tapping a lit chip takes it back out. The row is
+  the sentence being built, not a menu of mutually exclusive ones. `transferInstruction` joins the
   picked texts with a newline, each already rewritten for the agent about to read them.
-- **No chip is a valid send**: the payload with no instruction, which is what `@as-is` used to be.
-  A separate chip for "nothing" is a control for the state the row is already in.
+- **Optional.** No chip is a valid send: the payload, or the typed text, with no instruction. A
+  separate chip for "nothing" is a control for the state the row is already in.
+- **Spent by the send.** An instruction is attached to one message. The agent you chose is not — see
+  4.2. That asymmetry is the whole of the state model: sticky target, spent picks.
 - **`@+`** opens the same instructions as a list — the full label rather than the `@name`, and the
-  way back to a chip that has scrolled off a phone. It writes the same picks the chips do.
+  way back to a chip that has scrolled off a phone. It writes the same picks the chips do, and it is
+  redrawn on every tap so it can never show stale ticks.
 - **Only the chips scroll.** `@+` and Send are pinned: a conversation long on instructions must
   never push the one control that sends off the edge, and `@+` is the way back to what scrolled.
-- **Send is the only filled control on the row.** Picked chips are outlined in the accent; three
-  chips in the same solid blue as the button that fires them would be four things that look equally
-  like the action.
+- **Send is the only filled control.** Picked chips are outlined in the accent; three chips in the
+  same solid blue as the button that fires them would be four things that look equally like the
+  action.
 
-### 4.2 The target
+### 4.4 The two sends
 
-**Default:** the pair partner when the pane has a healthy pair, and otherwise the first other member
-— a conversation with exactly one other member has an obvious answer with no pair recorded at all.
-**Overridable:** tap another agent. A target that leaves while it is chosen falls back to the
-default rather than silently sending somewhere else.
+**`convSend()` — typed text.** What is in the composer, with any lit instructions above it, to the
+lit member. No checkpoint and no prefill: there is nothing to prefill *into*, and what is being sent
+is what the composer already shows. Ctrl/Cmd+Enter sends; Enter writes a newline, because there is
+no shell behind this composer to make a line end at one.
 
-Which pane is the *source* is the picked bubble's, not the open pane's — so picking the partner's
-message sends it back the other way. That is `claimTransfer`, shared with the sheet so the two can
-never disagree about who is being quoted. It takes the pair gate as an argument: the sheet transfers
-to *the partner* and cannot open without one; the row picks its own target out of the conversation
-and must not require one.
+**`convDockSend()` — the picked bubbles.** The picked messages in thread order, composed by
+`composeTransfer` and named for the member that wrote them, into the lit member. Whatever was typed
+goes under the quote rather than being dropped — a payload with a note of your own on the end is
+what `classifyVia` already calls `mixed`. `pendingTransfer` is set first, so the receiving pane's
+transcript records where the text came from instead of claiming the reader typed another agent's
+words.
 
-**The target and the picks live only as long as the selection does.** The next pick may be another
-agent's message, and an instruction left armed across that would be attached to something nobody
-chose it for.
+**Neither opens a pane.** The reader stays in the conversation; `Open pane` is the only thing that
+leaves it. Sending to an agent whose pane is not on screen is the point of a multi-agent window.
 
-**Two buttons that disagree are worse than one.** Where the row is drawn, the sheet's own entry
-points step aside — `#selTransfer` on the bar below it, and `Transfer ›` on the pair strip. Both
-always target the partner, and beside a row with a chosen target they would be a second answer to
-"where did that go". The pane view keeps them both, unchanged.
+**Messages from two agents at once are refused**, the same way the sheet refuses them: two agents'
+messages quoted as one is two conversations, and the dock stands down rather than guessing which of
+them the payload belongs to.
 
-### 4.3 Not armed
+### 4.5 Not armed
 
 CLS, QUIT and Esc take two taps. Those fire from a button that sits under the thumb for as long as a
 pane is open; Send needs a message picked and a target standing, and **the pick is the deliberate
@@ -241,15 +280,12 @@ silent.
 
 Resend is armed, because nothing precedes it.
 
-### 4.4 The toast that would have covered it
+### 4.6 Leaving
 
-`prefillTransfer` opens the target, and opening a stale pane starts a **loud** catch-up (§2.4 of the
-deep-backfill spec) whose toast lands on top of the send's. That trigger is loud because someone
-tapped a pane to read it — nobody tapped this one. `convQuietPane` marks exactly one activation as
-the app's own, and the confirmation of an irreversible send outranks a report on a read nobody asked
-for.
+Closing the conversation clears the target, the picks and the draft. All three belong to that
+conversation, and none of them means anything in the next one.
 
-### 4.5 Resend
+### 4.7 Resend
 
 The last text sent to **this** pane, sent again, through `sendText` — so it is chunked, recorded and
 classified like anything else typed. In memory only: a prompt worth repeating is one from the
@@ -259,17 +295,20 @@ after a reload is a worse offer than no button.
 Two taps (`armButton`), and offered only where there is something to repeat — the same rule Summary
 follows, for the same reason.
 
-### 4.6 Esc
+### 4.8 Esc
 
 Already built and already correct: `abortWorking` in the status bar, two taps, visible only while
 the pane is working. A second Esc on the chip row would be a duplicate control for the same key, so
 there is none.
 
-### 4.7 Fixed along the way
+### 4.9 Fixed along the way
 
 `composeTransfer` was being handed `mine.role`, and a pair built by the Start dialog carries a bare
 `recentFingerprint` with no role at all — so the receiving agent was told the text came from
 **"undefined"**. It now falls back to the pane's live label.
+
+`sendText` was split: `sendTextTo(paneId, text)` is the send, and `sendText()` is the pane
+composer's caller. A composer that is not the pane's needs the first half and none of the second.
 
 ## 5. Landing at the end of what you switched to
 
@@ -299,7 +338,8 @@ place, and a reader who switches panes gets the end of the new one.
 - **No wire change, no new message type.**
 - **No change to what is recorded, or when.** §1.3 changes how much of one message the record keeps;
   the events that write it are untouched.
-- **No auto-send outside the conversation view** (§4).
+- **No auto-send outside the conversation window** (§4). The pane view's transfer still
+  prefills and stops.
 
 ---
 
@@ -327,15 +367,19 @@ place, and a reader who switches panes gets the end of the new one.
 8. With a thread open, the header row switches between the conversation's members.
 9. Switching to a pane lands at the newest bubble; switching to one with rows lands at the last row.
 10. Scrolling up in a thread and staying there is not undone by the next poll.
-11. Send in the thread puts the picked message into the chosen agent and submits it, in one tap.
-12. The same selection made on pane rows offers no row — only the sheet.
-13. A conversation with another live member offers the row with no pair recorded at all; a pane
-    alone in its conversation offers none.
+11. Send in the conversation window puts the picked message into the chosen agent and submits it,
+    in one tap, without opening a pane.
+12. The pane's own thread is unchanged: a pick there offers the sheet, and no dock.
+13. The dock serves a conversation with no pair recorded at all; a conversation with no live member
+    is offered no dock; a conversation of one can be typed to but offers no Send.
 14. Two chips send both instructions, in the order they were tapped; tapping one again removes it.
-15. The target defaults to the pair partner, can be set to another member, and is forgotten with the
-    selection.
-16. A direct transfer is recorded as `via: transfer`, not as something typed.
-17. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
+15. The target is any other member, is remembered across sends, and is forgotten on leaving the
+    conversation — as are the picks and the draft.
+16. A direct transfer is recorded as `via: transfer`, not as something typed; typing under a quote
+    is recorded as `mixed`.
+17. The dock sits on the bottom of the window with the thread scrolling behind it, at a height the
+    page measured rather than guessed.
+18. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
     has been sent nothing.
 
 ---

@@ -124,22 +124,31 @@
       paneLines = Math.min(paneLines + historyStep(), paneHistoryMax());
       refreshPane();
     }
-    function sendText() {
-      const i = document.getElementById('termInput');
-      if (!i.value || !ws || !activePane) return;
-      const paneId = activePane;
+    // One text into one pane, from whichever composer had it. The pane's own composer is one
+    // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
+    // open — which is why this takes the pane rather than reading `activePane`.
+    function sendTextTo(paneId, text) {
+      if (!text || !ws || !paneId) return false;
       // Before the send, while the composer still holds what is being sent: a transcript that
       // cannot tell a transfer from typing claims the user said what another agent said. The whole
       // text, not a chunk of it — what was sent is one message, however many the wire took.
-      noteSent(i.value, paneId);
-      lastSentText[paneId] = i.value;
+      noteSent(text, paneId);
+      lastSentText[paneId] = text;
       // One message per chunk, then the single Enter that submits all of them. Nothing between the
       // chunks submits, so they land in the agent's composer as one text; the relay handles a
       // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
       // is what makes the Enter behind them late enough to count.
-      for (const part of chunkText(i.value))
+      for (const part of chunkText(text))
         ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: part }));
       ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
+      return true;
+    }
+
+    function sendText() {
+      const i = document.getElementById('termInput');
+      if (!i.value || !ws || !activePane) return;
+      const paneId = activePane;
+      if (!sendTextTo(paneId, i.value)) return;
       i.value = ''; autoGrow(i);
       renderQuickActions();   // the pane has a last send now, so Resend has something to offer
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);

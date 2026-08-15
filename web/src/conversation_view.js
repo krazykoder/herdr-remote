@@ -540,9 +540,12 @@
         // against a wall of washed ones is unmistakable at a glance, on any of the eleven themes,
         // and it needs no colour of its own to say "this is not settled yet".
         const state = convProvisional(e) ? ` provisional${e.draft ? ' draft' : ''}` : '';
+        // `pick` is false for no ticks at all, or the name of the handler that owns them: the
+        // pane's thread and the conversation window each keep their own set of picked messages,
+        // and a bubble in one must not toggle a bubble in the other.
         const tick = pick === false ? '' :
-          `<button class="conv-pick" onclick="toggleConvPick(${i})" aria-pressed="false" ` +
-          `aria-label="Select this message">✓</button>`;
+          `<button class="conv-pick" onclick="${pick === true || !pick ? 'toggleConvPick' : pick}(${i})" ` +
+          `aria-pressed="false" aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
         return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
           ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${tick}${head}${text}</div>`;
@@ -597,16 +600,8 @@
         // messages that arrives out of order is not the conversation the reader saw.
         if (on) texts.push(el.dataset.text || '');
       }
-      const chips = document.getElementById('xferRow');
-      // Messages from one agent transfer as one payload; from two they are two conversations being
-      // quoted as one, which is what the sheet has always refused.
-      const keys = new Set(msgs.filter(el => convPicked.has(Number(el.dataset.i)))
-        .map(el => el.dataset.key));
       if (!texts.length) {
         bar.hidden = true;
-        chips.hidden = true;
-        // The row's target and instructions belong to the selection that is going away.
-        clearTransferRow();
         return;
       }
       selText = texts.join('\n\n');
@@ -615,21 +610,8 @@
         texts.length + (texts.length === 1 ? ' message' : ' messages');
       // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
       document.getElementById('selLearn').hidden = true;
-      // A conversation is a group of agents and the pair is only where the row's default comes
-      // from — so the row appears wherever this conversation has another live member to send to,
-      // pair or no pair.
-      const source = keys.size === 1
-        ? agents.find(a => convMemberKey(a) === keys.values().next().value) : null;
-      const html = source ? transferRowHtml(source) : '';
-      chips.hidden = !html;
-      // The sheet's button steps aside for the row. It always transfers to *the partner*, so with
-      // a target chosen on the row above it the same bar would offer two buttons that disagree
-      // about where the message is going. Its gate stays its own — a pair — for the case the row
-      // cannot draw itself at all.
+      // The sheet's own gate: it is the prefill-and-stop path, and that path is built on a pair.
       const pair = pairFor(pairs, activePane);
       document.getElementById('selTransfer').hidden =
-        !!html || !pair || pairHealth(pair, agents).state !== 'healthy';
-      // Rebuilt only when what it says changed. This runs on every poll, and replacing the row
-      // wholesale three times a minute would take a chip out from under a finger already on it.
-      if (html && chips.dataset.sig !== html) { chips.innerHTML = html; chips.dataset.sig = html; }
+        !pair || pairHealth(pair, agents).state !== 'healthy';
     }
