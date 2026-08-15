@@ -2691,44 +2691,157 @@
       flex-wrap: wrap;
     }
 
-    /* One tap from here puts a message into another agent's session. The row is the only place in
-       the app where that is true, so it is the only place drawn in the accent — and it is above the
-       bar's other controls rather than beside them, because Copy and ✕ prepare and these send. */
+    /* Send puts a message into another agent's session with no further confirmation. The row is
+       the only place in the app where that is true, so it is the only place drawn in the accent —
+       and it sits above the bar's other controls rather than beside them, because Copy and ✕
+       prepare and these send. Two lines: who, then what. */
     .xfer-row {
       display: flex;
+      flex-direction: column;
       gap: 6px;
       width: 100%;
-      overflow-x: auto;
-      scrollbar-width: none;
-      padding-bottom: 2px;
-    }
-
-    .xfer-row::-webkit-scrollbar {
-      display: none;
     }
 
     .xfer-row[hidden] {
       display: none;
     }
 
+    /* Both lines scroll rather than wrap. A conversation can hold more agents than fit across a
+       phone, and a row that wrapped would push the thread up by an unpredictable amount every time
+       one joined. */
+    .xfer-who-row,
+    .xfer-chip-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+
+    .xfer-who-row::-webkit-scrollbar,
+    .xfer-chip-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .xfer-act {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .xfer-act .xfer-chip-row {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    /* The conversation's agents. The one that will receive it is lit; the rest are dimmed rather
+       than hidden, because which agents are in this conversation is information and a row showing
+       only the chosen one would answer a different question. */
+    .sel-bar .xfer-who {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      min-height: 32px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      opacity: 0.55;
+    }
+
+    .sel-bar .xfer-who.on {
+      border-color: var(--text);
+      color: var(--text);
+      opacity: 1;
+    }
+
+    .sel-bar .xfer-who .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    /* An instruction, not a send. Chips are additive — two lit chips are two instructions, in the
+       order they were tapped, which is why a second one wears its position. */
     .sel-bar .xfer-chip {
       flex: 0 0 auto;
       padding: 7px 11px;
       min-height: 34px;
       border-radius: 999px;
-      border: 1px solid var(--blue);
+      border: 1px solid var(--border);
       background: var(--bg);
-      color: var(--blue);
+      color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 0.72rem;
       font-weight: 600;
     }
 
-    /* No instruction, and the overflow into the sheet. Neither is the thing the row is for. */
-    .sel-bar .xfer-chip.plain,
-    .sel-bar .xfer-chip.more {
-      border-color: var(--border);
-      color: var(--muted);
+    /* Lit, not filled. Send is the only filled thing on this row: three picked chips in the same
+       solid blue as the button that fires them make four buttons that look equally like the
+       action. Outline for chosen, fill for the one that sends. */
+    .sel-bar .xfer-chip.on {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .sel-bar .xfer-chip sub {
+      font-size: 0.6em;
+      vertical-align: sub;
+      margin-left: 2px;
+      opacity: 0.8;
+    }
+
+    .sel-bar .xfer-send {
+      flex: 0 0 auto;
+      padding: 7px 13px;
+      min-height: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--blue);
+      background: var(--blue);
+      color: var(--bg);
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    /* Every instruction as a list, for a chip row that has scrolled past the edge of a phone and
+       for reading the full label rather than its @name. Same picks, drawn twice. */
+    .chip-menu {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 40vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      padding: 4px;
+    }
+
+    .chip-menu[hidden] {
+      display: none;
+    }
+
+    /* Left-aligned, unlike the bar's buttons: this is a list being read down, and the ticks only
+       line up under each other if the labels start in the same place. */
+    .chip-menu .menu-item {
+      justify-content: flex-start;
+      text-align: left;
+      border-color: transparent;
+      font-weight: 500;
+    }
+
+    .chip-menu .tick {
+      display: inline-block;
+      width: 1.2em;
+      color: var(--blue);
     }
 
     /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
@@ -3774,10 +3887,12 @@
         <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
       </div>
     </div>
-    <!-- The chips are a row of their own inside the bar, not more buttons beside Copy: they send,
-         and everything else on this bar prepares. On a phone the two would wrap into each other. -->
+    <!-- The transfer row lives inside the bar but above it: who it goes to, what is added to it,
+         and Send. Everything else on this bar prepares — these send, and on a phone the two would
+         wrap into each other. -->
     <div class="sel-bar" id="selBar" hidden>
       <div class="xfer-row" id="xferRow" hidden></div>
+      <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
       <span class="count" id="selCount"></span>
       <span class="spacer"></span>
       <button onclick="learnSelection()" id="selLearn">Learn</button>

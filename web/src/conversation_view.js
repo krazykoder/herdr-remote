@@ -598,20 +598,38 @@
         if (on) texts.push(el.dataset.text || '');
       }
       const chips = document.getElementById('xferRow');
-      if (!texts.length) { bar.hidden = true; chips.hidden = true; return; }
+      // Messages from one agent transfer as one payload; from two they are two conversations being
+      // quoted as one, which is what the sheet has always refused.
+      const keys = new Set(msgs.filter(el => convPicked.has(Number(el.dataset.i)))
+        .map(el => el.dataset.key));
+      if (!texts.length) {
+        bar.hidden = true;
+        chips.hidden = true;
+        // The row's target and instructions belong to the selection that is going away.
+        clearTransferRow();
+        return;
+      }
       selText = texts.join('\n\n');
       bar.hidden = false;
       document.getElementById('selCount').textContent =
         texts.length + (texts.length === 1 ? ' message' : ' messages');
       // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
       document.getElementById('selLearn').hidden = true;
+      // A conversation is a group of agents and the pair is only where the row's default comes
+      // from — so the row appears wherever this conversation has another live member to send to,
+      // pair or no pair.
+      const source = keys.size === 1
+        ? agents.find(a => convMemberKey(a) === keys.values().next().value) : null;
+      const html = source ? transferRowHtml(source) : '';
+      chips.hidden = !html;
+      // The sheet's button steps aside for the row. It always transfers to *the partner*, so with
+      // a target chosen on the row above it the same bar would offer two buttons that disagree
+      // about where the message is going. Its gate stays its own — a pair — for the case the row
+      // cannot draw itself at all.
       const pair = pairFor(pairs, activePane);
-      const healthy = !!pair && pairHealth(pair, agents).state === 'healthy';
-      document.getElementById('selTransfer').hidden = !healthy;
-      // Same gate as the sheet's button, and for the same reason: without a healthy pair there is
-      // no unambiguous target, and a chip that had to ask which one would be the step it removes.
-      // Rebuilt only when it is not there — this runs on every pick, and replacing the row would
-      // take a chip out from under a finger already on it.
-      chips.hidden = !healthy;
-      if (healthy && !chips.firstChild) chips.innerHTML = transferChipsHtml();
+      document.getElementById('selTransfer').hidden =
+        !!html || !pair || pairHealth(pair, agents).state !== 'healthy';
+      // Rebuilt only when what it says changed. This runs on every poll, and replacing the row
+      // wholesale three times a minute would take a chip out from under a finger already on it.
+      if (html && chips.dataset.sig !== html) { chips.innerHTML = html; chips.dataset.sig = html; }
     }

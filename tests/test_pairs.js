@@ -258,7 +258,12 @@ test('text with no slash commands is untouched for codex', () => {
 });
 
 test('transfer picks the prefix from the destination pane, not the source', () => {
-  assert.match(TRANSFER, /agentSlash\(SHORTCUTS\[shortcutIndex\]\.text, agentOf\(partner\.pane_id\)\)/);
+  // One function rewrites the instructions, and it is handed the pane about to read them. Both
+  // callers pass their own target — the sheet's partner, and the row's chosen member.
+  assert.match(TRANSFER,
+    /function transferInstruction\(picks, targetPaneId\) \{[\s\S]*?agentSlash\(SHORTCUTS\[i\]\.text, agentOf\(targetPaneId\)\)/);
+  assert.match(TRANSFER, /transferInstruction\(shortcutIndex >= 0 \? \[shortcutIndex\] : \[\], partner\.pane_id\)/);
+  assert.match(TRANSFER, /transferInstruction\(transferPicks, target\)/);
 });
 
 // --- constants ---
@@ -281,7 +286,14 @@ test('a transfer never ends in a send, and exactly one function says otherwise',
   assert.match(TRANSFER, /function transferNow[\s\S]*?sendText\(\)/);
   // And the bypass is scoped: a chip in the pane view would be a one-tap send of a guess at where
   // a message starts.
-  assert.match(TRANSFER, /function transferNow\(shortcutIndex\) \{\s*\n\s*if \(!convThreadOn\(\)\) return;/);
+  assert.match(TRANSFER, /function transferNow\(\) \{\s*\n\s*if \(!convThreadOn\(\)\) return;/);
+});
+
+test('the thread\'s transfer row does not require a pair', () => {
+  // A conversation of three with no pair recorded between any two of them is an ordinary thread,
+  // and the row exists to serve it. The sheet still needs one — it transfers to *the partner*.
+  assert.match(TRANSFER, /function transferNow[\s\S]*?claimTransfer\(false\)/);
+  assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
 });
 
 test('every shortcut has a chip name, and no two chips are the same', () => {

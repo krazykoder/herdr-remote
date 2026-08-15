@@ -156,8 +156,9 @@ way `tabScope() === 'project'` already scopes it to a Project.
 it lands is the checkpoint — the payload is about to be typed into *another agent's* session, and
 nothing else in the app is as expensive to get wrong.
 
-**The decision: `@review`, `@implement`, `@test`, `@architect` send directly, and only from the
-conversation view.** The pane view keeps the checkpoint.
+**The decision: the thread's own row sends directly, and only from the conversation view.** One
+tap on Send puts the picked messages, plus whatever instructions are lit, into the chosen agent. The
+pane view keeps the checkpoint.
 
 That is a deliberate bypass, and the reasoning is that the two views are not the same act:
 
@@ -172,48 +173,77 @@ stays where the payload is still a guess.
 
 ### 4.1 The row
 
-A row of chips inside the selection bar, above its other controls — Copy and ✕ prepare, these send,
-and on a phone the two would wrap into each other. Drawn in the accent, because this is the only
-place in the app where one tap puts text into another agent.
+Two lines inside the selection bar, above its other controls — Copy and ✕ prepare, these send, and
+on a phone the two would wrap into each other.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  @review  @implement  @test  @architect  @as-is    ⋯     │   ← sends
-│  2 messages                          Copy   Transfer ›  ✕ │   ← prepares
+│  ● scratch   ○ amp   ○ pi-3                              │   ← who it goes to
+│  @review₁  @implement  @test₂  @architect   @+  Send (2) ›│   ← what is added, and the send
+│  2 messages                                     Copy    ✕ │   ← prepares
 └──────────────────────────────────────────────────────────┘
 ```
 
+**The conversation view is a multi-agent window, and the row is where that shows.** A pair is only
+where the default target is read from; three agents in one conversation is an ordinary thread and
+the row serves it without one.
+
+- **The who row** lists every *other* live member of the conversation — the source pane is excluded,
+  because a message cannot be transferred to the pane that said it. The chosen one is lit and the
+  rest are dimmed rather than hidden: which agents are in this conversation is information, and a
+  row that showed only the target would answer a different question.
 - **The chips are the shortcut list.** `SHORTCUTS` gained an `at` field — `@review` — beside the
   `label` the sheet already draws. Two fields rather than one derived from the other, so a label can
   be renamed without silently renaming a control someone has learned to tap. A shortcut added to
   that list is a chip, with nothing else edited.
-- **`@as-is`** sends the payload with no instruction. It is the plainest thing the row can do, so it
-  is not buried in the sheet with the rest.
-- **`⋯`** opens the sheet: the preview, the target's badge and the prefill-and-stop path. The row is
-  a shortcut for the common case, not a replacement for reading.
+- **Chips are additive.** `@review @test` is *both*, written in the order they were tapped, which is
+  why a second lit chip wears its position (`@test₂`). Tapping a lit chip takes it back out. The row
+  is the sentence being built, not a menu of mutually exclusive ones. `transferInstruction` joins the
+  picked texts with a newline, each already rewritten for the agent about to read them.
+- **No chip is a valid send**: the payload with no instruction, which is what `@as-is` used to be.
+  A separate chip for "nothing" is a control for the state the row is already in.
+- **`@+`** opens the same instructions as a list — the full label rather than the `@name`, and the
+  way back to a chip that has scrolled off a phone. It writes the same picks the chips do.
+- **Only the chips scroll.** `@+` and Send are pinned: a conversation long on instructions must
+  never push the one control that sends off the edge, and `@+` is the way back to what scrolled.
+- **Send is the only filled control on the row.** Picked chips are outlined in the accent; three
+  chips in the same solid blue as the button that fires them would be four things that look equally
+  like the action.
 
-### 4.2 The target, and why there is no picker
+### 4.2 The target
 
-The pair partner, which is what `doTransfer` has always used. The row carries **the same gate as the
-sheet's button** — a healthy pair — so it appears in exactly the cases where the target is already
-unambiguous, and a conversation with no pair keeps the sheet. A chip that had to ask which member it
-meant would be the step these exist to remove.
+**Default:** the pair partner when the pane has a healthy pair, and otherwise the first other member
+— a conversation with exactly one other member has an obvious answer with no pair recorded at all.
+**Overridable:** tap another agent. A target that leaves while it is chosen falls back to the
+default rather than silently sending somewhere else.
 
 Which pane is the *source* is the picked bubble's, not the open pane's — so picking the partner's
 message sends it back the other way. That is `claimTransfer`, shared with the sheet so the two can
-never disagree about who is being quoted.
+never disagree about who is being quoted. It takes the pair gate as an argument: the sheet transfers
+to *the partner* and cannot open without one; the row picks its own target out of the conversation
+and must not require one.
+
+**The target and the picks live only as long as the selection does.** The next pick may be another
+agent's message, and an instruction left armed across that would be attached to something nobody
+chose it for.
+
+**Two buttons that disagree are worse than one.** Where the row is drawn, the sheet's own entry
+points step aside — `#selTransfer` on the bar below it, and `Transfer ›` on the pair strip. Both
+always target the partner, and beside a row with a chosen target they would be a second answer to
+"where did that go". The pane view keeps them both, unchanged.
 
 ### 4.3 Not armed
 
 CLS, QUIT and Esc take two taps. Those fire from a button that sits under the thumb for as long as a
-pane is open; a chip needs a message picked first, and **the pick is the deliberate act** the arm
-would be duplicating. The toast names where it went, because a mis-tap is otherwise silent.
+pane is open; Send needs a message picked and a target standing, and **the pick is the deliberate
+act** the arm would be duplicating. The toast names where it went, because a mis-tap is otherwise
+silent.
 
 Resend is armed, because nothing precedes it.
 
 ### 4.4 The toast that would have covered it
 
-`doTransfer` opens the partner, and opening a stale pane starts a **loud** catch-up (§2.4 of the
+`prefillTransfer` opens the target, and opening a stale pane starts a **loud** catch-up (§2.4 of the
 deep-backfill spec) whose toast lands on top of the send's. That trigger is loud because someone
 tapped a pane to read it — nobody tapped this one. `convQuietPane` marks exactly one activation as
 the app's own, and the confirmation of an irreversible send outranks a report on a read nobody asked
@@ -297,11 +327,15 @@ place, and a reader who switches panes gets the end of the new one.
 8. With a thread open, the header row switches between the conversation's members.
 9. Switching to a pane lands at the newest bubble; switching to one with rows lands at the last row.
 10. Scrolling up in a thread and staying there is not undone by the next poll.
-11. A chip in the thread sends the picked message into the partner and submits it, in one tap.
-12. The same selection made on pane rows offers no chips — only the sheet.
-13. A pane with no healthy pair offers no chips.
-14. A direct transfer is recorded as `via: transfer`, not as something typed.
-15. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
+11. Send in the thread puts the picked message into the chosen agent and submits it, in one tap.
+12. The same selection made on pane rows offers no row — only the sheet.
+13. A conversation with another live member offers the row with no pair recorded at all; a pane
+    alone in its conversation offers none.
+14. Two chips send both instructions, in the order they were tapped; tapping one again removes it.
+15. The target defaults to the pair partner, can be set to another member, and is forgotten with the
+    selection.
+16. A direct transfer is recorded as `via: transfer`, not as something typed.
+17. Resend repeats the last text sent to that pane, on the second tap, and is absent on a pane that
     has been sent nothing.
 
 ---

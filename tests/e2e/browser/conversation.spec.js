@@ -1007,7 +1007,7 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
 
-test('thread Transfer targets selected member’s partner', async ({page}) => {
+test('the thread targets the selected member\'s partner', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await page.evaluate(() => {
@@ -1015,18 +1015,32 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
       recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
   });
   await read(page);
-  // After the read and not before: read() forces the open pane to `done`, which is the status the
-  // transfer sheet would then have drawn.
-  await forceStatus(page, 'Architect 1', 'working');
   await page.locator('#quickActions .qa-conv').click();
-  // First bubble belongs to scratch, while Architect 1 remains the open pane.
+  // First bubble belongs to scratch, while Architect 1 remains the open pane. The source of a
+  // transfer is whoever wrote the message, so the default target is scratch's partner — the pane
+  // being read, and not the pane being read *from*.
   await page.locator('#convThread .conv-msg').first().locator('.conv-pick').click();
+  await expect(page.locator('#xferRow .xfer-who.on')).toHaveText(/Architect 1/);
+  // And the sheet stands aside: it always transfers to the partner, so beside a row with a chosen
+  // target it would be a second button on the same bar disagreeing about where the text goes.
+  await expect(page.locator('#selTransfer')).toBeHidden();
+});
+
+test('the transfer sheet names the pane it will write into', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+  });
+  await read(page);
+  // The pane view, where the sheet is still the way a range is transferred.
+  await page.evaluate(() => { selA = 0; selB = 2; drawSel(); });
   await page.locator('#selTransfer').click();
   await expect(page.locator('#transferSheet')).toBeVisible();
-  await expect(page.locator('#transferTarget')).toHaveText('Architect 1');
+  await expect(page.locator('#transferTarget')).toHaveText('scratch');
   // One agent's output entering another's context: which agent is the fact the reader has to be
   // sure of, so the sheet says it the way the agent list does — name, harness badge, live dot.
-  await expect(page.locator('#transferBadge')).toHaveText('claude');
+  await expect(page.locator('#transferBadge')).toHaveText('codex');
   await expect(page.locator('#transferSheet .transfer-head .who')).toHaveCSS('justify-content', 'center');
   const dot = await page.evaluate(() => {
     const c = getComputedStyle(document.getElementById('transferDot'));
@@ -1034,7 +1048,7 @@ test('thread Transfer targets selected member’s partner', async ({page}) => {
   });
   expect(dot.size).toBe('8px');
   expect(dot.fill).not.toBe('rgba(0, 0, 0, 0)');
-  expect(dot.beat).toBe('pulse');
+  expect(dot.beat).toBe('pulse');            // the fake herdr reports scratch as working
 });
 
 test('pair strip names its composer target and switching keeps composer focus', async ({page}) => {
@@ -2355,24 +2369,40 @@ test('with a thread up, the header row switches between that conversation’s me
 // --- Direct transfer from the thread (§4) ---
 //
 // The one place in the app where a tap sends into another agent's session with no checkpoint. The
-// pane view keeps the checkpoint, and the tests below are as much about that as about the chips.
+// pane view keeps the checkpoint, and the tests below are as much about that as about the row.
 
-// The pair the chips need. Made against the same two panes joinBoth files together, so the thread
-// and the transfer target are the same partner.
+// A pair over the same two panes joinBoth files together, so the pair partner and the other
+// conversation member are the same agent. What the default target is read from — not what the row
+// needs to exist.
 const pairBoth = page => page.evaluate(() => {
   const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
   pairs = [{id: 'p1', members: [recentFingerprint(mine), recentFingerprint(other)]}];
   return other.pane_id;
 });
 
-// The source of a transfer is whoever wrote the picked message, and the target is that pane's
-// partner — so which bubble is picked decides which way it goes. Bubble 1 is this pane's.
+// A third member, so the row has something to choose between. A conversation is not a pair, and
+// three agents in one is the case the target row exists for.
+const joinThird = page => page.evaluate(async () => {
+  const third = agents.find(a => a.label === 'amp');
+  const key = convMemberKey(third);
+  await convPut({key, label: 'amp', first: 1, touched: 2,
+    entries: [{who: 'agent', text: 'the third pane', seen: 2, label: 'amp', agent: 'amp'}]});
+  const items = loadConvIndex();
+  items[0].members.push({key, added: 1, label: 'amp', messages: 1});
+  saveConvIndex(items);
+  return third.pane_id;
+});
+
+// The source of a transfer is whoever wrote the picked message, and the default target is that
+// pane's partner — so which bubble is picked decides which way it goes. Bubble 1 is this pane's.
 const pickBubble = async (page, i = 0) => {
   await page.locator('#convThread .conv-msg').nth(i).locator('.conv-pick').click();
   await expect(page.locator('#selBar')).toBeVisible();
 };
 
-test('a chip sends the picked message straight into the partner', async ({page}) => {
+const sendRow = page => page.locator('#xferRow .xfer-send').click();
+
+test('the row sends the picked message straight into the partner', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -2381,6 +2411,7 @@ test('a chip sends the picked message straight into the partner', async ({page})
   await tapWire(page);
   await pickBubble(page, 1);                                     // this pane's own message
   await page.locator('#xferRow .xfer-chip').first().click();     // @review
+  await sendRow(page);
   const sent = await page.evaluate(() => window.__sent);
   const text = sent.filter(m => m.type === 'send_text');
   expect(text.length).toBeGreaterThan(0);
@@ -2397,7 +2428,7 @@ test('a chip sends the picked message straight into the partner', async ({page})
   await expect(page.locator('#toast')).toContainText('Sent 1 message to scratch');
 });
 
-test('the chips are absent in the pane view, where a selection is still a guess',
+test('the row is absent in the pane view, where a selection is still a guess',
   async ({page}) => {
     await open(page);
     await joinBoth(page);
@@ -2411,18 +2442,35 @@ test('the chips are absent in the pane view, where a selection is still a guess'
     await expect(page.locator('#selTransfer')).toBeVisible();
   });
 
-test('a chip on a pane with no live partner is not offered at all', async ({page}) => {
+test('a conversation member is a target with no pair recorded at all', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page, 1);
+  // No pair anywhere. The thread is still a thread, and the other member is still a live pane.
+  await expect(page.locator('#xferRow .xfer-who')).toHaveCount(1);
+  await expect(page.locator('#xferRow .xfer-who')).toHaveText(/scratch/);
+  await sendRow(page);
+  const to = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.pane_id));
+  expect(new Set(to)).toEqual(new Set(['w8:p1']));
+  // But the sheet, which transfers to *the partner*, has no partner to offer.
+  await expect(page.locator('#selTransfer')).toBeHidden();
+});
+
+test('a pane alone in its conversation is offered no row', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
   await pickBubble(page);
-  // No pair, so no unambiguous target — and a chip that had to ask which one would be the step
-  // these exist to remove.
+  // Nobody to send to, so nothing that sends.
   await expect(page.locator('#xferRow')).toBeHidden();
 });
 
-test('@as-is sends the payload with no instruction', async ({page}) => {
+test('no chip sends the payload with no instruction', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -2430,11 +2478,94 @@ test('@as-is sends the payload with no instruction', async ({page}) => {
   await page.locator('#quickActions .qa-conv').click();
   await tapWire(page);
   await pickBubble(page);
-  await page.locator('#xferRow .xfer-chip.plain').click();
+  await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send ›');
+  await sendRow(page);
   const body = await page.evaluate(() =>
     window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
   expect(body).toContain('the other pane spoke first');
   expect(body).not.toContain('Review, edit, fix');
+});
+
+test('chips add up, in the order they were tapped', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page);
+  const at = name => page.locator(`#xferRow .xfer-chip:text-matches("^@${name}")`);
+  await at('test').click();
+  await at('review').click();
+  // Numbered by the order they were chosen, because that order is what gets written.
+  await expect(at('test')).toHaveText('@test1');
+  await expect(at('review')).toHaveText('@review2');
+  await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (2) ›');
+  await sendRow(page);
+  const body = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
+  expect(body.indexOf('Write the tests')).toBeGreaterThan(-1);
+  expect(body.indexOf('Write the tests')).toBeLessThan(body.indexOf('Review, edit, fix'));
+});
+
+test('a chip tapped twice comes back out', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page);
+  const review = page.locator('#xferRow .xfer-chip').first();
+  await review.click();
+  await expect(review).toHaveAttribute('aria-pressed', 'true');
+  await review.click();
+  await expect(review).toHaveAttribute('aria-pressed', 'false');
+  await sendRow(page);
+  const body = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join(''));
+  expect(body).not.toContain('Review, edit, fix');
+});
+
+test('the target defaults to the pair partner and can be overridden', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  const third = await joinThird(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await tapWire(page);
+  await pickBubble(page, 2);                                     // this pane's own message
+  const who = page.locator('#xferRow .xfer-who');
+  await expect(who).toHaveCount(2);
+  // The pair partner is lit; the other member is there, dimmed — which agents are in this
+  // conversation is information, and hiding them would answer a different question.
+  await expect(page.locator('#xferRow .xfer-who.on')).toHaveText(/scratch/);
+  await who.filter({hasText: 'amp'}).click();
+  await expect(page.locator('#xferRow .xfer-who.on')).toHaveText(/amp/);
+  await sendRow(page);
+  const to = await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').map(m => m.pane_id));
+  expect(new Set(to)).toEqual(new Set([third]));
+});
+
+test('the picked target is forgotten with the selection', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await joinThird(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await pickBubble(page, 2);
+  await page.locator('#xferRow .xfer-who').filter({hasText: 'amp'}).click();
+  await page.locator('#xferRow .xfer-chip').first().click();
+  // Unpicking empties the bar. The next pick may be another agent's message, and an instruction
+  // left armed across that would be attached to something nobody chose it for.
+  await page.locator('#convThread .conv-msg').nth(2).locator('.conv-pick').click();
+  await expect(page.locator('#selBar')).toBeHidden();
+  await pickBubble(page, 2);
+  await expect(page.locator('#xferRow .xfer-who.on')).toHaveText(/scratch/);
+  await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send ›');
 });
 
 test('a direct transfer is recorded as a transfer, not as something typed', async ({page}) => {
@@ -2445,8 +2576,9 @@ test('a direct transfer is recorded as a transfer, not as something typed', asyn
   await page.locator('#quickActions .qa-conv').click();
   await pickBubble(page);
   await page.locator('#xferRow .xfer-chip').first().click();
-  // The classifier runs at the send, against the pendingTransfer doTransfer left — a transcript
-  // that cannot tell a transfer from typing claims the user said what another agent said.
+  await sendRow(page);
+  // The classifier runs at the send, against the pendingTransfer prefillTransfer left — a
+  // transcript that cannot tell a transfer from typing claims the user said what another agent did.
   const mine = await page.evaluate(() => convMemberKey(paneOf(activePane)));
   await expect.poll(async () => {
     const rec = await held(page, mine);
@@ -2455,7 +2587,7 @@ test('a direct transfer is recorded as a transfer, not as something typed', asyn
   }).toBe('transfer');
 });
 
-test('the ⋯ chip still opens the sheet, preview and all', async ({page}) => {
+test('@+ lists every instruction, and picking there is the same pick', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -2463,8 +2595,34 @@ test('the ⋯ chip still opens the sheet, preview and all', async ({page}) => {
   await page.locator('#quickActions .qa-conv').click();
   await pickBubble(page);
   await page.locator('#xferRow .xfer-chip.more').click();
+  const menu = page.locator('#chipMenu');
+  await expect(menu.locator('[role=menuitemcheckbox]')).toHaveCount(
+    await page.evaluate(() => SHORTCUTS.length));
+  await menu.locator('[role=menuitemcheckbox]', {hasText: 'Architect prompt'}).click();
+  await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveText(/^@architect/);
+  // The list is the same picks drawn twice, so it has to show the tap it just took.
+  await expect(menu.locator('[aria-checked=true]')).toHaveText(/@architect/);
+  await menu.locator('[role=menuitem]', {hasText: 'Done'}).click();
+  await expect(menu).toBeHidden();
+});
+
+test('the sheet steps aside for the row, and keeps the pane view', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await pairBoth(page);
+  await page.locator('#quickActions .qa-conv').click();
+  await pickBubble(page);
+  // Two buttons on one bar that disagree about where the message goes: the row has a chosen
+  // target and the sheet always takes the partner.
+  await expect(page.locator('#xferRow')).toBeVisible();
+  await expect(page.locator('#selTransfer')).toBeHidden();
+  // The pane view has no row, so the sheet is still how a range gets transferred, preview and all.
+  await page.locator('#quickActions .qa-conv').click();
+  await page.evaluate(() => { selA = 0; selB = 2; drawSel(); });
+  await page.locator('#selTransfer').click();
   await expect(page.locator('#transferSheet')).toBeVisible();
-  await expect(page.locator('#transferPreview')).toContainText('the other pane spoke first');
+  await expect(page.locator('#transferPreview')).not.toBeEmpty();
 });
 
 test('Resend repeats the last thing sent to this pane, and takes two taps', async ({page}) => {
