@@ -5,15 +5,42 @@
     const NAV_MAX = 20;
     let navHistory = [], navIndex = -1, navigating = false;
 
+    // A conversation window is a stop on this walk, not a place outside it. Reading a conversation,
+    // opening a member's pane from it and then wanting the record back is the ordinary way round a
+    // multi-agent thread, and until this the only way back was the pane's own Back — which lands on
+    // the agent list, from where the conversation has to be found again.
+    //
+    // Held in the same list, prefixed, rather than in a second one: back and forward are one order,
+    // and two lists would have to be interleaved by a timestamp to answer "where was I" — which is
+    // the list this already is.
+    const NAV_CONV = 'conv:';
+    function navIsConv(id) { return typeof id === 'string' && id.startsWith(NAV_CONV); }
+    function navConvId(id) { return id.slice(NAV_CONV.length); }
+
     function noteVisit(paneId) {
       if (navigating || navHistory[navIndex] === paneId) return;
       navHistory = navPush(navHistory, navIndex, paneId, NAV_MAX);
       navIndex = navHistory.length - 1;
     }
 
+    function noteConvNav(id) { noteVisit(NAV_CONV + id); }
+
+    // A conversation is alive while its record exists; a pane is alive while herdr reports it. Both
+    // are skipped when they are not, so a step never lands on a record that was deleted or a pane
+    // that has exited.
+    function navAlive(id) {
+      return navIsConv(id) ? loadConvIndex().some(c => c.id === navConvId(id)) : !!paneOf(id);
+    }
+
     function navTarget(step) {
       // Both lists, or the history silently steps over every terminal ever visited.
-      return navStep(navHistory, navIndex, step, id => !!paneOf(id), activePane);
+      return navStep(navHistory, navIndex, step, navAlive, navHere());
+    }
+
+    // Where the walk currently stands: the open pane, or the conversation window if that is what is
+    // on screen. Passed to navStep so a step never re-opens what is already open.
+    function navHere() {
+      return convViewId && convDockOn() ? NAV_CONV + convViewId : activePane;
     }
 
     function navGo(step) {
@@ -21,8 +48,21 @@
       if (i < 0) return;
       navIndex = i;
       navigating = true;
-      try { openTerminal(navHistory[i]); } finally { navigating = false; }
+      const id = navHistory[i];
+      try { navIsConv(id) ? openConversation(navConvId(id)) : openTerminal(id); }
+      finally { navigating = false; }
       if (window.cue) cue('page');
+    }
+
+    // What the arrow will land on, so the button says where it goes rather than "Previous session"
+    // over a conversation. Blank when there is nowhere to step, where the button is disabled anyway.
+    function navLabel(step) {
+      const i = navTarget(step);
+      if (i < 0) return step < 0 ? 'Previous session' : 'Next session';
+      const id = navHistory[i];
+      if (!navIsConv(id)) return `${step < 0 ? 'Back to' : 'Forward to'} ${paneLabel(paneOf(id)) || id}`;
+      const conv = loadConvIndex().find(c => c.id === navConvId(id));
+      return `${step < 0 ? 'Back to' : 'Forward to'} ${(conv && conv.name) || 'the conversation'}`;
     }
 
     const QA_KEY = 'herdr_quick_actions';
@@ -125,9 +165,11 @@
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
       if (!blocked && !showNav) { qa.innerHTML = ''; return; }
-      const nav = (step, glyph, label) =>
-        `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
-        `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      const nav = (step, glyph) => {
+        const label = escapeHtml(navLabel(step));
+        return `<button class="nav" onclick="navGo(${step})" aria-label="${label}" title="${label}"` +
+          `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      };
       const open = bottomDockOpen();
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
@@ -157,7 +199,7 @@
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>${conv}</div>` +
-        `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
+        `<div class="qa-mid">${nav(-1, '‹')}${nav(1, '›')}</div>` +
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;

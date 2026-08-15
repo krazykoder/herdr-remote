@@ -92,7 +92,9 @@
       bandwidthSaveTimer = setTimeout(flushBandwidth, 1000);
     }
 
-    addEventListener('pagehide', flushBandwidth);
+    // Guarded because these modules are also run as slices in a vm context, which has no window and
+    // no event target — an unguarded call there throws at load and takes the whole suite with it.
+    if (typeof addEventListener === 'function') addEventListener('pagehide', flushBandwidth);
 
     function loadPaneBandwidth() {
       try {

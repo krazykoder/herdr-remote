@@ -120,10 +120,10 @@
 
     // A jump is a destination, so it drops any panel the user was in and the pane it would
     // have returned to — otherwise closing Settings later would yank them back to an older pane.
-    function jumpToPane(paneId) {
+    function jumpToPane(paneId, returnConversation) {
       panelReturnPane = null;
       hidePanels();
-      openTerminal(paneId);
+      openTerminal(paneId, returnConversation);
     }
 
     function toggleSettings() {

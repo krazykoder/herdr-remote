@@ -220,7 +220,66 @@ test('the live member is one tap on, in its own thread', async ({page}) => {
   // Opened on the thread and not on the rows: the conversation is what the reader was reading.
   await expect(page.locator('#convThread')).toBeVisible();
   await expect(page.locator('#convView')).toBeHidden();
+  await page.locator('#termBack').click();
+  await expect(page.locator('#convView')).toBeVisible();
 });
+
+test('the conversation is a stop on the ‹ › walk, not a place outside it', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  // Reading a record, opening a member's pane out of it and wanting the record back is the ordinary
+  // way round a joint thread. Before this the only way back was the pane's own Back, which lands on
+  // the agent list — from where the conversation has to be found again.
+  const back = page.locator('#quickActions .nav').first();
+  await expect(back).toBeEnabled();
+  await expect(back).toHaveAttribute('aria-label', /Back to new authentication feature/);
+  await back.click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
+});
+
+test('a deleted conversation is stepped over rather than opened', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.evaluate(() => saveConvIndex([]));
+  // The walk skips what no longer exists, the same way it skips a pane that has exited — and with
+  // nothing else behind it, the arrow says so by being disabled.
+  await page.evaluate(() => renderQuickActions());
+  await expect(page.locator('#quickActions .nav').first()).toBeDisabled();
+});
+
+test('the composer fills from the top, and Send stays beside the line being written',
+  async ({page}) => {
+    await open(page);
+    await join(page);
+    await read(page);
+    await page.locator('.term-header .back').click();
+    await page.locator('#conversations .conversation-card').click();
+    await page.locator('#convInput').fill('one line');
+    // The field is shorter than the Send button until a second line arrives. Bottom-aligned, the
+    // first line you type sat below the button's middle — a box you appear to be typing into from
+    // underneath.
+    const top = box => box.evaluate(el => el.getBoundingClientRect().top);
+    const field = page.locator('#convInput');
+    expect(await top(field) - await top(page.locator('#convComposer'))).toBeLessThan(8);
+    // Send is the exception, and stays at the bottom: it belongs beside the last line, which on a
+    // phone is also where the thumb is.
+    await page.locator('#convInput').fill('one\ntwo\nthree\nfour');
+    const bottom = box => box.evaluate(el => el.getBoundingClientRect().bottom);
+    expect(Math.abs(await bottom(page.locator('#convSendBtn')) - await bottom(field)))
+      .toBeLessThan(10);
+  });
 
 // The card, then the view: every action below is the conversation's own rather than a pane's.
 const openCard = async page => {
