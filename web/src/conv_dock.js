@@ -448,6 +448,24 @@
       setDockTarget(paneId);
     }
 
+    // A bubble double-tapped is that agent addressed. Double rather than single: a single tap in a
+    // thread is already how text is selected and how a bubble is picked for transfer, and a gesture
+    // that has to share with those two would fire on both of them.
+    //
+    // Only the conversation window's thread, because it is the only one with a target to change —
+    // the pane's own composer types into the pane on screen.
+    function addressConvAuthor(key) {
+      const live = dockTargets().find(a => convMemberKey(a) === key);
+      // No target: the author has exited, is folded out of the thread, or is the source of what is
+      // picked — a message cannot be transferred back into its own session.
+      if (!live) return;
+      // The word the double-click selected is not a selection anybody asked for.
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      setDockTarget(live.pane_id);
+      showToast(`Talking to ${paneLabel(live) || live.pane_id}`);
+    }
+
     // Into the addressed pane's terminal, not into its thread. The thread is what this window
     // already is, and a reader leaving it is leaving it for the rows — the live frame, the
     // keyboard, the approval buttons — so the pane's thread panel is turned off on the way.
@@ -608,6 +626,11 @@
         if (dockMenuOpen() && !e.target.closest('#chipMenu, .xfer-chip')) closeDockMenu('chipMenu');
         if (whoMenuOpen() && !e.target.closest('#whoMenu, .xfer-who-more')) closeDockMenu('whoMenu');
       }, true);
+      const thread = document.getElementById('convViewThread');
+      if (thread) thread.addEventListener('dblclick', e => {
+        const msg = e.target.closest && e.target.closest('.conv-msg');
+        if (msg) addressConvAuthor(msg.dataset.key);
+      });
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);
       syncDockHeight();

@@ -329,6 +329,61 @@
       localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
     }
 
+    // --- The recent switcher ---
+    //
+    // Every live pane, agents and terminals together, in the order this device last opened them.
+    // Reached from the status bar, which is the one row on screen in every view: "put me back where
+    // I was" is not a question about the screen you are asking it from, and the landing page's
+    // Recents section can only answer it from the landing page.
+
+    // Panes herdr is ambiguous about are dropped, the same rule the landing section follows: an ID
+    // that is an agent in one list and a shell in the other is one the relay will refuse.
+    function livePanes() {
+      return agents.concat(shells).filter(p => agents.filter(x => x.pane_id === p.pane_id).length
+        + shells.filter(x => x.pane_id === p.pane_id).length === 1);
+    }
+
+    function recentPanes() {
+      const log = loadRecents();
+      const rank = p => {
+        const i = log.findIndex(r => recentMatchesPane(r, p, isShell(p.pane_id)));
+        return i < 0 ? log.length : i;
+      };
+      // Visited panes first, in visit order. The rest follow by when they last moved, which keeps
+      // the list a recent list rather than making it a second copy of the agent list — and a pane
+      // this device has never opened still has to be reachable from here.
+      return livePanes().map((p, i) => [p, i])
+        .sort((a, b) => rank(a[0]) - rank(b[0]) ||
+          (lastSeen[b[0].pane_id] || 0) - (lastSeen[a[0].pane_id] || 0) || a[1] - b[1])
+        .map(pair => pair[0]);
+    }
+
+    function openRecentSheet() {
+      const box = document.getElementById('recentList');
+      const list = recentPanes();
+      // Same row as the pair and conversation sheets: a list of things to pick reads as one when
+      // every list in the app is picked from the same way.
+      box.innerHTML = list.length ? list.map(p => {
+        const shell = isShell(p.pane_id);
+        const seen = lastSeen[p.pane_id];
+        const meta = [p.project, shell ? (p.cwd || 'shell') : p.status,
+          seen ? fmtAgo(new Date(seen)) : ''].filter(Boolean).join(' · ');
+        return `<button class="pair-pick${p.pane_id === activePane ? ' on' : ''}" ` +
+          `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
+          `<span class="kind" aria-hidden="true">${shell ? '⬛' : '🤖'}</span>` +
+          `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
+          `${shell ? '' : agentBadge(p.agent)}</span>` +
+          `<span class="meta">${escapeHtml(meta)}</span></span>` +
+          `<span class="dot" style="background:${statusColor(p)}" aria-hidden="true"></span>` +
+          `</button>`;
+      }).join('') : '<p class="pair-empty">Nothing is running.</p>';
+      document.getElementById('recentSheet').style.display = 'block';
+    }
+
+    function closeRecentSheet() {
+      document.getElementById('recentSheet').style.display = 'none';
+    }
+
     // Only live panes are offered. A dead pane_id is dropped rather than shown greyed: herdr reuses
     // pane IDs, so a stale entry could open a pane the user never visited.
     function renderRecents() {

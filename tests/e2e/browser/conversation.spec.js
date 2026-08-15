@@ -3072,6 +3072,54 @@ test('the composer draws its own block cursor, and it is always there', async ({
   await expect(page.locator('#convInput')).toHaveCSS('caret-color', 'rgba(0, 0, 0, 0)');
 });
 
+test('a double tap on a bubble addresses the agent that wrote it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  const third = await joinThird(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.evaluate(() => setDockMru(false));
+  await expect(litWho(page)).toHaveText(/Architect 1/);
+  // The gesture is double rather than single, because a single tap in a thread already selects
+  // text and already picks a bubble for transfer.
+  await page.locator('#convViewThread .conv-msg', {hasText: 'the third pane'}).dblclick();
+  await expect(litWho(page)).toHaveText(/amp/);
+  // And the word the double-click selected is not a selection anybody asked for.
+  expect(await page.evaluate(() => String(window.getSelection()))).toBe('');
+  await compose(page, 'over to you');
+  expect((await sentText(page)).map(m => m.pane_id)).toEqual([third]);
+});
+
+test('a double tap on the picked message\'s own bubble changes nothing', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await joinThird(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.evaluate(() => setDockMru(false));
+  await whoRow(page).filter({hasText: 'amp'}).click();
+  await pickBubble(page, 'the other pane spoke first');           // scratch's
+  // scratch cannot receive what scratch said, so the gesture has nothing to do — and must not
+  // quietly move the target somewhere else on the way to doing nothing.
+  await page.locator('#convViewThread .conv-msg', {hasText: 'the other pane spoke first'}).dblclick();
+  await expect(litWho(page)).toHaveText(/amp/);
+});
+
+test('the pane\'s own thread is not addressed by a double tap', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  // The pane view's composer types into the pane on screen: there is no target to change, and the
+  // gesture belongs to the window that has one.
+  await page.locator('#convThread .conv-msg').first().dblclick();
+  await expect(page.locator('#toast')).toBeHidden();
+  // The dock is the conversation window's and does not follow a thread into a pane.
+  await expect(page.locator('#convDock')).toBeHidden();
+});
+
 test('the block follows the caret however it was moved', async ({page}) => {
   await open(page);
   await joinBoth(page);

@@ -288,6 +288,12 @@ than none.
   about the row and "the partner" is a fact about the message. One tap on any other pill overrides
   it, and a choice made before the pick is never overridden: a default fills a blank, it does not
   correct a reader.
+- **A double tap on a bubble addresses its author.** Double rather than single: a single tap in a
+  thread already selects text and already picks a bubble for transfer, so a single-tap gesture would
+  fire on both of them. It does nothing for an author that has exited, is folded out of the thread,
+  or is the source of what is currently picked — and it clears the word the double-click selected,
+  which is not a selection anybody asked for. Only in the conversation window: the pane's own
+  composer types into the pane on screen and has no target to change.
 - **`🤖` opens the row as a list**, for a row that has scrolled past the edge of a phone and for a
   name a pill cut off. Same members, same order, the lit one ticked, the source named but not
   choosable. It wears the agent icon rather than a caret, because a caret could open anything. One
@@ -484,6 +490,8 @@ place, and a reader who switches panes gets the end of the new one.
     member; a pill tapped before or after the pick beats the default.
 25. Holding an arrow key walks the drawn block across the text, and a selection made with the mouse
     moves it too.
+26. Double-tapping a bubble lights its author in the row and sends the next message there; doing it
+    on the picked message's own bubble, or anywhere in a pane's thread, changes nothing.
 
 ---
 
