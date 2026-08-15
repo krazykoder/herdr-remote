@@ -2089,6 +2089,32 @@ test('the turn-end read stands aside while a recovery is in flight', async ({pag
     .toEqual([{type: 'read_pane', pane_id: pane, lines: 5000, source: 'recent-unwrapped'}]);
 });
 
+test('a read already in flight when a recovery starts is not mistaken for its reply',
+  async ({page}) => {
+    // The one the guard above cannot cover: a 200-line turn-end read sent a moment *before* the
+    // recovery. Answering it as the deep reply is not a mis-counted toast — a window too shallow to
+    // hold the record's newest message misses the anchor, and a miss is written down as a gap in
+    // history that never happened. The watermark refuses it (§2.4).
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    await tapWire(page);
+    await page.evaluate(async k => {
+      const h = (await convGet([k]))[0];
+      h.depth = 5000;                          // this transcript has been read deeper than 200
+      convHeld.delete(k);
+      await convPut(h);
+    }, key);
+    await page.evaluate(k => convRecoverStart(paneOf(activePane), true), key);
+    await page.evaluate(() => recordPane(activePane, [
+      '⏺ Something else entirely.', '', '❯ ', '',
+    ]));
+    const stored = await held(page, key);
+    expect(stored.gap).toBeFalsy();
+    // Still waiting, so the deep reply behind it is the one that reports.
+    expect(await page.evaluate(k => convRecovering.has(k), key)).toBe(true);
+  });
+
 test('a recovery nobody can send says so instead of pretending', async ({page}) => {
   await open(page);
   await join(page);

@@ -220,8 +220,20 @@ Adding the correlation field was tried and reverted. It is the right protocol sh
 line in the relay, but the app is served from GitHub Pages while the relay runs on the user's own
 machine: their versions drift by design, and a browser waiting for an echo an older relay never
 sends never resolves a recovery at all — turning a cosmetic mis-report into a button that does
-nothing. The residual is that a turn-end read already in flight when a recovery is issued can still
-report early; it costs a slightly understated toast and nothing in the record.
+nothing.
+
+What is left is a read sent a moment *before* the recovery, which no in-flight guard can decline
+after the fact. That one is refused by the watermark instead: a reply shallower than a window this
+transcript has already been read from is not the reply being waited for, whatever else it is —
+`asked` relaxes the watermark from `>` to `>=`, it does not remove it. This matters past the toast.
+A window too shallow to hold the record's newest message misses the anchor, and §2.1 writes a miss
+down as a gap — so answering a 200-line straggler as the deep reply would mark a break in history
+that never happened. Below the watermark it takes the ordinary turn path, records what it saw, and
+leaves the recovery pending for the reply behind it.
+
+The residual after that is one case: a straggler exactly as deep as the watermark, which needs the
+pane to sit at a scrollback ceiling below `POLL_MAX_LINES`. It reports early and understates the
+count. The anchor is present at that depth, so it costs a toast and nothing in the record.
 
 **Fifteen minutes is the single threshold.** Two hours is not a disconnection, it is a different
 working session, and by then the gap is the thing you came back to read. Fifteen minutes is roughly

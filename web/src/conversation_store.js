@@ -324,9 +324,19 @@
       // An explicit request is never declined for being a repeat. Idempotence is what makes that
       // safe, and it is not merely a nicety: a pane sitting at herdr's own scrollback ceiling comes
       // back the same length every time, so a watermark alone would refuse every recovery after the
-      // first — on exactly the panes with the most history to lose.
+      // first — on exactly the panes with the most history to lose. Hence `>=` while one is pending
+      // and `>` otherwise.
+      //
+      // What the watermark still refuses, pending or not, is a window *shallower* than one this
+      // transcript has already been read from: a 200-line turn-end read in flight when a recovery
+      // was issued is not the reply being waited for, whatever else it is (§2.4). Answering it as
+      // one is not merely a mis-counted toast — a window too shallow to hold the record's newest
+      // message misses the anchor, and a miss is written down as a gap in history that never
+      // happened. Below the watermark the read takes the ordinary turn path instead, and the deep
+      // reply behind it still reports.
       const asked = convRecovering.has(key);
-      const deep = held.backfilled && (asked || rows.length > (held.depth || 0));
+      const depth = held.depth || 0;
+      const deep = held.backfilled && (asked ? rows.length >= depth : rows.length > depth);
       let before = [], add = [], noteGap = false;
       if (!held.backfilled) {
         // The first read.
