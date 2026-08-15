@@ -282,6 +282,9 @@
       convAdding = false;
       openPanel('convView');
       syncNavBtns();   // the walk is standing somewhere new, and its arrows are on screen here too
+      // Tabs come from the index and live snapshot, not transcript storage. Draw them before the
+      // IndexedDB read below so first open has navigation while its messages load.
+      renderConvStrip();
       renderConvStandalone(true);
     }
 

@@ -1532,6 +1532,17 @@ test('the conversation view carries the conversations as tabs', async ({page}) =
     .toHaveText('new authentication feature');
 });
 
+test('conversation tabs appear before its transcript finishes loading', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([{id: 'c1', name: 'first view', created: 1,
+      members: [{key, added: 1, label: 'Architect 1'}]}]);
+    openConversation('c1');
+  });
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
+});
+
 test('the strip hides the auto conversations exactly when the landing list does', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
