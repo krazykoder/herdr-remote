@@ -1,7 +1,7 @@
 # Spec — The composer, the transfer, and what a working pane looks like
 
 **Date:** 2026-08-14
-**Status:** Proposed. Branch `feat/composer-and-transfer`.
+**Status:** Partially implemented — §§1–3 and §5; §4 deferred. Branch `feat/composer-and-transfer`.
 **Classification:** Class B — additive, backward compatible. **No relay change, no wire change, no
 new message type.** §4 is the exception in intent but not in code: it changes what a tap means, not
 what goes on the wire.
@@ -25,8 +25,8 @@ So a fix that lives in the relay is a fix the user does not have. Worse than abs
 sends what an old relay refuses turns a working feature into an error toast. This decided the
 recovery-id question in the deep-backfill spec (§2.4), and it decides §1 here.
 
-**Rule: the app is written against the oldest relay it might meet, and asks the relay for its
-ceiling rather than restating it.**
+**Rule: the app is written against the oldest relay it might meet. Where an old relay exposes no
+ceiling, the client uses its documented compatible cap rather than requiring a new relay field.**
 
 ---
 
@@ -39,7 +39,7 @@ Three caps, commonly mistaken for one:
 | Cap | Where | What it bounds |
 |---|---|---|
 | 4000 | `relay/herdr_relay.py:1292` | one `send_text` message on the wire |
-| `SEND_TEXT_MAX` = 4000 | `web/src/pairs_pure.js:7` | what the composer and `composeTransfer` will accept |
+| `SEND_TEXT_MAX` = 4000 | `web/src/pairs_pure.js` | one outbound `send_text` chunk |
 | `CONV_TEXT_MAX` = 4000 | `web/src/conversation_pure.js:15` | one entry in a **transcript**, truncated with `…` |
 
 A transferred selection is code or a diff. Both are routinely past 4000, and today the app refuses
