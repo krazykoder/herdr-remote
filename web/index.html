@@ -650,34 +650,52 @@
       font-weight: 500;
     }
 
-    .bandwidth-row {
+    /* One grid holding the clock row and all three data rows, so the columns line up and the whole
+       thing scrolls as one table. The rows and the chip strip are display: contents, which keeps
+       the markup readable while every cell sits in the one grid. */
+    #bandwidthRows {
       display: grid;
-      grid-template-columns: 52px minmax(0, 1fr);
       align-items: center;
-      gap: 6px;
-      margin-top: 5px;
+      gap: 5px 4px;
+      overflow-x: auto;
+      padding-bottom: 2px;
       font: 0.62rem monospace;
     }
 
-    .bandwidth-label { color: var(--muted); }
+    .bandwidth-head,
+    .bandwidth-row,
+    .bandwidth-chips { display: contents; }
 
-    .bandwidth-chips {
-      display: flex;
-      flex-wrap: nowrap;
-      gap: 4px;
-      overflow-x: auto;
-      padding-bottom: 2px;
+    /* The row's name stays put while the hour scrolls past it, so a number is never nameless. */
+    .bandwidth-label {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      padding-right: 4px;
+      color: var(--muted);
+      background: var(--bg);
     }
 
+    .bandwidth-time {
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .bandwidth-time.now { color: var(--green); }
+
     .bandwidth-chip {
-      flex: 0 0 auto;
-      min-width: 38px;
       padding: 3px 4px;
       border: 1px solid var(--border);
       border-radius: 4px;
       text-align: center;
       color: var(--text);
       background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
+    /* The bucket still being filled: what is on the wire right now, not a closed total. */
+    .bandwidth-chip.now {
+      border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+      background: color-mix(in srgb, var(--green) 8%, var(--bg));
     }
 
     /* Settings */
@@ -3945,8 +3963,24 @@
 
     <div class="setting-group">
       <label class="toggle-option"><input type="checkbox" id="bandwidthOn" onchange="setBandwidthOn(this.checked)"> Track WebSocket payload data</label>
-      <div class="hint">Shows sent, received and total payload bytes in Activity, in five-minute buckets
-        for this browser session. WebSocket frame and TLS overhead are not available to the page.</div>
+      <div class="hint">Shows sent, received and total payload bytes in Activity, for this browser
+        session. The newest bucket is the one filling now. WebSocket frame and TLS overhead are not
+        available to the page.</div>
+      <label for="bandwidthStep">Bucket</label>
+      <select id="bandwidthStep" onchange="setBandwidthStep(Number(this.value))">
+        <option value="5">5 minutes</option>
+        <option value="10">10 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">60 minutes</option>
+      </select>
+      <label for="bandwidthSpan">Keep</label>
+      <select id="bandwidthSpan" onchange="setBandwidthSpan(Number(this.value))">
+        <option value="1">1 hour</option>
+        <option value="5">5 hours</option>
+      </select>
+      <div class="hint">A narrower bucket is closer to live, a wider one is easier to read across
+        hours. Changing the bucket clears what has been collected: it is already cut on the old
+        boundaries. Changing how much is kept only changes how far back the table draws.</div>
     </div>
 
     <div class="setting-group">
@@ -3990,7 +4024,7 @@
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
     <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
-      <h2>Data exchange · last hour</h2>
+      <h2 id="bandwidthTitle">Data exchange · last hour</h2>
       <div id="bandwidthRows"></div>
     </section>
   </div>

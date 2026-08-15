@@ -17,13 +17,54 @@
     // this API and are deliberately not guessed at. Kept for this session only, like the activity
     // log it is shown beside: turning collection on starts a fresh hour rather than claiming to
     // know traffic from before this page was open.
-    const BANDWIDTH_KEY = 'herdr_bandwidth', BANDWIDTH_BUCKET_MS = 5 * 60 * 1000,
-      BANDWIDTH_BUCKETS = 12;
+    const BANDWIDTH_KEY = 'herdr_bandwidth', BANDWIDTH_STEP_KEY = 'herdr_bandwidth_step',
+      BANDWIDTH_SPAN_KEY = 'herdr_bandwidth_span';
+    // How wide a bucket is and how far back they run, both settings: five minutes across the last
+    // hour by default, which is close enough to live to watch a transfer land, and an hour is long
+    // enough to see the idle rate. Offered as a pair because they only mean anything together — one
+    // hour in five-minute steps is twelve chips, five hours in the same step is sixty.
+    const BANDWIDTH_STEPS = [5, 10, 30, 60];   // minutes
+    const BANDWIDTH_SPANS = [1, 5];            // hours
     let bandwidth = [];
 
     function bandwidthOn() {
       try { return localStorage.getItem(BANDWIDTH_KEY) === 'on'; }
       catch (e) { return false; }
+    }
+
+    function bandwidthPick(key, allowed) {
+      let v;
+      try { v = Number(localStorage.getItem(key)); } catch (e) { /* private mode */ }
+      return allowed.indexOf(v) < 0 ? allowed[0] : v;
+    }
+
+    function bandwidthStepMin() { return bandwidthPick(BANDWIDTH_STEP_KEY, BANDWIDTH_STEPS); }
+    function bandwidthSpanHr() { return bandwidthPick(BANDWIDTH_SPAN_KEY, BANDWIDTH_SPANS); }
+    function bandwidthBucketMs() { return bandwidthStepMin() * 60 * 1000; }
+    function bandwidthCount() { return Math.round(bandwidthSpanHr() * 60 / bandwidthStepMin()); }
+
+    // A wider bucket is not a merge of narrower ones: what is held is already cut on the old
+    // boundaries, and re-cutting it would invent numbers for edges that were never measured. So
+    // changing the step starts again, the same way turning collection on does. Changing the span
+    // keeps everything — it only decides how much of it is drawn.
+    function setBandwidthStep(min) {
+      try { localStorage.setItem(BANDWIDTH_STEP_KEY, String(min)); } catch (e) { /* session-only */ }
+      bandwidth = [];
+      syncBandwidthRange();
+      renderBandwidth();
+    }
+
+    function setBandwidthSpan(hr) {
+      try { localStorage.setItem(BANDWIDTH_SPAN_KEY, String(hr)); } catch (e) { /* session-only */ }
+      syncBandwidthRange();
+      renderBandwidth();
+    }
+
+    function syncBandwidthRange() {
+      const step = document.getElementById('bandwidthStep');
+      const span = document.getElementById('bandwidthSpan');
+      if (step) step.value = String(bandwidthStepMin());
+      if (span) span.value = String(bandwidthSpanHr());
     }
 
     function setBandwidthOn(on) {
@@ -44,11 +85,14 @@
 
     function noteBandwidth(direction, data, now) {
       if (!bandwidthOn()) return;
-      const at = Math.floor((now || Date.now()) / BANDWIDTH_BUCKET_MS) * BANDWIDTH_BUCKET_MS;
+      const size = bandwidthBucketMs();
+      const at = Math.floor((now || Date.now()) / size) * size;
       let bucket = bandwidth.find(b => b.at === at);
       if (!bucket) { bucket = {at: at, sent: 0, received: 0}; bandwidth.push(bucket); }
       bucket[direction] += bandwidthBytes(data);
-      const cutoff = at - (BANDWIDTH_BUCKETS - 1) * BANDWIDTH_BUCKET_MS;
+      // Held against the widest span on offer, not the one being drawn, so widening the span shows
+      // history that was already collected rather than an hour of blanks.
+      const cutoff = at - (Math.max.apply(null, BANDWIDTH_SPANS) * 60 * 60 * 1000);
       bandwidth = bandwidth.filter(b => b.at >= cutoff);
       // Whether the view is on screen, not which display mode it happens to use: PANELS decides
       // that, and a counter that stopped updating because a panel changed layout would be a
@@ -58,9 +102,10 @@
     }
 
     function bandwidthBuckets(now) {
-      const end = Math.floor((now || Date.now()) / BANDWIDTH_BUCKET_MS) * BANDWIDTH_BUCKET_MS;
-      return Array.from({length: BANDWIDTH_BUCKETS}, (_, i) => {
-        const at = end - (BANDWIDTH_BUCKETS - 1 - i) * BANDWIDTH_BUCKET_MS;
+      const size = bandwidthBucketMs(), count = bandwidthCount();
+      const end = Math.floor((now || Date.now()) / size) * size;
+      return Array.from({length: count}, (_, i) => {
+        const at = end - (count - 1 - i) * size;
         return bandwidth.find(b => b.at === at) || {at: at, sent: 0, received: 0};
       });
     }

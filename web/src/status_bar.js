@@ -135,7 +135,9 @@
     }
 
     function toggleTimeline() {
-      if (document.getElementById('timelineView').style.display === 'block') { closePanel(); return; }
+      // Against being on screen, not against a display mode: PANELS decides that, and this view is
+      // a flex column since it grew a scrolling log with the data panel pinned under it.
+      if (document.getElementById('timelineView').style.display !== 'none') { closePanel(); return; }
       openPanel('timelineView');
       renderTimeline();
     }
@@ -167,31 +169,56 @@
       panel.hidden = !bandwidthOn();
       if (panel.hidden) return;
       const buckets = bandwidthBuckets();
+      const size = bandwidthBucketMs();
+      const title = document.getElementById('bandwidthTitle');
+      if (title) {
+        const span = bandwidthSpanHr();
+        title.textContent = `Data exchange · ${bandwidthStepMin()} min · ` +
+          `last ${span === 1 ? 'hour' : span + ' hours'}`;
+      }
       const kinds = [
         ['Total', b => b.sent + b.received],
         ['Sent', b => b.sent],
         ['Received', b => b.received],
       ];
-      // The rows are built when the *window* moves, which is once every five minutes, and never
-      // for a number changing. Twelve chips at 38px overflow a phone, so this row scrolls — and it
-      // is redrawn on every message that lands, which with the poll is three times a minute. An
-      // innerHTML rebuild there would send a reader who had scrolled back to an earlier bucket to
-      // the left edge again, three times a minute. Same rule the dock's chip row follows.
+      // The rows are built when the *window* moves — once a bucket — and never for a number
+      // changing. The chips overflow a phone, so they scroll, and this is redrawn on every message
+      // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
+      // send a reader who had scrolled back to an earlier bucket to the left edge again, three
+      // times a minute. Same rule the dock's chip row follows.
       const sig = buckets.map(b => b.at).join(',');
       if (rows.dataset.sig !== sig) {
-        rows.innerHTML = kinds.map(([label]) =>
-          `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
-          `<div class="bandwidth-chips">${buckets.map(b => {
-            const start = new Date(b.at), end = new Date(b.at + BANDWIDTH_BUCKET_MS);
-            const time = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
-              end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
-            return `<span class="bandwidth-chip" title="${label}, ${time}"></span>`;
-          }).join('')}</div></div>`).join('');
+        // One grid for the header and all three rows, so the columns line up and the whole table
+        // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
+        // against Received at 2:40 and never see that they had.
+        rows.style.gridTemplateColumns = `52px repeat(${buckets.length}, minmax(46px, 1fr))`;
+        const at = (b, i) => {
+          const start = new Date(b.at), end = new Date(b.at + size);
+          const range = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
+            end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+          // The last bucket is the one being filled: it is a few minutes old at most, and saying so
+          // is the difference between a small number and a number that has stopped moving.
+          return {range: range, live: i === buckets.length - 1,
+            clock: `${String(start.getHours()).padStart(2, '0')}:` +
+              `${String(start.getMinutes()).padStart(2, '0')}`};
+        };
+        rows.innerHTML =
+          `<div class="bandwidth-head"><span class="bandwidth-label"></span>` +
+          buckets.map((b, i) => { const t = at(b, i);
+            return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
+              `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
+          kinds.map(([label]) =>
+            `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+            `<div class="bandwidth-chips">${buckets.map((b, i) => { const t = at(b, i);
+              return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
+                `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
+            }).join('')}</div></div>`).join('');
         rows.dataset.sig = sig;
       }
       // The numbers, written into the chips that are already there.
+      const bars = rows.querySelectorAll('.bandwidth-row');
       kinds.forEach(([, value], r) => {
-        const chips = rows.children[r].querySelectorAll('.bandwidth-chip');
+        const chips = bars[r].querySelectorAll('.bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = formatBandwidth(value(b)); });
       });
     }

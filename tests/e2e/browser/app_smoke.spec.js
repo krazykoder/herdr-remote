@@ -57,7 +57,74 @@ test('Activity tracks local WebSocket payload bytes in twelve five-minute bucket
     const b = bandwidthBuckets().at(-1);
     return b.sent + b.received;
   })).toBeGreaterThan(0);
+
+  // A second tap on Activity leaves it, which is what every other panel button does.
+  await page.locator('#navTimeline').click();
+  await expect(page.locator('#timelineView')).toBeHidden();
 });
+
+test('the newest bucket is the one filling, and it is drawn while it fills', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  await page.locator('#bandwidthOn').check();
+  await page.locator('#navTimeline').click();
+  // The clock row names each bucket by its start, and says "now" for the one still being filled —
+  // the numbers underneath it are minutes old at most, and the difference between a small total
+  // and a stopped one is the whole reason to look.
+  const times = page.locator('#bandwidthRows .bandwidth-time');
+  await expect(times).toHaveCount(12);
+  await expect(times.last()).toHaveText('now');
+  await expect(times.last()).toHaveClass(/now/);
+  await expect(times.first()).toHaveText(/^\d\d:\d\d$/);
+
+  // And it is redrawn where it stands, without leaving Activity and coming back.
+  const live = page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip.now');
+  const before = await live.textContent();
+  await page.evaluate(() => ws.send(JSON.stringify(
+    {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+  await expect.poll(() => live.textContent()).not.toBe(before);
+});
+
+test('the clock row and all three rows are one table in one scroller', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  await page.locator('#bandwidthOn').check();
+  await page.locator('#navTimeline').click();
+  // Three scrollers of their own would let a reader line Sent up against a Received from half an
+  // hour earlier and never see that they had. One grid: every column starts at one x.
+  const columns = await page.locator('#bandwidthRows').evaluate(rows => {
+    const cells = r => [...r.querySelectorAll('.bandwidth-chip, .bandwidth-time')]
+      .map(c => Math.round(c.getBoundingClientRect().x));
+    return [...rows.querySelectorAll('.bandwidth-head, .bandwidth-row')].map(cells);
+  });
+  expect(columns).toHaveLength(4);
+  for (const row of columns) expect(row).toEqual(columns[0]);
+  await expect(page.locator('#bandwidthRows')).toHaveCSS('overflow-x', 'auto');
+});
+
+test('the bucket and the span are settings, and the heading says which is in force',
+  async ({page}) => {
+    await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+    await page.locator('#navSettings').click();
+    await page.locator('#bandwidthOn').check();
+    await page.locator('#bandwidthStep').selectOption('30');
+    await page.locator('#bandwidthSpan').selectOption('5');
+    await page.locator('#navTimeline').click();
+    // Five hours in half-hour steps is ten buckets, and the heading says so rather than leaving a
+    // reader to count chips to find out what one of them covers.
+    await expect(page.locator('#bandwidthTitle')).toHaveText('Data exchange · 30 min · last 5 hours');
+    await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(10);
+    await expect(page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip'))
+      .toHaveCount(10);
+    // Half-hour boundaries, not the five-minute ones the buckets were cut on before the change.
+    const clocks = await page.locator('#bandwidthRows .bandwidth-time').allTextContents();
+    for (const t of clocks.slice(0, -1)) expect(t).toMatch(/:(00|30)$/);
+    // And it survives a reload, like every other setting.
+    await page.reload();
+    await page.locator('#navSettings').click();
+    await expect(page.locator('#bandwidthStep')).toHaveValue('30');
+    await expect(page.locator('#bandwidthSpan')).toHaveValue('5');
+  });
 
 test('the compiled distribution single-file boots and connects', async ({page}) => {
   await page.goto('/dist/');

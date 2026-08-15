@@ -389,9 +389,10 @@
         `${(paneOf(target) || {}).agent ? '🤖' : '⬛'}</button>` +
         // The way out of the reading window and into the addressed pane itself. Beside the list it
         // is chosen from, because "who am I talking to" and "take me there" are the same question
-        // asked twice.
+        // asked twice. A screen rather than an arrow: what it opens is the pane's terminal, and an
+        // arrow says only that something moves.
         (target ? `<button class="xfer-who-more open" onclick="openDockPane()" ` +
-          `title="Open ${to}'s terminal" aria-label="Open ${to}'s terminal">⇱</button>` : '') +
+          `title="Open ${to}'s terminal" aria-label="Open ${to}'s terminal">🖥</button>` : '') +
         `</div>` +
         `<div class="xfer-act"><div class="xfer-chip-row">${chips}</div>` +
         `<button class="xfer-chip more" onclick="toggleDockMenu()" ` +

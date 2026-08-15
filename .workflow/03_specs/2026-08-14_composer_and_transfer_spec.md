@@ -189,7 +189,7 @@ The window is read top to bottom — header, thread, and the dock floating over 
 │    Architect 1  Ready. Name the change.             ✓    │     behind the dock
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐  │
-│  │ ● Architect 1   ○ amp                    🤖    ⇱   │  │  ← who it goes to, the list, the pane
+│  │ ● Architect 1   ○ amp                    🤖    🖥   │  │  ← who it goes to, the list, the pane
 │  │ @review₁  @implement  @test₂  @+  ⤵    Send (1) ›  │  │  ← what is added, and the send
 │  │ ┌────────────────────────────────────────────┐     │  │
 │  │ │ looks good, ship it                    ( ➤ )│    │  │  ← the composer bubble
@@ -298,7 +298,7 @@ than none.
   name a pill cut off. Same members, same order, the lit one ticked, the source named but not
   choosable. It wears the agent icon rather than a caret, because a caret could open anything. One
   list at a time: opening it closes `@+`, and opening `@+` closes it.
-- **`⇱` opens the addressed pane's terminal**, not its thread — the thread is what this window
+- **`🖥` opens the addressed pane's terminal**, not its thread — the thread is what this window
   already is, and what a reader leaves it for is the rows, the keyboard and the approval buttons.
   Beside the list it is chosen from, because "who am I talking to" and "take me there" are the same
   question asked twice.
@@ -479,7 +479,7 @@ place, and a reader who switches panes gets the end of the new one.
 19. A pick leaves every member in the row: the one that wrote it is marked and disabled, the others
     stay one tap away, and choosing one before the pick still holds after it.
 20. `🤖` lists the same members in the same order and choosing there is the same choice; it and `@+`
-    are never open together; `⇱` opens the addressed pane's rows, not its thread.
+    are never open together; `🖥` opens the addressed pane's rows, not its thread.
 21. On a phone both rows are one line that scrolls sideways, with their right-hand buttons on
     screen.
 22. The composer is monospace and follows the pane menu's text-size control, ghost included, and a
