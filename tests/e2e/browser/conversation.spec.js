@@ -2686,6 +2686,102 @@ test('the dock floats over the thread, at the bottom of the window', async ({pag
   expect(parseFloat(box.measured)).toBeGreaterThan(0);
 });
 
+test('the address row, the chips and the message are one bubble', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  // Not three panels that happen to be near each other: one control, addressed and written.
+  const bubble = page.locator('#convBubble');
+  await expect(bubble.locator('#xferRow')).toBeVisible();
+  await expect(bubble.locator('#convComposer')).toBeVisible();
+});
+
+test('the bubble and the lit pill wear the agent about to receive the message',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await openWindow(page);
+    // A pane's harness has a colour everywhere else in the app; the thing being written into it is
+    // where it matters most, because that is where the eye is while typing.
+    const accent = () => page.evaluate(() =>
+      document.getElementById('convBubble').style.getPropertyValue('--dock-accent'));
+    expect(await accent()).toBe('var(--agent-claude)');   // Architect 1 is the claude pane
+    await whoRow(page).filter({hasText: 'scratch'}).click();
+    expect(await accent()).toBe('var(--blue)');           // scratch is codex
+    // And the pill says which harness in words, the way the pane header does — "scratch" alone does
+    // not say whether that is a codex or a claude.
+    await expect(whoRow(page).filter({hasText: 'scratch'}).locator('.badge')).toHaveText('codex');
+    await expect(whoRow(page).filter({hasText: 'Architect 1'}).locator('.badge'))
+      .toHaveText('claude');
+  });
+
+test('the pills are sized by the conversation-text control, like the names above them',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await openWindow(page);
+    const size = () => page.evaluate(() => {
+      const pill = document.querySelector('#xferRow .xfer-who');
+      const head = document.querySelector('#convViewThread .conv-who');
+      return [getComputedStyle(pill).fontSize, getComputedStyle(head).fontSize,
+        getComputedStyle(pill).fontFamily === getComputedStyle(head).fontFamily];
+    });
+    const [pill, head, sameFace] = await size();
+    // A pill naming a member in a different type from the bubbles naming that same member reads as
+    // a different member. Same face, same size, same control.
+    expect(pill).toBe(head);
+    expect(sameFace).toBe(true);
+    await page.evaluate(() => setConvFont(20));
+    const [bigger] = await size();
+    expect(parseFloat(bigger)).toBeGreaterThan(parseFloat(pill));
+    // The text grew; the tap target did not shrink with the small sizes.
+    await page.evaluate(() => setConvFont(6));
+    expect((await page.locator('#xferRow .xfer-who').first().boundingBox()).height)
+      .toBeGreaterThanOrEqual(32);
+  });
+
+test('the composer draws its own block cursor, and it is always there', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const cursor = page.locator('#convGhost .cur');
+  // Before anything is typed, and without focus: the block is what says this is a place to type.
+  await expect(cursor).toHaveCount(1);
+  await page.locator('#convInput').fill('ship it');
+  await page.locator('#convInput').click();
+  const at = async () => (await cursor.boundingBox()).x;
+  const end = await at();
+  // It follows the caret rather than sitting at the end of the box.
+  await page.evaluate(() => {
+    const i = document.getElementById('convInput');
+    i.setSelectionRange(0, 0);
+    syncConvCursor();
+  });
+  expect(await at()).toBeLessThan(end);
+  // And the platform's own caret is off, so there is exactly one.
+  await expect(page.locator('#convInput')).toHaveCSS('caret-color', 'rgba(0, 0, 0, 0)');
+});
+
+test('the composer\'s own send carries the picked message too', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  await pickBubble(page, 'the other pane spoke first');
+  await page.locator('#convInput').fill('and this is why');
+  // Two sends in one bubble that did different things would be a way to lose the quote by tapping
+  // the nearer button. There is one message being written, so both send it.
+  await page.locator('#convSendBtn').click();
+  const body = await sentBody(page);
+  expect(body).toContain('the other pane spoke first');
+  expect(body.endsWith('and this is why')).toBe(true);
+});
+
 test('Resend repeats the last thing sent to this pane, and takes two taps', async ({page}) => {
   await open(page);
   // Nothing sent yet, so nothing to repeat.

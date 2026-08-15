@@ -198,6 +198,31 @@ The window is read top to bottom — header, thread, and the dock floating over 
 └──────────────────────────────────────────────────────────┘
 ```
 
+**It is one bubble.** The address row, the instruction chips and the text are a single rounded
+control, not three panels that happen to be near each other: there is one message being written, and
+who it is for is part of writing it. A hairline divides the row from the text; nothing else does.
+
+**The bubble wears the agent it is addressed to.** Its border — and a 6% wash under it — take that
+pane's harness colour, the same one that agent's messages carry in the thread and the same one the
+lit pill takes. Which agent is about to receive another agent's output is the fact worth being sure
+of, and it is answered on the thing being written, where the eye already is. A harness the app has
+no colour for falls back to the ordinary border.
+
+**The pills name a pane the way the app names one anywhere else**: live dot, label, harness badge —
+"scratch" alone does not say whether that is a codex or a claude. They are drawn in the thread's own
+face, case and size, and so are governed by the pane menu's conversation-text control rather than by
+the root font: a pill naming a member in a different type from the bubbles naming that same member
+reads as a different member. The text scales; the 32px tap target does not.
+
+**The cursor is drawn, not borrowed.** A ghost copy of the text sits under a field whose own caret
+is transparent, and a block is painted at the caret — always, dimmed when the field is not focused.
+This is a box that types into terminals, and where the next character lands is worth knowing before
+tapping in; the platform's hairline caret disappears exactly when a phone keyboard is not up.
+
+**One message means one send.** With bubbles picked, the composer's own ➤ does what `Send (n) ›`
+does — the row's button is a labelled second view of it, showing the count. Two buttons in one
+bubble that sent different things would be a way to lose the quote by tapping the nearer one.
+
 **It floats.** `position: sticky; bottom: 0` with `margin-top: calc(-1 * var(--dock-h))`, so the
 thread runs *behind* it rather than ending above it, under a gradient to the page background. The
 composer is a rounded bubble, slightly raised — the same shape as a message, because that is what is

@@ -1784,33 +1784,83 @@
       pointer-events: auto;
     }
 
-    /* The composer, drawn as what it is: the next bubble in the thread, elevated a little so it
-       reads as being in front of the conversation rather than beneath it. */
+    /* The bubble, drawn as what it is: the next message in the thread, elevated a little so it
+       reads as being in front of the conversation rather than beneath it. Who it is addressed to,
+       what is added to it and the text itself are one control — the border says which agent is
+       about to receive it, so the answer is on the thing being written rather than beside it. */
+    .conv-bubble {
+      margin: 8px;
+      border: 1px solid var(--dock-accent, var(--border));
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+      /* A wash of the same colour, so the tint survives on a theme where a 1px border is nearly
+         invisible — and stays under the text at 6%, which no theme's contrast notices. */
+      background-image: linear-gradient(var(--dock-wash, transparent), var(--dock-wash, transparent));
+    }
+
     .conv-composer {
       display: flex;
       align-items: flex-end;
       gap: 8px;
-      margin: 8px;
       padding: 8px 8px 8px 12px;
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      background: var(--surface);
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    }
+
+    /* The field and its ghost, stacked. The ghost is the one that paints the block cursor. */
+    .conv-field {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .conv-composer textarea,
+    .conv-ghost {
+      width: 100%;
+      box-sizing: border-box;
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.4;
+      padding: 6px 0;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
     }
 
     .conv-composer textarea {
-      flex: 1;
-      min-width: 0;
+      display: block;
       max-height: 40vh;
       border: none;
       background: transparent;
       color: var(--text);
-      font-family: inherit;
-      font-size: 0.95rem;
-      line-height: 1.4;
       resize: none;
       outline: none;
-      padding: 6px 0;
+      /* The platform's caret is off: the block below is the cursor, and two would be one too many. */
+      caret-color: transparent;
+    }
+
+    /* Behind the text, mirroring it exactly, so the block lands where the caret is. Nothing here is
+       read by anyone — the textarea is still the field, and this is aria-hidden. */
+    .conv-ghost {
+      position: absolute;
+      inset: 0;
+      color: transparent;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    /* A terminal's cursor, because this is a box that types into agents. Always drawn, dimmed when
+       the field is not focused: where the next character lands is worth knowing before tapping in,
+       and a caret that vanishes with focus is the thing a phone keyboard hides anyway. */
+    .conv-ghost .cur {
+      display: inline-block;
+      min-width: 0.6em;
+      border-radius: 1px;
+      background: var(--dock-cursor, var(--text));
+      opacity: 0.4;
+    }
+
+    .conv-field.on .conv-ghost .cur {
+      opacity: 0.85;
     }
 
     .conv-composer .send {
@@ -2764,16 +2814,18 @@
       flex-wrap: wrap;
     }
 
-    /* The address line: who the composer is talking to, and what is added to what it sends. Two
-       lines — who, then what — sitting directly on top of the composer, because that is what they
-       modify. Only the conversation window has it; a pane's composer types into its pane. */
+    /* The address line: who the message is going to, and what is added to it. Two lines — who, then
+       what — inside the bubble and above the text, because that is what they modify. Only the
+       conversation window has it; a pane's composer types into its pane. */
     .xfer-row {
       display: flex;
       flex-direction: column;
       gap: 6px;
       width: 100%;
-      padding: 8px 12px 0;
-      background: var(--bg);
+      padding: 8px 10px;
+      /* Hairline rather than a gap: one bubble divided into what it says and who it is for, not
+         two boxes sharing a shadow. */
+      border-bottom: 1px solid var(--border);
     }
 
     .xfer-row[hidden] {
@@ -2824,15 +2876,33 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--muted);
-      font-size: 0.72rem;
+      /* Named exactly as the bubbles above name their members — same face, same size, same case —
+         and so sized off the menu's conversation-text control rather than the root. A pill that
+         said "scratch" in a different type from the thread's "SCRATCH" would read as a different
+         scratch. The pill's own padding and 32px floor are untouched: the text scales, the tap
+         target does not. */
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       font-weight: 600;
       opacity: 0.55;
     }
 
+    /* Lit in the agent's own colour, the same one the bubble's border takes and the same one that
+       agent's messages wear in the thread — so "who is this going to" is answered once, in one
+       colour, in three places. */
     .xfer-row .xfer-who.on {
-      border-color: var(--text);
+      border-color: var(--who-accent, var(--text));
       color: var(--text);
       opacity: 1;
+    }
+
+    /* Measured in the pill's own ems, so the pill scales as one piece — the same rule the thread's
+       message headers follow. */
+    .xfer-row .xfer-who .badge {
+      font-size: 1em;
+      padding: 0 0.4em;
     }
 
     .xfer-row .xfer-who .dot {
@@ -3792,15 +3862,28 @@
          modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
     <div class="conv-dock" id="convDock">
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
-      <div class="xfer-row" id="xferRow" hidden></div>
-      <div class="conv-composer" id="convComposer">
-        <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
-          autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"
-          oninput="autoGrow(this)" onkeydown="convInputKey(event)"></textarea>
-        <button class="send" id="convSendBtn" onclick="convSend()" aria-label="Send"><svg width="22" height="22"
-            viewBox="0 0 24 24" fill="currentColor" stroke="none">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-          </svg></button>
+      <!-- One bubble: who it goes to, what is added to it, and the message itself. Three stacked
+           panels would read as three controls that happen to be near each other; this is one thing
+           being addressed and written. Its border carries the chosen agent's colour. -->
+      <div class="conv-bubble" id="convBubble">
+        <div class="xfer-row" id="xferRow" hidden></div>
+        <div class="conv-composer" id="convComposer">
+          <!-- The ghost mirrors the field's text under a transparent caret, so the block cursor is
+               drawn rather than borrowed from the platform — see syncConvCursor. -->
+          <div class="conv-field">
+            <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
+            <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
+              autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"
+              oninput="autoGrow(this); syncConvCursor()" onkeydown="convInputKey(event)"
+              onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
+              onfocus="syncConvCursor()" onblur="syncConvCursor()"
+              onscroll="syncConvCursor()"></textarea>
+          </div>
+          <button class="send" id="convSendBtn" onclick="convSend()" aria-label="Send"><svg width="22" height="22"
+              viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg></button>
+        </div>
       </div>
     </div>
   </div>

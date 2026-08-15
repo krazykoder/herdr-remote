@@ -125,7 +125,7 @@
       dockTarget = ''; dockPicks = []; dockPicked.clear(); dockPickedOf = 0;
       closeDockMenu();
       const input = document.getElementById('convInput');
-      if (input) { input.value = ''; autoGrow(input); }
+      if (input) { input.value = ''; autoGrow(input); syncConvCursor(); }
     }
 
     function renderConvDock() {
@@ -146,19 +146,58 @@
       // Nobody live to send to is the ordinary end state of a record, not a failure: the thread is
       // still readable, and a composer that could only fail is worse than none.
       dock.hidden = !all.length;
+      paintDockAccent();
       syncDockHeight();
+    }
+
+    // The bubble wears the colour of the agent it is addressed to. The row says who in words; this
+    // says it on the thing being written, which is where the eye already is while typing — and it
+    // is the same colour that agent's bubbles carry in the thread above.
+    function paintDockAccent() {
+      const bubble = document.getElementById('convBubble');
+      if (!bubble) return;
+      const c = agentColor((paneOf(dockAddressed()) || {}).agent);
+      bubble.style.setProperty('--dock-accent', c || 'var(--border)');
+      bubble.style.setProperty('--dock-wash',
+        c ? `color-mix(in srgb, ${c} 6%, transparent)` : 'transparent');
+      // The cursor takes the accent when there is one and the text colour when there is not: a
+      // harness the app has no colour for must not leave the caret drawn in the border's grey.
+      bubble.style.setProperty('--dock-cursor', c || 'var(--text)');
+    }
+
+    // The block cursor. A textarea's own caret is a hairline that disappears with focus, and this
+    // is a box that types into terminals — so the caret is painted instead, on a ghost copy of the
+    // text sitting exactly under the field. The character at the caret goes inside the block, and a
+    // caret at the end of the text gets a space to sit on, so the block has a width either way.
+    function syncConvCursor() {
+      const input = document.getElementById('convInput');
+      const ghost = document.getElementById('convGhost');
+      if (!input || !ghost) return;
+      const at = input.selectionStart ?? input.value.length;
+      const head = input.value.slice(0, at), tail = input.value.slice(at);
+      ghost.innerHTML = escapeHtml(head) +
+        `<span class="cur">${escapeHtml(tail.slice(0, 1) || ' ')}</span>` +
+        escapeHtml(tail.slice(1));
+      // Follows the field rather than being scrolled on its own: past 40vh the textarea scrolls,
+      // and a ghost that stayed at the top would paint the block on the wrong line.
+      ghost.scrollTop = input.scrollTop;
+      input.parentElement.classList.toggle('on', document.activeElement === input);
     }
 
     function dockRowHtml(list, noSend) {
       const target = dockTargetOf(list);
       // One lit, the rest dimmed rather than hidden: which agents are in this conversation is
       // information, and a row that showed only the chosen one would answer a different question.
+      // Named the way the pane header names one: the live dot, the label, and the harness badge.
+      // Which agent is about to receive another agent's output is the fact worth being sure of, and
+      // "scratch" alone does not say whether that is a codex or a claude.
       const who = list.map(a =>
         `<button class="xfer-who${a.pane_id === target ? ' on' : ''}" ` +
+        `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
         `onclick="setDockTarget('${a.pane_id}')" aria-pressed="${a.pane_id === target}" ` +
         `title="Talk to ${escapeHtml(paneLabel(a))}" aria-label="Talk to ${escapeHtml(paneLabel(a))}">` +
         `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-        `${escapeHtml(paneLabel(a))}</button>`).join('');
+        `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</button>`).join('');
       // Numbered by the order they were chosen, because that order is what will be written and two
       // lit chips otherwise say nothing about which comes first.
       const chips = SHORTCUTS.map((s, i) => {
@@ -223,6 +262,10 @@
     // Typed text, to whoever the row has lit. No checkpoint and no prefill: there is no pane on
     // screen to prefill *into*, and what is being sent is what the composer already shows.
     function convSend() {
+      // With bubbles picked there is one message being written, and the row's Send is a labelled
+      // second view of this button rather than a different one. Sending only the typed half here
+      // would quietly drop the quote the pick put on the message.
+      if (dockPicked.size && dockTargets().length) return convDockSend();
       const input = document.getElementById('convInput');
       const body = input.value.trim();
       if (!body) return;
@@ -231,7 +274,7 @@
       if (!live) { showToast('That agent is no longer running.'); return; }
       const lead = dockInstruction(target);
       if (!sendTextTo(target, lead ? lead + '\n\n' + body : body)) return;
-      input.value = ''; autoGrow(input);
+      input.value = ''; autoGrow(input); syncConvCursor();
       // The instruction was attached to this message, so it goes with it. Who you are talking to
       // stays — that is the point of having chosen them.
       dockPicks = [];
@@ -289,7 +332,7 @@
         body: quoted, payload: out.text, hash: convHash(quoted), at: Date.now(),
       };
       if (!sendTextTo(target, kept ? out.text + '\n\n' + kept : out.text)) return;
-      input.value = ''; autoGrow(input);
+      input.value = ''; autoGrow(input); syncConvCursor();
       dockPicks = [];
       dockPicked.clear();
       drawDockPicks();
@@ -312,6 +355,9 @@
 
     function watchDockHeight() {
       const dock = document.getElementById('convDock');
+      // The cursor is drawn before anything is typed, because it is what says the box is a place to
+      // type — that is the whole reason it is always on.
+      syncConvCursor();
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);
       syncDockHeight();
