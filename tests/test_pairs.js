@@ -296,7 +296,18 @@ test('the conversation window\'s targets do not require a pair', () => {
   // A conversation of three with no pair recorded between any two of them is an ordinary thread,
   // and the dock exists to serve it: membership is what makes an agent a target. The sheet still
   // needs a pair — it transfers to *the partner*.
-  assert.ok(!/\bpairFor\(|\bpairHealth\(/.test(CONV_DOCK));
+  //
+  // The dock reads a pair in exactly one place, and only to pick a default: no health check, and
+  // nothing that decides who is *in* the row. A pair that is broken, absent, or outside this
+  // conversation simply does not answer, and the row falls back to its first member.
+  assert.ok(!/\bpairHealth\(/.test(CONV_DOCK), 'the dock must never gate on pair health');
+  assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 1);
+  assert.match(CONV_DOCK,
+    /function dockPairTarget\(source, list\) \{[\s\S]*?list\.some\(a => a\.pane_id === partner\.pane_id\) \? partner\.pane_id : ''/);
+  for (const fn of ['dockMembers', 'dockTargets']) {
+    const body = CONV_DOCK.split(`function ${fn}(`)[1].split('\n    }')[0];
+    assert.ok(!/pairFor\(|dockPairTarget\(/.test(body), `${fn} must not consult a pair`);
+  }
   assert.match(CONV_DOCK, /function dockMembers\(\)[\s\S]*?\(conv\.members \|\| \[\]\)/);
   assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
   assert.match(TRANSFER, /function claimTransfer[\s\S]*?pairHealth\(pair, agents\)\.state !== 'healthy'/);

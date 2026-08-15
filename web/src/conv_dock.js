@@ -109,11 +109,25 @@
       return source ? all.filter(a => a.pane_id !== source.pane_id) : all;
     }
 
+    // The pane this one is paired with, when it is in the conversation. A default, never a rule:
+    // membership is still what makes an agent a target (4.2), and a conversation with no pair
+    // recorded anywhere is served exactly as before. But when a message has been picked and nobody
+    // has said where it is going, the pair is the right answer nearly every time, and the row was
+    // otherwise defaulting to whichever member happened to sort first — which is a fact about the
+    // row, not about the message.
+    function dockPairTarget(source, list) {
+      const pair = source && pairFor(pairs, source.pane_id);
+      const partner = pair && partnerOf(pair, source.pane_id);
+      return partner && list.some(a => a.pane_id === partner.pane_id) ? partner.pane_id : '';
+    }
+
     // Kept honest against the row it is drawn from: a target that has exited, or that turns out to
-    // be the source of what is being transferred, falls back to the first member rather than
-    // silently sending somewhere else.
-    function dockTargetOf(list) {
-      return list.some(a => a.pane_id === dockTarget) ? dockTarget : ((list[0] || {}).pane_id || '');
+    // be the source of what is being transferred, falls back — to the source's partner if it is
+    // here, and to the first member if it is not — rather than silently sending somewhere else.
+    // A target the reader chose always wins, including one chosen before the pick was made.
+    function dockTargetOf(list, source) {
+      if (list.some(a => a.pane_id === dockTarget)) return dockTarget;
+      return dockPairTarget(source, list) || ((list[0] || {}).pane_id || '');
     }
 
     // Who the composer is talking to: the row's lit member. Falls back to the whole membership when
@@ -121,7 +135,7 @@
     // draws in that case.
     function dockAddressed() {
       const list = dockTargets();
-      return dockTargetOf(list.length ? list : dockMembers());
+      return list.length ? dockTargetOf(list, dockSource()) : dockTargetOf(dockMembers());
     }
 
     function setDockTarget(paneId) {
@@ -286,6 +300,24 @@
       // and a ghost that stayed at the top would paint the block on the wrong line.
       ghost.scrollTop = input.scrollTop;
       input.parentElement.classList.toggle('on', document.activeElement === input);
+    }
+
+    // The caret moves for more reasons than a key going down: a held arrow repeats without ever
+    // firing keyup, a drag selects while the mouse moves, and undo, autocorrect and dictation move
+    // it with no key at all. So the block follows the *selection* rather than the events that might
+    // have changed it — one listener, and every one of those cases is covered.
+    //
+    // Bound to the document as well as the field: browsers disagree about which of the two fires
+    // for a textarea, and a caret that lags a held arrow key is exactly the case this is for.
+    function watchConvCursor() {
+      const input = document.getElementById('convInput');
+      if (!input) return;
+      const sync = () => { if (document.activeElement === input) syncConvCursor(); };
+      document.addEventListener('selectionchange', sync);
+      input.addEventListener('selectionchange', sync);
+      // The fallback, for a browser that fires neither: a key that moves the caret is read after
+      // the browser has moved it, not while it is still where it was.
+      input.addEventListener('keydown', () => requestAnimationFrame(syncConvCursor));
     }
 
     function dockRowHtml(list, noSend) {
@@ -517,7 +549,7 @@
       if (!picked.length) return;
       const targets = dockTargets();
       if (!targets.length) { showToast('Nobody else in this conversation to send it to.'); return; }
-      const target = dockTargetOf(targets);
+      const target = dockTargetOf(targets, source);
       const live = agents.find(a => a.pane_id === target);
       if (!live) { showToast('That agent is no longer running.'); return; }
       // Read in thread order rather than in the order they were tapped: a pair of messages that
@@ -564,6 +596,7 @@
       // The cursor is drawn before anything is typed, because it is what says the box is a place to
       // type — that is the whole reason it is always on.
       syncConvCursor();
+      watchConvCursor();
       // A menu opened by mistake closes by tapping past it, the way every other menu on a phone
       // does. One listener for the life of the page rather than one per open, so nothing has to be
       // taken back off again. `@+` itself is excluded: it is the menu's own toggle.

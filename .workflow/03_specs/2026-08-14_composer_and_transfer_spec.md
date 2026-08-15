@@ -247,6 +247,12 @@ is transparent, and a block is painted at the caret — always, dimmed when the 
 This is a box that types into terminals, and where the next character lands is worth knowing before
 tapping in; the platform's hairline caret disappears exactly when a phone keyboard is not up.
 
+**The block follows the selection, not the keystroke.** A held arrow repeats without ever firing
+`keyup`, a drag selects while the mouse moves, and undo, autocorrect and dictation move the caret
+with no key at all — so the ghost is redrawn on `selectionchange` (on the field and on the document,
+because browsers disagree about which fires for a textarea), with a `keydown`-then-`rAF` fallback
+for one that fires neither.
+
 **One message means one send.** With bubbles picked, the composer's own ➤ does what `Send (n) ›`
 does — the row's button is a labelled second view of it, showing the count. Two buttons in one
 bubble that sent different things would be a way to lose the quote by tapping the nearer one.
@@ -275,6 +281,13 @@ than none.
   was quoted would answer "who is in this conversation" differently on every tap, and it would take
   the reader's other choices away over a state one tap undoes. The mark is suppressed when it is the
   only member there is: a pill drawn dead beside a composer that works would be lying.
+- **A picked message defaults to its author's pair.** With a bubble picked and nobody having said
+  where it is going, the target is the pane the author is paired with, when that pane is in this
+  conversation. A conversation is still not a pair — membership alone is what makes an agent a
+  target, no pair is required, and pair *health* is never consulted — but "the first pill" is a fact
+  about the row and "the partner" is a fact about the message. One tap on any other pill overrides
+  it, and a choice made before the pick is never overridden: a default fills a blank, it does not
+  correct a reader.
 - **`🤖` opens the row as a list**, for a row that has scrolled past the edge of a phone and for a
   name a pill cut off. Same members, same order, the lit one ticked, the source named but not
   choosable. It wears the agent icon rather than a caret, because a caret could open anything. One
@@ -467,6 +480,10 @@ place, and a reader who switches panes gets the end of the new one.
     tap anywhere in it focuses the field.
 23. With the sort on, the agent and instruction last used are first in their rows, across a reload;
     off, both rows hold their original order, and what was learned survives being turned off.
+24. A picked message with a pair recorded for its author lights that partner, not the row's first
+    member; a pill tapped before or after the pick beats the default.
+25. Holding an arrow key walks the drawn block across the text, and a selection made with the mouse
+    moves it too.
 
 ---
 

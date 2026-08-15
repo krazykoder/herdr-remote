@@ -2576,6 +2576,55 @@ test('the target is every other member, and the chosen one can be overridden', a
   expect(new Set(to)).toEqual(new Set([third]));
 });
 
+// The pair the dock defaults to: between the pane whose message gets picked and one of the other
+// two members, so "the partner" and "the first pill" are different answers.
+const pairScratchWithAmp = page => page.evaluate(() => {
+  pairs = [{id: 'p1', members: [recentFingerprint(agents.find(a => a.label === 'scratch')),
+    recentFingerprint(agents.find(a => a.label === 'amp'))]}];
+});
+
+test('a picked message defaults to the pane its author is paired with', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  const third = await joinThird(page);
+  // scratch — whose message is picked — is paired with amp, and Architect 1 is the third member
+  // and the row's first pill.
+  await pairScratchWithAmp(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.evaluate(() => setDockMru(false));
+  await pickBubble(page, 'the other pane spoke first');           // scratch's
+  // Not the row's first member: where a message goes is a fact about the message, and the pane
+  // its author is paired with is that answer nearly every time.
+  await expect(litWho(page)).toHaveText(/amp/);
+  await sendPicked(page);
+  expect(new Set((await sentText(page)).map(m => m.pane_id))).toEqual(new Set([third]));
+});
+
+test('the pair is only the default, and any pill overrides it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  const mine = await page.evaluate(() => activePane);
+  await joinThird(page);
+  await pairScratchWithAmp(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.evaluate(() => setDockMru(false));
+  // Chosen before the pick, and still chosen after it: a default is what fills a blank, never
+  // what corrects a reader.
+  await whoRow(page).filter({hasText: 'Architect 1'}).click();
+  await pickBubble(page, 'the other pane spoke first');
+  await expect(litWho(page)).toHaveText(/Architect 1/);
+  // And chosen after the pick, over the pair the default had picked.
+  await whoRow(page).filter({hasText: 'amp'}).click();
+  await expect(litWho(page)).toHaveText(/amp/);
+  await whoRow(page).filter({hasText: 'Architect 1'}).click();
+  await sendPicked(page);
+  expect(new Set((await sentText(page)).map(m => m.pane_id))).toEqual(new Set([mine]));
+});
+
 test('a pick never takes the other members out of the row', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3021,6 +3070,35 @@ test('the composer draws its own block cursor, and it is always there', async ({
   expect(await at()).toBeLessThan(end);
   // And the platform's own caret is off, so there is exactly one.
   await expect(page.locator('#convInput')).toHaveCSS('caret-color', 'rgba(0, 0, 0, 0)');
+});
+
+test('the block follows the caret however it was moved', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await input.click();
+  await input.pressSequentially('ship it when the tests are green');
+  // Read in one synchronous go rather than through the locator: the ghost is rebuilt on every
+  // caret move, so a handle resolved in one call can be detached by the next.
+  const at = () => page.evaluate(() =>
+    document.querySelector('#convGhost .cur').getBoundingClientRect().x);
+  const end = await at();
+  // A held arrow repeats without ever firing keyup, which is what used to leave the block sitting
+  // where the caret started. Nothing is released here until every repeat has been delivered.
+  await page.keyboard.down('ArrowLeft');
+  await expect.poll(at).toBeLessThan(end);
+  const mid = await at();
+  await page.keyboard.up('ArrowLeft');
+  // A selection dragged with the mouse moves it too, with no key involved at all.
+  await page.evaluate(() => {
+    const i = document.getElementById('convInput');
+    i.setSelectionRange(0, 4);
+    i.dispatchEvent(new Event('select', {bubbles: true}));
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+  await expect.poll(at).toBeLessThan(mid);
 });
 
 test('the composer\'s own send carries the picked message too', async ({page}) => {
