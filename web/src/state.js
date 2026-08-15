@@ -17,17 +17,17 @@
     // this API and are deliberately not guessed at.
     const BANDWIDTH_KEY = 'herdr_bandwidth', BANDWIDTH_STEP_KEY = 'herdr_bandwidth_step',
       BANDWIDTH_KEEP_KEY = 'herdr_bandwidth_keep', BANDWIDTH_DATA_KEY = 'herdr_bandwidth_data',
-      PANE_BANDWIDTH_DATA_KEY = 'herdr_pane_bandwidth_data';
+      PANE_BANDWIDTH_DATA_KEY = 'herdr_pane_bandwidth_data', BANDWIDTH_METRIC_KEY = 'herdr_bandwidth_metric',
+      BANDWIDTH_PANES_KEY = 'herdr_bandwidth_panes', BANDWIDTH_OPEN_KEY = 'herdr_bandwidth_open';
     // Buckets are a small persisted stack, not a continuous chart. Empty slots say no interval was
     // collected; they do not invent a time or a zero-byte interval.
     const BANDWIDTH_STEPS = [1, 5, 10, 30, 60];   // minutes
     const BANDWIDTH_KEEPS = [12, 60];
     const PANE_BANDWIDTH_KEEP_MS = 24 * 60 * 60 * 1000;
+    const BANDWIDTH_RESUME_MS = 30 * 1000;
     let bandwidth = loadBandwidth();
     let paneBandwidth = loadPaneBandwidth();
-    // Intentionally memory-only: reloading the page or losing the socket closes the partial chunk
-    // while its completed bytes stay in localStorage as history.
-    let bandwidthOpen = null;
+    let bandwidthOpen = loadBandwidthOpen();
 
     function bandwidthOn() {
       try { return localStorage.getItem(BANDWIDTH_KEY) === 'on'; }
@@ -59,11 +59,32 @@
       catch (e) { /* private mode: session-only */ }
     }
 
+    // A reload during normal polling is not an outage. Resume only the bucket explicitly left
+    // open and only while it was active very recently; disconnect and tracking-off remove its key.
+    function loadBandwidthOpen() {
+      try {
+        const at = Number(localStorage.getItem(BANDWIDTH_OPEN_KEY));
+        const bucket = bandwidth.find(b => b.at === at);
+        return bucket && Number.isFinite(bucket.last) && Date.now() - bucket.last < BANDWIDTH_RESUME_MS ? bucket : null;
+      } catch (e) { return null; }
+    }
+
+    function saveBandwidthOpen() {
+      try {
+        if (bandwidthOpen) localStorage.setItem(BANDWIDTH_OPEN_KEY, String(bandwidthOpen.at));
+        else localStorage.removeItem(BANDWIDTH_OPEN_KEY);
+      } catch (e) { /* private mode: session-only */ }
+    }
+
     function loadPaneBandwidth() {
       try {
         const saved = JSON.parse(localStorage.getItem(PANE_BANDWIDTH_DATA_KEY) || '{}');
         return saved && typeof saved === 'object' ? Object.fromEntries(Object.entries(saved).filter(([, b]) =>
-          b && Number.isFinite(b.sent) && Number.isFinite(b.received) && Number.isFinite(b.ping))) : {};
+          b && Number.isFinite(b.ping) && Array.isArray(b.buckets)).map(([key, b]) => [key, {
+          ping: b.ping,
+          buckets: b.buckets.filter(x => x && Number.isFinite(x.at) && Number.isFinite(x.sent) &&
+            Number.isFinite(x.received)).slice(0, Math.max.apply(null, BANDWIDTH_KEEPS))
+        }])) : {};
       } catch (e) { return {}; }
     }
 
@@ -77,8 +98,10 @@
     function setBandwidthStep(min) {
       try { localStorage.setItem(BANDWIDTH_STEP_KEY, String(min)); } catch (e) { /* session-only */ }
       bandwidth = [];
+      paneBandwidth = {};
       resetBandwidthBucket();
       saveBandwidth();
+      savePaneBandwidth();
       syncBandwidthRange();
       renderBandwidth();
     }
@@ -86,6 +109,27 @@
     function setBandwidthKeep(count) {
       try { localStorage.setItem(BANDWIDTH_KEEP_KEY, String(count)); } catch (e) { /* session-only */ }
       syncBandwidthRange();
+      renderBandwidth();
+    }
+
+    function bandwidthMetric() {
+      try { const v = localStorage.getItem(BANDWIDTH_METRIC_KEY); return ['total', 'sent', 'received'].includes(v) ? v : 'total'; }
+      catch (e) { return 'total'; }
+    }
+
+    function setBandwidthMetric(metric) {
+      if (!['total', 'sent', 'received'].includes(metric)) return;
+      try { localStorage.setItem(BANDWIDTH_METRIC_KEY, metric); } catch (e) { /* session-only */ }
+      renderBandwidth();
+    }
+
+    function bandwidthPanesOn() {
+      try { return localStorage.getItem(BANDWIDTH_PANES_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function setBandwidthPanes(on) {
+      try { localStorage.setItem(BANDWIDTH_PANES_KEY, on ? 'on' : 'off'); } catch (e) { /* session-only */ }
       renderBandwidth();
     }
 
@@ -132,14 +176,16 @@
       const size = bandwidthBucketMs();
       const at = now || Date.now();
       if (!bandwidthOpen || at < bandwidthOpen.at || at - bandwidthOpen.at >= size) {
-        bandwidthOpen = {at: at, sent: 0, received: 0};
+        bandwidthOpen = {at: at, last: at, sent: 0, received: 0};
         bandwidth.push(bandwidthOpen);
       }
       const bucket = bandwidthOpen;
       bucket[direction] += bandwidthBytes(data);
+      bucket.last = at;
       bandwidth.sort((a, b) => b.at - a.at);
       bandwidth = bandwidth.slice(0, Math.max.apply(null, BANDWIDTH_KEEPS));
       saveBandwidth();
+      saveBandwidthOpen();
       // Whether the view is on screen, not which display mode it happens to use: PANELS decides
       // that, and a counter that stopped updating because a panel changed layout would be a
       // silent failure.
@@ -152,9 +198,14 @@
     function notePaneBandwidth(paneId, direction, data, now) {
       if (!bandwidthOn() || !paneId) return;
       const at = now || Date.now();
-      const pane = paneBandwidth[paneId] || (paneBandwidth[paneId] = {sent: 0, received: 0, ping: at});
-      pane[direction] += bandwidthBytes(data);
+      const pane = paneBandwidth[paneId] || (paneBandwidth[paneId] = {ping: at, buckets: []});
+      const bucketAt = bandwidthOpen ? bandwidthOpen.at : at;
+      const bucket = pane.buckets.find(b => b.at === bucketAt) ||
+        (pane.buckets.push({at: bucketAt, sent: 0, received: 0}), pane.buckets[pane.buckets.length - 1]);
+      bucket[direction] += bandwidthBytes(data);
       if (direction === 'sent') pane.ping = at;
+      pane.buckets.sort((a, b) => b.at - a.at);
+      pane.buckets = pane.buckets.slice(0, Math.max.apply(null, BANDWIDTH_KEEPS));
       // herdr reuses a pane_id once its pane is gone, and these totals are cumulative — a day-old
       // entry inherited by a new agent would report another session's traffic under its name. A day
       // is also longer than any pane worth attributing bytes to has been quiet for.
@@ -169,7 +220,7 @@
       if (view && view.style.display !== 'none') renderBandwidth();
     }
 
-    function resetBandwidthBucket() { bandwidthOpen = null; }
+    function resetBandwidthBucket() { bandwidthOpen = null; saveBandwidthOpen(); }
 
     // Which record, if any, is still being filled — the only place that knows it, because a bucket
     // starts at the message that opened it rather than on a clock boundary, so no arithmetic over

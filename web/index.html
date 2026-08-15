@@ -714,49 +714,6 @@
       background: color-mix(in srgb, var(--green) 8%, var(--bg));
     }
 
-    .pane-bandwidth {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
-    }
-
-    .pane-bandwidth h3 {
-      margin: 0 0 6px;
-      color: var(--muted);
-      font-size: 0.68rem;
-      font-weight: 500;
-    }
-
-    /* The same table the intervals above are, turned on its side: there the metric names run down
-       the left and time runs across, here the pane names run down the left and the same three
-       metrics run across. One grid, so a pane's Total sits under the word Total and the numbers
-       form columns that can be read down. */
-    #paneBandwidthRows {
-      display: grid;
-      grid-template-columns: minmax(96px, 1fr) repeat(4, minmax(52px, auto));
-      gap: 4px;
-      align-items: center;
-      font: 0.62rem monospace;
-    }
-
-    .pane-bandwidth-head,
-    .pane-bandwidth-row { display: contents; }
-
-    .pane-bandwidth-head span {
-      color: var(--muted);
-      text-align: right;
-    }
-
-    .pane-bandwidth-head span:first-child { text-align: left; }
-
-    /* Right-aligned, because a column of byte counts is read by its magnitude and ragged right
-       hides an order of magnitude. The names stay put while the numbers scroll. */
-    .pane-bandwidth-row span {
-      color: var(--muted);
-      text-align: right;
-      white-space: nowrap;
-    }
-
     .pane-bandwidth-name {
       position: sticky;
       left: 0;
@@ -770,9 +727,12 @@
       background: var(--bg);
     }
 
-    .pane-bandwidth-row .pane-bandwidth-total { color: var(--text); }
     .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
-    .pane-bandwidth-empty { grid-column: 1 / -1; color: var(--muted); }
+    .pane-bandwidth-ping { color: var(--muted); font-size: 0.56rem; }
+
+    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+    .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
+    .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
 
     /* Settings */
     .settings {
@@ -4107,12 +4067,13 @@
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
     <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
-      <h2><span id="bandwidthTitle">Data exchange</span><span class="bandwidth-total now" id="bandwidthTotal"></span></h2>
+      <h2><span id="bandwidthTitle">Data exchange</span><span class="bandwidth-metrics" aria-label="Pane metric">
+        <button class="bandwidth-metric" data-bandwidth-metric="total" aria-pressed="true" onclick="setBandwidthMetric('total')">Total</button>
+        <button class="bandwidth-metric" data-bandwidth-metric="sent" aria-pressed="false" onclick="setBandwidthMetric('sent')">Sent</button>
+        <button class="bandwidth-metric" data-bandwidth-metric="received" aria-pressed="false" onclick="setBandwidthMetric('received')">Received</button>
+        <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button>
+      </span><span class="bandwidth-total now" id="bandwidthTotal"></span></h2>
       <div id="bandwidthRows"></div>
-      <section class="pane-bandwidth" aria-label="Per-pane payload data">
-        <h3>Per pane, since its first read</h3>
-        <div id="paneBandwidthRows"></div>
-      </section>
     </section>
   </div>
 

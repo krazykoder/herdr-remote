@@ -193,21 +193,30 @@
         total.classList.toggle('now', !!liveAt);
       }
       const kinds = [
-        ['Total', b => b.sent + b.received],
-        ['Sent', b => b.sent],
-        ['Received', b => b.received],
+        ['total', 'Total', b => b.sent + b.received],
+        ['sent', 'Sent', b => b.sent],
+        ['received', 'Received', b => b.received],
       ];
+      const metric = bandwidthMetric();
+      const paneKind = kinds.find(([key]) => key === metric) || kinds[0];
+      const panesOn = bandwidthPanesOn();
+      document.querySelectorAll('[data-bandwidth-metric]').forEach(button =>
+        button.setAttribute('aria-pressed', String(button.dataset.bandwidthMetric === metric)));
+      const paneToggle = document.getElementById('bandwidthPanes');
+      if (paneToggle) paneToggle.setAttribute('aria-pressed', String(panesOn));
       // The rows are built when the *window* moves — once a bucket — and never for a number
       // changing. The chips overflow a phone, so they scroll, and this is redrawn on every message
       // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
-      const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : []).join(',');
+      const panes = panesOn ? agents.filter(a => a.agent) : [];
+      const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : [], metric,
+        panes.map(a => a.pane_id)).join(',');
       if (rows.dataset.sig !== sig) {
         // One grid for the header and all three rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
-        rows.style.gridTemplateColumns = `52px repeat(${buckets.length}, minmax(46px, 1fr))`;
+        rows.style.gridTemplateColumns = `minmax(110px, 1fr) repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -228,55 +237,38 @@
           buckets.map(b => { const t = at(b);
             return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
               `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
-          kinds.map(([label]) =>
+          kinds.map(([, label]) =>
             `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
+            }).join('')}</div></div>`).join('') +
+          panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
+            `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
+            `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
+              return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
+                `title="${paneKind[1]}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
             }).join('')}</div></div>`).join('');
         rows.dataset.sig = sig;
       }
       // The numbers, written into the chips that are already there.
       const bars = rows.querySelectorAll('.bandwidth-row');
-      kinds.forEach(([, value], r) => {
+      kinds.forEach(([, , value], r) => {
         const chips = bars[r].querySelectorAll('.bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
-      // Only panes whose bytes were actually attributed. Every other agent would sit here reading
-      // 0 B, which is not "this pane is quiet" — it is "nothing about it named a pane", and a
-      // column of zeroes claiming otherwise is the one reading this table must not give.
-      const paneRows = document.getElementById('paneBandwidthRows');
-      if (!paneRows) return;
-      const seen = agents.filter(a => a.agent && paneBandwidth[a.pane_id]);
-      // Structure when the membership changes, numbers every time — the rule the chip row follows,
-      // for the same reason: this is redrawn on every message that lands.
-      const paneSig = seen.map(a => a.pane_id).join(',');
-      if (paneRows.dataset.sig !== paneSig) {
-        // The same three metrics the interval table names down its left edge, in the same order,
-        // so the two halves of this panel are one table read two ways: by time above, by pane here.
-        const head = `<div class="pane-bandwidth-head"><span>Pane</span><span>Last poll</span>` +
-          kinds.map(([label]) => `<span>${label}</span>`).join('') + `</div>`;
-        paneRows.innerHTML = seen.length ? head + seen.map(a =>
-          `<div class="pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
-          `<span class="pane-bandwidth-name"><span class="dot"></span>` +
-          `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</span>` +
-          `<span class="pane-bandwidth-ping" title="When this pane was last polled"></span>` +
-          `<span class="pane-bandwidth-total"></span>` +
-          `<span class="pane-bandwidth-sent"></span><span class="pane-bandwidth-recv"></span></div>`).join('')
-          : '<span class="pane-bandwidth-empty">No pane traffic recorded yet.</span>';
-        paneRows.dataset.sig = paneSig;
-      }
-      const paneCells = paneRows.querySelectorAll('.pane-bandwidth-row');
-      seen.forEach((a, i) => {
-        const row = paneCells[i];
+      panes.forEach((a, i) => {
+        const row = bars[i + kinds.length];
         const b = paneBandwidth[a.pane_id];
         const dot = row.querySelector('.dot');
         dot.style.background = statusColor(a);
         dot.classList.toggle('pulse', a.status === 'working');
-        row.querySelector('.pane-bandwidth-ping').textContent = b.ping ? fmtAgo(new Date(b.ping)) : '—';
-        row.querySelector('.pane-bandwidth-total').textContent = formatBandwidth(b.sent + b.received);
-        row.querySelector('.pane-bandwidth-sent').textContent = formatBandwidth(b.sent);
-        row.querySelector('.pane-bandwidth-recv').textContent = formatBandwidth(b.received);
+        row.querySelector('.pane-bandwidth-ping').textContent = b && b.ping ? ` · ${fmtAgo(new Date(b.ping))}` : '';
+        const byAt = Object.fromEntries((b ? b.buckets : []).map(entry => [entry.at, entry]));
+        const chips = row.querySelectorAll('.bandwidth-chip');
+        buckets.forEach((bucket, j) => { const entry = byAt[bucket.at];
+          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : ''; });
       });
     }
 

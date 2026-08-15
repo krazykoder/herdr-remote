@@ -53,20 +53,22 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   // On the scale of what was actually measured: a fixed MB reads 0.00 for an hour of a quiet
   // relay, which is a panel saying it is not measuring anything.
   await expect(page.locator('#bandwidthTotal')).toHaveText(/^Total: [\d.]+ (B|KB|MB)$/);
-  const paneRow = page.locator('#paneBandwidthRows [data-pane="w1:p1"]');
-  await expect(paneRow.locator('.pane-bandwidth-total')).toBeVisible();
-  await expect.poll(() => paneRow.locator('.pane-bandwidth-total').textContent()).not.toBe('0 B');
-  // Pane rows are a table with named columns, in the order the interval table names its own rows.
-  await expect(page.locator('#paneBandwidthRows .pane-bandwidth-head span'))
-    .toHaveText(['Pane', 'Last poll', 'Total', 'Sent', 'Received']);
-  // And one grid: a pane's Total sits under the word Total, or the numbers cannot be read down.
-  const cols = await page.locator('#paneBandwidthRows').evaluate(rows => {
-    const xs = r => [...r.children].map(c => Math.round(c.getBoundingClientRect().x));
-    return [...rows.querySelectorAll('.pane-bandwidth-head, .pane-bandwidth-row')].map(xs);
+  await page.locator('#bandwidthPanes').click();
+  const paneRow = page.locator('#bandwidthRows [data-pane="w1:p1"]');
+  await expect(paneRow).toBeVisible();
+  await expect.poll(() => paneRow.locator('.bandwidth-chip').first().textContent()).not.toBe('');
+  // The agent rows live in the same grid, so an interval is the same column above and below.
+  const cols = await page.locator('#bandwidthRows').evaluate(rows => {
+    const cells = r => [...r.querySelectorAll('.bandwidth-chip, .bandwidth-time')]
+      .map(c => Math.round(c.getBoundingClientRect().x));
+    return [...rows.querySelectorAll('.bandwidth-head, .bandwidth-row')].map(cells);
   });
   for (const row of cols) expect(row).toEqual(cols[0]);
+  await page.locator('[data-bandwidth-metric="sent"]').click();
+  await expect(page.locator('[data-bandwidth-metric="sent"]')).toHaveAttribute('aria-pressed', 'true');
 
-  await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(3);
+  await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(
+    3 + await page.locator('#agents .agent').count());
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
     await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
   }
@@ -83,6 +85,19 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   // A second tap on Activity leaves it, which is what every other panel button does.
   await page.locator('#navTimeline').click();
   await expect(page.locator('#timelineView')).toBeHidden();
+});
+
+test('a refresh resumes a recently active bandwidth bucket', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  await page.locator('#bandwidthOn').check();
+  await page.evaluate(() => ws.send(JSON.stringify(
+    {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].last)).toBeTruthy();
+  const at = await page.evaluate(() => bandwidthBuckets()[0].at);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets()[0].at)).toBe(at);
 });
 
 test('the newest bucket is the one filling, and it is drawn while it fills', async ({page}) => {
