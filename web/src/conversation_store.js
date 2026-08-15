@@ -305,7 +305,7 @@
       // safe, and it is not merely a nicety: a pane sitting at herdr's own scrollback ceiling comes
       // back the same length every time, so a watermark alone would refuse every recovery after the
       // first — on exactly the panes with the most history to lose.
-      const asked = convRecoverKey === key;
+      const asked = convRecovering.has(key);
       const deep = held.backfilled && (asked || rows.length > (held.depth || 0));
       let before = [], add = [], noteGap = false;
       if (!held.backfilled) {
@@ -366,14 +366,18 @@
       }
       // Answered on the first record after the press, whatever it found. A button that adds nothing
       // and says nothing reads as broken (§2.6).
-      if (asked) {
-        convRecoverKey = '';
-        convRecoverReport(wrote, dropped, held.gap);
-      } else if (dropped) {
-        // T2 is invisible by construction — no toast, no redraw. This is the one thing it may not
-        // stay quiet about: history the transcript had no room for is a fact about the ceiling, and
-        // a recovery that silently kept less than it found would look like one that found less.
-        convRecoverReport(wrote, dropped, false);
+      // Resolved on a *deep* write and no other: the 3s poll writes turns of its own, and one
+      // landing first would report on a read nobody asked about while the recovery was still in
+      // flight.
+      const pending = deep ? convRecovering.get(key) : null;
+      if (pending) {
+        clearTimeout(pending.timer);
+        convRecovering.delete(key);
+        // The background sweep is invisible by construction — no toast, no redraw. Capacity is the
+        // one thing it may not stay quiet about: history the transcript had no room for is a fact
+        // about the ceiling, and a recovery that kept less than it found would look like one that
+        // found less.
+        if (pending.loud || dropped) convRecoverReport(wrote, dropped, held.gap);
       }
       // The thread draws the draft as well as the record, so a poll that added nothing can still
       // have changed what is on screen.
@@ -441,23 +445,17 @@
     }
 
     // `Recover history` (§2.6). Every automatic trigger is bounded by a gate that can be wrong — a
-    // gap too short to count, an outage the browser never registered — and the answer to a
-    // heuristic that can miss is a button, not a looser heuristic.
+    // gap too short to count, a pane the sweep has not reached yet — and the answer to a heuristic
+    // that can miss is a button, not a looser heuristic.
     //
-    // It issues no read of its own. It asks the pane for everything the relay will give and lets
-    // the ordinary draw path deliver it; the recorder does the rest, exactly as it does for Load
-    // more. What this holds is *who asked*, so that the write it lands on can report what it did
-    // rather than leaving a silent no-op looking like a broken button.
-    let convRecoverKey = '';
-
+    // It issues no read of its own kind: it is `convRecoverStart` with every gate skipped. No
+    // staleness test, because the user can see the gap; no watermark, because a pane sitting at
+    // herdr's own scrollback ceiling comes back the same length every time and would otherwise be
+    // refused every recovery after the first.
     function recoverConvHistory() {
       const a = activePane ? paneOf(activePane) : null;
-      const key = a ? convMemberKey(a) : '';
-      if (!key || !convReferenced().has(key)) return;
-      convRecoverKey = key;
-      paneLines = READ_LINES_ASK;
-      refreshPane();
-      showToast('Reading as far back as the relay allows…');
+      if (!a) return;
+      convRecoverStart(a, true, READ_LINES_ASK);
     }
 
     // What the recovery did, in the pane's own words. `wrote` counts entries added on both sides;
@@ -544,47 +542,134 @@
 
     function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
 
-    let convSawSnapshot = false;
+    function convDeepLines() { return convDeepAll() ? READ_LINES_ASK : DEEP_LINES; }
 
-    // Once per snapshot, and it declines on almost all of them.
-    async function convRecoverAway(list) {
-      if (!ws) return;
+    // How often a member nobody has opened is caught up on. Dormant panes are the only ones no
+    // other trigger reaches — you are not looking at them, so nothing you do can pay for them —
+    // and an hour is the cadence at which a background read stops being a cost anyone notices.
+    const CONV_SWEEP_KEY = 'herdr_conv_sweep';
+    const CONV_SWEEP_MS = { off: 0, '1h': 60 * 60 * 1000, '4h': 4 * 60 * 60 * 1000 };
+
+    function convSweepEvery() {
+      let v;
+      try { v = localStorage.getItem(CONV_SWEEP_KEY); } catch (e) { v = null; }
+      return CONV_SWEEP_MS[v] === undefined ? CONV_SWEEP_MS['1h'] : CONV_SWEEP_MS[v];
+    }
+
+    function setConvSweep(v) {
+      const pick = CONV_SWEEP_MS[v] === undefined ? '1h' : v;
+      try { localStorage.setItem(CONV_SWEEP_KEY, pick); } catch (e) { /* session-only */ }
+      document.getElementById('sweepPick').value = pick;
+      convArmSweep();
+    }
+
+    let convSweepTimer = null;
+    function convArmSweep() {
+      clearInterval(convSweepTimer);
+      convSweepTimer = null;
+      const every = convSweepEvery();
+      // Armed, never fired immediately: a reload must cost nothing. The panes you open pay for
+      // themselves, and the ones you do not can wait an hour.
+      if (every) convSweepTimer = setInterval(convRecoverSweep, every);
+    }
+
+    // A recovery in flight, by transcript. `loud` is whether anyone is watching it happen: the
+    // button and the pane you just opened say what they are doing, the background sweep says
+    // nothing. Held so the write it lands on can report, and so a second trigger for the same pane
+    // does not issue a second read.
+    const convRecovering = new Map();
+    // Long enough that a 50000-line read over SSH is not called a failure, short enough that a
+    // toast which will never be answered does not sit there for the rest of the session.
+    const CONV_RECOVER_WAIT = 45000;
+
+    // One recovery, whoever asked for it. Every automatic trigger below and the manual button all
+    // arrive here, and the only difference between them is who is watching.
+    function convRecoverStart(a, loud, depth) {
+      const key = a ? convMemberKey(a) : '';
+      if (!key || !convReferenced().has(key)) return false;
+      if (convRecovering.has(key)) return false;
+      if (!ws || ws.readyState !== 1) {
+        if (loud) showToast('Not connected — history cannot be recovered right now');
+        return false;
+      }
       const now = Date.now();
-      // A page that has just loaded, or a socket that was down long enough to have missed turns.
-      // `prevStatuses` survives a dropped socket, so without the second clause a 40-minute outage
-      // with no reload recovers nothing — which is the reported symptom.
-      const fresh = !convSawSnapshot;
-      const outage = !!wsDownSince && now - wsDownSince > DEEP_AWAY_MS;
-      convSawSnapshot = true;
+      // The setting is what the *automatic* triggers ask for. The button is not one of them: it
+      // always asks for everything, because that is what pressing it means.
+      const lines = depth || convDeepLines();
+      // Stamped whether or not the read produces anything, or a recovery that finds nothing would
+      // be re-issued for as long as the transcript stays quiet. `touched` cannot answer this on its
+      // own: it moves only when something is written.
+      convQueue(key, async () => {
+        const held = await convHold(key, now);
+        held.recovered = now;
+        await convCommit(key);
+      });
+      convRecovering.set(key, {
+        loud: loud,
+        // A read the relay never answers — the pane died, the socket went down mid-flight, the SSH
+        // hop hung. Nothing else in the app would ever say so, because a read that produces no
+        // reply produces no error either.
+        timer: setTimeout(() => {
+          convRecovering.delete(key);
+          if (loud) showToast('No answer from the relay — history was not recovered');
+        }, CONV_RECOVER_WAIT),
+      });
+      if (loud) showToast(lines === READ_LINES_ASK
+        ? 'Catching up on this pane — reading as far back as the relay allows…'
+        : 'Catching up on this pane’s history…');
+      // The open pane cannot take the silent path: its reply lands on the draw branch, which would
+      // replace the rows under the reader's finger. It gets Load more to the same depth instead
+      // (§2.5), and the recorder does not care which of the two brought the rows.
+      if (a.pane_id === activePane) { paneLines = lines; refreshPane(); }
+      else ws.send(JSON.stringify(
+        { type: 'read_pane', pane_id: a.pane_id, lines: lines, source: 'recent-unwrapped' }));
+      return true;
+    }
+
+    // Whether this member has been away long enough for a read to be worth issuing. One question,
+    // asked by every trigger, so "stale" means one thing in this app.
+    async function convStale(key, now) {
+      const held = convHeld.get(key) || (await convGet([key]))[0];
+      // No record is not stale: there is no history to catch up on, and the pane's first ordinary
+      // read backfills the whole window anyway.
+      if (!held) return false;
+      return now - Math.max(held.touched || 0, held.recovered || 0) > DEEP_AWAY_MS;
+    }
+
+    // T2a — you opened a pane and its record is old. The read is paid for by the one thing that
+    // makes it worth paying: you are about to read it. Loud, because you are looking at the pane
+    // when it happens and a pane that suddenly grows ten thousand lines of scrollback should say
+    // why.
+    async function convRecoverPane(paneId) {
+      const a = paneId ? paneOf(paneId) : null;
+      if (!a || !profileFor(a.agent)) return;
+      const key = convMemberKey(a);
+      if (!convReferenced().has(key)) return;
+      if (!(await convStale(key, Date.now()))) return;
+      // Opened and closed again while IndexedDB answered: the read would land on a pane nobody is
+      // looking at and redraw the one they moved to.
+      if (activePane !== paneId) return;
+      convRecoverStart(a, true);
+    }
+
+    // T2b — the socket was down long enough to have missed turns, and the pane it was down over is
+    // still open. No activation will fire for it, because it never went away.
+    async function convRecoverOutage() {
+      const down = wsDownSince;
       wsDownSince = 0;
-      if (!fresh && !outage) return;
-      const referenced = convReferenced();
-      const panes = (list || [])
-        .filter(a => a && profileFor(a.agent) && referenced.has(convMemberKey(a)));
-      if (!panes.length) return;
-      // One transaction for the lot. A member with no record yet is not here and does not want to
-      // be: it has no history to recover, and its first ordinary read backfills the whole pane.
-      const stored = await convGet(panes.map(convMemberKey));
-      const stale = new Set(stored
-        .filter(h => now - Math.max(h.touched || 0, h.recovered || 0) > DEEP_AWAY_MS)
-        .map(h => h.key));
+      if (!down || Date.now() - down <= DEEP_AWAY_MS) return;
+      if (activePane) await convRecoverPane(activePane);
+    }
+
+    // T2c — the members nobody has opened. Every other trigger is tied to something the user did;
+    // this one is a clock, so it is the one that has to be cheap: quiet, skipping the open pane,
+    // and off entirely for anyone who would rather it were.
+    async function convRecoverSweep() {
+      const referenced = convReferenced(), now = Date.now();
+      const panes = agents.filter(a => a && a.pane_id !== activePane && profileFor(a.agent)
+        && referenced.has(convMemberKey(a)));
       for (const a of panes) {
-        const key = convMemberKey(a);
-        if (!stale.has(key)) continue;
-        // Stamped whether or not the read produces anything, or a recovery that finds nothing would
-        // be re-issued on every reload for as long as the transcript stays quiet. `touched` cannot
-        // answer this on its own: it moves only when something is written.
-        convQueue(key, async () => {
-          const held = await convHold(key, now);
-          held.recovered = now;
-          await convCommit(key);
-        });
-        // The open pane cannot take this path: its reply lands on the draw branch, which would
-        // replace the rows under the reader's finger. It gets Load more to the same depth instead
-        // (§2.5), and T1 does the recording.
-        if (a.pane_id === activePane) { paneLines = convDeepLines(); refreshPane(); continue; }
-        ws.send(JSON.stringify({ type: 'read_pane', pane_id: a.pane_id,
-          lines: convDeepLines(), source: 'recent-unwrapped' }));
+        if (await convStale(convMemberKey(a), now)) convRecoverStart(a, false);
       }
     }
 

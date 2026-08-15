@@ -3415,6 +3415,19 @@
     </div>
 
     <div class="setting-group">
+      <label for="sweepPick">Background catch-up</label>
+      <select id="sweepPick" onchange="setConvSweep(this.value)">
+        <option value="1h">Every hour</option>
+        <option value="4h">Every four hours</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">How often conversations you have not opened are caught up on. A pane you do
+        open catches up the moment you open it, whatever this says, so this is only about the ones
+        you never look at — the other half of a joint thread, mostly. Off means those fill in when
+        you next open them.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>

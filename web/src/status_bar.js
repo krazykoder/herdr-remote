@@ -348,9 +348,9 @@
         // It writes nothing on the polls where nothing has outgrown the cap, which is all of them.
         convPruneAuto();
         // After the auto-join, so a pane filed under a conversation on this very snapshot is a
-        // member by the time recovery looks for one. Declines on all but the first snapshot of a
-        // page and the first after a real outage.
-        convRecoverAway(msg.agents);
+        // member by the time recovery looks for one. Declines on every snapshot but the first
+        // after an outage long enough to have missed turns.
+        convRecoverOutage();
         render();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.

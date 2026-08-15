@@ -141,79 +141,103 @@ new. **Zero added reads, zero added wire traffic, zero added relay load.**
 This alone closes every gap the user can see by scrolling, which is every gap in the pane they are
 looking at.
 
-### 2.4 Trigger T2 — a real disconnection, and only a real one
+### 2.4 Trigger T2 — three triggers, none of them a fan-out
 
-T1 covers the pane in front of you. It does not cover the eight members of a conversation whose panes
-were never opened this session. For those, one read has to be issued.
+T1 covers the pane in front of you. It covers nothing else: the other members of a conversation are
+panes nobody opened this session, and the one-turn recovery on reconnect is all their transcripts
+get. So reads have to be issued — and the whole design question is *when*, because these are the
+only reads in this feature nobody asked for.
 
-**Gated on an actual outage.** A healthy connected session pulls nothing: if the socket never
-dropped and no time was lost, there is no gap to close and a speculative deep read is pure cost. Two
-conditions, both required:
+**One staleness test, used by all three.** `now - max(held.touched, held.recovered) > DEEP_AWAY_MS`
+(15 min). `held.recovered` is the *attempt*, stamped whether or not the read produced anything, and
+it is why `touched` cannot answer this alone: `touched` moves only when something is *written*, so a
+quiet transcript — the outcome to optimise for — would otherwise buy a read on every trigger
+forever. A member with no record at all is never stale: there is no history to catch up on, and its
+first ordinary read backfills the whole window.
 
-1. **A gap in coverage.** Either
-   - a fresh page — the first `agents` snapshot where `!prevStatuses[pane_id]`
-     (`status_bar.js:318`), which is exactly where `convReadTurnEnd` already fires its 200-line
-     read; or
-   - a socket recovery — `ws.onclose` stamps `wsDownSince`, and the first `agents` snapshot after
-     the following `onopen` sees `Date.now() - wsDownSince` exceed the threshold. `prevStatuses`
-     survives a dropped socket, so without this clause a 40-minute outage with no reload recovers
-     nothing — which is the reported symptom.
-2. **The gap is worth a read.** `Date.now() - max(held.touched, held.recovered) > DEEP_AWAY_MS` for
-   that member. A transcript written 90 seconds ago has nothing to recover; a three-second socket
-   flap must never cost a deep read on every member.
+**T2a — a pane you opened.** `openTerminal` calls `convRecoverPane`. The read is paid for by the one
+thing that makes it worth paying: someone is about to read that pane. **Loud** — a pane that
+suddenly grows ten thousand lines of scrollback should say why.
 
-   `held.recovered` is the attempt, stamped whether or not the read produced anything, and it is
-   why `touched` cannot answer this alone: `touched` moves only when something is *written*. A
-   quiet transcript — the common case, since a recovery that finds nothing is the outcome to
-   optimise for — would otherwise buy a deep read per member on every reconnect and every reload,
-   forever. The stamp is a small put on a path that already awaits IndexedDB, and it turns the rule
-   into "at most one deep recovery per member per `DEEP_AWAY_MS`", which is the cost story the rest
-   of this section claims.
+**T2b — an outage over the pane you are reading.** The first snapshot after `wsDownSince` exceeds
+the threshold catches up the *open* pane, and only it. This is the one case no activation will ever
+fire for, because the pane never went away — you did. **Loud**, one read.
 
-Then, per member that passes — conversation member, transcript exists, agent profile known:
+**T2c — the members nobody opened.** A timer, off the *Background catch-up* setting: hourly by
+default, four-hourly, or off. Skips the open pane, which has two triggers of its own. **Quiet** —
+nobody is watching, and a toast reporting that nothing was interrupted is an interruption.
+
+**What is deliberately gone: the fan-out.** An earlier draft recovered *every* stale member on the
+first snapshot of a page load and after every long outage. That is a burst of N deep reads, N being
+conversation membership, on a path the user did not initiate — paid again on every reload, which on
+a phone is whenever the tab is evicted. Replaced by the three above: every automatic read is now
+tied either to something the user just did, or to a clock slow enough that its cost is not a
+question. **A reload costs nothing** — the sweep is armed on load and never fires immediately.
+
+Each read is the message `convReadTurnEnd` already sends, deeper:
 
 ```
-send { type: 'read_pane', pane_id, lines: DEEP_LINES, source: 'recent-unwrapped' }
+send { type: 'read_pane', pane_id, lines: <depth>, source: 'recent-unwrapped' }
 ```
 
 **The depth is a setting, and 5000 is only its floor.** *Conversation recovery* in Settings —
 `A day of history` (default) or `Everything the relay has` — chooses between `DEEP_LINES` and
-`READ_LINES_ASK`. The default is the small one because T2 fires unasked, on every member, possibly
-on a phone over cellular: a cost nobody chose has to be the small one. Someone who would rather pay
-the full read once than find the gap later and press the button says so once, in one place, and T3
-is unaffected — the button always fetches everything, whichever the setting says.
-
-One consequence to hold: T2 is otherwise invisible by construction, and at full depth it can reach
-`CONV_ENTRY_MAX`. A capacity shortfall (§2.8) is therefore reported even on the silent path. It is
-the one thing that recovery may not stay quiet about — a recovery that kept less than it found
-would look like one that found less.
+`READ_LINES_ASK`. The default is the small one because these fire unasked, possibly on a phone over
+cellular: a cost nobody chose has to be the small one. T3 is unaffected — the button always asks for
+everything, because that is what pressing it means.
 
 `DEEP_LINES` flat, **not** `min(DEEP_LINES, paneHistoryMax())`. The two were coupled in an earlier
 draft and should not be: `paneHistoryMax()` is how much scrollback the user wants *drawn in the
-pane*, and a T2 read is never drawn. Someone who sets 2000 to keep a phone light has said nothing
-about how far back a recovery may look. The relay clamps anyway (§2.7), so this number is a request
-and not an assertion.
+pane*, and a recovery read is never drawn. Someone who sets 2000 to keep a phone light has said
+nothing about how far back a recovery may look. The relay clamps anyway (§2.7), so this number is a
+request and not an assertion.
 
-Same message `convReadTurnEnd` sends today, deeper. The reply lands on the **non-active** branch
-(`status_bar.js:409`), which records and never draws — so this is invisible by construction. That is
-what "seamless" means here: not a fast redraw, but no redraw at all.
+**Saying what is happening.** A recovery in flight is held in `convRecovering`, keyed by transcript,
+and resolved by the *deep* write it lands on — never by an ordinary poll write, which would report
+on a read nobody asked about. From that one place:
 
-**Once per member per recovery.** `held.depth` makes a repeat a no-op even if the guard is wrong,
-which is the property to test first.
+- **In progress**, loud triggers only: `Catching up on this pane's history…`
+- **Outcome**: the §2.6 reports — recovered, nothing new, or the missed anchor.
+- **Capacity**: reported even on the quiet path. History the transcript had no room for is a fact
+  about the ceiling, and a recovery that kept less than it found would look like one that found
+  less.
+- **Not connected**: refused at the send, said out loud rather than queued.
+- **No answer**: a read the relay never replies to — a dead pane, a hung SSH hop, a socket that went
+  down mid-flight — resolves after `CONV_RECOVER_WAIT` with `No answer from the relay`. Nothing else
+  in the app would ever say so, because a read that produces no reply produces no error either.
 
-**One threshold and one depth, deliberately.** An earlier draft had a two-tier ladder — 10 minutes
-to trigger, and a deeper read past a 2-hour gap. Both numbers are gone:
+**Once per member per recovery.** A second trigger for a transcript already in flight is declined by
+`convRecovering`, and `held.depth` makes a repeat a no-op even if a guard is wrong.
 
-- **15 minutes is the single trigger.** Two hours is not a disconnection, it is a different working
-  session, and by then the gap is the thing you came back to read. Fifteen minutes is roughly the
-  shortest gap in which an agent finishes more turns than the one the existing recovery already
-  handles, which is the exact condition this spec exists for. Below it, nothing is missed that is
-  worth a read.
-- **The second depth tier bought nothing.** `paneHistoryMax()` is the ceiling and defaults to 5000,
-  so `min(10000, paneHistoryMax())` and `min(5000, paneHistoryMax())` are the same read for every
-  user who has not changed the setting. A tier that is invisible at the default is a constant
-  pretending to be a policy. One depth, ceilinged by the user's own setting, and §2.6 is how someone
-  who wants more asks for it.
+**Fifteen minutes is the single threshold.** Two hours is not a disconnection, it is a different
+working session, and by then the gap is the thing you came back to read. Fifteen minutes is roughly
+the shortest gap in which an agent finishes more turns than the existing one-turn recovery already
+handles. Below it, nothing is missed that is worth a read.
+
+### 2.5 The active pane
+
+The open pane cannot take the read path above: its `pane_content` lands on the draw branch, and
+`pane_content` echoes `pane_id`, `content`, `source` and `cols` but **not** `lines`, so the reply of
+a deep recovery read is indistinguishable from the reply of the 3s poll. Rendering it would replace
+the rows and move the scroll.
+
+Rather than add a wire field, it gets the one thing that is already correct for it:
+
+```js
+paneLines = lines;
+refreshPane();
+```
+
+— i.e. `loadMore` to the recovery depth, and the relay clamps it (§2.7). Identical consequences to
+the user pressing Load more, which they were about to do anyway: the history appears above,
+`userScrolledUp` governs the scroll exactly as it does today, the poll stops above `POLL_MAX_LINES`
+as documented, and returning to the tail turns it live again. No new state, no new branch, and T1
+does the recording.
+
+**The wire change that would remove this special case** — echoing `lines` back in `pane_content`, so
+a deep reply can be routed to the recorder alone — is deliberately not taken. It is one field and it
+would work; it is out of scope because this spec's whole claim is that no relay change is needed, and
+the special case costs nothing.
 
 ### 2.6 Trigger T3 — the manual button
 
@@ -251,32 +275,6 @@ copies in every respect: a transcript repair, hidden unless it applies, that rep
 
 **Not armed.** The two-tap drain is for destructive and irreversible actions. This one only ever
 adds, and its worst outcome is that it adds nothing.
-
-### 2.5 The active pane under T2
-
-The open pane cannot take the T2 path: its `pane_content` lands on the draw branch, and
-`pane_content` echoes `pane_id`, `content`, `source` and `cols` but **not** `lines`, so the reply of
-a deep recovery read is indistinguishable from the reply of the 3s poll. Rendering it would replace
-the rows and move the scroll.
-
-Rather than add a wire field, T2 gives the active pane the one thing that is already correct for it:
-
-```js
-paneLines = DEEP_LINES;
-refreshPane();
-```
-
-— i.e. `loadMore` to the automatic depth, and the relay clamps it (§2.7). `DEEP_LINES` rather than
-`READ_LINES_ASK`, because this fires without anyone asking: the button is where "everything you
-have" belongs. Identical consequences to the user pressing Load more,
-which they were about to do anyway: the history appears above, `userScrolledUp` governs the scroll
-exactly as it does today, the poll stops above `POLL_MAX_LINES` as documented, and returning to the
-tail turns it live again. No new state, no new branch, and T1 does the recording.
-
-**The wire change that would remove this special case** — echoing `lines` back in `pane_content`, so
-a deep reply can be routed to the recorder alone — is deliberately not taken. It is one field and it
-would work; it is out of scope because this spec's whole claim is that no relay change is needed, and
-the special case costs nothing.
 
 ### 2.7 The ceiling is the relay's, and the app must never restate it
 
@@ -404,8 +402,10 @@ guard belongs at the one point both paths pass through, not on the new one.
 
 | Name | Value | Why |
 |---|---|---|
-| `DEEP_AWAY_MS` | **15 min** | The only threshold. Below it nothing worth a read was missed; a flap costs nothing. §2.4. |
-| `DEEP_LINES` | 5000 | The automatic depth, T2 only. Roughly a working day of one pane. A request, not a bound — the relay clamps it. |
+| `DEEP_AWAY_MS` | **15 min** | The only staleness threshold, shared by all three T2 triggers. Below it nothing worth a read was missed; a flap costs nothing. §2.4. |
+| `DEEP_LINES` | 5000 | The automatic depth, T2 only, and the default of a setting. Roughly a working day of one pane. A request, not a bound — the relay clamps it. |
+| `CONV_SWEEP_MS` | off / **1h** / 4h | How often members nobody opened are caught up on. A setting, because it is the one recovery no user action pays for. §2.4. |
+| `CONV_RECOVER_WAIT` | 45 s | When a read the relay never answered is called a failure rather than a wait. Long enough for 50000 lines over SSH. |
 | `READ_LINES_ASK` | `1e9` | Sentinel: "as deep as you allow". T3 only. Never a literal depth. §2.7. |
 | `held.depth` | — | Deepest recorded window, per transcript. New persisted field; absent reads as 0. |
 

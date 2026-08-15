@@ -916,6 +916,10 @@
       disarmShortcut();
       disarmCtrl();
       refreshPane();
+      // A pane whose record went stale while nobody was looking at it catches up now, on the one
+      // event that makes the read worth paying for: someone is about to read it. Asynchronous and
+      // deliberately after the ordinary 200-line read — that one is what puts the pane on screen.
+      convRecoverPane(paneId);
       refreshInterval = setInterval(() => refreshPane(true), 3000);
     }
 
