@@ -38,6 +38,8 @@
       // check the live snapshot first and land on the list rather than on a dead pane.
       if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
       else document.getElementById('agentListView').style.display = '';
+      // Leaving the conversation window moves where the walk stands, so its arrows are re-read.
+      syncNavBtns();
     }
 
     // Jumping between panes is the most frequent move in the app, so every live agent gets a tab

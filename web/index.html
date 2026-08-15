@@ -271,6 +271,33 @@
       text-overflow: ellipsis;
     }
 
+    /* The walk and its destination list, as one group, so it is the group that is centred and the
+       Recent button does not shift sideways when an arrow goes disabled. */
+    .status-bar .walk {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    /* A disabled arrow is dimmed rather than removed: "there is nowhere back from here" is worth
+       saying, and a control that vanished would take the Recent button's position with it. */
+    .status-bar .nav-btn {
+      flex: 0 0 auto;
+      width: 28px;
+      padding: 2px 0;
+      font: inherit;
+      font-size: 0.9rem;
+      line-height: 1;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+    }
+
+    .status-bar .nav-btn:hover:not(:disabled) { color: var(--text); }
+    .status-bar .nav-btn:disabled { opacity: 0.3; cursor: default; }
+
     /* Sized like the Esc chip beside it and always present, so the bar's height is what it was —
        the reserved heights above exist because this row must never change size. */
     .status-bar .recent-btn {
@@ -3262,12 +3289,11 @@
       gap: 6px;
     }
 
-    /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. Three columns: the fold, the arrows, and the right-edge
-       group. The edges size to their content and the middle takes the rest, which is what keeps
-       the arrows off them — a track cannot be overrun by its neighbour. These used to be absolute
-       with the arrows reserving width for them by hand, and the hand-written reserve was wrong the
-       moment Summary appeared and made the right edge twice as wide. */
+    /* The pane's own switches get their own full-width row under any approval buttons, so the two
+       never compete for the same line. Three columns: the fold and conversation switch, an empty
+       middle, and the right-edge group. The edges size to their content and the middle takes the
+       rest, so the two groups are pushed apart by the row rather than by a hand-written reserve —
+       which was wrong the moment Summary appeared and made the right edge twice as wide. */
     .qa-nav {
       flex: 1 0 100%;
       display: grid;
@@ -3280,14 +3306,6 @@
       display: flex;
       align-items: center;
       gap: 6px;
-    }
-
-    /* The arrows, centred in whatever the edges leave rather than in the row. Off-centre by the
-       difference between the two edges, which is the price of never sitting under either. */
-    .qa-nav .qa-mid {
-      display: flex;
-      justify-content: center;
-      gap: 8px;
     }
 
     /* Sized to the pair strip, which is the other always-there strip in this view and the only
@@ -3332,6 +3350,10 @@
        has a closing message to offer. One column holding both, so the width the pair needs is
        measured rather than guessed and the middle track gives up exactly that much. */
     .quick-actions .qa-nav .qa-right {
+      /* Third column named rather than counted: the middle track has nothing in it since the walk
+         moved to the status bar, and an empty div held only to fill a grid slot is a box that has
+         to be styled forever to keep its own height out of the row. */
+      grid-column: 3;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -4151,10 +4173,18 @@
        curve as for what it says. -->
   <div class="status-bar" id="statusBar">
     <span class="left" id="statusBarLeft"></span>
-    <!-- The one control in the app's last row. Centred because it belongs to no view: the bar is
-         on screen whatever is above it, and so is the question it answers. -->
-    <button class="recent-btn" id="recentBtn" onclick="openRecentSheet()" aria-haspopup="dialog"
-      aria-label="Recent panes">Recent ▴</button>
+    <!-- The app's last row, and the only controls in it that belong to no view: the bar is on
+         screen whatever is above it, and so are the questions these answer. Recent is "where else
+         could I be"; the arrows either side of it are "where was I", which is why they flank it
+         rather than sitting somewhere else. The pane's own bar had the arrows first and the
+         conversation window had nothing — one walk deserves one control, in the row that is
+         always there. -->
+    <span class="walk">
+      <button class="nav-btn" id="navBack" onclick="navGo(-1)" aria-label="Back">‹</button>
+      <button class="recent-btn" id="recentBtn" onclick="openRecentSheet()" aria-haspopup="dialog"
+        aria-label="Recent panes">Recent ▴</button>
+      <button class="nav-btn" id="navFwd" onclick="navGo(1)" aria-label="Forward">›</button>
+    </span>
     <span class="state"><button class="abort" id="abortBtn" onclick="abortWorking()" hidden
       aria-label="Stop working agent">Esc</button><span class="right" id="statusBarRight"></span></span>
   </div>

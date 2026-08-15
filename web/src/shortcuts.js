@@ -284,6 +284,7 @@
       convRosterOpen = false;
       convAdding = false;
       openPanel('convView');
+      syncNavBtns();   // the walk is standing somewhere new, and its arrows are on screen here too
       renderConvStandalone(true);
     }
 

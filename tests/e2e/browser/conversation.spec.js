@@ -236,12 +236,34 @@ test('the conversation is a stop on the ‹ › walk, not a place outside it', a
   // Reading a record, opening a member's pane out of it and wanting the record back is the ordinary
   // way round a joint thread. Before this the only way back was the pane's own Back, which lands on
   // the agent list — from where the conversation has to be found again.
-  const back = page.locator('#quickActions .nav').first();
+  const back = page.locator('#statusBar #navBack');
   await expect(back).toBeEnabled();
   await expect(back).toHaveAttribute('aria-label', /Back to new authentication feature/);
   await back.click();
   await expect(page.locator('#convView')).toBeVisible();
   await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
+});
+
+test('the walk is reachable from the conversation window too', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#convViewOpen').click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.locator('#statusBar #navBack').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  // The window that had no way onward. Its arrows are the same two, in the row that is on screen
+  // whatever is above it, so the step back into the pane is made from here rather than by finding
+  // the pane again.
+  const fwd = page.locator('#statusBar #navFwd');
+  await expect(fwd).toBeEnabled();
+  await expect(fwd).toHaveAttribute('aria-label', new RegExp(`Forward to ${AGENT}`));
+  await fwd.click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await expect(page.locator('#termTitle')).toContainText(AGENT);
+  await expect(page.locator('#convView')).toBeHidden();
 });
 
 test('a deleted conversation is stepped over rather than opened', async ({page}) => {
@@ -255,8 +277,8 @@ test('a deleted conversation is stepped over rather than opened', async ({page})
   await page.evaluate(() => saveConvIndex([]));
   // The walk skips what no longer exists, the same way it skips a pane that has exited — and with
   // nothing else behind it, the arrow says so by being disabled.
-  await page.evaluate(() => renderQuickActions());
-  await expect(page.locator('#quickActions .nav').first()).toBeDisabled();
+  await page.evaluate(() => syncNavBtns());
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
 });
 
 test('the composer fills from the top, and Send stays beside the line being written',
@@ -936,7 +958,8 @@ test('on a phone, the menu scrolls and conversation controls keep the nav to one
       return Math.round(r.y);
     }),
   }));
-  expect(nav.children).toBe(3);
+  // Two groups, not three: the walk moved to the status bar and the middle is empty track now.
+  expect(nav.children).toBe(2);
   expect(nav.conversationWidth).toBe(34);
   expect(Math.max(...nav.rows) - Math.min(...nav.rows)).toBeLessThanOrEqual(1);
 

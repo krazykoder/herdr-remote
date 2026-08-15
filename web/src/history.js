@@ -51,14 +51,31 @@
       const id = navHistory[i];
       try { navIsConv(id) ? openConversation(navConvId(id)) : openTerminal(id); }
       finally { navigating = false; }
+      syncNavBtns();
       if (window.cue) cue('page');
     }
 
+    // The walk's own controls live in the status bar, which is the one row on screen in every view —
+    // the pane had arrows and the conversation window had none, and a walk that crosses both needs
+    // a control that does too. Enabled state is recomputed rather than remembered: a pane exiting
+    // can empty the walk without anybody navigating.
+    function syncNavBtns() {
+      [[-1, 'navBack'], [1, 'navFwd']].forEach(([step, id]) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        const label = navLabel(step);
+        btn.disabled = navTarget(step) < 0;
+        btn.title = btn.disabled ? '' : label;
+        btn.setAttribute('aria-label', btn.disabled ? (step < 0 ? 'Back' : 'Forward') : label);
+      });
+    }
+
     // What the arrow will land on, so the button says where it goes rather than "Previous session"
-    // over a conversation. Blank when there is nowhere to step, where the button is disabled anyway.
+    // over a conversation. Falls back to the generic word where there is nowhere to step, which is
+    // where the button is disabled anyway.
     function navLabel(step) {
       const i = navTarget(step);
-      if (i < 0) return step < 0 ? 'Previous session' : 'Next session';
+      if (i < 0) return step < 0 ? 'Back' : 'Forward';
       const id = navHistory[i];
       if (!navIsConv(id)) return `${step < 0 ? 'Back to' : 'Forward to'} ${paneLabel(paneOf(id)) || id}`;
       const conv = loadConvIndex().find(c => c.id === navConvId(id));
@@ -165,11 +182,6 @@
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
       if (!blocked && !showNav) { qa.innerHTML = ''; return; }
-      const nav = (step, glyph) => {
-        const label = escapeHtml(navLabel(step));
-        return `<button class="nav" onclick="navGo(${step})" aria-label="${label}" title="${label}"` +
-          `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
-      };
       const open = bottomDockOpen();
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
@@ -199,7 +211,9 @@
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>${conv}</div>` +
-        `<div class="qa-mid">${nav(-1, '‹')}${nav(1, '›')}</div>` +
+        // The walk used to sit in a middle column here, where only a pane could reach it. It is in
+        // the status bar now, one row down and on screen in every view, so the middle is empty
+        // track rather than a second pair of arrows disagreeing with the first.
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;

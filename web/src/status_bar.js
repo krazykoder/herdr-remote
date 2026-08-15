@@ -64,6 +64,9 @@
     function renderStatusBar() {
       const pane = activePane ? paneOf(activePane) : null;
       paintPaneDot();
+      // The arrows sit in this row and their reach depends on which panes are still alive, which is
+      // a fact the snapshot changes without anybody navigating.
+      syncNavBtns();
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');

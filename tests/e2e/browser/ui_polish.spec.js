@@ -142,7 +142,6 @@ const navBoxes = page => page.locator('#quickActions .qa-nav').evaluate(el => {
   return {
     row: box(el), fold: box(el.querySelector('.qa-fold')),
     right: box(el.querySelector('.qa-right')),
-    arrows: [...el.querySelectorAll('button.nav')].map(box),
   };
 });
 
@@ -157,10 +156,10 @@ test('the fold and Last sit on opposite edges of the nav row', async ({page}) =>
   expect(right.x + right.width).toBeCloseTo(row.x + row.width, 0);
 });
 
-test('Summary never lands on an arrow, at any phone width', async ({page}) => {
-  // The right edge roughly doubles when a pane has a closing message to offer. The arrows used to
-  // reserve room for it by hand, with a min-width under the reserve that silently outranked it —
-  // so on every phone width Summary was drawn straight over the ›.
+test('Summary never lands on the walk, at any phone width', async ({page}) => {
+  // The nav row's right edge roughly doubles when a pane has a closing message to offer, and the
+  // walk is a row below it — so what this now measures is that the two rows stay two rows, and
+  // that the arrows keep a thumb-sized target at the narrowest phone.
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
   // The poll re-reads the pane every few seconds and would put the fake herdr's rows of x back,
@@ -176,13 +175,26 @@ test('Summary never lands on an arrow, at any phone width', async ({page}) => {
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({width, height: 844});
-    const {fold, right, arrows} = await navBoxes(page);
-    expect(arrows.length, `both arrows are there at ${width}`).toBe(2);
-    for (const b of arrows) {
-      expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThan(24);
-      expect(b.x, `an arrow runs under the fold at ${width}`).toBeGreaterThanOrEqual(fold.x + fold.width);
-      expect(b.x + b.width, `an arrow runs under Summary at ${width}`).toBeLessThanOrEqual(right.x);
+    const walk = await page.locator('#statusBar').evaluate(bar => {
+      const box = node => { const {x, width, top} = node.getBoundingClientRect(); return {x, width, top}; };
+      return {bar: box(bar), left: box(bar.querySelector('.left')),
+        state: box(bar.querySelector('.state')), group: box(bar.querySelector('.walk')),
+        arrows: [...bar.querySelectorAll('.nav-btn')].map(box)};
+    });
+    const row = await page.locator('#quickActions .qa-nav').evaluate(el =>
+      el.getBoundingClientRect().bottom);
+    expect(walk.bar.top, `the walk climbed into the nav row at ${width}`).toBeGreaterThanOrEqual(row - 1);
+    expect(walk.arrows.length, `both arrows are there at ${width}`).toBe(2);
+    for (const b of walk.arrows) {
+      expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThanOrEqual(28);
+      expect(b.x, `an arrow runs under the stamp at ${width}`).toBeGreaterThanOrEqual(walk.left.x);
+      expect(b.x + b.width, `an arrow runs past the state at ${width}`)
+        .toBeLessThanOrEqual(walk.state.x + walk.state.width);
     }
+    // The group is centred on the screen, not on what is left of the bar: the stamp beside it
+    // changes on every read, and a control that drifted with it would not be findable by feel.
+    expect(Math.abs((walk.group.x + walk.group.width / 2) - (walk.bar.x + walk.bar.width / 2)),
+      `the walk is off centre at ${width}`).toBeLessThan(2);
   }
 });
 
