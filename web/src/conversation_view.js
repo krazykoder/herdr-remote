@@ -4,6 +4,13 @@
     // jobs, and a global switch would keep answering the wrong one.
     const CONV_VIEW_KEY = 'herdr_conv_view';
 
+    // Set by a pane switch, consumed by the next render that completes. `stick` below is measured
+    // against the box as it stands, and on a switch that box still holds the thread you left — so
+    // arriving at a pane you had scrolled up in lands you in the middle of a different pane's
+    // history. Not measured, because there is nothing yet to measure: the answer is decided by the
+    // switch, not by where the last thread happened to sit.
+    let convStickNext = false;
+
     function convViews() {
       try {
         const d = JSON.parse(localStorage.getItem(CONV_VIEW_KEY) || '');
@@ -258,6 +265,9 @@
       // Which conversation the pane is reading is what the strip marks current, when the strip is
       // holding conversations. Diffed by its own signature, so this costs nothing when it is not.
       renderConvStrip();
+      // And the pane strip is scoped to the conversation's members while its thread is up, so
+      // turning the thread on and off is a change to what the strip holds.
+      renderAgentTabs();
     }
 
     // A render can be overtaken by the next one while it waits on the database, and the loser
@@ -270,9 +280,15 @@
       const conv = a ? convViewConv(a) : null;
       const on = !!conv && convViewOn(a);
       wrap.classList.toggle('conv-on', on);
+      // The same fact one level up, where the composer can see it: `conv-on` is on the wrap and CSS
+      // has no ancestor selector, so the fold rule — which lives on the view — could not read it.
+      document.getElementById('terminalView').classList.toggle('conv-view', on);
       box.hidden = !on;
       if (!on) {
         box.innerHTML = '';
+        // The pane switched to reads as rows, so nothing will consume this. Left armed it would
+        // yank the next thread to its end under a reader who had scrolled up in it.
+        convStickNext = false;
         hideConvPaneRoster();
         convViewToken++;
         // Picks were bubbles, and they filled the same selection bar the rows fill, so they leave
@@ -304,8 +320,11 @@
       if (token !== convViewToken) return;
       const recs = composed.recs;
       // Following the newest message is the default, and a reader who has scrolled up keeps their
-      // place: the same rule the pane rows follow.
-      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+      // place: the same rule the pane rows follow. Consumed here rather than where it is set, so
+      // that the render which actually finishes is the one that spends it — two renders can be in
+      // flight and only the newest token draws.
+      const stick = convStickNext || box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+      convStickNext = false;
       // Filtered in the composer rather than in the renderer: picks, Summary and the count are all
       // positions in the list that was drawn, so the list that was drawn has to be the list they
       // index.
@@ -349,25 +368,35 @@
       if (stick) box.scrollTop = box.scrollHeight;
     }
 
-    // What the pane is doing right now, on the newest bubble. Written in place rather than by
-    // re-rendering the thread: the status arrives on every poll, and rebuilding the thread three
-    // times a minute would take the reader's text selection with it mid-copy.
+    // What each pane is doing right now, on that pane's newest bubble. Written in place rather
+    // than by re-rendering the thread: the status arrives on every poll, and rebuilding the thread
+    // three times a minute would take the reader's text selection with it mid-copy.
     function syncConvBadge() {
       const box = document.getElementById('convThread');
       if (!box || box.hidden) return;
-      const msgs = box.querySelectorAll('.conv-msg');
-      const last = msgs[msgs.length - 1];
-      if (!last) return;
-      const live = agents.find(x => convMemberKey(x) === last.dataset.key);
-      // 'idle' is not a state worth a badge — it is what a pane is nearly all of the time, and a
-      // badge that is always on says nothing. blocked is here because it is the one this whole app
-      // exists to surface.
-      const status = live && ['working', 'done', 'blocked'].includes(live.status) ? live.status : '';
-      let badge = last.querySelector('.conv-badge');
-      if (!status) { if (badge) badge.remove(); return; }
-      if (!badge) { badge = document.createElement('span'); last.appendChild(badge); }
-      badge.className = 'conv-badge ' + status;
-      badge.textContent = status;
+      const msgs = Array.from(box.querySelectorAll('.conv-msg'));
+      // The newest bubble of each member, not the newest bubble of the thread. In a joint thread
+      // the two are only the same for whoever spoke last, and a partner working while someone else
+      // spoke is the case the joint thread exists to show.
+      const newest = new Map();
+      msgs.forEach(el => newest.set(el.dataset.key, el));
+      msgs.forEach(el => {
+        const live = newest.get(el.dataset.key) === el
+          && agents.find(x => convMemberKey(x) === el.dataset.key);
+        // 'idle' is not a state worth a badge — it is what a pane is nearly all of the time, and a
+        // badge that is always on says nothing. blocked is here because it is the one this whole
+        // app exists to surface.
+        const status = live && ['working', 'done', 'blocked'].includes(live.status)
+          ? live.status : '';
+        let badge = el.querySelector('.conv-badge');
+        if (!status) { if (badge) badge.remove(); return; }
+        if (!badge) { badge = document.createElement('span'); el.appendChild(badge); }
+        // Assigned rather than compared away: writing the same string to the same node is what
+        // makes this safe to run on every poll, and a badge that only changed when the status did
+        // would still have to find that out by reading the node.
+        badge.className = 'conv-badge ' + status;
+        badge.textContent = status;
+      });
     }
 
     // This session's copies first, so the common case — a thread re-rendered on every read of the

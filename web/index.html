@@ -2371,9 +2371,11 @@
       flex: none;
     }
 
-    /* The live state of the pane the last bubble belongs to, hung off its top-right corner. Only
-       the last one carries it: a status is a fact about the pane now, not about the message, and
-       a column of them would read as a per-message history that does not exist. */
+    /* The live state of the pane a bubble belongs to, hung off its top-right corner. One per
+       member, on that member's newest bubble: a status is a fact about the pane now, not about the
+       message, so a column of them would read as a per-message history that does not exist — but a
+       joint thread has more than one pane, and the partner working while someone else spoke last
+       is exactly what a joint thread is for. */
     .conv-badge {
       position: absolute;
       top: -8px;
@@ -2397,6 +2399,40 @@
     .conv-badge.working {
       color: var(--orange);
       border-color: var(--orange);
+    }
+
+    /* Working is the one state that is an activity rather than a result, so it is the one that
+       moves. The dots are drawn by CSS and not by the badge's text: syncConvBadge runs on the poll
+       and writes in place precisely so that nothing re-renders under a reader's finger, and a
+       badge animated by rewriting textContent would be that re-render three times a second.
+
+       Reserved width, revealed by clip-path — the badge is right-anchored, so dots that grew the
+       box would walk its left edge back and forth. `ch` is exact here: the badge is monospace. */
+    .conv-badge.working::after {
+      content: '...';
+      display: inline-block;
+      width: 3ch;
+      overflow: hidden;
+      vertical-align: bottom;
+      animation: conv-dots 1.2s steps(4, jump-none) infinite;
+    }
+
+    @keyframes conv-dots {
+      from {
+        clip-path: inset(0 100% 0 0);
+      }
+
+      to {
+        clip-path: inset(0 0 0 0);
+      }
+    }
+
+    /* Still three dots, still reading as work in progress, without the motion. A pane that is
+       working has to say so whether or not this browser will animate. */
+    @media (prefers-reduced-motion: reduce) {
+      .conv-badge.working::after {
+        animation: none;
+      }
     }
 
     .conv-badge.blocked {
@@ -2847,6 +2883,14 @@
     .terminal-view.dock-folded .term-input,
     .terminal-view.dock-folded .term-keys {
       display: none !important;
+    }
+
+    /* Except with a thread on screen. The fold's trade is height for a control you are not using
+       while you read a long pane — but the thread's equivalent of reading is replying, and a
+       conversation whose composer folded away would be the one view where the fold takes the thing
+       the view is for. The key docks still fold; the text area and Send do not. */
+    .terminal-view.dock-folded.conv-view .term-input {
+      display: flex !important;
     }
 
     /* Every label that sits on an accent fill — these three, the armed keys, Send, Start, the

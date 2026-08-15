@@ -2192,3 +2192,162 @@ test('the repair can be turned off, and the setting is remembered', async ({page
   await expect.poll(() => page.evaluate(() => document.getElementById('tidyPick').value))
     .toBe('off');
 });
+
+// --- Between reading a pane and writing to it ---
+//
+// The composer, the badge, and where a switch lands. All four live in the same place: what the app
+// does with a thread that is on screen, as opposed to a pane that is.
+
+test('a text past one message goes as several, and one Enter submits them all',
+  async ({page}) => {
+    // The relay caps one `send_text` at 4000 and always has. Raising that cap would fix this for
+    // nobody who has not upgraded the relay — the app is on GitHub Pages and the relay is on the
+    // user's own machine — so the split is here, against the oldest relay's number.
+    await open(page);
+    await tapWire(page);
+    const text = ('a diff line that is long enough to matter ' + 'x'.repeat(60) + '\n').repeat(220);
+    await page.evaluate(t => {
+      document.getElementById('termInput').value = t;
+      sendText();
+    }, text);
+    const sent = await page.evaluate(() => window.__sent);
+    const parts = sent.filter(m => m.type === 'send_text');
+    expect(parts.length).toBeGreaterThan(2);
+    for (const p of parts) expect(p.text.length).toBeLessThanOrEqual(4000);
+    // The agent's composer receives exactly what was typed, and nothing between the chunks submits.
+    expect(parts.map(p => p.text).join('')).toBe(text);
+    const keys = sent.filter(m => m.type === 'send_keys');
+    expect(keys).toHaveLength(1);
+    expect(keys[0].keys).toEqual(['Enter']);
+    // And the Enter is behind every chunk, or it submits half a diff.
+    expect(sent.indexOf(keys[0])).toBe(sent.length - 1);
+  });
+
+test('the transcript keeps a long message whole', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await tapWire(page);
+  const text = 'x'.repeat(9000);
+  await page.evaluate(t => {
+    document.getElementById('termInput').value = t;
+    sendText();
+  }, text);
+  // What was sent is one message however many the wire took, and D1 says the record is what was
+  // said — a record cut at the length of one `send_text` could not answer what was sent.
+  await expect.poll(async () => {
+    const rec = await held(page, key);
+    return (rec && rec.entries.filter(e => e.text.length === 9000).length) || 0;
+  }).toBe(1);
+});
+
+test('a working pane says WORKING on its own newest bubble, and moves', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await forceStatus(page, AGENT, 'working');
+  await page.evaluate(() => convSetView(paneOf(activePane), loadConvIndex()[0].id));
+  await page.evaluate(() => renderConvView());
+  const badge = page.locator('#convThread .conv-msg .conv-badge').last();
+  await expect(badge).toHaveText('working');          // uppercased by the badge's own CSS
+  expect(await badge.evaluate(el => getComputedStyle(el).textTransform)).toBe('uppercase');
+  // The dots are CSS on a pseudo-element and not text: syncConvBadge runs on the poll and writes
+  // in place so that nothing re-renders under a reader's finger.
+  const dots = await badge.evaluate(el => {
+    const s = getComputedStyle(el, '::after');
+    return {content: s.content, animation: s.animationName};
+  });
+  expect(dots.content).toContain('...');
+  expect(dots.animation).toBe('conv-dots');
+});
+
+test('in a joint thread, a partner working while someone else spoke last still says so',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    const mate = await partner(page, 0);
+    await page.evaluate(([k, p]) => {
+      const other = agents.find(x => x.pane_id === p);
+      other.status = 'working';
+      convSetView(paneOf(activePane), loadConvIndex()[0].id);
+      return renderConvView();
+    }, [key, mate.pane]);
+    // The badge used to land on the thread's last bubble whoever wrote it, so a partner that was
+    // working but not newest showed nothing — the exact case a joint thread exists for.
+    const badges = page.locator('#convThread .conv-badge');
+    await expect.poll(() => badges.count()).toBeGreaterThanOrEqual(1);
+    expect(await page.evaluate(() => Array.from(
+      document.querySelectorAll('#convThread .conv-badge')).map(b => b.textContent)))
+      .toContain('working');
+  });
+
+test('switching to a pane lands at the newest bubble, not where the last one sat',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    // A thread long enough to scroll, then scrolled to the top of it.
+    for (let i = 0; i < 12; i++) await read(page, `❯ question ${i}\n\n⏺ Answer ${i}.\n\n❯\n`);
+    await page.evaluate(() => convSetView(paneOf(activePane), loadConvIndex()[0].id));
+    await page.evaluate(() => renderConvView());
+    await page.evaluate(() => { document.getElementById('convThread').scrollTop = 0; });
+    const pane = await page.evaluate(() => activePane);
+    // Away and back: `stick` is measured against the box as it stands, and on a switch that box
+    // still holds the thread being left.
+    await page.evaluate(() => closeTerminal());
+    await page.evaluate(p => openTerminal(p), pane);
+    await expect.poll(() => page.evaluate(() => {
+      const b = document.getElementById('convThread');
+      return b.scrollHeight - b.scrollTop - b.clientHeight;
+    })).toBeLessThan(24);
+  });
+
+test('a reader who scrolled up in a thread stays there through a poll', async ({page}) => {
+  await open(page);
+  await join(page);
+  for (let i = 0; i < 12; i++) await read(page, `❯ question ${i}\n\n⏺ Answer ${i}.\n\n❯\n`);
+  await page.evaluate(() => convSetView(paneOf(activePane), loadConvIndex()[0].id));
+  await page.evaluate(() => renderConvView());
+  await page.evaluate(() => { document.getElementById('convThread').scrollTop = 0; });
+  await page.evaluate(() => renderConvView());
+  expect(await page.evaluate(() => document.getElementById('convThread').scrollTop)).toBe(0);
+});
+
+test('the composer survives the fold while a thread is on screen', async ({page}) => {
+  // The fold trades height for a control you are not using while you read a long pane. Replying is
+  // what reading a thread is, so in a conversation that trade takes the thing the view is for.
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(() => convSetView(paneOf(activePane), loadConvIndex()[0].id));
+  await page.evaluate(() => renderConvView());
+  await page.evaluate(() => {
+    localStorage.setItem('herdr_bottom_dock', 'folded');
+    syncBottomDock();
+  });
+  await expect(page.locator('#termInput')).toBeVisible();
+  // The key docks still fold — this is not a way of turning the fold off.
+  expect(await page.evaluate(() =>
+    document.getElementById('terminalView').classList.contains('dock-folded'))).toBe(true);
+});
+
+test('with a thread up, the header row switches between that conversation’s members',
+  async ({page}) => {
+    await open(page);
+    const key = await join(page);
+    await read(page);
+    const mate = await partner(page, 0);
+    const before = await page.evaluate(() => Array.from(
+      document.querySelectorAll('#agentTabs .agent-tab')).map(b => b.dataset.pane));
+    await page.evaluate(() => {
+      convSetView(paneOf(activePane), loadConvIndex()[0].id);
+      renderConvBar();
+    });
+    const panes = await page.evaluate(() => Array.from(
+      document.querySelectorAll('#agentTabs .agent-tab')).map(b => b.dataset.pane));
+    // Both members, and nothing that is not one.
+    const mine = await page.evaluate(() => activePane);
+    expect(new Set(panes)).toEqual(new Set([mine, mate.pane]));
+    // Including members the Project scope would have dropped: a conversation is free to span
+    // projects, which is what makes it a conversation and not a directory.
+    expect(before).not.toContain(mate.pane);
+  });

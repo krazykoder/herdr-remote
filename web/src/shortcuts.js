@@ -907,7 +907,10 @@
       renderQuickActions();
       renderPairStrip();
       // The view this pane was last read in, restored with it — after activePane is set, which is
-      // what it reads.
+      // what it reads. At its end, whatever the thread being left was doing: the rows already land
+      // there by way of `userScrolledUp`, and a thread that did not would be the only half of a
+      // pane switch that remembered somewhere else.
+      convStickNext = true;
       renderConvView();
       closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened

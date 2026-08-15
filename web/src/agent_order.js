@@ -193,8 +193,28 @@
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
       // worse than a long one. On the list screen nothing is open, so the strip stays complete.
       const scope = tabScope();
-      const open = scope === 'project' && activePane ? paneOf(activePane) : null;
-      if (open) live = live.filter(a => projectKey(a) === projectKey(open) || a.pane_id === activePane);
+      // The conversation's members, while its thread is on screen. A thread makes you want the
+      // other half of the conversation more than anything else on the machine — read what the
+      // architect said, switch to the implementer, reply — and this row is where a pane switch
+      // already lives. Not a second row: the same one, scoped, and read off the same members the
+      // thread drew so the two can never name different panes.
+      //
+      // It replaces the Project scope rather than narrowing it. A conversation is free to span
+      // projects — that is what makes it a conversation and not a directory — and a row that
+      // dropped a member for living somewhere else would be a switch that cannot reach the pane
+      // whose message is on screen.
+      const reading = activePane ? paneOf(activePane) : null;
+      const thread = reading && convViewOn(reading) ? convViewConv(reading) : null;
+      if (thread) {
+        const keys = new Set(pairedConvMembers(reading, thread).map(m => m.key));
+        // The open pane is exempt from its own filter, for the reason the Project scope is: a row
+        // that cannot show the pane on screen is worse than a long one.
+        live = live.filter(a => keys.has(convMemberKey(a)) || a.pane_id === activePane);
+      } else if (scope === 'project' && activePane) {
+        const open = paneOf(activePane);
+        if (open) live = live.filter(a =>
+          projectKey(a) === projectKey(open) || a.pane_id === activePane);
+      }
       if (scope === 'pairs') {
         live = pairedTabs(live);
       } else {
