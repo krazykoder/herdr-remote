@@ -289,7 +289,9 @@
       // Once per transcript, and not once per *empty* transcript: a prompt committed at the send
       // can reach a new record before its pane has ever been read, and that must not cost the pane
       // its history. Records written before this flag existed were all written from reads.
+      let initialized = false;
       if (held.backfilled === undefined) {
+        initialized = true;
         held.backfilled = held.entries.some(e => e.at_src !== 'sent');
         // The one moment a record written by the *previous* recorder is met by this one. That
         // recorder folded every read against the stored tail, and a pane read as a `visible` frame
@@ -379,7 +381,7 @@
         held.touched = now;
         held.spawn = convSpawn(a, now);
         await convCommit(key);
-      } else if (noteGap) {
+      } else if (noteGap || initialized) {
         await convCommit(key);
       }
       // Answered on the first record after the press, whatever it found. A button that adds nothing

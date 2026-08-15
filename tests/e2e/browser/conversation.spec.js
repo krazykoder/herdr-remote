@@ -2125,6 +2125,17 @@ test('a transcript from the folding recorder is repaired the first time it is op
     await expect(page.locator('#toast')).toContainText('removed 2 duplicate messages');
   });
 
+test('tidying a legacy transcript persists even when the read adds no messages', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await legacy(page, key);
+  await page.evaluate(async () => recordPane(activePane, []));
+  await page.evaluate(k => convHeld.delete(k), key);
+  const stored = await held(page, key);
+  expect(stored.backfilled).toBe(true);
+  expect(stored.entries.filter(e => e.text === 'first question')).toHaveLength(1);
+});
+
 test('a record this recorder wrote is never offered to the repair', async ({page}) => {
   // convDedupe calls a repeat within 200 entries a duplicate, and an agent that says "Done." twice
   // inside 200 entries said it twice. The gate is `backfilled`, which every record written since
