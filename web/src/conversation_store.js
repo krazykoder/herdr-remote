@@ -236,12 +236,12 @@
       return !msg.source || msg.source === 'recent-unwrapped';
     }
 
-    function recordPane(paneId, rows, recoveryId) {
+    function recordPane(paneId, rows) {
       const a = paneId ? paneOf(paneId) : null;
       if (!a || !profileFor(a.agent)) return;
       const key = convMemberKey(a);
       if (!convReferenced().has(key)) return;
-      return convQueue(key, () => recordPaneNow(a, key, rows, recoveryId));
+      return convQueue(key, () => recordPaneNow(a, key, rows));
     }
 
     // pane_content can arrive again before IndexedDB answers the first read. One queue per
@@ -276,7 +276,7 @@
     // read, or the end of one of its turns — so nothing is ever matched against a previous window
     // (§5.2). What a poll in between produces is the live draft, which is not history and is not
     // stored.
-    async function recordPaneNow(a, key, rows, recoveryId) {
+    async function recordPaneNow(a, key, rows) {
       const now = Date.now();
       const held = await convHold(key, now);
       const fresh = paneMessages(rows, a.agent);
@@ -305,9 +305,8 @@
       // safe, and it is not merely a nicety: a pane sitting at herdr's own scrollback ceiling comes
       // back the same length every time, so a watermark alone would refuse every recovery after the
       // first — on exactly the panes with the most history to lose.
-      const pending = convRecovering.get(key);
-      const recovery = !!(pending && pending.id === recoveryId);
-      const deep = held.backfilled && (recovery || rows.length > (held.depth || 0));
+      const asked = convRecovering.has(key);
+      const deep = held.backfilled && (asked || rows.length > (held.depth || 0));
       let before = [], add = [], noteGap = false;
       if (!held.backfilled) {
         // The first read.
@@ -367,10 +366,13 @@
       }
       // Answered on the first record after the press, whatever it found. A button that adds nothing
       // and says nothing reads as broken (§2.6).
-      // Resolved on a *deep* write and no other: the 3s poll writes turns of its own, and one
-      // landing first would report on a read nobody asked about while the recovery was still in
-      // flight.
-      if (recovery) {
+      // Resolved on a *deep* write and no other. `pane_content` echoes no request id — that is a
+      // wire change this spec refuses (§2.5) — so "deep" is the whole of what distinguishes the
+      // reply being waited for from any other read of the same pane. The reads that could race it
+      // are held off instead: the 3s poll cannot run above `POLL_MAX_LINES`, which a recovery puts
+      // the pane past on its first line, and `convReadTurnEnd` declines while one is pending.
+      const pending = deep ? convRecovering.get(key) : null;
+      if (pending) {
         clearTimeout(pending.timer);
         convRecovering.delete(key);
         // The background sweep is invisible by construction — no toast, no redraw. Capacity is the
@@ -503,6 +505,11 @@
       if (!endsTurn(status)) return;
       const a = paneOf(paneId);
       if (!a || !profileFor(a.agent) || !convReferenced().has(convMemberKey(a))) return;
+      // Not while a recovery is in flight for this transcript. `pane_content` carries no request
+      // id, so a 200-line reply landing first is indistinguishable from the deep one it would be
+      // reporting on — and this is the only other read anything sends for a pane nobody has open.
+      // Nothing is lost by skipping it: the deep read is a superset of it and lands moments later.
+      if (convRecovering.has(convMemberKey(a))) return;
       // Fixed source and length. `visible` is the live frame with the terminal's own breaks left in
       // and they land mid-word, so a turn read that way records a message no reader would recognise.
       ws.send(JSON.stringify(
@@ -601,9 +608,7 @@
         held.recovered = now;
         await convCommit(key);
       });
-      const id = `r${now}-${Math.random().toString(36).slice(2, 8)}`;
       convRecovering.set(key, {
-        id: id,
         loud: loud,
         // A read the relay never answers — the pane died, the socket went down mid-flight, the SSH
         // hop hung. Nothing else in the app would ever say so, because a read that produces no
@@ -619,10 +624,9 @@
       // The open pane cannot take the silent path: its reply lands on the draw branch, which would
       // replace the rows under the reader's finger. It gets Load more to the same depth instead
       // (§2.5), and the recorder does not care which of the two brought the rows.
-      if (a.pane_id === activePane) { paneLines = lines; refreshPane(false, id); }
+      if (a.pane_id === activePane) { paneLines = lines; refreshPane(); }
       else ws.send(JSON.stringify(
-        { type: 'read_pane', pane_id: a.pane_id, lines: lines, source: 'recent-unwrapped',
-          recovery_id: id }));
+        { type: 'read_pane', pane_id: a.pane_id, lines: lines, source: 'recent-unwrapped' }));
       return true;
     }
 

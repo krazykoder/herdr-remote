@@ -1246,21 +1246,15 @@ async def handle_client(ws, listener="lan"):
                 # live frame and nothing else is to read the frame rather than the backlog. An
                 # allowlist and not a pass-through — this string is an argv element.
                 source = "visible" if msg.get("source") == "visible" else "recent-unwrapped"
-                recovery_id = msg.get("recovery_id")
-                if not isinstance(recovery_id, str) or len(recovery_id) > 80:
-                    recovery_id = None
                 # Off the event loop, both of them. This is two subprocesses — an SSH round trip
                 # each for a remote pane — and every open pane on every client repeats it every
                 # few seconds. Run inline it stops the relay: the poll broadcast, every other
                 # client's approval, and the ping that keeps this socket alive all wait behind
                 # one client's deep read.
                 content, cols = await asyncio.to_thread(read_pane_content, pane_id, lines, source, remote)
-                reply = {
+                await ws.send(json.dumps({
                     "type": "pane_content", "pane_id": pane_id, "content": content,
-                    "source": source, "cols": cols}
-                if recovery_id:
-                    reply["recovery_id"] = recovery_id
-                await ws.send(json.dumps(reply))
+                    "source": source, "cols": cols}))
             elif msg_type == "send_keys":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)

@@ -39,15 +39,6 @@ const read = (page, text = PANE) => page.evaluate(async text => {
   await recordPane(activePane, paneRows);
 }, text);
 
-// The relay echoes a recovery_id only for the deep read that asked for it. An ordinary poll for
-// the same pane must stay ordinary while that response is in flight.
-const recoverRead = (page, text = PANE) => page.evaluate(async text => {
-  paneOf(activePane).status = 'done';
-  setPaneText(text);
-  const key = convMemberKey(paneOf(activePane));
-  await recordPane(activePane, paneRows, convRecovering.get(key)?.id);
-}, text);
-
 // Hold a pane at a status the fake herdr never reports. Setting it on the `agents` array alone
 // loses the race with the 3s poll, which replaces that array wholesale — so the snapshot itself is
 // what gets rewritten, on the way in and every time.
@@ -1871,11 +1862,8 @@ test('Recover history asks the relay for everything it has, and says what came b
     // what lets an operator raise it without the app being edited.
     const asked = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
     expect(asked.at(-1).lines).toBe(1e9);
-    // A regular poll that arrives first is not the recovery reply and must not consume its report.
-    await read(page, turns(2));
-    await expect(page.locator('#toast')).toContainText('Catching up');
     // The reply arrives on the ordinary draw path, and the recorder reports on the write it lands on.
-    await recoverRead(page, turns(6));
+    await read(page, turns(6));
     await expect(page.locator('#toast')).toContainText('Recovered 8 messages');
     expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(6);
   });
@@ -1885,7 +1873,7 @@ test('a recovery that finds nothing new says so rather than nothing at all', asy
   await join(page);
   await read(page, turns(2));
   await page.evaluate(() => recoverConvHistory());
-  await recoverRead(page, turns(2));
+  await read(page, turns(2));
   await expect(page.locator('#toast')).toContainText('Nothing new to recover');
 });
 
@@ -1897,7 +1885,7 @@ test('a window the record cannot be located in marks the break instead of guessi
     // /clear, or a scrollback that no longer reaches the record. Longer, so it is a deep read, and
     // with nothing in it the transcript can be joined to.
     await page.evaluate(() => recoverConvHistory());
-    await recoverRead(page, turns(6).replace(/Answer/g, 'Something else'));
+    await read(page, turns(6).replace(/Answer/g, 'Something else'));
     await expect(page.locator('#toast')).toContainText('Could not find where the record left off');
     // Nothing written, and the break remembered for the next thing that is.
     expect((await held(page, key)).entries.filter(e => e.who === 'agent').length).toBe(2);
@@ -2025,7 +2013,7 @@ test('the background sweep catches up the members nobody opened, quietly', async
   const mate = await partner(page, 60 * 60 * 1000);
   await tapWire(page);
   await page.evaluate(() => convRecoverSweep());
-  await expect.poll(() => deepReads(page)).toMatchObject([
+  await expect.poll(() => deepReads(page)).toEqual([
     {type: 'read_pane', pane_id: mate.pane, lines: 5000, source: 'recent-unwrapped'},
   ]);
   // Nobody is watching a background read, and a toast for one would be an interruption reporting
@@ -2062,7 +2050,7 @@ test('set to everything, the same catch-up asks for everything', async ({page}) 
   await tapWire(page);
   await page.evaluate(() => convRecoverSweep());
   // The sentinel, not a number: the relay clamps it to whatever it is configured for (§2.7).
-  await expect.poll(() => deepReads(page)).toMatchObject([
+  await expect.poll(() => deepReads(page)).toEqual([
     {type: 'read_pane', pane_id: mate.pane, lines: 1e9, source: 'recent-unwrapped'},
   ]);
 });
@@ -2081,6 +2069,25 @@ test('both recovery settings are remembered, and the pickers show what they are'
     // Off is off: no timer, so a member nobody opens fills in when someone finally does.
     expect(await page.evaluate(() => convSweepTimer)).toBe(null);
   });
+
+test('the turn-end read stands aside while a recovery is in flight', async ({page}) => {
+  // `pane_content` carries no request id, so a 200-line reply landing first is indistinguishable
+  // from the deep one being waited for. It is held off rather than told apart — and nothing is
+  // lost, because the deep read is a superset of it.
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  const pane = await page.evaluate(() => activePane);
+  await page.evaluate(() => closeTerminal());
+  await tapWire(page);
+  await page.evaluate(k => {
+    const a = agents.find(x => convMemberKey(x) === k);
+    convRecoverStart(a, false);
+    convReadTurnEnd(a.pane_id, 'idle');       // the turn that ended mid-recovery
+  }, key);
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane')))
+    .toEqual([{type: 'read_pane', pane_id: pane, lines: 5000, source: 'recent-unwrapped'}]);
+});
 
 test('a recovery nobody can send says so instead of pretending', async ({page}) => {
   await open(page);
