@@ -871,7 +871,7 @@
         const msgs = (c.members || []).reduce((t, m) => t + (m.messages || 0), 0);
         const meta = `${n} member${n > 1 ? 's' : ''}` + (msgs ? ` · ${msgs} messages` : '');
         return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="toggleConvMember('${escapeHtml(c.id)}')">
-      <span class="kind" aria-hidden="true">💬</span>
+      <span class="kind conv-kind" aria-hidden="true">💬︎</span>
       <span class="info"><span class="name">${escapeHtml(c.name)}</span><span class="meta">${meta}</span></span>
       <span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
     </button>`;

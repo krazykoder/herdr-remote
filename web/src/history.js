@@ -301,7 +301,7 @@
         ? `<button class="qa-conv${threaded ? ' on' : ''}" onclick="toggleConvView()" ` +
         `aria-pressed="${threaded}" ` +
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
-        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">💬</button>`
+        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}"><span class="conv-kind">💬︎</span></button>`
         : '';
       const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +

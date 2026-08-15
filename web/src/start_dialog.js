@@ -410,7 +410,7 @@
       const meta = `${n} pane${n === 1 ? '' : 's'}` + (live ? ` · ${live} live` : '');
       return `<button class="pair-pick${c.id === convViewId ? ' on' : ''}" ` +
         `onclick="closeRecentSheet(); openConversation('${escapeHtml(c.id)}')">` +
-        `<span class="kind" aria-hidden="true">💬</span>` +
+        `<span class="kind conv-kind" aria-hidden="true">💬︎</span>` +
         `<span class="info"><span class="name">${escapeHtml(c.name)}</span>` +
         `<span class="meta">${escapeHtml(meta)}</span></span>` +
         `</button>`;

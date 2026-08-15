@@ -104,7 +104,7 @@ test('a conversation visited is in the same list, in the same order', async ({pa
   const names = await rows(page).locator('.name').allTextContents();
   expect(names[0]).toContain('a thread');
   expect(names[1]).toContain(AGENT);
-  await expect(rows(page).first().locator('.kind')).toHaveText('💬');
+  await expect(rows(page).first().locator('.kind')).toHaveText('💬︎');
   await expect(rows(page).first().locator('.meta')).toContainText('1 pane · 1 live');
   // Only visited ones: every conversation is already one tap away on the landing page.
   await page.evaluate(() => {

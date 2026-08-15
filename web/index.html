@@ -1402,6 +1402,9 @@
       font-size: 0.75rem;
     }
 
+    /* Text presentation makes the chat glyph obey the shared green in every browser. */
+    .conv-kind { color: var(--green); font-family: Arial, sans-serif; }
+
     .order-row .info,
     .pair-pick .info {
       flex: 1;
@@ -3440,11 +3443,11 @@
       border-radius: 11px;
       border: 1px solid var(--border);
       background: var(--surface);
-      color: var(--muted);
+      color: var(--green);
       font-size: 0.7rem;
       font-weight: 400;
-      filter: grayscale(1);
-      opacity: 0.75;
+      filter: none;
+      opacity: 1;
     }
 
     .quick-actions .qa-nav button.qa-conv.on {
