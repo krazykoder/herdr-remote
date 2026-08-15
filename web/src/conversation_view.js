@@ -261,6 +261,9 @@
     // Both halves of the switch: the button that offers it and the view it selects.
     function renderConvBar() {
       renderQuickActions();
+      // The pair strip shares the pane composer, whose folded/thread state just changed. Repaint it
+      // with the same transition so an existing pair cannot retain an absent or stale strip.
+      renderPairStrip();
       renderConvView();
       // Which conversation the pane is reading is what the strip marks current, when the strip is
       // holding conversations. Diffed by its own signature, so this costs nothing when it is not.

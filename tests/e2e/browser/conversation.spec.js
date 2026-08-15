@@ -104,6 +104,19 @@ test('a pane in a conversation is recorded into the database', async ({page}) =>
   expect(rec.touched).toBeGreaterThan(0);
 });
 
+test('a paired pane keeps its pair strip in its conversation thread', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    toggleConvView();
+  });
+  await expect(page.locator('#convThread')).toBeVisible();
+  await expect(page.locator('#pairStrip')).toBeVisible();
+});
+
 test('an older bubble clock includes its short date', async ({page}) => {
   await open(page);
   const key = await join(page);
