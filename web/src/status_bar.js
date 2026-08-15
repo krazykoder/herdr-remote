@@ -142,12 +142,43 @@
 
     function renderTimeline() {
       const el = document.getElementById('timelineList');
-      if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
-      el.innerHTML = timeline.map(e => {
-        const t = e.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const color = e.status === 'blocked' ? 'var(--red)' : e.status === 'working' ? 'var(--green)' : 'var(--muted)';
-        return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
-      }).join('');
+      if (!timeline.length) {
+        el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>';
+      } else {
+        el.innerHTML = timeline.map(e => {
+          const t = e.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const color = e.status === 'blocked' ? 'var(--red)' : e.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
+        }).join('');
+      }
+      renderBandwidth();
+    }
+
+    function formatBandwidth(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function renderBandwidth() {
+      const panel = document.getElementById('bandwidth');
+      const rows = document.getElementById('bandwidthRows');
+      if (!panel || !rows) return;
+      panel.hidden = !bandwidthOn();
+      if (panel.hidden) return;
+      const buckets = bandwidthBuckets();
+      const kinds = [
+        ['Total', b => b.sent + b.received],
+        ['Sent', b => b.sent],
+        ['Received', b => b.received],
+      ];
+      rows.innerHTML = kinds.map(([label, value]) => `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+        `<div class="bandwidth-chips">${buckets.map((b, i) => {
+          const start = new Date(b.at), end = new Date(b.at + BANDWIDTH_BUCKET_MS);
+          const time = `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
+            end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+          return `<span class="bandwidth-chip" title="${label}, ${time}">${formatBandwidth(value(b))}</span>`;
+        }).join('')}</div></div>`).join('');
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
@@ -206,6 +237,10 @@
       let wsUrl = url;
       if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       ws = new WebSocket(wsUrl);
+      // Central wire accounting. Every caller goes through this socket, so instrumenting it here
+      // catches polls, sends, pushes and commands without duplicating counters at each call site.
+      const send = ws.send.bind(ws);
+      ws.send = data => { noteBandwidth('sent', data); return send(data); };
       // Re-announcing the push subscription here rather than only at subscribe time is what makes
       // it survive the socket being down at the wrong moment — on a phone that is most of the time.
       ws.onopen = () => {
@@ -221,7 +256,7 @@
         setTimeout(connect, 3000);
       };
       ws.onerror = () => setStatus('disconnected');
-      ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+      ws.onmessage = (e) => { noteBandwidth('received', e.data); handleMessage(JSON.parse(e.data)); };
     }
 
     // One update path for every status dot: the app header's and the term header's, so the

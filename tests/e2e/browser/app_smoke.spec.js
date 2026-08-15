@@ -32,6 +32,33 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+test('Activity tracks local WebSocket payload bytes in twelve five-minute buckets', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  // Off means no collection and no empty telemetry panel claiming an hour it did not observe.
+  await page.locator('#navTimeline').click();
+  await expect(page.locator('#bandwidth')).toBeHidden();
+  await page.locator('#navSettings').click();
+  await page.locator('#bandwidthOn').check();
+  await page.locator('#navTimeline').click();
+  await expect(page.locator('#bandwidth')).toBeVisible();
+
+  // A real request and its real relay reply exercise both central WebSocket hooks, rather than
+  // testing the counters by calling them directly.
+  await page.evaluate(() => ws.send(JSON.stringify(
+    {type: 'read_pane', pane_id: 'w1:p1', lines: 200, source: 'recent-unwrapped'})));
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets().at(-1).sent)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => bandwidthBuckets().at(-1).received)).toBeGreaterThan(0);
+
+  await expect(page.locator('#bandwidthRows .bandwidth-row')).toHaveCount(3);
+  for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
+    await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
+  }
+  expect(await page.evaluate(() => {
+    const b = bandwidthBuckets().at(-1);
+    return b.sent + b.received;
+  })).toBeGreaterThan(0);
+});
+
 test('the compiled distribution single-file boots and connects', async ({page}) => {
   await page.goto('/dist/');
   await expect(page.locator('#agents')).toBeVisible();

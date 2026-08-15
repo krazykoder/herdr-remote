@@ -13,6 +13,54 @@
     let shells = [];
     let timeline = [], prevStatuses = {};
 
+    // WebSocket payload bytes the browser can observe. Frame, TLS and transport overhead live below
+    // this API and are deliberately not guessed at. Kept for this session only, like the activity
+    // log it is shown beside: turning collection on starts a fresh hour rather than claiming to
+    // know traffic from before this page was open.
+    const BANDWIDTH_KEY = 'herdr_bandwidth', BANDWIDTH_BUCKET_MS = 5 * 60 * 1000,
+      BANDWIDTH_BUCKETS = 12;
+    let bandwidth = [];
+
+    function bandwidthOn() {
+      try { return localStorage.getItem(BANDWIDTH_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function setBandwidthOn(on) {
+      try { localStorage.setItem(BANDWIDTH_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: session-only */ }
+      if (!on) bandwidth = [];
+      const input = document.getElementById('bandwidthOn');
+      if (input) input.checked = !!on;
+      renderBandwidth();
+    }
+
+    function bandwidthBytes(data) {
+      if (typeof data === 'string') return new TextEncoder().encode(data).length;
+      if (data && typeof data.byteLength === 'number') return data.byteLength;
+      if (data && typeof data.size === 'number') return data.size;
+      return 0;
+    }
+
+    function noteBandwidth(direction, data, now) {
+      if (!bandwidthOn()) return;
+      const at = Math.floor((now || Date.now()) / BANDWIDTH_BUCKET_MS) * BANDWIDTH_BUCKET_MS;
+      let bucket = bandwidth.find(b => b.at === at);
+      if (!bucket) { bucket = {at: at, sent: 0, received: 0}; bandwidth.push(bucket); }
+      bucket[direction] += bandwidthBytes(data);
+      const cutoff = at - (BANDWIDTH_BUCKETS - 1) * BANDWIDTH_BUCKET_MS;
+      bandwidth = bandwidth.filter(b => b.at >= cutoff);
+      if (document.getElementById('timelineView')?.style.display === 'flex') renderBandwidth();
+    }
+
+    function bandwidthBuckets(now) {
+      const end = Math.floor((now || Date.now()) / BANDWIDTH_BUCKET_MS) * BANDWIDTH_BUCKET_MS;
+      return Array.from({length: BANDWIDTH_BUCKETS}, (_, i) => {
+        const at = end - (BANDWIDTH_BUCKETS - 1 - i) * BANDWIDTH_BUCKET_MS;
+        return bandwidth.find(b => b.at === at) || {at: at, sent: 0, received: 0};
+      });
+    }
+
     // When each pane last did anything. herdr reports no timestamps, so this is kept here and
     // persisted — without that, a reload would make every pane look untouched, which is the one
     // reading the dot must never give. Keyed by pane_id, and a pane_id herdr later reuses costs

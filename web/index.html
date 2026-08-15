@@ -624,6 +624,62 @@
       overflow-y: auto;
     }
 
+    /* Activity keeps its event log readable while the local wire summary stays pinned below it. */
+    #timelineView {
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    #timelineList {
+      flex: 1 1 50%;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .bandwidth {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .bandwidth h2 {
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .bandwidth-row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      font: 0.62rem monospace;
+    }
+
+    .bandwidth-label { color: var(--muted); }
+
+    .bandwidth-chips {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 4px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .bandwidth-chip {
+      flex: 0 0 auto;
+      min-width: 38px;
+      padding: 3px 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      text-align: center;
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
     /* Settings */
     .settings {
       display: none;
@@ -3888,6 +3944,12 @@
     </div>
 
     <div class="setting-group">
+      <label class="toggle-option"><input type="checkbox" id="bandwidthOn" onchange="setBandwidthOn(this.checked)"> Track WebSocket payload data</label>
+      <div class="hint">Shows sent, received and total payload bytes in Activity, in five-minute buckets
+        for this browser session. WebSocket frame and TLS overhead are not available to the page.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -3918,6 +3980,10 @@
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
+    <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
+      <h2>Data exchange · last hour</h2>
+      <div id="bandwidthRows"></div>
+    </section>
   </div>
 
   <!-- A conversation read as itself. Its own view and not the pane's thread panel, because the

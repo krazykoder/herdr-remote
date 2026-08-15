@@ -7,7 +7,7 @@
     // Every panel that takes the list's place, against the display mode it wants — adding one is a
     // line here rather than a line in each of the four functions below. Settings is display:none in
     // its class, so an empty string would hide it; the conversation view is a flex column.
-    const PANELS = { settingsView: 'block', timelineView: 'block', convView: 'flex' };
+    const PANELS = { settingsView: 'block', timelineView: 'flex', convView: 'flex' };
 
     function hidePanels() {
       for (const id in PANELS) document.getElementById(id).style.display = 'none';
