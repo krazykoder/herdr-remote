@@ -228,17 +228,14 @@
       border-top: 1px solid var(--border);
     }
 
-    /* The shell's last row at every width. Its bottom padding is as much the point as its
-       contents: ~20px keeps the text clear of the iPhone's bottom curve and home indicator.
-       env() resolves to 0 until P5 adds viewport-fit=cover, so the 20px stands alone for now and
-       the device inset simply adds to it once it starts reporting. */
+    /* Desktop needs only a compact footer; phones add their own safe-area inset below. */
     .status-bar {
       flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 5px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+      padding: 5px 14px calc(5px + env(safe-area-inset-bottom, 0px));
       font-size: 0.65rem;
       font-weight: 500;
       color: var(--muted);
@@ -1662,6 +1659,48 @@
        away the agent's context, and the pane re-reads itself anyway — so a tap to reach them is
        the right price for a header that fits. Same breakpoint as the rest of the layout. */
     @media (max-width: 767px) {
+      /* Phone thumbs reach the edges, while the home indicator lives under the centre. Keep the
+         walk's arrows out at the safe edges and leave Recent in the middle; time and state stay in
+         the DOM but do not spend this row's height. Esc remains beside Back when it is needed. */
+      .status-bar {
+        position: relative;
+        display: grid;
+        grid-template-columns: 68px minmax(0, 1fr) 68px;
+        grid-template-areas: 'back recent forward';
+        gap: 0;
+        padding-left: max(8px, env(safe-area-inset-left, 0px));
+        padding-right: max(8px, env(safe-area-inset-right, 0px));
+      }
+
+      .status-bar .walk { display: contents; }
+      .status-bar #navBack { grid-area: back; justify-self: start; width: 68px; min-height: 34px; margin-left: 10vw; }
+      .status-bar #recentBtn { grid-area: recent; justify-self: center; }
+      .status-bar #navFwd { grid-area: forward; justify-self: end; width: 68px; min-height: 34px; margin-right: 10vw; }
+
+      /* Reuse the reserved safe-area padding as a tiny footer rather than adding a second row. */
+      .status-bar .left {
+        position: absolute;
+        left: max(8px, env(safe-area-inset-left, 0px));
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 2px);
+        flex: none;
+        min-height: 0;
+        font-size: 0.5rem;
+      }
+
+      .status-bar #statusBarRight { display: block; font-size: 0.5rem; }
+
+      .status-bar .state {
+        position: absolute;
+        left: auto;
+        right: max(8px, env(safe-area-inset-right, 0px));
+        top: auto;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 2px);
+        transform: none;
+        display: flex;
+        flex: none;
+        min-height: 0;
+      }
+
       .fire-wrap {
         display: flex;
         position: relative;
@@ -4124,7 +4163,7 @@
          under it. -->
     <div class="conv-view-top">
     <div class="conv-view-head">
-      <button class="back" onclick="goBack()" aria-label="Back to list"><svg width="20" height="20"
+      <button class="back" onclick="showLanding()" aria-label="Back to list"><svg width="20" height="20"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
@@ -4198,7 +4237,7 @@
 
   <div class="terminal-view" id="terminalView">
     <div class="term-header">
-      <button class="back" id="termBack" onclick="goBack()" aria-label="Back to agent list"><svg width="20" height="20"
+      <button class="back" id="termBack" onclick="showLanding()" aria-label="Back to agent list"><svg width="20" height="20"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />

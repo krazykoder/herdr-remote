@@ -59,7 +59,7 @@
     //   'w1:p1'             a pane
     //   'conv:<id>'         a conversation window
     //   'panel:settingsView' a panel
-    //   'landing'           the agent list
+    //   'landing'           screen marker only; never a history entry
     const NAV_CONV = 'conv:', NAV_PANEL = 'panel:', NAV_LANDING = 'landing';
     function navIsConv(id) { return typeof id === 'string' && id.startsWith(NAV_CONV); }
     function navConvId(id) { return id.slice(NAV_CONV.length); }
@@ -80,11 +80,10 @@
 
     function noteConvNav(id) { noteVisit(NAV_CONV + id); }
     function notePanelNav(id) { noteVisit(NAV_PANEL + id); }
-    function noteLandingNav() { noteVisit(NAV_LANDING); }
 
     // A conversation is alive while its record exists; a pane is alive while herdr reports it. Both
     // are skipped when they are not, so a step never lands on a record that was deleted or a pane
-    // that has exited. A panel and the list are always reachable.
+    // that has exited. Panels are always reachable.
     function navAlive(id) {
       if (navIsConv(id)) return loadConvIndex().some(c => c.id === navConvId(id));
       if (navIsPanel(id) || id === NAV_LANDING) return true;
@@ -133,9 +132,7 @@
       if (window.cue) cue('page');
     }
 
-    // One Back for the whole app: the pane header's chevron, a panel's chevron and `‹` are the
-    // same step, so where Back lands is one answer rather than three that disagree the first time
-    // a pane is reached from the tab strip with a conversation still open.
+    // Panels use the walk. Pane and conversation header chevrons deliberately return to the list.
     function goBack() { if (!navGo(-1)) showLanding(); }
 
     // The walk's own controls live in the status bar, which is the one row on screen in every view —
@@ -154,12 +151,11 @@
       syncBackLabel();
     }
 
-    // The pane header's chevron is the same step as `‹`, so it says the same thing. Falls back to
-    // the list, which is where goBack lands when there is nowhere on the walk to step.
+    // The pane header always exits to the list; only the status-bar arrows walk history.
     function syncBackLabel() {
       const back = document.getElementById('termBack');
       if (!back) return;
-      back.setAttribute('aria-label', navTarget(-1) < 0 ? 'Back to the agent list' : navLabel(-1));
+      back.setAttribute('aria-label', 'Back to the agent list');
     }
 
     // What a destination is called in a label. The panel names are the words on the buttons that

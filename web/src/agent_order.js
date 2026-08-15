@@ -39,11 +39,8 @@
     // panel on top of the first, which the old one-deep memory did not.
     function closePanel() { goBack(); }
 
-    // The agent list, which is an entry too — it is where Back from the first pane of a session
-    // lands, and making it a destination rather than a special case is what lets one navGo answer
-    // every Back in the app.
+    // The agent list is an exit, not a history entry. Header back buttons always land here.
     function showLanding() {
-      noteLandingNav();
       // closeTerminal puts the list up itself, and does the rest of the teardown a pane needs.
       if (activePane) { closeTerminal(); return; }
       hidePanels();

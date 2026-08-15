@@ -43,19 +43,12 @@ test('a panel is a stop on the walk, and stacking two of them keeps both', async
   await expect(page.locator('#termTitle')).toContainText(AGENT);
 });
 
-test('the agent list is a stop too, so Back off the first pane is a step and not a special case',
+test('pane header Back always returns directly to the agent list',
   async ({page}) => {
     await openPane(page);
-    await expect(page.locator('#statusBar #navBack')).toHaveAttribute(
-      'aria-label', 'Back to the agent list');
     await page.locator('.term-header .back').click();
     await expect(page.locator('#agentListView')).toBeVisible();
-    // And forward again, which the old closeTerminal had no way to offer: leaving a pane used to
-    // be a dead end rather than a move.
-    const fwd = page.locator('#statusBar #navFwd');
-    await expect(fwd).toHaveAttribute('aria-label', new RegExp(`Forward to ${AGENT}`));
-    await fwd.click();
-    await expect(page.locator('#terminalView')).toBeVisible();
+    await expect(page.locator('#statusBar #navBack')).toBeDisabled();
   });
 
 test('the browser holds the cursor, so its own Back is the same step as ‹', async ({page}) => {
@@ -66,23 +59,46 @@ test('the browser holds the cursor, so its own Back is the same step as ‹', as
   // them, which is how Back and ‹ end up pointing at different entries.
   await page.goBack();
   await expect(page.locator('#terminalView')).toBeVisible();
-  await page.goBack();
-  await expect(page.locator('#agentListView')).toBeVisible();
   await page.goForward();
-  await expect(page.locator('#terminalView')).toBeVisible();
+  await expect(page.locator('#settingsView')).toBeVisible();
   // And the app's own arrow agrees about where it now stands, rather than having been left behind.
   await expect(page.locator('#statusBar #navBack')).toHaveAttribute(
-    'aria-label', 'Back to the agent list');
+    'aria-label', new RegExp(`Back to ${AGENT}`));
 });
 
-test('the landing page is the bottom of the stack, not a state of our own', async ({page}) => {
+test('desktop < and > walk history without stealing composer input', async ({page}) => {
+  await openPane(page);
+  await page.locator('#navSettings').click();
+  await page.keyboard.press('Shift+Comma');
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await page.keyboard.press('Shift+Period');
+  await expect(page.locator('#settingsView')).toBeVisible();
+  await page.locator('#settingsView input').first().focus();
+  await page.keyboard.press('Shift+Comma');
+  await expect(page.locator('#settingsView')).toBeVisible();
+});
+
+test('the landing page is not an app history entry', async ({page}) => {
   // Nothing has been visited, so there is nowhere back.
   await expect(page.locator('#statusBar #navBack')).toBeDisabled();
   await expect(page.locator('#statusBar #navFwd')).toBeDisabled();
-  // The list anchored the document's own entry rather than pushing a second one on top of it —
-  // otherwise the browser's Back would spend a press going nowhere before it could leave the app.
+  // No state is pushed until a real destination is opened.
   const before = await page.evaluate(() => history.length);
-  expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBe(1);
+  expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
   await page.reload();
   expect(await page.evaluate(() => history.length)).toBe(before);
+});
+
+test('phone navigation keeps the arrows at the safe edges', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  const box = id => page.locator(id).evaluate(el => {
+    const r = el.getBoundingClientRect(); return {left: r.left, right: r.right, width: r.width};
+  });
+  const [back, forward] = await Promise.all([box('#navBack'), box('#navFwd')]);
+  expect(back.left).toBeGreaterThanOrEqual(38);
+  expect(forward.right).toBeLessThanOrEqual(352);
+  expect(back.width).toBe(68);
+  expect(forward.width).toBe(68);
+  await expect(page.locator('#statusBarLeft')).toHaveCSS('font-size', '8px');
+  await expect(page.locator('#statusBarRight')).toHaveCSS('font-size', '8px');
 });

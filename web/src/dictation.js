@@ -195,6 +195,14 @@
         if (activePane || window.innerWidth < 768) return;
         if (stepTab(e.shiftKey ? -1 : 1)) { e.preventDefault(); e.stopPropagation(); }
       }
+
+      // Desktop only: < and > walk the same history as the footer arrows. Never steal text input
+      // or a modified shortcut; Shift is already part of producing these two characters.
+      if (window.innerWidth < 768 || e.altKey || e.metaKey || e.ctrlKey ||
+          (e.key !== '<' && e.key !== '>') ||
+          (e.target && typeof e.target.closest === 'function' &&
+            e.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
+      if (navGo(e.key === '<' ? -1 : 1)) e.preventDefault();
     }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
