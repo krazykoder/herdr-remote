@@ -2386,6 +2386,13 @@ const pickBubble = async (page, text) => {
   await expect(msg).toHaveClass(/picked/);
 };
 
+// Instructions attached to the send rather than written into the box. The default is the other
+// way round — the instruction on screen where it can be read — so the tests about lit chips say so.
+const attachMode = async page => {
+  await page.locator('#xferRow .xfer-chip.fill').click();
+  await expect(page.locator('#xferRow .xfer-chip.fill')).toHaveAttribute('aria-pressed', 'false');
+};
+
 const whoRow = page => page.locator('#xferRow .xfer-who');
 const litWho = page => page.locator('#xferRow .xfer-who.on');
 const sendPicked = page => page.locator('#xferRow .xfer-send').click();
@@ -2406,6 +2413,7 @@ test('the dock sends a picked message straight into another member', async ({pag
   await read(page);
   await tapWire(page);
   await openWindow(page);
+  await attachMode(page);
   await pickBubble(page, 'the other pane spoke first');           // scratch's
   await page.locator('#xferRow .xfer-chip').first().click();      // @review
   await sendPicked(page);
@@ -2498,6 +2506,7 @@ test('chips add up, in the order they were tapped', async ({page}) => {
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');
+  await attachMode(page);
   const at = name => page.locator(`#xferRow .xfer-chip:text-matches("^@${name}")`);
   await at('test').click();
   await at('review').click();
@@ -2518,6 +2527,7 @@ test('a chip tapped twice comes back out', async ({page}) => {
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');
+  await attachMode(page);
   const review = page.locator('#xferRow .xfer-chip').first();
   await review.click();
   await expect(review).toHaveAttribute('aria-pressed', 'true');
@@ -2579,6 +2589,7 @@ test('an instruction is spent by the send, the agent chosen is not', async ({pag
   await joinThird(page);
   await tapWire(page);
   await openWindow(page);
+  await attachMode(page);
   await whoRow(page).filter({hasText: 'scratch'}).click();
   await page.locator('#xferRow .xfer-chip').first().click();      // @review
   await compose(page, 'the diff is on the branch');
@@ -2636,6 +2647,7 @@ test('a direct transfer is recorded as a transfer, not as something typed', asyn
   const [mine] = await joinBoth(page);
   await read(page);
   await openWindow(page);
+  await attachMode(page);
   await pickBubble(page, 'the other pane spoke first');
   await page.locator('#xferRow .xfer-chip').first().click();
   await sendPicked(page);
@@ -2653,6 +2665,7 @@ test('@+ lists every instruction, and picking there is the same pick', async ({p
   await joinBoth(page);
   await read(page);
   await openWindow(page);
+  await attachMode(page);
   await pickBubble(page, 'the other pane spoke first');
   await page.locator('#xferRow .xfer-chip.more').click();
   const menu = page.locator('#chipMenu');
@@ -2663,6 +2676,25 @@ test('@+ lists every instruction, and picking there is the same pick', async ({p
   // The list is the same picks drawn twice, so it has to show the tap it just took.
   await expect(menu.locator('[aria-checked=true]')).toHaveText(/@architect/);
   await menu.locator('[role=menuitem]', {hasText: 'Done'}).click();
+  await expect(menu).toBeHidden();
+});
+
+test('the @+ list closes on a tap past it, and on a second tap of @+', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const menu = page.locator('#chipMenu');
+  const more = page.locator('#xferRow .xfer-chip.more');
+  await more.click();
+  await expect(menu).toBeVisible();
+  // A menu opened by mistake closes the way every other menu on a phone does.
+  await page.locator('#convViewThread .conv-msg').first().click();
+  await expect(menu).toBeHidden();
+  await more.click();
+  await expect(menu).toBeVisible();
+  // And the control that opened it is the control that closes it.
+  await more.click();
   await expect(menu).toBeHidden();
 });
 
@@ -2737,10 +2769,10 @@ test('the pills are sized by the conversation-text control, like the names above
     await page.evaluate(() => setConvFont(20));
     const [bigger] = await size();
     expect(parseFloat(bigger)).toBeGreaterThan(parseFloat(pill));
-    // The text grew; the tap target did not shrink with the small sizes.
+    // The text grew; the pill keeps a floor under it at the smallest sizes.
     await page.evaluate(() => setConvFont(6));
     expect((await page.locator('#xferRow .xfer-who').first().boundingBox()).height)
-      .toBeGreaterThanOrEqual(32);
+      .toBeGreaterThanOrEqual(26);
   });
 
 test('the composer draws its own block cursor, and it is always there', async ({page}) => {
@@ -2780,6 +2812,52 @@ test('the composer\'s own send carries the picked message too', async ({page}) =
   const body = await sentBody(page);
   expect(body).toContain('the other pane spoke first');
   expect(body.endsWith('and this is why')).toBe(true);
+});
+
+test('a chip writes its instruction into the box, and the toggle changes that',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await tapWire(page);
+    await openWindow(page);
+    // The default: what the agent will receive is on screen, editable, before anything is sent.
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+    await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
+    // Written at the caret, so a chip tapped mid-sentence adds to what was being typed.
+    await page.locator('#convInput').fill('here is the branch: ');
+    await page.evaluate(() => {
+      const i = document.getElementById('convInput');
+      i.setSelectionRange(i.value.length, i.value.length);
+    });
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@test")`).click();
+    await expect(page.locator('#convInput')).toHaveValue(/^here is the branch: Write the tests/);
+    // Nothing is lit, because the instruction is not waiting anywhere — it is in the box.
+    await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(1);  // the toggle
+    await page.locator('#convInput').fill('just this');
+    await compose(page, 'just this');
+    expect(await sentBody(page)).toBe('just this');
+    // Turned off, a chip goes back to riding the send instead.
+    await attachMode(page);
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+    await expect(page.locator('#convInput')).toHaveValue('');
+    await compose(page, 'and now this');
+    expect(await sentBody(page)).toContain('Review, edit, fix; then propose next steps.\n\nand now this');
+  });
+
+test('several members working at once each say so on their own newest bubble', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await forceStatus(page, 'scratch', 'working');
+  await forceStatus(page, AGENT, 'working');
+  await openWindow(page);
+  // A multi-agent panel: two panes working at the same time is the ordinary case here, not a
+  // conflict to resolve into one badge.
+  await expect(page.locator('#convViewThread .conv-badge.working')).toHaveCount(2);
+  // On the newest bubble of each member, not on every bubble they wrote.
+  const last = page.locator('#convViewThread .conv-msg').last();
+  await expect(last.locator('.conv-badge.working')).toHaveCount(1);
 });
 
 test('Resend repeats the last thing sent to this pane, and takes two taps', async ({page}) => {

@@ -214,6 +214,25 @@ face, case and size, and so are governed by the pane menu's conversation-text co
 the root font: a pill naming a member in a different type from the bubbles naming that same member
 reads as a different member. The text scales; the 32px tap target does not.
 
+**The chips and the pills are the same height** (26px). Two rows of controls in one bubble that do
+not line up read as two bars that happened to be stacked.
+
+**A chip writes its instruction into the box.** That is the default, because it is the honest one:
+what the agent will receive is on screen, editable, before anything is sent, and it is inserted at
+the caret so a chip tapped mid-sentence adds to what was being written. The `⤵` toggle beside `@+`
+turns it off, and a chip goes back to riding the send as a lit, ordinal-numbered instruction — for a
+long prompt that a wall of boilerplate above it would bury. Switching modes clears whatever was
+armed in the other one: an instruction that is invisible in the mode you are now in must not travel
+on the next send. The setting is remembered.
+
+**`@+` closes on a tap past it**, and on a second tap of `@+`. The listener is in the capture phase
+and excludes the chips — a chip's own handler rebuilds the list it was tapped in, so by the time a
+bubbled click arrived the target would be detached and the menu would close on its own taps.
+
+**The conversation window carries the `WORKING` badge too**, on each member's newest bubble — and
+several at once, because a panel for several agents is a panel where several of them are working.
+`syncConvBadge` is the pane thread's, given the box to write into.
+
 **The cursor is drawn, not borrowed.** A ghost copy of the text sits under a field whose own caret
 is transparent, and a block is painted at the caret — always, dimmed when the field is not focused.
 This is a box that types into terminals, and where the next character lands is worth knowing before

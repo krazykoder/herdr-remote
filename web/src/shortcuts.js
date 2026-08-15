@@ -91,6 +91,10 @@
     // report the content height — a px cap here would drift the moment the font size changes.
     function autoGrow(el) {
       el.style.height = 'auto';
+      // A field in a view that is not on screen measures 0, and pinning that 0 shut is a composer
+      // that opens as a sliver — the conversation window's is cleared while its view is hidden.
+      // Left at auto it is one row, which is what it grows from anyway.
+      if (!el.offsetParent) return;
       el.style.height = el.scrollHeight + 'px';
     }
 
@@ -845,6 +849,9 @@
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
       // After the thread is on screen: the picks are painted onto its bubbles, and the dock's row
       // says who is live and what is picked.
+      // What each member is doing right now, on that member's newest bubble — several at once in a
+      // conversation of several, which is the whole point of reading them together.
+      syncConvBadge('convViewThread');
       syncDockPicks(entries.length);
       renderConvDock();
       renderConvStrip();

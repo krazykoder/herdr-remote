@@ -1838,14 +1838,22 @@
       caret-color: transparent;
     }
 
-    /* Behind the text, mirroring it exactly, so the block lands where the caret is. Nothing here is
-       read by anyone — the textarea is still the field, and this is aria-hidden. */
+    /* Behind the text, mirroring it exactly, so the block lands where the caret is. Behind and not
+       over it: a block painted on top hides the character it sits on, and a cursor that eats a
+       letter is worse than no cursor. Nothing here is read by anyone — the textarea is still the
+       field, and this is aria-hidden. */
     .conv-ghost {
       position: absolute;
       inset: 0;
+      z-index: 0;
       color: transparent;
       pointer-events: none;
       overflow: hidden;
+    }
+
+    .conv-composer textarea {
+      position: relative;
+      z-index: 1;
     }
 
     /* A terminal's cursor, because this is a box that types into agents. Always drawn, dimmed when
@@ -2870,8 +2878,8 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 10px;
-      min-height: 32px;
+      padding: 3px 10px;
+      min-height: 26px;
       border-radius: 999px;
       border: 1px solid var(--border);
       background: var(--bg);
@@ -2916,8 +2924,10 @@
        order they were tapped, which is why a second one wears its position. */
     .xfer-row .xfer-chip {
       flex: 0 0 auto;
-      padding: 7px 11px;
-      min-height: 34px;
+      /* The same height as the pills above them: two rows of controls in one bubble that do not
+         line up read as two bars that happened to be stacked. */
+      padding: 3px 11px;
+      min-height: 26px;
       border-radius: 999px;
       border: 1px solid var(--border);
       background: var(--bg);
@@ -2944,8 +2954,8 @@
 
     .xfer-row .xfer-send {
       flex: 0 0 auto;
-      padding: 7px 13px;
-      min-height: 34px;
+      padding: 4px 13px;
+      min-height: 28px;
       border-radius: 999px;
       border: 1px solid var(--blue);
       background: var(--blue);

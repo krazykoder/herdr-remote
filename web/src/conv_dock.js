@@ -74,10 +74,47 @@
       if (window.cue) cue('tick');
     }
 
+    // What a chip does with its instruction: write it into the box, or attach it to the send.
+    //
+    // Writing it in is the default because it is the honest one — the instruction is on screen,
+    // editable, and what you see is what the agent gets. Attaching it keeps the box clear for a
+    // long prompt that a wall of boilerplate above it would bury, which is why the other mode
+    // exists rather than being an argument nobody won.
+    const DOCK_FILL_KEY = 'herdr_dock_fill';
+
+    function dockFill() { return localStorage.getItem(DOCK_FILL_KEY) !== 'off'; }
+
+    function toggleDockFill() {
+      try { localStorage.setItem(DOCK_FILL_KEY, dockFill() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      // Switching modes leaves nothing armed behind: an instruction attached in the other mode is
+      // invisible in this one, and an invisible instruction on a send is the thing to avoid.
+      dockPicks = [];
+      renderConvDock();
+      if (dockMenuOpen()) openDockMenu();
+      if (window.cue) cue('tick');
+    }
+
+    // The instruction, rewritten for the agent about to read it, at the caret. The composer keeps
+    // whatever is already in it — a chip tapped mid-sentence is someone adding to what they wrote.
+    function insertDockShortcut(i) {
+      const input = document.getElementById('convInput');
+      const text = agentSlash(SHORTCUTS[i].text, agentOf(dockAddressed()));
+      const at = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? at;
+      input.value = input.value.slice(0, at) + text + input.value.slice(end);
+      input.selectionStart = input.selectionEnd = at + text.length;
+      autoGrow(input);
+      syncConvCursor();
+      input.focus();
+      if (window.cue) cue('tick');
+    }
+
     // Additive. Two chips are two instructions, in the order they were tapped, and tapping one
     // again takes it back out — so the row is the sentence being built rather than a menu of
     // mutually exclusive ones.
     function toggleDockChip(i) {
+      if (dockFill()) return insertDockShortcut(i);
       const at = dockPicks.indexOf(i);
       if (at >= 0) dockPicks.splice(at, 1); else dockPicks.push(i);
       renderConvDock();
@@ -199,15 +236,24 @@
         `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
         `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}</button>`).join('');
       // Numbered by the order they were chosen, because that order is what will be written and two
-      // lit chips otherwise say nothing about which comes first.
+      // lit chips otherwise say nothing about which comes first. In fill mode nothing is lit at
+      // all: the instruction is in the box where it can be read, so a second place saying it is on
+      // would be saying it twice.
+      const fill = dockFill();
       const chips = SHORTCUTS.map((s, i) => {
-        const at = dockPicks.indexOf(i);
+        const at = fill ? -1 : dockPicks.indexOf(i);
         return `<button class="xfer-chip${at >= 0 ? ' on' : ''}" onclick="toggleDockChip(${i})" ` +
           `aria-pressed="${at >= 0}" title="${escapeHtml(s.label)}" ` +
-          `aria-label="Add the instruction ${escapeHtml(s.label)}">` +
+          `aria-label="${fill ? 'Write' : 'Add'} the instruction ${escapeHtml(s.label)}">` +
           `@${escapeHtml(s.at)}${at >= 0 && dockPicks.length > 1 ? `<sub>${at + 1}</sub>` : ''}` +
           `</button>`;
       }).join('');
+      // Which of the two a chip does, said by the control that changes it. Pressed is "into the
+      // box", because that is the mode where the instruction is visible.
+      const fillBtn = `<button class="xfer-chip fill${fill ? ' on' : ''}" onclick="toggleDockFill()" ` +
+        `aria-pressed="${fill}" title="${fill ? 'Instructions are written into the message' :
+          'Instructions are added to the message when it is sent'}" ` +
+        `aria-label="Write instructions into the message box">⤵</button>`;
       const n = dockPicked.size;
       // Send belongs to the bubbles. With nothing picked there is nothing for it to carry and the
       // composer's own send is what fires, so the row would be offering a second button for a
@@ -223,23 +269,31 @@
       // way back to the instructions that scrolled away, so it cannot scroll away itself.
       return `<div class="xfer-who-row">${who}</div>` +
         `<div class="xfer-act"><div class="xfer-chip-row">${chips}</div>` +
-        `<button class="xfer-chip more" onclick="openDockMenu()" ` +
+        `<button class="xfer-chip more" onclick="toggleDockMenu()" ` +
         `title="Every instruction, as a list" aria-label="Every instruction, as a list">@+</button>` +
-        send + `</div>`;
+        fillBtn + send + `</div>`;
     }
 
     // The same instructions as a list, for a row that has scrolled past the edge of a phone and for
     // reading the full label rather than its @name. It writes the same picks the chips do.
     function openDockMenu() {
       const box = document.getElementById('chipMenu');
+      const fill = dockFill();
       box.innerHTML = SHORTCUTS.map((s, i) =>
-        `<button class="menu-item" role="menuitemcheckbox" ` +
-        `aria-checked="${dockPicks.includes(i)}" onclick="toggleDockChip(${i})">` +
-        `<span class="tick">${dockPicks.includes(i) ? '✓' : ''}</span>` +
+        `<button class="menu-item" role="${fill ? 'menuitem' : 'menuitemcheckbox'}" ` +
+        (fill ? '' : `aria-checked="${dockPicks.includes(i)}" `) +
+        `onclick="toggleDockChip(${i})">` +
+        `<span class="tick">${!fill && dockPicks.includes(i) ? '✓' : ''}</span>` +
         `@${escapeHtml(s.at)} — ${escapeHtml(s.label)}</button>`).join('') +
         `<button class="menu-item" role="menuitem" onclick="closeDockMenu()">Done</button>`;
       box.hidden = false;
       syncDockHeight();
+    }
+
+    // `@+` is the menu's own toggle: a second tap on the control that opened it closes it, which
+    // is also what keeps it out of the tap-outside-to-close rule below.
+    function toggleDockMenu() {
+      if (dockMenuOpen()) closeDockMenu(); else openDockMenu();
     }
 
     function dockMenuOpen() {
@@ -353,11 +407,22 @@
       view.style.setProperty('--dock-h', (dock.hidden ? 0 : dock.offsetHeight) + 'px');
     }
 
-    function watchDockHeight() {
+    function initConvDock() {
       const dock = document.getElementById('convDock');
       // The cursor is drawn before anything is typed, because it is what says the box is a place to
       // type — that is the whole reason it is always on.
       syncConvCursor();
+      // A menu opened by mistake closes by tapping past it, the way every other menu on a phone
+      // does. One listener for the life of the page rather than one per open, so nothing has to be
+      // taken back off again. `@+` itself is excluded: it is the menu's own toggle.
+      // Capture, because a chip's own handler rebuilds the list it was tapped in: by the time a
+      // bubbled click reached here the target would be detached from the document and `closest`
+      // would say it came from nowhere, closing the menu on its own taps.
+      document.addEventListener('click', e => {
+        if (!dockMenuOpen()) return;
+        if (e.target.closest && e.target.closest('#chipMenu, .xfer-chip')) return;
+        closeDockMenu();
+      }, true);
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);
       syncDockHeight();

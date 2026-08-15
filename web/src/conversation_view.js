@@ -371,8 +371,10 @@
     // What each pane is doing right now, on that pane's newest bubble. Written in place rather
     // than by re-rendering the thread: the status arrives on every poll, and rebuilding the thread
     // three times a minute would take the reader's text selection with it mid-copy.
-    function syncConvBadge() {
-      const box = document.getElementById('convThread');
+    // Both threads use it: the pane's, and the conversation window's, which is a multi-agent panel
+    // where several members working at once is the ordinary case rather than the exception.
+    function syncConvBadge(id) {
+      const box = document.getElementById(id || 'convThread');
       if (!box || box.hidden) return;
       const msgs = Array.from(box.querySelectorAll('.conv-msg'));
       // The newest bubble of each member, not the newest bubble of the thread. In a joint thread
