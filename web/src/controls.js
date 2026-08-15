@@ -127,14 +127,17 @@
     function sendText() {
       const i = document.getElementById('termInput');
       if (!i.value || !ws || !activePane) return;
-      if (i.value.length > SEND_TEXT_MAX) {
-        showToast(`Text must be ${SEND_TEXT_MAX} characters or fewer.`); return;
-      }
       const paneId = activePane;
       // Before the send, while the composer still holds what is being sent: a transcript that
-      // cannot tell a transfer from typing claims the user said what another agent said.
+      // cannot tell a transfer from typing claims the user said what another agent said. The whole
+      // text, not a chunk of it — what was sent is one message, however many the wire took.
       noteSent(i.value, paneId);
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: i.value }));
+      // One message per chunk, then the single Enter that submits all of them. Nothing between the
+      // chunks submits, so they land in the agent's composer as one text; the relay handles a
+      // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
+      // is what makes the Enter behind them late enough to count.
+      for (const part of chunkText(i.value))
+        ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: part }));
       ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
       i.value = ''; autoGrow(i);
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);

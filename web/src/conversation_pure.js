@@ -12,7 +12,11 @@
     // twice. The one place text is still compared is the menu's duplicate repair, on records
     // written by the version that did fold windows together.
 
-    const CONV_TEXT_MAX = 4000, CONV_DEDUPE_WINDOW = 200;
+    // How much of one message a transcript stores. Not the wire's cap and never was: D1 says the
+    // record is what was said, and a record that cut a transferred diff at the length of one
+    // `send_text` could not answer "what did I send it". Still bounded — CONV_ENTRY_MAX counts
+    // entries, so an unbounded entry would make that ceiling mean nothing.
+    const CONV_TEXT_MAX = 16000, CONV_DEDUPE_WINDOW = 200;
     const CONV_OUTBOX_MAX = 50, CONV_OUTBOX_TTL = 30 * 60 * 1000;
 
     // Gutter glyph, the box side it may sit inside, and the leading space. Same characters as

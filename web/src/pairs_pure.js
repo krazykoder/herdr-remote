@@ -4,7 +4,45 @@
     const PAIRS_KEY = 'herdr_pairs';
     const PAIRS_VERSION = 1;
     const MAX_PAIRS = 32;
-    const SEND_TEXT_MAX = 4000;      // matches the relay cap in herdr_relay.py
+    // The relay's cap on one `send_text` message, and no longer a cap on what may be sent: text
+    // past it is split into this many characters at a time and typed into the same composer, then
+    // submitted by the single `send_keys ['Enter']` that follows. Restated here rather than asked
+    // for because the relay does not offer it — and it is the *oldest* relay's number, which is
+    // what makes a client-side split work against a relay this app did not ship with.
+    const SEND_TEXT_MAX = 4000;
+
+    // Text too long for one message, split into messages that are not. Line boundaries where there
+    // are any: a chunk boundary is invisible to the agent — it is one composer either way — but the
+    // relay's audit log records one line per message, and a log that cuts a diff mid-hunk is harder
+    // to read afterwards than one that does not.
+    //
+    // The newline stays with the line it ends, so the chunks concatenate back to exactly the input.
+    function chunkText(text, max) {
+      const cap = max || SEND_TEXT_MAX;
+      const s = String(text == null ? '' : text);
+      if (s.length <= cap) return s ? [s] : [];
+      const out = [];
+      let buf = '';
+      const flush = () => { if (buf) { out.push(buf); buf = ''; } };
+      const lines = s.split('\n').map((l, i, all) => i < all.length - 1 ? l + '\n' : l);
+      for (let line of lines) {
+        // One line longer than the cap has no boundary to break on, so it is cut. Never through a
+        // surrogate pair: half an emoji is a byte sequence the agent receives as a replacement
+        // character, and the two halves never rejoin.
+        while (line.length > cap) {
+          flush();
+          const lead = line.charCodeAt(cap - 1);
+          const n = lead >= 0xD800 && lead <= 0xDBFF ? cap - 1 : cap;
+          out.push(line.slice(0, n));
+          line = line.slice(n);
+        }
+        if (!line) continue;
+        if (buf.length + line.length > cap) flush();
+        buf += line;
+      }
+      flush();
+      return out;
+    }
 
     const SHORTCUTS = [
       { label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
@@ -112,10 +150,11 @@
     // one — the user selects the text and reads the prefilled composer before sending.
     function composeTransfer(instruction, from, text) {
       if (!text) return { error: 'Select some text in the pane first' };
-      const body = (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}`;
-      if (body.length > SEND_TEXT_MAX)
-        return { error: `Payload is ${body.length} characters, over the ${SEND_TEXT_MAX} limit — select less` };
-      return { text: body };
+      // No length check. A transferred selection is code or a diff and is routinely past one
+      // message's worth; the composer splits it (`chunkText`) rather than refusing it, and telling
+      // someone to "select less" was never advice about their work — it was the wire's limit
+      // wearing the shape of an editorial one.
+      return { text: (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}` };
     }
 
     // A ruler selection is a pair of line indices, and `pane read` returns the *last* N lines —
