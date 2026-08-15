@@ -126,8 +126,6 @@
 
     function setDockTarget(paneId) {
       dockTarget = paneId;
-      const a = agents.find(x => x.pane_id === paneId);
-      if (a) noteDockUse('who', convMemberKey(a));
       renderConvDock();
       if (window.cue) cue('tick');
     }
@@ -480,6 +478,7 @@
       if (!live) { showToast('That agent is no longer running.'); return; }
       const lead = dockInstruction(target);
       if (!sendTextTo(target, lead ? lead + '\n\n' + body : body)) return;
+      noteDockUse('who', convMemberKey(live));
       input.value = ''; autoGrow(input); syncConvCursor();
       // The instruction was attached to this message, so it goes with it. Who you are talking to
       // stays — that is the point of having chosen them.
@@ -538,6 +537,7 @@
         body: quoted, payload: out.text, hash: convHash(quoted), at: Date.now(),
       };
       if (!sendTextTo(target, kept ? out.text + '\n\n' + kept : out.text)) return;
+      noteDockUse('who', convMemberKey(live));
       input.value = ''; autoGrow(input); syncConvCursor();
       dockPicks = [];
       dockPicked.clear();

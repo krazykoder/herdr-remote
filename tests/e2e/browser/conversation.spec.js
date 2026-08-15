@@ -2829,6 +2829,10 @@ test('what was used last comes back to the left, and the sort can be turned off'
     expect((await names())[0]).toMatch(/Architect 1/);
     const firstChip = (await chips())[0];
     await whoRow(page).filter({hasText: 'amp'}).click();
+    // Choosing who to talk to is not writing to them. The recency promise is about the last agent
+    // written to, so an abandoned choice must not reshuffle the row under the next conversation.
+    expect((await names())[0]).toMatch(/Architect 1/);
+    await compose(page, 'remember this target');
     expect((await names())[0]).toMatch(/amp/);
     await page.locator(`#xferRow .xfer-chip-row .xfer-chip`).nth(1).click();
     const moved = (await chips())[0];
