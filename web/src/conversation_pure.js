@@ -39,9 +39,14 @@
       return text.length > CONV_TEXT_MAX ? text.slice(0, CONV_TEXT_MAX - 1) + '…' : text;
     }
 
-    // The comparison key, and only ever that: whitespace collapsed, so one message read at a phone
-    // width and at a desktop width is one string. Stored text stays as it was extracted.
-    function convKey(text) { return String(text == null ? '' : text).replace(/\s+/g, ' ').trim(); }
+    // The comparison key, and only ever that. Whitespace is dropped entirely rather than collapsed,
+    // because that is exactly the difference a terminal's own wrap makes: the same sentence read at
+    // a phone width and at a desktop width breaks in different places, and one of those breaks lands
+    // mid-word — "our loca l database" against "our local database". Collapsing runs of spaces could
+    // not close that, so a re-read of a message already recorded normalized to a string the anchor
+    // match had never seen, and the window it was in was written down as a gap or as a second copy.
+    // Stored text stays exactly as it was extracted; only what the recorder compares is normalized.
+    function convKey(text) { return String(text == null ? '' : text).replace(/\s+/g, ''); }
 
     // Everything said in this window, in window order: the agent's closing message per turn, and
     // each run of the user's own lines as one message rather than one per line.
@@ -230,34 +235,69 @@
     // recovers *less*: the newest for the append, the oldest for the prepend. A run that is short by
     // a few messages is a smaller wrong than a run that duplicates what is already recorded, because
     // the record is permanent and the duplicate is in it forever.
+    // The record's own newest agent message: the one thing a pane says that this app never wrote
+    // itself — a prompt it sent is in the record before any read, so it cannot be used to find where
+    // the record ends inside a window.
+    function newestAgentAt(entries) {
+      const es = entries || [];
+      for (let i = es.length - 1; i >= 0; i--) if (es[i].who === 'agent') return i;
+      return -1;
+    }
+
+    // How many of the record's own messages have to line up for a window position to be its end.
+    // One is not enough: agents close turns with the same words constantly, and a bare match on
+    // "Done." lands on whichever copy is newest — which is the *last* one on screen when the agent
+    // has just said it twice, and the turn between them is then invisible.
+    const CONV_ANCHOR_CONTEXT = 3;
+
+    // Everything this window holds past the record's end, or null when it cannot find that end — a
+    // `/clear`, a window shallower than the record, or a message whose text changed. Both writes ask
+    // this one question; what differs is how they stamp what comes back, not how it is found.
+    //
+    // Where more than one position lines up, the newest is taken: it is the one that recovers
+    // *less*, and a run short by a message is a smaller wrong than a run that duplicates what is
+    // already recorded, because the record is permanent and the duplicate is in it forever. A
+    // context line that falls off the top of the window is not a mismatch — it is absent, and a
+    // window is allowed to begin in the middle of the record.
+    function messagesAfterRecord(fresh, stored) {
+      const ms = fresh || [], entries = stored || [], newest = newestAgentAt(entries);
+      if (newest < 0) return null;
+      // Who said it is half of what a message is. A context slot matched on text alone would count
+      // the user's "ok" as the agent's, and the two speak in turn — so aligning on the wrong one is
+      // aligning half a turn out, which is exactly the off-by-one this context exists to prevent.
+      const back = Math.min(CONV_ANCHOR_CONTEXT, newest + 1);
+      const tail = entries.slice(newest + 1 - back, newest + 1)
+        .map(e => ({ who: e.who, key: convKey(e.text) }));
+      const same = (m, t) => !!m && m.who === t.who && convKey(m.text) === t.key;
+      let at = -1;
+      for (let i = ms.length - 1; i >= 0 && at < 0; i--) {
+        if (!same(ms[i], tail[tail.length - 1])) continue;
+        let lines = true;
+        for (let k = 1; k < tail.length && lines; k++) {
+          // Above the top of the window there is nothing to disagree with, and a window is allowed
+          // to begin in the middle of the record.
+          lines = i - k < 0 || same(ms[i - k], tail[tail.length - 1 - k]);
+        }
+        if (lines) at = i;
+      }
+      if (at < 0) return null;
+      // A prompt committed at the send sits after that anchor already, and its echo is in the
+      // window. Same rule `sentTurnEntries` applies for the same reason, over the entries the
+      // record holds past the anchor rather than over the sends alone.
+      const said = new Set(entries.slice(newest + 1)
+        .filter(e => e.who === 'user').map(e => convKey(e.text)));
+      return ms.slice(at + 1).filter(m => !(m.who === 'user' && said.has(convKey(m.text))));
+    }
+
     function deepEntries(fresh, stored, now) {
       const ms = fresh || [], entries = stored || [];
       const out = { before: [], add: [], gap: false };
       if (!ms.length || !entries.length) return out;
 
-      // Above the record: the newest agent entry, because an agent message is the one thing a pane
-      // says that this app never wrote itself — a prompt it sent is in the record before any read.
-      let newest = -1;
-      for (let i = entries.length - 1; i >= 0 && newest < 0; i--) {
-        if (entries[i].who === 'agent') newest = i;
-      }
-      if (newest >= 0) {
-        const key = convKey(entries[newest].text);
-        let at = -1;
-        for (let i = ms.length - 1; i >= 0 && at < 0; i--) {
-          if (ms[i].who === 'agent' && convKey(ms[i].text) === key) at = i;
-        }
-        if (at < 0) {
-          out.gap = true;
-        } else {
-          // A prompt committed at the send sits after that anchor already, and its echo is in the
-          // window. Same rule `sentTurnEntries` applies for the same reason, over the entries the
-          // record holds past the anchor rather than over the sends alone.
-          const said = new Set(entries.slice(newest + 1)
-            .filter(e => e.who === 'user').map(e => convKey(e.text)));
-          const add = ms.slice(at + 1).filter(m => !(m.who === 'user' && said.has(convKey(m.text))));
-          out.add = backfillEntries(add, now);
-        }
+      if (newestAgentAt(entries) >= 0) {
+        const after = messagesAfterRecord(ms, entries);
+        if (after === null) out.gap = true;
+        else out.add = backfillEntries(after, now);
       }
 
       // Below it: the oldest entry of any kind, since a transcript can begin on either speaker.
@@ -275,6 +315,26 @@
     // not the fold's own. A recovered turn passes no `end`: the reconnect is not when the agent
     // finished, and `read` is the honest stamp for "this is when it was found".
     function turnEntries(fresh, stored, now, end, recover) {
+      // Everything the window holds past the record's end, when it can be found. The last-block rule
+      // below is what this replaces, and it could only ever see the closing message plus the prompts
+      // directly above it — so an interrupt, a steer sent while the agent was working, a second
+      // prompt sent before the first reply, or anything typed straight into the pane was highlighted
+      // in the rows view and never became a message. They are all below the record's newest message,
+      // which is where this looks.
+      //
+      // Idempotent on the same window: what it appends ends on the newest message, so the next read
+      // anchors there and finds nothing beyond it. That is a second guard behind `lastTurn`, and it
+      // is the one that holds when a turn ends twice with the pane rewritten in between.
+      const after = messagesAfterRecord(fresh, stored);
+      if (after) return stampTurn(after, now, end);
+      // The window cannot locate the record's end at all — a `/clear`, or a transcript holding
+      // nothing an agent said. The last-block rule cannot see the intermediate inputs, but it does
+      // see the turn, and a turn recorded without its interruptions beats a turn not recorded.
+      //
+      // An *empty* answer is not this case and does not come here: the record's end was found, at
+      // the end of the window, so there is nothing past it. Falling back there would append the
+      // closing message a second time — which is what a turn ending twice over an unchanged pane,
+      // an interrupt being the ordinary way that happens, used to do.
       const picked = turnMessages(fresh);
       return stampTurn(newTurnMessages(stored, recover ? recoveredTurn(stored, picked) : picked),
         now, end);
@@ -452,10 +512,10 @@
     // normalized to a string the overlap match had never seen and everything on screen was appended
     // again. convRecordable stopped it happening; records written before it still carry the copies.
     //
-    // Whitespace is dropped entirely rather than collapsed, because that is exactly the difference
-    // the wrap made — "our loca l database" against "our local database".
+    // The comparison key already drops whitespace entirely, which is exactly the difference the wrap
+    // made — "our loca l database" against "our local database" — so this is that key, per speaker.
     function convDupKey(e) {
-      return (e.who || '') + '\u0000' + convKey(e.text).replace(/\s+/g, '');
+      return (e.who || '') + '\u0000' + convKey(e.text);
     }
 
     // Only a repeat inside one read window counts: an agent that says "Done." again an hour later

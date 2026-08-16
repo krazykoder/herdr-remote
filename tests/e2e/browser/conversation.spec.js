@@ -1114,6 +1114,60 @@ test('a conversation of two opens on the joint thread, both members in it', asyn
   await expect(page.locator('#convThread .conv-head')).toContainText('4 messages');
 });
 
+// A turn that was interrupted and carried on: the middle prompt is not the one above the closing
+// message, which is all the append could see before it was anchored to the record's own end.
+// Both windows are the same number of rows, deliberately: a window deeper than any this transcript
+// has been read from takes the recovery path instead, and the turn-end append is what is under test.
+const INTERRUPTED = ['❯ first question', '', '⏺ First answer.', '',
+                     '❯ wait, stop', '', '⏺ Stopped there.', '',
+                     '❯ carry on then', '', '⏺ Carried on.', '', '❯'].join('\n');
+const FIRST_TURN = new Array(8).fill('')
+  .concat(['❯ first question', '', '⏺ First answer.', '', '❯']).join('\n');
+
+test('an input made between two replies is recorded, not only the last block', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page, FIRST_TURN);
+  await page.evaluate(async rows => {
+    // The transition the recorder appends on, and the window as it stands when it lands. The two
+    // statuses are a millisecond apart on purpose: `turnEnd` is 0 while the ending stamp is not
+    // strictly newer than the working one, which is the pane still writing.
+    noteStatus(activePane, 'working');
+    await new Promise(r => setTimeout(r, 5));
+    noteStatus(activePane, 'idle');
+    paneOf(activePane).status = 'idle';
+    setPaneText(rows);
+    await recordPane(activePane, paneRows);
+  }, INTERRUPTED);
+  await page.locator('#quickActions .qa-conv').click();
+  const msgs = page.locator('#convThread .conv-msg');
+  await expect(msgs).toHaveCount(6);
+  // The one the rows view highlights and the thread used to leave out.
+  await expect(msgs.nth(2)).toContainText('wait, stop');
+  await expect(msgs.nth(3)).toContainText('Stopped there.');
+  await expect(msgs.nth(5)).toContainText('Carried on.');
+});
+
+test('the same window at a second turn end is not recorded twice', async ({page}) => {
+  // What an interrupt does: the pane ends a turn, is rewritten, and ends another over a window the
+  // record already holds. The append anchors on its own newest message and finds nothing past it.
+  await open(page);
+  await join(page);
+  await read(page, FIRST_TURN);
+  await page.evaluate(async rows => {
+    for (const at of [1, 2]) {
+      noteStatus(activePane, 'working');
+      await new Promise(r => setTimeout(r, 5));
+      noteStatus(activePane, at === 1 ? 'idle' : 'done');
+      paneOf(activePane).status = 'idle';
+      setPaneText(rows);
+      await recordPane(activePane, paneRows);
+    }
+  }, INTERRUPTED);
+  await page.locator('#quickActions .qa-conv').click();
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(6);
+});
+
 test('a turn ending reads that pane, wherever the app is looking', async ({page}) => {
   // The read behind every append. It follows the transition rather than the view, which is what
   // records a partner's half of a conversation while you are reading the other half.

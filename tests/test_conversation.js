@@ -153,6 +153,63 @@ test('an agent that answers one prompt twice records the prompt once', () => {
   assert.deepStrictEqual(texts(turn(stored, again, NOW + 1000, NOW + 900)), ['Second pass.']);
 });
 
+// Everything said between the record's newest message and the end of the window — an interrupt, a
+// steer sent while the agent was working, a prompt typed straight into the pane. The rows view
+// highlights all of them; before the turn append was anchored, only the last block was recorded and
+// the rest were highlighted on screen and absent from the thread.
+const MID_TURN = ['❯ a', '', '⏺ R1.', '', '❯ b', '', '⏺ R2.', '', '❯ c', '', '⏺ R3.', '', '❯'];
+
+test('an input between two replies is recorded, not just the last block', () => {
+  const stored = backfill(['❯ a', '', '⏺ R1.', '', '❯'], NOW);
+  const out = turn(stored, MID_TURN, NOW + 1000, NOW + 900);
+  assert.deepStrictEqual(texts(out), ['b', 'R2.', 'c', 'R3.']);
+  assert.deepStrictEqual(whos(out), ['user', 'agent', 'user', 'agent']);
+});
+
+test('only the message the transition ended carries that transition', () => {
+  const stored = backfill(['❯ a', '', '⏺ R1.', '', '❯'], NOW);
+  const out = turn(stored, MID_TURN, NOW + 1000, NOW + 900);
+  assert.deepStrictEqual(Array.from(out, e => e.at_src), ['read', 'read', 'read', 'state']);
+  assert.strictEqual(out[out.length - 1].at, NOW + 900);
+});
+
+test('the same window at the next turn end adds nothing', () => {
+  // The append ends on the newest message, so the next read anchors there and finds nothing beyond
+  // it. That is the guard that holds when a turn ends twice with the pane rewritten in between.
+  const stored = backfill(['❯ a', '', '⏺ R1.', '', '❯'], NOW);
+  const grown = stored.concat(turn(stored, MID_TURN, NOW + 1000, NOW + 900));
+  assert.deepStrictEqual(texts(turn(grown, MID_TURN, NOW + 2000, NOW + 1900)), []);
+});
+
+test('a prompt committed at the send is not recorded again by the anchored append', () => {
+  const stored = backfill(['❯ a', '', '⏺ R1.', '', '❯'], NOW)
+    .concat([{who: 'user', text: 'b', at: NOW + 500, at_src: 'sent'}]);
+  assert.deepStrictEqual(texts(turn(stored, MID_TURN, NOW + 1000, NOW + 900)),
+    ['R2.', 'c', 'R3.']);
+});
+
+test('a window that cannot find the record still records the turn it ended on', () => {
+  // A `/clear`: nothing on screen is anything the record holds, so there is no anchor. The
+  // last-block rule cannot see the intermediate inputs, but a turn recorded without its
+  // interruptions beats a turn not recorded at all.
+  const stored = backfill(['❯ old', '', '⏺ Long gone.', '', '❯'], NOW);
+  assert.deepStrictEqual(texts(turn(stored, MID_TURN, NOW + 1000, NOW + 900)), ['c', 'R3.']);
+});
+
+test('the anchor context is who said it as well as what was said', () => {
+  // Messages are built by hand here: the point is a window where the same words are said by both
+  // speakers, which no pane fixture produces reliably. Matching the context on text alone lines the
+  // record up half a turn out — the agent's own "ok" standing in for the user's — and everything
+  // between the two positions is then lost.
+  const stored = [{who: 'user', text: 'ok', at: NOW - 2, at_src: 'backfill'},
+                  {who: 'agent', text: 'A1.', at: NOW - 1, at_src: 'backfill'}];
+  const fresh = [{who: 'user', text: 'ok'}, {who: 'agent', text: 'A1.'},
+                 {who: 'agent', text: 'ok'}, {who: 'agent', text: 'A1.'},
+                 {who: 'user', text: 'next'}, {who: 'agent', text: 'A2.'}];
+  assert.deepStrictEqual(texts(turnEntries(fresh, stored, NOW, NOW)),
+    ['ok', 'A1.', 'next', 'A2.']);
+});
+
 test('a prompt already committed at the send is not read back off the pane', () => {
   // The transcript ends on a user entry, which is what "this app sent it" looks like from here.
   const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
@@ -280,12 +337,18 @@ test('a window with nothing an agent said in it writes no turn', () => {
 });
 
 test('the comparison key is not the stored text', () => {
-  // Collapsing whitespace is what the duplicate repair compares on; storing the collapsed form
-  // would run Codex's three closing paragraphs together.
+  // Whitespace is dropped entirely to compare on; storing that form would run Codex's three
+  // closing paragraphs together.
   const rows = ['❯ go', '', '⏺ First paragraph.', '', '  Second paragraph.', '', '❯'];
   const text = paneMessages(rows, 'claude')[1].text;
   assert.ok(text.includes('\n'), text);
-  assert.strictEqual(convKey(text), 'First paragraph. Second paragraph.');
+  assert.strictEqual(convKey(text), 'Firstparagraph.Secondparagraph.');
+});
+
+test('a message the terminal wrapped mid-word is the message it wrapped', () => {
+  // The whole reason the key drops whitespace rather than collapsing it: the same sentence read at
+  // two widths breaks in different places, and one of those breaks lands inside a word.
+  assert.strictEqual(convKey('our loca\nl database'), convKey('our local database'));
 });
 
 test('recording never mutates what it was given', () => {
@@ -582,12 +645,23 @@ test('the same window twice is one recovery, without a watermark to stop it', ()
   assert.strictEqual(again.gap, false);
 });
 
-test('an anchor said twice picks the occurrence that recovers less', () => {
-  // Duplicating what is already recorded is the worse of the two wrongs, so the newest occurrence
-  // wins on the append side and a short recovery is the price.
+test('an anchor said twice is told apart by what sits above it', () => {
+  // A bare text match could not tell the record's own A2. from a later turn that closed on the same
+  // words. It took the newest — safe against duplicating, and it silently dropped the turn between
+  // the two copies. The messages above the anchor say which copy it is.
   const said = FOUR_TURNS.map(r => (r === '⏺ A3.' ? '⏺ A2.' : r));
   const found = deepEntries(msgs(said), backfill(FIRST_TWO, NOW), LATER);
-  assert.deepStrictEqual(texts(found.add), ['q4', 'A4.']);
+  assert.deepStrictEqual(texts(found.add), ['q3', 'A2.', 'q4', 'A4.']);
+});
+
+test('an anchor whose context is identical too still recovers less', () => {
+  // Two turns that repeat word for word, prompt included. Nothing distinguishes the copies, so the
+  // newest wins and the recovery is short: duplicating what is already recorded is permanent, and
+  // being a turn behind is not.
+  const twice = ['❯ q1', '', '⏺ A1.', '', '❯ q2', '', '⏺ A2.', '',
+                 '❯ q1', '', '⏺ A1.', '', '❯ q2', '', '⏺ A2.', '', '❯ q3', '', '⏺ A3.', '', '❯'];
+  const found = deepEntries(msgs(twice), backfill(FIRST_TWO, NOW), LATER);
+  assert.deepStrictEqual(texts(found.add), ['q3', 'A3.']);
 });
 
 test('a prompt this app already committed is not recovered as well', () => {
