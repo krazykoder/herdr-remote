@@ -8,7 +8,7 @@
 // The pane text is the same checked-in read of a live Claude pane the vm slice asserts against.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 const fs = require('node:fs');
 const path = require('node:path');
 

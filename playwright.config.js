@@ -7,17 +7,16 @@
 // width — is only observable here.
 const {defineConfig, devices} = require('@playwright/test');
 
-const PORT = process.env.HERDR_PW_PORT || '8402';
-const HERE = __dirname;
-
 module.exports = defineConfig({
   testDir: './tests/e2e/browser',
-  // The relay is one process holding one fake herdr's state; parallel workers would race on it.
-  workers: 1,
-  fullyParallel: false,
+  // The relay is one process holding one fake herdr's state, so workers cannot share one. They do
+  // not: tests/e2e/browser/fixtures.js starts a relay per worker on its own port and points
+  // `baseURL` at it, which is what makes running them all at once safe. Half the cores, because
+  // each worker is a browser and a Python relay polling the fake on a timer.
+  workers: '50%',
+  fullyParallel: true,
   reporter: process.env.CI ? 'list' : [['list']],
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'retain-on-failure',
   },
   projects: [
@@ -25,24 +24,4 @@ module.exports = defineConfig({
     // a second project here would double every run for the few specs that need it.
     {name: 'desktop', use: {...devices['Desktop Chrome'], viewport: {width: 1440, height: 900}}},
   ],
-  webServer: {
-    command: `${HERE}/.venv313/bin/python ${HERE}/relay/herdr_relay.py`,
-    url: `http://127.0.0.1:${PORT}/`,
-    reuseExistingServer: false,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: {
-      PATH: `${HERE}/tests/e2e/bin:${process.env.PATH}`,   // fake ssh
-      HERDR_BIN: `${HERE}/tests/e2e/bin/herdr`,            // fake herdr
-      FAKE_LOG: `${HERE}/tests/e2e/fake_herdr.log`,
-      HERDR_RELAY_PORT: PORT,
-      HERDR_LAN_BIND: '127.0.0.1',
-      HERDR_LAN_OPEN: '1',        // no token: the browser connects straight to its own origin
-      HERDR_LOG_DIR: `${HERE}/tests/e2e/logs`,
-      HERDR_ENABLE_TERMINAL: '1',
-      HERDR_ENABLE_WRITE_EXT: '1',
-      // No HERDR_REMOTES: one host keeps the fake's deliberate cross-host pane-ID collisions out
-      // of the way, and the Projects fixture is not loaded because its entries name that host.
-    },
-  },
 });

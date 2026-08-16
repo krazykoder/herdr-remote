@@ -7,7 +7,7 @@
 // only a browser can hold a pointer down across it.
 //
 //   npx playwright test agent_order
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 // The fake herdr's three agents, in the order it reports them. `scratch` is the working one and
 // the other two are idle, which is what makes this fixture worth naming: the main page groups by

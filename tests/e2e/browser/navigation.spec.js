@@ -7,7 +7,7 @@
 // then shows the wrong thing is the failure that matters here.
 //
 //   npx playwright test tests/e2e/browser/navigation.spec.js
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 

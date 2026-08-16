@@ -6,7 +6,7 @@
 // that the setting is on the settings screen and survives a reload.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';   // the fake herdr reports this one idle
 const WORKING = 'scratch';     // and this one working

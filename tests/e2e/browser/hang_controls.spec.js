@@ -7,7 +7,7 @@
 // bolted together, one of which writes to IndexedDB.
 //
 //   npx playwright test hang_controls
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 

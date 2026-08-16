@@ -6,7 +6,7 @@
 // load.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 // Elements are addressed by the ids the single-file app gives them.
 const R = name => `#${name}`;

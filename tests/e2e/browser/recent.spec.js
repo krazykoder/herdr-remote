@@ -6,7 +6,7 @@
 // holding terminals as well as agents — none of which a vm slice can see.
 //
 //   npx playwright test tests/e2e/browser/recent.spec.js
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 const OTHER = 'scratch';
