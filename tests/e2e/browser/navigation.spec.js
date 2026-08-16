@@ -97,6 +97,9 @@ test('leaving by the header chevron rewinds the browser too', async ({page}) => 
 
 test('desktop , and . walk history without stealing composer input', async ({page}) => {
   await openPane(page);
+  // Same disabled edge as the footer Back: the shortcut must not turn into the header's exit.
+  await page.keyboard.press('Comma');
+  await expect(page.locator('#terminalView')).toBeVisible();
   await page.locator('#navSettings').click();
   // Unshifted: the keys the arrows are printed on, which is the whole point of moving off < >.
   await page.keyboard.press('Comma');

@@ -205,9 +205,7 @@
           !(e.key in WALK_KEYS) ||
           (e.target && typeof e.target.closest === 'function' &&
             e.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
-      // Back leaves to the list where the walk has nothing behind, exactly as ‹ does.
-      if (WALK_KEYS[e.key] < 0) { goBack(); e.preventDefault(); }
-      else if (navGo(1)) e.preventDefault();
+      if (navGo(WALK_KEYS[e.key])) e.preventDefault();
     }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;
