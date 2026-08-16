@@ -353,6 +353,13 @@
       return a ? JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']) : '';
     }
 
+    // When a conversation last had anything said in it, across its members. `convNoteCounts` stamps
+    // each member as it records, so this is the record's own clock and not the browser's. Asked by
+    // the landing list, by the tab strip's order, and by which thread a pane opens on.
+    function convSeenAt(c) {
+      return Math.max(0, ...((c && c.members) || []).map(m => Number(m.seen) || 0));
+    }
+
     function convHash(text) {
       const t = convKey(text);
       let h = 0x811c9dc5;

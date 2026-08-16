@@ -31,14 +31,19 @@
       const mine = convsForPane(a);
       if (!mine.length) return null;
       const want = convViews()[convMemberKey(a)];
-      // With nothing chosen, the widest record the user named. This used to be mine[0], which is
-      // index order — and a new conversation is prepended, so an auto pair record filed after a
-      // named one took the thread from it: the pane opened on its pair and every other member of
-      // the work was simply absent, with nothing on screen to say a wider thread existed.
-      // A named conversation is a statement and an auto one is a guess; among either, the one with
-      // more members is the one that says more. Ties keep index order, because sort is stable.
+      // A choice already made wins, and one is made for you on the way in: opening a pane *from* a
+      // conversation stores that conversation against it — see openConvMemberPane — so a pane
+      // reached from a thread opens on the thread it was reached from, every time.
+      //
+      // With nothing chosen, the one that is going on now. This was the widest record the user had
+      // named, which was already better than index order — but "widest" is a fact about the roster
+      // and the reader is asking about the work: a pane that belongs to last month's three-way and
+      // to this morning's pair should open on this morning's. Newest message first, then a named
+      // record ahead of an auto one, then the wider roster; ties keep index order, sort being
+      // stable.
       return mine.find(c => c.id === want) || mine.slice().sort((x, y) =>
-        (!!x.auto - !!y.auto) || ((y.members || []).length - (x.members || []).length))[0];
+        (convSeenAt(y) - convSeenAt(x)) || (!!x.auto - !!y.auto)
+        || ((y.members || []).length - (x.members || []).length))[0];
     }
 
     function convSetView(a, id) {
@@ -400,14 +405,51 @@
         // app exists to surface.
         const status = live && ['working', 'done', 'blocked'].includes(live.status)
           ? live.status : '';
-        let badge = el.querySelector('.conv-badge');
-        if (!status) { if (badge) badge.remove(); return; }
-        if (!badge) { badge = document.createElement('span'); el.appendChild(badge); }
+        let wrap = el.querySelector('.conv-live');
+        if (!status) { if (wrap) { if (wrap.contains(armedEl)) disarmButton(); wrap.remove(); } return; }
+        if (!wrap) {
+          wrap = document.createElement('span');
+          wrap.className = 'conv-live';
+          wrap.innerHTML = '<span class="conv-badge"></span>';
+          el.appendChild(wrap);
+        }
         // Assigned rather than compared away: writing the same string to the same node is what
         // makes this safe to run on every poll, and a badge that only changed when the status did
         // would still have to find that out by reading the node.
+        const badge = wrap.querySelector('.conv-badge');
         badge.className = 'conv-badge ' + status;
         badge.textContent = status;
+        // Esc, immediately left of the tag it belongs to. One per working pane rather than one for
+        // the app: the bar at the bottom of the screen could only ever stop the open pane, and the
+        // thread a reader is watching may have three members working at once.
+        let esc = wrap.querySelector('.conv-esc');
+        if (status !== 'working') {
+          // An arm must not survive the pane leaving the state the button existed for: it would
+          // come back armed the next time it worked, one tap from firing.
+          if (esc) { if (esc === armedEl) disarmButton(); esc.remove(); }
+          return;
+        }
+        if (!esc) {
+          esc = document.createElement('button');
+          esc.className = 'conv-esc arm-btn';
+          esc.textContent = 'Esc';
+          esc.setAttribute('aria-label', 'Stop this agent');
+          esc.onclick = () => armEscMember(esc, el.dataset.key);
+          wrap.insertBefore(esc, badge);
+        }
+      });
+    }
+
+    // Two taps, the same promise CLS and QUIT make in the header: stopping an agent mid-run is not
+    // undoable, and this button hangs over a thread a thumb is already scrolling. Addressed to the
+    // member's own pane, which in a joint thread is usually not the pane that is open.
+    function armEscMember(btn, key) {
+      const live = agents.find(x => convMemberKey(x) === key);
+      if (!ws || !live || live.status !== 'working') return;
+      armButton(btn, 'Esc?', () => {
+        ws.send(JSON.stringify({ type: 'send_keys', pane_id: live.pane_id, keys: ['Escape'] }));
+        showToast(`Sent Escape to ${paneLabel(live)}`);
+        burstPoll();
       });
     }
 

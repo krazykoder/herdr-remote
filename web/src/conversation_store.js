@@ -491,6 +491,24 @@
         : 'No duplicates found in this transcript');
     }
 
+    // The same repair, over the members the caller names and without the dialog: the hanging ⟳ is
+    // the reader asking for exactly this on a record they are looking at, and a confirmation on
+    // every refresh would make that button unusable. It reports what it removed and says nothing at
+    // all when it removes nothing — the ordinary outcome, and not news.
+    //
+    // Queued per transcript like every other write, so a tidy cannot land on top of a fold in
+    // flight. A member with no record of its own counts zero rather than failing: a conversation's
+    // roster outlives the transcripts in it.
+    async function convTidyQuiet(keys) {
+      const held = convReferenced();
+      let removed = 0;
+      for (const key of new Set(keys || [])) {
+        if (!key || !held.has(key)) continue;
+        removed += await convQueue(key, () => convDedupeNow(key));
+      }
+      return removed;
+    }
+
     // `Recover history` (§2.6). Every automatic trigger is bounded by a gate that can be wrong — a
     // gap too short to count, a pane the sweep has not reached yet — and the answer to a heuristic
     // that can miss is a button, not a looser heuristic.

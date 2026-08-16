@@ -348,9 +348,9 @@
         // The walk used to sit in a middle column here, where only a pane could reach it. It is in
         // the status bar now, one row down and on screen in every view, so the middle is empty
         // track rather than a second pair of arrows disagreeing with the first.
-        `<div class="qa-right">${summary}` +
-        `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
-        `aria-label="Jump to the newest line">Last</button></div></div>`;
+        // No Last here any more: the same jump hangs over the text itself, in the corner the end
+        // is in, and appears only while there is somewhere to jump to — see hangSync.
+        `<div class="qa-right">${summary}</div></div>`;
       let middle = '';
       if (blocked) {
         const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];

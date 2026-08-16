@@ -309,23 +309,38 @@ test('the composer sends to the pane that is open', async ({page}) => {
   await expect(page.locator(R('termInput'))).toHaveValue('');
 });
 
-test('Esc is beside a working pane badge, and takes two taps like CLS', async ({page}) => {
-  // The codex pane is the one the fake herdr reports as genuinely working, so the chip is on
-  // screen because the pane is working — not because the test set a field that the next snapshot,
-  // three seconds later, sets back.
+// A working pane, read as a thread, with one bubble in it — which is where the Esc lives now. The
+// codex pane is the one the fake herdr reports as genuinely working, so the tag is on screen
+// because the pane is working, not because the test set a field the next snapshot would undo.
+const workingThread = async page => {
   await page.locator('#agents .agent', {hasText: 'scratch'}).click();
-  await expect(page.locator('#statusBarRight')).toHaveText('working');
+  await expect(page.locator('#termContent')).toContainText('pane w8:p1');
+  await page.evaluate(async () => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([{id: 'c1', name: 'the release', created: Date.now(),
+      members: [{key: key, added: Date.now(), label: 'scratch'}]}]);
+    await convRecordSend(activePane, 'go on then');
+    toggleConvView();
+    await renderConvView();
+  });
+  await expect(page.locator('#convThread .conv-msg').first()).toBeVisible();
+};
+
+test('Esc hangs off a working bubble, and takes two taps like CLS', async ({page}) => {
+  await workingThread(page);
   const sent = [];
   await page.exposeFunction('__noteEsc', d => sent.push(JSON.parse(d)));
   await page.evaluate(() => {
     const send = ws.send.bind(ws);
     ws.send = d => { window.__noteEsc(d); return send(d); };
   });
-  const esc = page.locator('#abortBtn');
+  const esc = page.locator('#convThread .conv-esc');
   await expect(esc).toBeVisible();
+  // Left of the tag it acts on, which is the whole reason it is here rather than in a bar.
+  await expect(page.locator('#convThread .conv-live > *:first-child')).toHaveClass(/conv-esc/);
+  await expect(page.locator('#convThread .conv-badge')).toHaveText('working');
 
-  // The first tap only arms, and says so. Stopping an agent mid-run is not undoable, and this
-  // button sits under the thumb for as long as the pane is busy.
+  // The first tap only arms, and says so. Stopping an agent mid-run is not undoable.
   await esc.click();
   await expect(esc).toHaveText('Esc?');
   await expect(esc).toHaveAttribute('data-armed', '1');
@@ -338,13 +353,13 @@ test('Esc is beside a working pane badge, and takes two taps like CLS', async ({
 });
 
 test('an Esc left armed disarms itself rather than waiting', async ({page}) => {
-  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
-  const esc = page.locator('#abortBtn');
+  await workingThread(page);
+  const esc = page.locator('#convThread .conv-esc');
   await esc.click();
   await expect(esc).toHaveText('Esc?');
-  // 1.5s is the whole window, and a button left armed across a pocket is the accident the pair
+  // 2.5s is the whole window, and a button left armed across a pocket is the accident the pair
   // exists to stop.
-  await expect(esc).toHaveText('Esc', {timeout: 4000});
+  await expect(esc).toHaveText('Esc', {timeout: 5000});
 });
 
 test('an armed button is painted armed, not just labelled armed', async ({page}) => {
@@ -360,6 +375,14 @@ test('an armed button is painted armed, not just labelled armed', async ({page})
   };
   expect(await page.evaluate(painted, ['clsBtn', 'armClear']))
     .toEqual({fill: true, drain: 'arm-drain'});
-  expect(await page.evaluate(painted, ['abortBtn', 'abortWorking']))
-    .toEqual({fill: true, drain: 'arm-drain'});
+});
+
+test('the bubble Esc is painted armed too, on the longer window it gets', async ({page}) => {
+  await workingThread(page);
+  await page.locator('#convThread .conv-esc').click();
+  expect(await page.evaluate(() => {
+    const c = getComputedStyle(document.querySelector('#convThread .conv-esc'));
+    return {fill: c.backgroundImage.startsWith('linear-gradient'), drain: c.animationName,
+      window: c.animationDuration};
+  })).toEqual({fill: true, drain: 'arm-drain', window: '2.5s'});
 });

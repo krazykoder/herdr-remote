@@ -1,4 +1,9 @@
     // --- Bottom status bar ---
+    // One field: how long ago the open pane last changed. What the pane is *doing* used to sit at
+    // the other end with an Esc chip beside it, and both are on the thread now — a bar has one of
+    // everything and can only speak for the open pane, while a conversation has as many panes
+    // working at once as it has members. See syncConvBadge.
+    //
     // Left: how long ago the open pane last changed. Stamping every poll would read "now" forever
     // and mean nothing, so the stamp is taken only when the text differs — and, for the same
     // reason, the first paint after opening a pane does not count. That paint always "differs"
@@ -69,26 +74,6 @@
       syncNavBtns();
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
-      const right = document.getElementById('statusBarRight');
-      const abort = document.getElementById('abortBtn');
-      const [word, tone] = pane ? paneStatusWord() : ['', ''];
-      right.textContent = word;  // uppercased by .status-bar .right, not here
-      right.classList.toggle('on', tone === 'on');
-      right.classList.toggle('alert', tone === 'alert');
-      // A pane that stops working takes the button off screen, and an arm must not survive that:
-      // it would come back armed the next time the pane got busy, one tap from firing.
-      const away = !pane || pane.status !== 'working';
-      if (away && armedAt.abortBtn) disarmAbort();
-      abort.hidden = away;
-    }
-
-    // Two taps, the same as CLS and QUIT beside it in the header. Escape is not undoable either —
-    // it stops work that may have been running for minutes — and this button is the one that sits
-    // under the thumb while the pane is busy, which is exactly when it is easiest to brush.
-    function abortWorking() {
-      const pane = activePane ? paneOf(activePane) : null;
-      if (!pane || pane.status !== 'working') return;
-      armFire('abortBtn', () => { sendKey('Escape'); showToast('Sent Escape'); });
     }
 
     // Both halves go stale on their own — the left label by the minute, a shell's live/idle at the
