@@ -199,7 +199,11 @@
     function convLandingList() {
       const seenOf = convSeenAt;
       const countOf = c => (c.members || []).reduce((n, m) => n + (Number(m.messages) || 0), 0);
-      const by = (a, b) => seenOf(b) - seenOf(a) || countOf(b) - countOf(a);
+      // A conversation the user made outranks one the app filed for itself, however lively the auto
+      // one is: the named ones are the reader's own list, and an auto record that happens to be
+      // busy pushing them down the page is the app rearranging their shelf. Within each tier it is
+      // the work that decides — newest message first, then the fuller record.
+      const by = (a, b) => (!!a.auto - !!b.auto) || seenOf(b) - seenOf(a) || countOf(b) - countOf(a);
       const all = loadConvIndex().sort(by);
       const autos = all.filter(c => c.auto);
       return { all: all, autos: autos,
@@ -953,7 +957,6 @@
       closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened
       disarmQuit();
-      disarmAbort();
       disarmShortcut();
       disarmCtrl();
       refreshPane();
@@ -970,7 +973,6 @@
       closeFireMenu();
       disarmClear();
       disarmQuit();
-      disarmAbort();
       disarmShortcut();
       disarmCtrl();
       renderQuickActions();  // reads activePane, so it empties the bar now that there is none

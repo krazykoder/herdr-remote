@@ -20,8 +20,8 @@
     // The danger shortcuts in the palette keep the longer window — those are picked off a list
     // that has to be read first, not aimed at a button already under the thumb.
     const SHORTCUT_ARM_MS = 8000;
-    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT', abortBtn: 'Esc' };
-    const armedAt = { clsBtn: 0, quitBtn: 0, abortBtn: 0 };
+    const ARM_LABELS = { clsBtn: 'CLS', quitBtn: 'QUIT' };
+    const armedAt = { clsBtn: 0, quitBtn: 0 };
 
     // The two-tap arm, once. The label says what the second tap will do, because a button that
     // only changes colour when armed does not say what it is armed to send.
@@ -86,7 +86,6 @@
 
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
-    function disarmAbort() { disarmFire('abortBtn'); }
 
     // Sent as a line, not as keys: this is the pane's own command in both cases. No agentSlash
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands

@@ -247,15 +247,13 @@
       line-height: 1.2;
     }
 
-    /* Both spans hold a line's worth of height whether or not they have text in them.
-       Without it the bar collapsed by 12px the moment both went empty — and both go empty on
-       every pane switch, because opening a pane clears the change stamp and the status is not
-       known again until the first read comes back. That was a 12px shrink and re-expand about
+    /* The stamp holds a line's worth of height whether or not it has text in it. Without it the
+       bar collapsed by 12px the moment it went empty — and it goes empty on every pane switch,
+       because opening a pane clears the change stamp. That was a 12px shrink and re-expand about
        25ms apart, and since .terminal-view is the flex column's only flexible child, the whole
        pane and its text took the 12px both ways. That was the bounce.
-       They are flex items, so min-height applies to them even while they are empty. */
-    .status-bar .left,
-    .status-bar .right {
+       It is a flex item, so min-height applies to it even while it is empty. */
+    .status-bar .left {
       min-height: 1.2em;
     }
 
@@ -266,6 +264,14 @@
       flex: 1 1 0;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    /* The other half of that pair, now that the right-hand status word is gone: the walk is
+       centred by having as much room to its right as the stamp takes on its left, and an empty
+       span would be a node in the markup that exists for a margin. */
+    .status-bar::after {
+      content: '';
+      flex: 1 1 0;
     }
 
     /* The walk and its destination list, as one group, so it is the group that is centred and the
@@ -324,54 +330,10 @@
       border-color: var(--text);
     }
 
-    .status-bar .right {
-      flex-shrink: 0;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-
-    .status-bar .right.on {
-      color: var(--green);
-    }
-
-    /* Blocked is the one state the whole app exists to surface, so it is not left muted here
-       either — the header, the card and the dot all say it in red already. */
-    .status-bar .right.alert {
-      color: var(--red);
-    }
-
-    .status-bar .state {
-      flex: 1 1 0;
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 7px;
-    }
-
-    /* Esc comes and goes with `working`, and the chip is taller than the bar's line box — so its
-       height is reserved whether or not it is on screen. Without this the bar grew 6px the moment
-       a pane started working and shrank again when it stopped, which is the same bounce the
-       min-height above was written to kill, once per status change instead of once per switch.
-       Only while a pane is open: the chip cannot appear on the list screen, so neither can the
-       reservation. 1.16rem is the chip: a 0.65rem line at 1.2, plus 2px padding and 2px border. */
-    body.terminal-open .status-bar .state {
-      min-height: 1.16rem;
-    }
-
-    .status-bar .abort {
-      padding: 2px 6px;
-      font: inherit;
-      font-size: 0.65rem;
-      color: var(--red);
-      background: transparent;
-      border: 1px solid var(--red);
-      border-radius: 4px;
-      /* Wide enough for the armed label, so the chip does not jitter under the thumb between the
-         two taps. The status word beside it never moves either way — the group is right-aligned,
-         so the button grows away from it. */
-      min-width: 38px;
-      text-align: center;
-    }
+    /* What the open pane is doing, and the Esc that stops it, used to live at this end of the bar.
+       Both are on the thread now, on the newest bubble of every pane that is working — one line of
+       chrome for the whole app could only ever speak for the open pane, and a conversation of
+       several has several. See .conv-live. */
 
     /* Last row of all, below the app header — which itself sits at the bottom while a pane is open. */
     body.terminal-open>.status-bar,
@@ -1644,13 +1606,8 @@
     }
 
     /* The armed fill drains left to right over the arm window, so the 1.5s the second tap has is
-       something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS.
-       Esc in the status bar arms the same way and has to look armed the same way, because it is
-       the same two-tap promise — so it is a second selector rather than a broader one. Both parents
-       style their own button two classes deep, and a bare [data-armed] loses to every one of them:
-       the drain still runs, over a fill that was never painted. */
-    .term-header .cls-btn[data-armed="1"],
-    .status-bar .abort[data-armed="1"] {
+       something you watch rather than something you guess. Duration mirrors FIRE_ARM_MS. */
+    .term-header .cls-btn[data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
       background: linear-gradient(to right, var(--orange) 50%, var(--border) 50%) right / 200% 100%;
@@ -1665,8 +1622,7 @@
     /* A bar that empties in 1.5s is motion nobody asked for if motion is what they cannot take.
        The colour still says armed; only the countdown goes. */
     @media (prefers-reduced-motion: reduce) {
-      .term-header .cls-btn[data-armed="1"],
-      .status-bar .abort[data-armed="1"] {
+      .term-header .cls-btn[data-armed="1"] {
         background: var(--orange);
         animation: none;
       }
@@ -1746,11 +1702,10 @@
     @media (max-width: 767px) {
       /* Phone thumbs reach the edges, while the home indicator lives under the centre. Keep the
          walk's arrows out at the safe edges and leave Recent in the middle.
-         Two rows, not one: the change stamp and the Esc chip were absolutely positioned into the
-         bar's bottom padding, and that padding is 5px — so both landed on top of the arrows they
-         were meant to sit under. A stamp under the ‹ and an Esc chip over the › are not a footer,
-         they are a collision.
-         The arrows take the upper row and the captions the lower one. On a phone the last 30px of
+         Two rows, not one: the change stamp was absolutely positioned into the bar's bottom
+         padding, and that padding is 5px — so it landed on top of the arrows it was meant to sit
+         under. A stamp under the ‹ is not a footer, it is a collision.
+         The arrows take the upper row and the stamp the lower one. On a phone the last 30px of
          the screen are the home indicator's, and a control sitting in them is one the thumb has to
          aim past the gesture bar to reach — so what goes down there is the 8px stamp, which is
          read and never pressed. The bar is the same height either way, so the pane above it keeps
@@ -1760,38 +1715,30 @@
         grid-template-columns: 68px minmax(0, 1fr) 68px;
         grid-template-areas:
           'back  recent forward'
-          'stamp stamp  state';
+          'stamp stamp  stamp';
         column-gap: 0;
         row-gap: 2px;
         padding-left: max(8px, env(safe-area-inset-left, 0px));
         padding-right: max(8px, env(safe-area-inset-right, 0px));
       }
 
+      /* The flex spacer that centres the walk at desktop width; here the grid places everything,
+         and a stray pseudo-element would be auto-placed into a third row. */
+      .status-bar::after { content: none; }
+
       .status-bar .walk { display: contents; }
       .status-bar #navBack { grid-area: back; justify-self: start; width: 68px; min-height: 34px; margin-left: 10vw; }
       .status-bar #recentBtn { grid-area: recent; justify-self: center; }
       .status-bar #navFwd { grid-area: forward; justify-self: end; width: 68px; min-height: 34px; margin-right: 10vw; }
 
-      /* Both ends of the top row, at the size of a caption rather than of a control — neither is
-         pressed, and the row exists so the arrows below it can have the whole width. Spanning two
-         columns each, meeting in the middle: the stamp grows to the right and the state grows to
-         the left, so the longer of the two takes the room the other is not using. */
+      /* The lower row, at the size of a caption rather than of a control — it is not pressed, and
+         the row exists so the arrows above it can have the whole width. */
       .status-bar .left {
         grid-area: stamp;
         align-self: center;
         flex: none;
         min-height: 0;
         font-size: 0.5rem;
-      }
-
-      .status-bar #statusBarRight { display: block; font-size: 0.5rem; }
-
-      .status-bar .state {
-        grid-area: state;
-        grid-column: 2 / 4;
-        align-self: center;
-        justify-content: flex-end;
-        flex: none;
       }
 
     }
@@ -1960,17 +1907,21 @@
     .term-wrap.conv-on>.ruler,
     .term-wrap.conv-on>.sel-band,
     .term-wrap.conv-on>.sel-bubble,
-    .term-wrap.conv-on>.block-nav {
+    .term-wrap.conv-on .block-nav {
       display: none !important;
     }
 
+    /* Top padding is the floating row's, not decoration: .hang-float hangs over this corner, and a
+       first bubble that started under it would have its own pick and Esc covered by it. Scrolled
+       text still passes beneath the row — that is what floating means — but nothing is born under
+       it. 44px is the row (28) plus the 6px it hangs at, plus a bubble's own breathing room. */
     .conv-thread {
       flex: 1;
       min-width: 0;
       width: 100%;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      padding: 44px 12px calc(10px + env(safe-area-inset-bottom, 0px));
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -2778,10 +2729,41 @@
        message, so a column of them would read as a per-message history that does not exist — but a
        joint thread has more than one pane, and the partner working while someone else spoke last
        is exactly what a joint thread is for. */
-    .conv-badge {
+    /* The tag and the control that acts on what it reports, as one group hung off the bubble's
+       top-right corner. A group and not two absolutely-placed chips: the tag's width changes with
+       the word in it, and Esc has to stay beside the tag rather than beside a coordinate. */
+    .conv-live {
       position: absolute;
       top: -8px;
       right: 34px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Stopping the agent this bubble belongs to. Red like every other control that cannot be taken
+       back, and two taps like them — see armEscMember. Otherwise the tag's own chip to the letter:
+       same font, size, padding and radius, so the pair reads as one object rather than as a control
+       that wandered next to a label. */
+    .conv-esc {
+      padding: 1px 7px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.55rem;
+      line-height: inherit;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--red);
+      background: var(--surface);
+      border: 1px solid var(--red);
+      border-radius: 9px;
+      /* Wide enough for the armed label, so the chip does not jitter under the thumb between the
+         two taps. */
+      min-width: 38px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .conv-badge {
       padding: 1px 7px;
       border-radius: 9px;
       border: 1px solid;
@@ -2950,16 +2932,12 @@
       opacity: 0.3;
     }
 
-    /* Stepping between the agent's messages. Beside the ruler rather than on it: the handles
-       travel that track from top to bottom, and a tap target sitting on a drag target is how a
-       drag becomes a jump. Out of flow, so the pane keeps its full height. */
+    /* Stepping between the agent's messages. One member of the floating row — see .hang-float —
+       rather than placed on its own: it comes and goes with whether the pane has blocks to step,
+       and the buttons beside it must close the gap when it does. */
     .block-nav {
-      position: absolute;
-      top: 6px;
-      right: 36px;
       display: flex;
       gap: 4px;
-      z-index: 4;
     }
 
     /* display:flex outranks the user agent's [hidden] rule, so hiding it needs saying twice —
@@ -2980,32 +2958,52 @@
       line-height: 1;
     }
 
-    /* The two controls that hang over a thread: refresh-and-tidy at the top left, and the jump to
-       the newest message at the bottom right. Both are over the text rather than in a bar, because
-       both are about the text — and neither may take a row of height from it on a phone, where the
+    /* The row of controls that floats over the top-right corner of whatever is being read: refresh
+       and tidy, the jump to the newest message, and — in a pane — the ↑↓ step between the agent's
+       messages. Over the text rather than in a bar, because they are about the text and a phone's
        thread already shares the screen with a header, a composer and a footer.
 
-       Left, deliberately, for the refresh: the right-hand top corner is the ruler's, and the pane's
-       own ↑↓ block-nav sits beside it. */
-    .hang-btn {
+       Right and not left: the corner the eye already goes to for the step buttons is the corner the
+       rest belong in. Left of the ruler, which owns the edge itself. */
+    .hang-float {
       position: absolute;
+      top: 6px;
+      right: 36px;
       z-index: 5;
-      display: none;
+      display: flex;
       align-items: center;
       gap: 4px;
-      padding: 0;
-      width: 30px;
-      height: 30px;
+    }
+
+    /* In the conversation window there is no ruler to leave room for, and the row hangs off the
+       bottom edge of the sticky header instead of off the top of a pane — which is what keeps it
+       over the thread at every scroll position without measuring the header. Inset past the
+       bubbles' own edge rather than flush with it: a control level with the text it floats over
+       reads as part of the text. */
+    .conv-view-top .hang-float {
+      top: 100%;
+      right: 22px;
+      margin-top: 6px;
+    }
+
+    /* Sized and coloured as the step buttons beside them, because they are the same kind of thing
+       in the same corner: a row that mixed two button languages would read as two toolbars that
+       happened to collide. */
+    .hang-btn {
+      display: none;
+      align-items: center;
       justify-content: center;
-      border-radius: 999px;
+      gap: 4px;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
       line-height: 1;
       cursor: pointer;
-      /* Over text it would otherwise be hard to read against. */
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
     }
 
     .hang-btn:hover {
@@ -3013,34 +3011,20 @@
       border-color: var(--muted);
     }
 
-    .hang-tidy {
-      top: 8px;
-      left: 8px;
-    }
-
-    /* Wider than the round refresh: it carries a word, because an arrow alone in the corner of a
-       thread reads as "scroll" rather than as "you are not at the end". */
+    /* Wider than the square refresh, and only wider: it carries a word, because an arrow alone in
+       the corner of a thread reads as "scroll" rather than as "you are not at the end". Same size,
+       weight and colour as the chips it belongs with — a bolder one would read as the important
+       control in a set where none of them is. */
     .hang-last {
-      bottom: 10px;
-      right: 12px;
       width: auto;
-      height: 28px;
-      padding: 0 12px;
-      font-size: 0.7rem;
-      font-weight: 600;
-      color: var(--text);
-      background: var(--surface);
+      padding: 0 10px;
     }
 
     /* Shown by the scroll position, and only then: at the end of a thread there is no "last" to go
-       to, and a control that is always there is one the eye stops reading. */
+       to, and a control that is always there is one the eye stops reading. The refresh is not
+       conditional that way — it is on whenever there is something to refresh — but it is drawn by
+       the same class, so both are marked on the button itself. */
     .hang-btn.on {
-      display: inline-flex;
-    }
-
-    /* The refresh is not conditional — it is always available while there is something to refresh,
-       and both views mark that on the button itself rather than by scroll position. */
-    .hang-tidy.on {
       display: inline-flex;
     }
 
@@ -3051,8 +3035,17 @@
       border-color: var(--blue);
     }
 
-    /* A view that is its own scroller cannot hold an absolutely-positioned button still: it would
-       scroll away with the text. A zero-height sticky layer can, and costs no layout. */
+    /* The jump to the end, in the corner the end is in. The pane is not a scroller itself — its
+       rows and its thread are — so an absolute corner holds still here. */
+    .hang-corner {
+      position: absolute;
+      right: 12px;
+      bottom: 10px;
+      z-index: 5;
+    }
+
+    /* The same corner in a view that scrolls as a whole: a zero-height sticky layer costs no
+       layout and does not scroll away with the text. */
     .hang-layer {
       position: sticky;
       height: 0;
@@ -3060,22 +3053,17 @@
       pointer-events: none;
     }
 
-    .hang-layer .hang-btn {
-      pointer-events: auto;
-    }
-
-    .hang-top {
-      top: 0;
-    }
-
-    /* Above the floating dock, not behind it — the dock's own height is already measured for the
-       thread's padding, so this rides the same variable. */
     .hang-bottom {
       bottom: 0;
     }
 
-    .hang-bottom .hang-btn {
+    /* Above the floating dock, not behind it — the dock's own height is already measured for the
+       thread's padding, so this rides the same variable. */
+    .hang-layer .hang-btn {
+      position: absolute;
+      right: 22px;
       bottom: calc(var(--dock-h, 96px) + 10px);
+      pointer-events: auto;
     }
 
     .ruler {
@@ -4323,16 +4311,20 @@
          names them. They are reference and ownership, not reading: a panel two taps deep beats a
          block of chrome above every thread. -->
     <div class="conv-panel" id="convViewRoster" hidden></div>
-    </div>
-    <!-- The same two controls, in a view that is its own scroller: a zero-height sticky layer is
-         what lets a button hang over content that scrolls under it, since an absolute one inside a
-         scroll box scrolls away with the text. -->
-    <div class="hang-layer hang-top">
+    <!-- The same two controls the pane carries, in the same corner, hung off the bottom of the
+         header rather than placed in it: this view is its own scroller, and the header is already
+         sticky — so riding it is what keeps the pair over the thread at every scroll position
+         without measuring anything. -->
+    <div class="hang-float">
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">⟳</button>
     </div>
+    </div>
     <div class="conv-thread" id="convViewThread"></div>
+    <!-- The jump to the end, at the end. This view is its own scroller, so a zero-height sticky
+         layer is what holds a button still over content that scrolls under it — an absolute one
+         inside a scroll box scrolls away with the text. -->
     <div class="hang-layer hang-bottom">
       <button class="hang-btn hang-last" id="convLast" onclick="hangToLastConv()"
         aria-label="Jump to the newest message">↓ Last</button>
@@ -4387,8 +4379,6 @@
         aria-label="Recent panes">Recent ▴</button>
       <button class="nav-btn" id="navFwd" onclick="navGo(1)" aria-label="Forward">›</button>
     </span>
-    <span class="state"><button class="abort" id="abortBtn" onclick="abortWorking()" hidden
-      aria-label="Stop working agent">Esc</button><span class="right" id="statusBarRight"></span></span>
   </div>
 
   <div class="terminal-view" id="terminalView">
@@ -4551,14 +4541,6 @@
            the header above it. Over the thread rather than above it, for the reason .conv-panel
            gives: a thread that jumps a hundred pixels loses the reader's place. -->
       <div class="conv-panel" id="convPaneRoster" hidden></div>
-      <!-- Two controls that hang over whichever way this pane is being read, rows or thread. Over
-           and not in the header: they belong to the text being read, they are the same two controls
-           the conversation window carries, and the header is already full at a phone's width. -->
-      <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
-        title="Refresh, then remove any duplicates this transcript picked up"
-        aria-label="Refresh and tidy">⟳</button>
-      <button class="hang-btn hang-last" id="paneLast" onclick="hangToLast()"
-        aria-label="Jump to the newest message">↓ Last</button>
       <div class="term-content" id="termContent"></div>
       <!-- The same pane, read as a thread. A sibling of the rows rather than a replacement for
            them: switching views is a re-render of what is already in memory, and nothing about
@@ -4573,9 +4555,23 @@
         <div class="ruler-handle" id="rulerBot" hidden></div>
       </div>
       <div class="sel-bubble" id="selBubble" hidden></div>
-      <div class="block-nav" id="blockNav" hidden>
-        <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
-        <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
+      <!-- Everything that floats over this pane's top-right corner, in one row: refresh-and-tidy,
+           the jump to the newest message, and the step between the agent's messages. One row and
+           not three placements, so a control that is off — the nav has no blocks to step, the jump
+           is at the end already — takes its width with it instead of leaving a hole where the eye
+           learned to find the next button. Left of the ruler, which owns the edge itself. -->
+      <!-- Not in the row above: this one is about the end of the text, so it lives at the end of
+           the text — bottom right, where a thumb already is. -->
+      <button class="hang-btn hang-last hang-corner" id="paneLast" onclick="hangToLast()"
+        aria-label="Jump to the newest message">↓ Last</button>
+      <div class="hang-float">
+        <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
+          title="Refresh, then remove any duplicates this transcript picked up"
+          aria-label="Refresh and tidy">⟳</button>
+        <div class="block-nav" id="blockNav" hidden>
+          <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
+          <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
+        </div>
       </div>
     </div>
     <div class="sel-bar" id="selBar" hidden>

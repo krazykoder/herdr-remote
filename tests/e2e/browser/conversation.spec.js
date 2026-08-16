@@ -569,6 +569,25 @@ test('landing keeps auto conversations optional and bounded', async ({page}) => 
   await expect(page.locator('#conversations .section-action')).toHaveText('Hide auto (12)');
 });
 
+test('landing lists the named ones first, newest activity at the top of each tier',
+  async ({page}) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    const conv = (id, seen, auto) => ({id: id, name: id, created: 1, auto: auto,
+      members: [{key: id + ':m', added: 1, label: id, seen: seen, messages: 2}]});
+    localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on');
+    // Written in the order that is wrong on both counts: quietest named one first, and an auto
+    // record livelier than either of them.
+    saveConvIndex([conv('quiet', 1000), conv('busy-auto', 9000, true), conv('loud', 5000),
+      conv('old-auto', 2000, true)]);
+    toggleSection('conversations', true);
+    renderConversations();
+  });
+  expect(await page.evaluate(() => Array.from(
+    document.querySelectorAll('#conversations .conversation-card'))
+    .map(el => el.dataset.convId))).toEqual(['loud', 'quiet', 'busy-auto', 'old-auto']);
+});
+
 test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openCard(page);
@@ -1627,14 +1646,15 @@ test('the conversation view carries the conversations as tabs', async ({page}) =
   await page.locator('.term-header .back').click();
   await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
   const tabs = page.locator('#convStrip .conv-tab');
-  // Same list and same order as the landing page it was opened from — newest message first.
+  // Same list and same order as the landing page it was opened from — the named ones first,
+  // newest message at the top of each tier.
   await expect(tabs).toHaveCount(3);
   await expect(tabs.locator('.name')).toHaveText(
-    ['the release', 'relay · Architect 1', 'new authentication feature']);
+    ['the release', 'new authentication feature', 'relay · Architect 1']);
   await expect(tabs.nth(0)).toHaveAttribute('aria-current', 'true');
-  await expect(tabs.nth(1).locator('.tier')).toHaveText('auto');
+  await expect(tabs.nth(2).locator('.tier')).toHaveText('auto');
   // And a tab is how you move between them, without going back to the list.
-  await tabs.nth(2).click();
+  await tabs.nth(1).click();
   await expect(page.locator('#convViewTitle')).toHaveText('new authentication feature');
   await expect(page.locator('#convStrip .conv-tab[aria-current="true"] .name'))
     .toHaveText('new authentication feature');

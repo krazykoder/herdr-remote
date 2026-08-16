@@ -141,5 +141,4 @@ test('phone navigation keeps the arrows at the safe edges', async ({page}) => {
   expect(back.width).toBe(68);
   expect(forward.width).toBe(68);
   await expect(page.locator('#statusBarLeft')).toHaveCSS('font-size', '8px');
-  await expect(page.locator('#statusBarRight')).toHaveCSS('font-size', '8px');
 });

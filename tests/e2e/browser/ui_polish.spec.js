@@ -197,7 +197,7 @@ test('Summary never lands on the walk, at any phone width', async ({page}) => {
       // The .walk wrapper is display:contents on a phone — its children join the bar's own grid,
       // so it has no box of its own and the group has to be measured from them.
       return {bar: box(bar), left: box(bar.querySelector('.left')),
-        state: box(bar.querySelector('.state')), mid: box(bar.querySelector('#recentBtn')),
+        mid: box(bar.querySelector('#recentBtn')),
         arrows: [...bar.querySelectorAll('.nav-btn')].map(box)};
     });
     const row = await page.locator('#quickActions .qa-nav').evaluate(el =>
@@ -207,8 +207,8 @@ test('Summary never lands on the walk, at any phone width', async ({page}) => {
     for (const b of walk.arrows) {
       expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThanOrEqual(28);
       expect(b.x, `an arrow runs under the stamp at ${width}`).toBeGreaterThanOrEqual(walk.left.x);
-      expect(b.x + b.width, `an arrow runs past the state at ${width}`)
-        .toBeLessThanOrEqual(walk.state.x + walk.state.width);
+      expect(b.x + b.width, `an arrow runs off the bar at ${width}`)
+        .toBeLessThanOrEqual(walk.bar.x + walk.bar.width);
     }
     // The group is centred on the screen, not on what is left of the bar: the stamp above it
     // changes on every read, and a control that drifted with it would not be findable by feel.
