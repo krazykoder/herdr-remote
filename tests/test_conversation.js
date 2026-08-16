@@ -86,6 +86,19 @@ test('a window is the user and the agent in the order they spoke', () => {
     ['first question', 'First answer.', 'second question', 'Second answer.']);
 });
 
+test('everything the agent said in a turn is a message, not only what it closed on', () => {
+  // A turn is minutes of work and the agent narrates it. Recording one line per turn kept the
+  // conclusions and threw away the reasoning, and on a real pane that is most of what was said.
+  const rows = ['❯ build it', '', '⏺ Starting on it.', '', '⏺ Bash(npm test)', '  ⎿  ok', '',
+    '⏺ Tests pass.', '', '⏺ All done.', '', '❯'];
+  const ms = paneMessages(rows, 'claude');
+  assert.deepStrictEqual(texts(ms),
+    ['build it', 'Starting on it.', 'Tests pass.', 'All done.']);
+  // Still not the tool call: a block with a result glyph under it ran something rather than said
+  // something, which is the same rule the summary uses.
+  assert.ok(!ms.some(m => m.text.includes('npm test')), 'a tool call became a message');
+});
+
 test('the empty composer at the foot is not a message', () => {
   // It is a prompt line with nothing typed on it, and a thread full of blank user turns is the
   // most obvious way this feature could look broken.
@@ -215,6 +228,20 @@ test('a prompt already committed at the send is not read back off the pane', () 
   const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
   const out = turn(stored, TWO_TURNS, NOW, NOW - 1);
   assert.deepStrictEqual(texts(out), ['Second answer.'], 'the prompt is already in the transcript');
+});
+
+test('a steer made while the agent worked is recorded, even beside this app\'s own send', () => {
+  // The pane's first turn, and the only thing in the record is the prompt this app sent — so
+  // there is no agent entry to anchor the window against. That case used to fall to the last-block
+  // rule, which sees the closing message and the prompts glued directly above it and nothing else:
+  // an input typed at the keyboard or sent from a second browser mid-turn was never recorded at
+  // all, and nothing else was ever going to record it.
+  const stored = [{who: 'user', text: 'do X', at: NOW - 5000, at_src: 'sent'}];
+  const rows = ['❯ do X', '', '⏺ Starting on X.', '', '❯ also do Y', '', '⏺ Both done.', '', '❯'];
+  const out = turn(stored, rows, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(out), ['Starting on X.', 'also do Y', 'Both done.']);
+  // The echo of what this app sent is not a second copy of it.
+  assert.ok(!texts(out).includes('do X'), 'the sent prompt was read back on top of itself');
 });
 
 test('a first read keeps a sent prompt in place and appends its completed reply', () => {

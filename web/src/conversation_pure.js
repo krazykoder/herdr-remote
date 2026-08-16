@@ -56,7 +56,10 @@
     // is exactly what the overlap match reads as a new message. The trim belongs to the view.
     function paneMessages(rows, agent) {
       const found = [];
-      for (const at of turnSummaries(rows, agent)) found.push({ who: 'agent', at });
+      // Every message, not one summary per turn. The record is what the pane said; a turn's
+      // narration — what the agent was about to do, what a test reported, what it found — is part
+      // of that and used to be dropped on the floor. Tool blocks are still not messages.
+      for (const at of messageBlocks(rows, agent)) found.push({ who: 'agent', at });
       const userLines = userInputLines(rows, agent);
       // Codex's idle composer shares its prompt gutter. Its model/context status immediately
       // follows, unlike a sent prompt, which is followed by the agent reply.
@@ -189,14 +192,19 @@
     // with nothing else said between, records once. A prompt this app sent is exempt, because rule
     // one has already dropped it.
     function newTurnMessages(stored, turn) {
-      const entries = stored || [];
-      const last = entries[entries.length - 1];
-      if (last && last.who === 'user') return (turn || []).filter(m => m.who !== 'user');
-      let said = '';
-      for (let i = entries.length - 1; i >= 0 && !said; i--) {
-        if (entries[i].who === 'user') said = convKey(entries[i].text);
-      }
-      return (turn || []).filter(m => !(m.who === 'user' && said && convKey(m.text) === said));
+      const entries = stored || [], said = new Set();
+      // The prompts the record already ends on: the trailing run of user entries, or the newest
+      // one when an agent message closes the record. Their echoes are in the window and are not
+      // new; anything else the user said is.
+      //
+      // A set and not "every user message in the turn", which is what rule one used to drop. The
+      // record ending on a prompt says that prompt is already held — it says nothing about an
+      // input made after it, and an input made after it while the agent worked is exactly the one
+      // no other event will ever record.
+      let i = entries.length - 1;
+      while (i >= 0 && entries[i].who !== 'user') i--;
+      for (; i >= 0 && entries[i].who === 'user'; i--) said.add(convKey(entries[i].text));
+      return (turn || []).filter(m => !(m.who === 'user' && said.has(convKey(m.text))));
     }
 
     // A turn found sitting finished at a reconnect, rather than watched ending. There is no
@@ -235,12 +243,20 @@
     // recovers *less*: the newest for the append, the oldest for the prepend. A run that is short by
     // a few messages is a smaller wrong than a run that duplicates what is already recorded, because
     // the record is permanent and the duplicate is in it forever.
-    // The record's own newest agent message: the one thing a pane says that this app never wrote
-    // itself — a prompt it sent is in the record before any read, so it cannot be used to find where
-    // the record ends inside a window.
-    function newestAgentAt(entries) {
+    // The record's own newest message that was read off a pane. A prompt this app *sent* is in the
+    // record before any read, so it cannot be used to find where the record ends inside a window —
+    // it is there whether the pane has echoed it or not. Everything else was found on a pane, and
+    // is therefore in one.
+    //
+    // Not "the newest agent message", which is what this was. An agent entry is the commonest
+    // anchor and used to be the only one, and the cost of that was the first turn of every pane
+    // this app started: its record holds the send and nothing else, no agent entry exists to
+    // anchor on, and the whole turn fell to the last-block rule below — which cannot see an input
+    // made while the agent was working, so a prompt typed at the keyboard or sent from a second
+    // browser during that turn was never recorded at all.
+    function newestReadAt(entries) {
       const es = entries || [];
-      for (let i = es.length - 1; i >= 0; i--) if (es[i].who === 'agent') return i;
+      for (let i = es.length - 1; i >= 0; i--) if (es[i].at_src !== 'sent') return i;
       return -1;
     }
 
@@ -260,8 +276,21 @@
     // context line that falls off the top of the window is not a mismatch — it is absent, and a
     // window is allowed to begin in the middle of the record.
     function messagesAfterRecord(fresh, stored) {
-      const ms = fresh || [], entries = stored || [], newest = newestAgentAt(entries);
-      if (newest < 0) return null;
+      const ms = fresh || [], entries = stored || [], newest = newestReadAt(entries);
+      // Nothing in the record was ever read off the pane: it holds this app's own sends and
+      // nothing else, which is a pane whose first turn is ending. The seam is the oldest echo of
+      // one of those sends — the same seam a first read splits on, and for the same reason.
+      // Everything from there down belongs to the turn; everything above it is history this
+      // browser was never connected for, and history is backfill's to stamp, not a turn's.
+      //
+      // No echo at all means the window cannot be placed against the record, which is the one
+      // answer this function has for that: null, and the last-block rule takes it.
+      if (newest < 0) {
+        const sent = new Set(entries.filter(e => e.who === 'user').map(e => convKey(e.text)));
+        const echo = m => m.who === 'user' && sent.has(convKey(m.text));
+        const seam = ms.findIndex(echo);
+        return seam < 0 ? null : ms.slice(seam).filter(m => !echo(m));
+      }
       // Who said it is half of what a message is. A context slot matched on text alone would count
       // the user's "ok" as the agent's, and the two speak in turn — so aligning on the wrong one is
       // aligning half a turn out, which is exactly the off-by-one this context exists to prevent.
@@ -294,11 +323,9 @@
       const out = { before: [], add: [], gap: false };
       if (!ms.length || !entries.length) return out;
 
-      if (newestAgentAt(entries) >= 0) {
-        const after = messagesAfterRecord(ms, entries);
-        if (after === null) out.gap = true;
-        else out.add = backfillEntries(after, now);
-      }
+      const after = messagesAfterRecord(ms, entries);
+      if (after === null) out.gap = true;
+      else out.add = backfillEntries(after, now);
 
       // Below it: the oldest entry of any kind, since a transcript can begin on either speaker.
       const oldest = entries[0], okey = convKey(oldest.text);

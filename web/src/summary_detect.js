@@ -273,6 +273,29 @@
       return out;
     }
 
+    // Every message in the window, in order — each block that said something rather than ran
+    // something. `turnSummaries` above answers a different question and keeps its own: stepping
+    // wants one stop per turn, because between two prompts an agent says a dozen things and only
+    // the last of them answers the question.
+    //
+    // The record wants all of them. A turn is minutes of work and the agent narrates it — what it
+    // is about to do, what a test said, what it found on the way — and a transcript holding only
+    // the closing line of each turn is a transcript of the conclusions with the reasoning cut out.
+    // Tool blocks are still not messages: `blockSpan` returns null for a block with a result glyph
+    // under it, which is the same rule the summary uses.
+    function messageBlocks(rows, agent) {
+      const g = profileFor(agent), out = [];
+      if (!g || !rows) return out;
+      for (let i = 0; i < rows.length; i++) {
+        if (!startsBlock(rows, g, i)) continue;
+        const at = blockSpan(rows, g, i);
+        // Past the end of the block, not past its first line: a block's own body must not be
+        // scanned for starts, or an indented harness opens a second block inside the first.
+        if (at) { out.push(at); i = at[1]; }
+      }
+      return out;
+    }
+
     // Every turn's closing message, as line numbers, trimmed the way this user trims. Scrolling
     // back is exactly when the marks earn their keep: the newest summary is on screen anyway, and
     // the one being hunted for is four screens up. Falls back to the pane's final message on a
