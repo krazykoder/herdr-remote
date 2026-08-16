@@ -53,6 +53,24 @@
       catch (e) { /* private mode: this session only */ }
     }
 
+    // Carry the thread across a pair switch. A pair is two panes on one job, so stepping between
+    // them should not change which record you are reading — the partner arrives showing the same
+    // conversation, the way a pane opened from the conversation window does.
+    //
+    // Only when the partner is actually in it. A pane in three conversations still has its own
+    // answer to "which of them", and forcing this one on it would file its thread under a record
+    // it never joined. Then it keeps whatever it had, and the fallback decides as before.
+    //
+    // Nothing carries off a pane being read as rows either: the source is not reading a thread, so
+    // there is no thread to keep, and switching would turn one on for the partner unasked.
+    function carryConvToPane(from, to) {
+      if (!from || !to || !convViewOn(from)) return;
+      const conv = convViewConv(from);
+      const key = to && convMemberKey(to);
+      if (!conv || !key || !(conv.members || []).some(m => m.key === key)) return;
+      convSetView(to, conv.id);
+    }
+
     function toggleConvView() {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
@@ -367,7 +385,8 @@
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
-          : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>'));
+          : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>')) +
+        convDraftSlotHtml(a, key, drafts, paired);
       // Which bubble Summary means, found once here rather than by the button every render. The
       // button is only rebuilt when the answer changed — it is on the poll path.
       const wasFinal = convLastAgent;
@@ -381,6 +400,45 @@
       syncConvBadge();
       drawConvSel();
       if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // The draft slot at the foot of a pane's thread: one bubble held open for as long as the pane
+    // is working, empty until the parser has something out of the live pane and carrying it the
+    // moment it does.
+    //
+    // A slot rather than a bubble that appears and disappears mid-turn. The draft used to exist
+    // only while the pane was working *and* the parser had found a block, so watching a pane work
+    // meant a bubble popping in partway through the turn, pushing the scroll, and popping out
+    // again at the end — and a pane working with nothing parsed out of it yet looked like a pane
+    // doing nothing. The slot holds that place open for the whole turn, so what changes is the
+    // text in it and not the shape of the thread.
+    //
+    // Outside the entry list, deliberately. Picks, Summary, the message count and the empty state
+    // are all positions in the list that was drawn, and a placeholder in it would be a pickable,
+    // countable message with nothing in it — Summary would select a blank bubble.
+    //
+    // Only while provisional content is shown. With "final messages only" on, the reader has asked
+    // for the settled record and nothing else, and a draft slot is the opposite of that.
+    // Only the pane being read, too: in a joint thread a slot per member is three empty bubbles
+    // for a question nobody asked about the other two.
+    function convDraftSlotHtml(a, key, drafts, paired) {
+      if (convFinalOnly()) return '';
+      // A real draft is already in the list, in this same place. One bubble in both states.
+      if ((drafts || []).some(d => d.key === key)) return '';
+      const live = paneOf(a.pane_id);
+      // Nothing is coming until the pane is working. An empty draft over a pane that finished its
+      // turn is a promise the thread cannot keep.
+      if (!live || live.status !== 'working') return '';
+      const color = agentColor(a.agent) || 'var(--muted)';
+      const dot = statusColor(live);
+      const who = `<span class="dot pulse" style="background:${dot}"></span>` +
+        `${escapeHtml(paneLabel(a) || '')}${agentBadge(a.agent)}`;
+      // `conv-slot` and not `conv-msg`: it looks like a bubble but it is not a message, and the
+      // pick handler, Summary, Last and the badge writer all find messages by that class.
+      return `<div class="conv-slot provisional draft${paired ? ' conv-right' : ''}" ` +
+        `data-key="${escapeHtml(key)}" style="--conv-agent:${color}">` +
+        `<span class="conv-who">${who}<span class="conv-state">draft</span></span>` +
+        `<span class="conv-waiting">Nothing parsed out of the live pane yet.</span></div>`;
     }
 
     // What each pane is doing right now, on that pane's newest bubble. Written in place rather
@@ -478,7 +536,8 @@
           mine.map(c => `<option value="${escapeHtml(c.id)}"${c.id === conv.id ? ' selected' : ''}>` +
             `${escapeHtml(c.name)}</option>`).join('') + '</select>'
         : `<span class="name">${escapeHtml(conv.name)}</span>`;
-      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+      return `<div class="conv-head">${name}` +
+        `<span class="count">${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
     // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue

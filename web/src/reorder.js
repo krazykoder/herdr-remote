@@ -335,7 +335,10 @@
       const pair = activePane ? pairFor(pairs, activePane) : null;
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
       const keepComposer = document.activeElement === document.getElementById('termInput');
-      openTerminal(partnerOf(pair, activePane).pane_id);
+      const to = partnerOf(pair, activePane).pane_id;
+      // Before the switch, because the thread the partner opens on is read during it.
+      carryConvToPane(paneOf(activePane), paneOf(to));
+      openTerminal(to);
       if (keepComposer) document.getElementById('termInput').focus();
       if (window.cue) cue('page');
     }

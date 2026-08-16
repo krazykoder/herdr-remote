@@ -482,6 +482,11 @@
     }
 
     // Dismiss on any click outside the menu and its button, and on Escape.
+    //
+    // Capture, not bubble. Several of these panels hold buttons that re-render the panel they are
+    // in — "Add pane" is one — and by the time a bubbled click reached here its target had been
+    // detached, so `closest` walked a tree that was no longer in the document and answered
+    // "outside". Capture runs before the onclick that does the rebuilding.
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
       if (!e.target.closest('.fire-wrap')) closeFireMenu();
@@ -490,13 +495,19 @@
       if (convPaneRoster && !e.target.closest('#convPaneRoster') && !e.target.closest('#paneConvWho')) {
         toggleConvPaneRoster();
       }
-    });
+      // The conversation window's copy of that panel, on the same terms. It had no dismiss of its
+      // own, so it stayed open over the thread until the button that opened it was found again.
+      if (convRosterOpen && !e.target.closest('#convViewRoster') && !e.target.closest('#convViewWho')) {
+        toggleConvRoster();
+      }
+    }, true);
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeTermMenu();
         closeFireMenu();
         disarmButton();
         if (convPaneRoster) toggleConvPaneRoster();
+        if (convRosterOpen) toggleConvRoster();
       }
     });
 

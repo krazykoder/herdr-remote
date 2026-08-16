@@ -247,7 +247,7 @@
       try { localStorage.setItem(DOCK_KEY, bottomDockOpen() ? 'folded' : 'open'); }
       catch (e) { /* private mode: session-only */ }
       syncBottomDock();
-      renderQuickActions();  // the v has to become a ^, and vice versa
+      renderQuickActions();  // the chevron has to turn over
       // The strip names the pane the composer types into, so it is only true while there is a
       // composer. Without this the name outlives the fold by up to one poll.
       renderPairStrip();
@@ -344,7 +344,11 @@
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
-        `${open ? 'v' : '^'}</button>${conv}</div>` +
+        // One chevron for both states — CSS turns it over, keyed off aria-expanded, so the glyph
+        // and the state it reports cannot drift apart.
+        `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+        `stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+        `<path d="m6 9 6 6 6-6"/></svg></button>${conv}</div>` +
         // The walk used to sit in a middle column here, where only a pane could reach it. It is in
         // the status bar now, one row down and on screen in every view, so the middle is empty
         // track rather than a second pair of arrows disagreeing with the first.

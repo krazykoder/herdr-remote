@@ -16,11 +16,11 @@
       catch (e) { /* private mode: session-only */ }
     }
 
-    // The button says what it opens: P for prompts, $ for a command line. Both open the palette.
+    // The button says what it opens: @ prompts, $ a command line. Both open the palette.
     function syncPromptsBtn() {
       const shell = !!activePane && isShell(activePane);
       const btn = document.getElementById('promptsBtn');
-      btn.textContent = shell ? '$' : 'P';
+      btn.textContent = shell ? '$' : '@';
       btn.setAttribute('aria-label', shell ? 'Commands' : 'Prompts');
     }
 
@@ -851,6 +851,19 @@
       // saying nothing.
       document.getElementById('convViewCount').textContent =
         `${entries.length} message${entries.length === 1 ? '' : 's'}`;
+      // What kinds of agent are in this record, beside the count. Kinds and not names: who is in it
+      // is the roster panel's question and it answers it with labels — this says whether the thread
+      // is a claude on its own or a claude and a codex, which is the fact a reader wants before
+      // opening anything. Read off the recorded spawn first, so a member that has exited still
+      // counts; deduped, because two claudes are still "claude".
+      const live = new Map(agents.map(x => [convMemberKey(x), x.agent]));
+      const kinds = [];
+      for (const m of members) {
+        const rec = composed.recs.find(r => r.key === m.key);
+        const kind = ((rec && rec.spawn) || {}).agent || live.get(m.key);
+        if (kind && !kinds.includes(kind)) kinds.push(kind);
+      }
+      document.getElementById('convViewAgents').innerHTML = kinds.map(agentBadge).join('');
       convViewRecs = composed.recs;
       convViewEntries = entries;
       // The panel is its own element and diffed on its own: a message arriving must not rewrite the
