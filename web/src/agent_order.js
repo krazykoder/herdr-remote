@@ -198,9 +198,14 @@
       // has one row for tabs, and a second saying the same kind of thing is how a bar stops being
       // read. On the landing page there is nothing to leave, so the pane strip is not drawn there
       // either and this changes nothing.
-      const convTabs = tabScope() === 'convs' && !!activePane;
+      // …and only while it has something to hold. The strip draws the landing list, which hides the
+      // auto conversations behind a toggle — so a reader on this setting whose conversations are
+      // all auto, in a pane that is not reading one, got an empty strip *and* no pane tabs, because
+      // the class below hides those. An empty conversation strip falls back to the pane tabs rather
+      // than leaving the header with no way out of the pane at all.
+      const convTabs = tabScope() === 'convs' && !!activePane && !!renderConvStrip();
       document.body.classList.toggle('conv-tabs', convTabs);
-      if (convTabs) { renderConvStrip(); return; }
+      if (convTabs) return;
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
       // One order for agents and terminals, not an agent block followed by a terminal block. The

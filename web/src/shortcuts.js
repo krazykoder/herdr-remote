@@ -744,9 +744,11 @@
     // sideways scroll and the tab they were about to press.
     let convStripSig = '';
 
+    // Returns how many tabs it is holding. The caller in the pane-tabs slot needs that: an empty
+    // strip there hides itself and would leave the header with no tabs at all — see renderAgentTabs.
     function renderConvStrip() {
       const el = document.getElementById('convStrip');
-      if (!el) return;
+      if (!el) return 0;
       const shown = convLandingList().shown;
       // The open conversation is always a tab, even when the reader has the auto ones hidden — a
       // strip that cannot show what is on screen is worse than one carrying an extra tab, which is
@@ -766,7 +768,7 @@
       const now = convCurrentId();
       const sig = rows.map(r => `${r.c.id}|${r.c.name}|${r.c.auto ? 'a' : '-'}|${r.dot}|${r.pulse}`)
         .join(' /// ') + ` @@ ${now}`;
-      if (sig === convStripSig) return;
+      if (sig === convStripSig) return rows.length;
       convStripSig = sig;
       el.innerHTML = rows.map(r =>
         `<button class="conv-tab" data-conv-id="${escapeHtml(r.c.id)}"` +
@@ -777,6 +779,7 @@
         (r.c.auto ? '<span class="tier">auto</span>' : '') + '</span></button>').join('');
       const open = el.querySelector('[aria-current="true"]');
       if (open) open.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      return rows.length;
     }
 
     // Which tab is the one you are looking at. Two views ask it: the standalone one is showing a

@@ -1617,6 +1617,30 @@ test('an auto conversation opened while auto is hidden still gets its own tab', 
     .toHaveText('relay · Architect 1');
 });
 
+test('the header keeps a row of tabs when the conversation strip has none', async ({page}) => {
+  await open(page);
+  // Conversations in the pane tabs' slot, and the only conversation is an auto one the reader has
+  // hidden. The strip then draws nothing — and it used to hide the pane tabs on its way to drawing
+  // nothing, leaving the header with no tabs at all and no way out of the pane but Back.
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    saveConvIndex([{id: 'c1', name: 'relay · Architect 1', created: 1, auto: true,
+      members: [{key, added: 1, seen: 5}]}]);
+    localStorage.setItem('herdr_conv_landing_auto', 'off');
+    setTabScope('convs');
+    convSetView(paneOf(activePane), '');   // reading rows, not the thread
+    renderAgentTabs();
+  });
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(0);
+  await expect(page.locator('#agentTabs')).toBeVisible();
+  await expect(page.locator('#agentTabs .agent-tab').first()).toBeVisible();
+  // And the strip takes the slot back the moment it has something to say — reading the pane as its
+  // thread makes that conversation the current one, which is always a tab.
+  await page.evaluate(() => toggleConvView());
+  await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
+  await expect(page.locator('#agentTabs')).toBeHidden();
+});
+
 test('a conversation read on its own uses the whole width', async ({page}) => {
   await openCard(page);
   const w = await page.evaluate(() => {
