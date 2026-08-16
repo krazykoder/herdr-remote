@@ -7,7 +7,7 @@
 // otherwise the next real snapshot lands mid-assertion and puts the status back.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';   // w1:p1, which the fake herdr reports idle
 const PANE = 'w1:p1';

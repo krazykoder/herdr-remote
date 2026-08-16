@@ -6,7 +6,7 @@
 // exactly the deployment where it matters most. That is what this file watches.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 test('the relay serves a fetchable manifest naming icons that exist', async ({request}) => {
   const res = await request.get('/manifest.webmanifest');

@@ -7,7 +7,7 @@
 // whether the pulse rule survives being written. That is what this file is for.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 const fs = require('node:fs');
 const path = require('node:path');
 

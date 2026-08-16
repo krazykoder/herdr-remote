@@ -6,7 +6,7 @@
 // take it away from them.
 //
 //   npx playwright test tab_pairs
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const tabs = page => page.locator('#agentTabs .agent-tab');
 const labels = page => tabs(page).evaluateAll(els => els.map(e => e.querySelector('.label').textContent));

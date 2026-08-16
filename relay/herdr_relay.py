@@ -1471,6 +1471,12 @@ def start_mdns():
     # Only the LAN listener is advertised — a loopback port is no use to anything on the network.
     # Note this actively broadcasts an open listener when HERDR_LAN_OPEN=1: obscurity is not part
     # of the threat model, HERDR_LAN_BIND is.
+    #
+    # A relay bound to loopback is not on the LAN at all, so there is nothing to advertise and
+    # nobody who could reach it if there were. Skipping it there also keeps the browser suite's
+    # per-worker relays from all registering the same service name at once.
+    if LAN_BIND in ("127.0.0.1", "::1", "localhost"):
+        return None, None
     try:
         from zeroconf import Zeroconf, ServiceInfo
         import socket as sock_mod
@@ -1561,7 +1567,13 @@ async def main():
     for server in servers:
         server.close()
     if zc and info:
-        zc.unregister_service(info)
+        # Best effort. zeroconf gives the unregister broadcast a deadline and raises
+        # EventLoopBlocked when it misses it, which on the way out turns a clean Ctrl-C into a
+        # traceback and a non-zero exit for a courtesy packet nobody is waiting for.
+        try:
+            zc.unregister_service(info)
+        except Exception as e:
+            log.warning("mDNS unregister failed: %s", e)
         zc.close()
 
 

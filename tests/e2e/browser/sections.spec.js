@@ -7,7 +7,7 @@
 // stylesheet that had never been given `display: flex` at all.
 //
 //   npx playwright test sections
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 

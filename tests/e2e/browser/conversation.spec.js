@@ -6,7 +6,7 @@
 // are storage bugs, and a storage bug loses history rather than a render.
 //
 //   npx playwright test
-const {test, expect} = require('@playwright/test');
+const {test, expect} = require('./fixtures');
 const fs = require('node:fs');
 const path = require('node:path');
 
