@@ -2980,6 +2980,104 @@
       line-height: 1;
     }
 
+    /* The two controls that hang over a thread: refresh-and-tidy at the top left, and the jump to
+       the newest message at the bottom right. Both are over the text rather than in a bar, because
+       both are about the text — and neither may take a row of height from it on a phone, where the
+       thread already shares the screen with a header, a composer and a footer.
+
+       Left, deliberately, for the refresh: the right-hand top corner is the ruler's, and the pane's
+       own ↑↓ block-nav sits beside it. */
+    .hang-btn {
+      position: absolute;
+      z-index: 5;
+      display: none;
+      align-items: center;
+      gap: 4px;
+      padding: 0;
+      width: 30px;
+      height: 30px;
+      justify-content: center;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      /* Over text it would otherwise be hard to read against. */
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    }
+
+    .hang-btn:hover {
+      color: var(--text);
+      border-color: var(--muted);
+    }
+
+    .hang-tidy {
+      top: 8px;
+      left: 8px;
+    }
+
+    /* Wider than the round refresh: it carries a word, because an arrow alone in the corner of a
+       thread reads as "scroll" rather than as "you are not at the end". */
+    .hang-last {
+      bottom: 10px;
+      right: 12px;
+      width: auto;
+      height: 28px;
+      padding: 0 12px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    /* Shown by the scroll position, and only then: at the end of a thread there is no "last" to go
+       to, and a control that is always there is one the eye stops reading. */
+    .hang-btn.on {
+      display: inline-flex;
+    }
+
+    /* The refresh is not conditional — it is always available while there is something to refresh,
+       and both views mark that on the button itself rather than by scroll position. */
+    .hang-tidy.on {
+      display: inline-flex;
+    }
+
+    /* Mid-refresh: the same button, saying so. Not a spinner over the thread — the work is a read
+       and a tidy, both of which finish in well under a second on a record this size. */
+    .hang-tidy.busy {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* A view that is its own scroller cannot hold an absolutely-positioned button still: it would
+       scroll away with the text. A zero-height sticky layer can, and costs no layout. */
+    .hang-layer {
+      position: sticky;
+      height: 0;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .hang-layer .hang-btn {
+      pointer-events: auto;
+    }
+
+    .hang-top {
+      top: 0;
+    }
+
+    /* Above the floating dock, not behind it — the dock's own height is already measured for the
+       thread's padding, so this rides the same variable. */
+    .hang-bottom {
+      bottom: 0;
+    }
+
+    .hang-bottom .hang-btn {
+      bottom: calc(var(--dock-h, 96px) + 10px);
+    }
+
     .ruler {
       position: absolute;
       top: 0;
@@ -4226,7 +4324,19 @@
          block of chrome above every thread. -->
     <div class="conv-panel" id="convViewRoster" hidden></div>
     </div>
+    <!-- The same two controls, in a view that is its own scroller: a zero-height sticky layer is
+         what lets a button hang over content that scrolls under it, since an absolute one inside a
+         scroll box scrolls away with the text. -->
+    <div class="hang-layer hang-top">
+      <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
+        title="Reload this conversation, then remove any duplicates its members picked up"
+        aria-label="Refresh and tidy">⟳</button>
+    </div>
     <div class="conv-thread" id="convViewThread"></div>
+    <div class="hang-layer hang-bottom">
+      <button class="hang-btn hang-last" id="convLast" onclick="hangToLastConv()"
+        aria-label="Jump to the newest message">↓ Last</button>
+    </div>
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
          modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
     <div class="conv-dock" id="convDock">
@@ -4441,6 +4551,14 @@
            the header above it. Over the thread rather than above it, for the reason .conv-panel
            gives: a thread that jumps a hundred pixels loses the reader's place. -->
       <div class="conv-panel" id="convPaneRoster" hidden></div>
+      <!-- Two controls that hang over whichever way this pane is being read, rows or thread. Over
+           and not in the header: they belong to the text being read, they are the same two controls
+           the conversation window carries, and the header is already full at a phone's width. -->
+      <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
+        title="Refresh, then remove any duplicates this transcript picked up"
+        aria-label="Refresh and tidy">⟳</button>
+      <button class="hang-btn hang-last" id="paneLast" onclick="hangToLast()"
+        aria-label="Jump to the newest message">↓ Last</button>
       <div class="term-content" id="termContent"></div>
       <!-- The same pane, read as a thread. A sibling of the rows rather than a replacement for
            them: switching views is a re-render of what is already in memory, and nothing about
@@ -4811,6 +4929,9 @@
   <script src="src/shortcuts.js"></script>
   <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
+  <!-- After history.js and shortcuts.js: it wires its listeners at load and calls scrollPaneToBottom
+       and renderConvStandalone, which those two own. -->
+  <script src="src/hang_controls.js"></script>
   <script src="src/controls.js"></script>
   <script src="src/dictation.js"></script>
   <script src="src/command_palette.js"></script>

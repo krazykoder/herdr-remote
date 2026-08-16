@@ -31,14 +31,19 @@
       const mine = convsForPane(a);
       if (!mine.length) return null;
       const want = convViews()[convMemberKey(a)];
-      // With nothing chosen, the widest record the user named. This used to be mine[0], which is
-      // index order — and a new conversation is prepended, so an auto pair record filed after a
-      // named one took the thread from it: the pane opened on its pair and every other member of
-      // the work was simply absent, with nothing on screen to say a wider thread existed.
-      // A named conversation is a statement and an auto one is a guess; among either, the one with
-      // more members is the one that says more. Ties keep index order, because sort is stable.
+      // A choice already made wins, and one is made for you on the way in: opening a pane *from* a
+      // conversation stores that conversation against it — see openConvMemberPane — so a pane
+      // reached from a thread opens on the thread it was reached from, every time.
+      //
+      // With nothing chosen, the one that is going on now. This was the widest record the user had
+      // named, which was already better than index order — but "widest" is a fact about the roster
+      // and the reader is asking about the work: a pane that belongs to last month's three-way and
+      // to this morning's pair should open on this morning's. Newest message first, then a named
+      // record ahead of an auto one, then the wider roster; ties keep index order, sort being
+      // stable.
       return mine.find(c => c.id === want) || mine.slice().sort((x, y) =>
-        (!!x.auto - !!y.auto) || ((y.members || []).length - (x.members || []).length))[0];
+        (convSeenAt(y) - convSeenAt(x)) || (!!x.auto - !!y.auto)
+        || ((y.members || []).length - (x.members || []).length))[0];
     }
 
     function convSetView(a, id) {

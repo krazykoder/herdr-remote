@@ -1098,6 +1098,28 @@ test('a pane in a pair and a wider conversation opens on the wider one', async (
   await expect(page.locator('#convThread')).toContainText('said by the third');
 });
 
+test('a pane in two conversations opens on the one that was active last', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
+    const mineKey = convMemberKey(mine), otherKey = convMemberKey(other);
+    // The wider one is stale and the pair is where the work is. `seen` is what the landing list
+    // reads too — the newest message any member recorded, not when the roster was written.
+    saveConvIndex([
+      {id: 'wide', name: 'three of us', created: 1, members: [
+        {key: mineKey, added: 1, label: 'Architect 1', seen: 1000},
+        {key: otherKey, added: 1, label: 'scratch', seen: 1000},
+        {key: 'm3', added: 1, label: 'third', seen: 1000}]},
+      {id: 'pair', name: 'this morning', created: 2, members: [
+        {key: mineKey, added: 2, label: 'Architect 1', seen: 9000},
+        {key: otherKey, added: 2, label: 'scratch', seen: 2000}]},
+    ]);
+  });
+  // Wider roster, named, and first in the index — and still the wrong answer, because the reader
+  // is asking about the work rather than the roster.
+  expect(await page.evaluate(() => convViewConv(paneOf(activePane)).id)).toBe('pair');
+});
+
 test('a conversation of two opens on the joint thread, both members in it', async ({page}) => {
   await open(page);
   await joinBoth(page);

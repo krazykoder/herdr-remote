@@ -197,7 +197,7 @@
     // of those. The strip in the conversation view draws from this too — a tab bar that disagreed
     // with the list it was opened from would be a second answer to the same question.
     function convLandingList() {
-      const seenOf = c => Math.max(0, ...(c.members || []).map(m => Number(m.seen) || 0));
+      const seenOf = convSeenAt;
       const countOf = c => (c.members || []).reduce((n, m) => n + (Number(m.messages) || 0), 0);
       const by = (a, b) => seenOf(b) - seenOf(a) || countOf(b) - countOf(a);
       const all = loadConvIndex().sort(by);
