@@ -2510,26 +2510,24 @@ test('the composer survives the fold while a thread is on screen', async ({page}
     document.getElementById('terminalView').classList.contains('dock-folded'))).toBe(true);
 });
 
-test('with a thread up, the header row switches between that conversation’s members',
+test('a thread does not narrow the header row — the Tabs setting owns it',
   async ({page}) => {
     await open(page);
-    const key = await join(page);
+    await join(page);
     await read(page);
-    const mate = await partner(page, 0);
-    const before = await page.evaluate(() => Array.from(
+    await partner(page, 0);
+    const tabs = () => page.evaluate(() => Array.from(
       document.querySelectorAll('#agentTabs .agent-tab')).map(b => b.dataset.pane));
+    const before = await tabs();
     await page.evaluate(() => {
       convSetView(paneOf(activePane), loadConvIndex()[0].id);
       renderConvBar();
     });
-    const panes = await page.evaluate(() => Array.from(
-      document.querySelectorAll('#agentTabs .agent-tab')).map(b => b.dataset.pane));
-    // Both members, and nothing that is not one.
-    const mine = await page.evaluate(() => activePane);
-    expect(new Set(panes)).toEqual(new Set([mine, mate.pane]));
-    // Including members the Project scope would have dropped: a conversation is free to span
-    // projects, which is what makes it a conversation and not a directory.
-    expect(before).not.toContain(mate.pane);
+    // Reading a pane as a thread used to scope this row to the conversation's members, which
+    // overrode the Tabs setting: an ordinary auto conversation is one pane plus its pair partner,
+    // so the thread cost the reader every other tab on the machine. The row is how you get
+    // anywhere from here, and it answers to the setting alone.
+    expect(await tabs()).toEqual(before);
   });
 
 // --- The conversation window's dock (§4) ---
@@ -2548,6 +2546,34 @@ const openWindow = async page => {
   await page.locator('#conversations .conversation-card').click();
   await expect(page.locator('#convView')).toBeVisible();
 };
+
+test('a half-written message waits in the conversation it was being written to', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  // A second conversation to switch to — reading what somebody else said is part of writing a
+  // reply, and the reply used to be the price of looking.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    saveConvIndex(items.concat({id: 'c2', name: 'the other one', created: Date.now(),
+      members: [{key: convMemberKey(paneOf(activePane)), added: Date.now(), label: 'Architect 1'}]}));
+  });
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await page.locator('#convInput').fill('half a thought about the auth rewrite');
+  await page.locator('#convStrip .conv-tab', {hasText: 'the other one'}).click();
+  await expect(page.locator('#convInput')).toHaveValue('');
+  await page.locator('#convInput').fill('and something else entirely');
+  await page.locator('#convStrip .conv-tab', {hasText: 'new authentication feature'}).click();
+  await expect(page.locator('#convInput')).toHaveValue('half a thought about the auth rewrite');
+  await page.locator('#convStrip .conv-tab', {hasText: 'the other one'}).click();
+  await expect(page.locator('#convInput')).toHaveValue('and something else entirely');
+  // In memory and not in storage: a draft is in flight, and a reload is the session ending.
+  await page.reload();
+  await page.locator('#conversations .conversation-card[data-conv-id="c2"]').click();
+  await expect(page.locator('#convInput')).toHaveValue('');
+});
 
 test('typing in the conversation composer keeps its newest bubble visible', async ({page}) => {
   await open(page);
@@ -2882,7 +2908,7 @@ test('an instruction is spent by the send, the agent chosen is not', async ({pag
   expect(new Set(to)).toEqual(new Set(['w8:p1']));
 });
 
-test('leaving the conversation takes the chosen agent and the draft with it', async ({page}) => {
+test('leaving the conversation takes the chosen agent with it, and keeps the draft', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -2893,11 +2919,12 @@ test('leaving the conversation takes the chosen agent and the draft with it', as
   await page.evaluate(() => setDockMru(false));
   await whoRow(page).filter({hasText: 'amp'}).click();
   await page.locator('#convInput').fill('half a thought');
-  // Who you were talking to and what you were about to say belong to this conversation.
+  // Who you were talking to is a passing state and does not survive leaving; the half-written
+  // message does, because it belongs to this conversation and finishing it later is the point.
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conversation-card').click();
   await expect(litWho(page)).toHaveText(/Architect 1/);
-  await expect(page.locator('#convInput')).toHaveValue('');
+  await expect(page.locator('#convInput')).toHaveValue('half a thought');
 });
 
 test('a transfer keeps what was already being typed, under the quote', async ({page}) => {

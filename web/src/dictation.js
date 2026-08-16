@@ -205,7 +205,12 @@
           !(e.key in WALK_KEYS) ||
           (e.target && typeof e.target.closest === 'function' &&
             e.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
-      if (navGo(WALK_KEYS[e.key])) e.preventDefault();
+      // Back is goBack, not navGo(-1): the footer ‹ leaves to the list where the walk has nothing
+      // behind it, and so does the browser's own Back. A key that went dead there instead would be
+      // the third control in the row disagreeing with the other two — and from the first pane
+      // opened, which is the only entry most sessions have, it would look like it does nothing.
+      if (WALK_KEYS[e.key] < 0) { goBack(); e.preventDefault(); }
+      else if (navGo(1)) e.preventDefault();
     }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;

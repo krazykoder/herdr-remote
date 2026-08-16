@@ -276,10 +276,12 @@
     function openConversation(id) {
       const conv = loadConvIndex().find(c => c.id === id);
       if (!conv) return;
+      stashConvDraft();   // before the id moves, or the draft is filed under where it is going
       convViewId = id;
       noteConvVisit(id);   // the Recent switcher's log, which is MRU
       noteConvNav(id);     // and the ‹ › walk, which is order of visit
       clearConvDock();
+      restoreConvDraft();   // whatever was left half-written to *this* conversation earlier
       convStandaloneHtml = '';
       convRosterHtmlLast = '';
       convStripSig = '';

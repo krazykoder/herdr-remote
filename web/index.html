@@ -1749,13 +1749,18 @@
          Two rows, not one: the change stamp and the Esc chip were absolutely positioned into the
          bar's bottom padding, and that padding is 5px — so both landed on top of the arrows they
          were meant to sit under. A stamp under the ‹ and an Esc chip over the › are not a footer,
-         they are a collision. The first row is theirs and costs 12px; the arrows own the second. */
+         they are a collision.
+         The arrows take the upper row and the captions the lower one. On a phone the last 30px of
+         the screen are the home indicator's, and a control sitting in them is one the thumb has to
+         aim past the gesture bar to reach — so what goes down there is the 8px stamp, which is
+         read and never pressed. The bar is the same height either way, so the pane above it keeps
+         every pixel it had. */
       .status-bar {
         display: grid;
         grid-template-columns: 68px minmax(0, 1fr) 68px;
         grid-template-areas:
-          'stamp stamp state'
-          'back  recent forward';
+          'back  recent forward'
+          'stamp stamp  state';
         column-gap: 0;
         row-gap: 2px;
         padding-left: max(8px, env(safe-area-inset-left, 0px));

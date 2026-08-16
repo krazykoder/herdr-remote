@@ -228,12 +228,40 @@
     }
 
     // Leaving the conversation. Who you were talking to and what you were about to say belong to
-    // it, and neither means anything in the next one.
+    // it, and neither means anything in the next one — so the picks go, and the half-written
+    // message goes with the conversation it was being written to rather than into the next one's
+    // box.
     function clearConvDock() {
       dockTarget = ''; dockPicks = []; dockPicked.clear(); dockPickedOf = 0;
       closeDockMenu();
       const input = document.getElementById('convInput');
       if (input) { input.value = ''; autoGrow(input); syncConvCursor(); }
+    }
+
+    // Half-written messages, one per conversation, for as long as the page is open. Switching tabs
+    // to read what somebody else said is part of writing a reply, and losing the reply to it made
+    // the strip something to avoid mid-sentence. Deliberately in memory and not in storage: a
+    // draft is a thing in flight, and a reload is a session ending — see D4's tiering for the same
+    // line drawn between what is asserted and what is passing.
+    const convComposerDrafts = new Map();
+
+    // Called before convViewId moves, so what is in the box is filed under the conversation it was
+    // written to. An empty box drops the entry rather than storing '': "nothing written" and
+    // "nothing kept" are the same state, and a stale empty draft would survive a Send.
+    function stashConvDraft() {
+      const input = document.getElementById('convInput');
+      if (!input || !convViewId) return;
+      if (input.value.trim()) convComposerDrafts.set(convViewId, input.value);
+      else convComposerDrafts.delete(convViewId);
+    }
+
+    function restoreConvDraft() {
+      const input = document.getElementById('convInput');
+      const text = convViewId ? convComposerDrafts.get(convViewId) : '';
+      if (!input || !text) return;
+      input.value = text;
+      autoGrow(input);
+      syncConvCursor();
     }
 
     function renderConvDock() {
