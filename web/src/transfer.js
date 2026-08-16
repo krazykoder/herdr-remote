@@ -2,18 +2,32 @@
 
     let transferSource = '';
 
-    function openTransfer() {
+    // Who is being quoted, and what. Shared by the sheet and by the chips so that a chip and the
+    // sheet behind it can never disagree about either — and because `transferSelection` is what
+    // doTransfer reads, so anything that reaches it has to come through here.
+    //
+    // Returns the source pane, or null with the reason already on screen.
+    //
+    function claimTransfer() {
       const picked = convThreadOn() ? Array.from(document.querySelectorAll('#convThread .conv-msg.picked')) : [];
       const keys = new Set(picked.map(el => el.dataset.key));
-      if (keys.size > 1) { showToast('Select messages from one agent to transfer.'); return; }
+      if (keys.size > 1) { showToast('Select messages from one agent to transfer.'); return null; }
       const source = keys.size ? agents.find(a => convMemberKey(a) === keys.values().next().value) : paneOf(activePane);
-      const pair = source && pairFor(pairs, source.pane_id);
-      if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
+      if (!source) return null;
+      const pair = pairFor(pairs, source.pane_id);
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') return null;
       // The ruler's range wins when there is one: it is the deliberate selection, and on a phone
       // the native one is usually empty anyway. Capture before anything can steal it — switching
       // panes clears both.
       transferSelection = selText || String(window.getSelection() || '').trim();
       transferSource = source.pane_id;
+      return source;
+    }
+
+    function openTransfer() {
+      const source = claimTransfer();
+      if (!source) return;
+      const pair = pairFor(pairs, source.pane_id);
       const partner = partnerOf(pair, transferSource);
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
@@ -48,7 +62,7 @@
     }
 
     // Prefill and stop. This is the last checkpoint before one agent's output enters another's
-    // context, so it must never end in a send.
+    // context, so it must never end in a send. The sheet's path, and the pane view's.
     function doTransfer(shortcutIndex) {
       const source = paneOf(transferSource || activePane);
       const pair = source && pairFor(pairs, source.pane_id);
@@ -56,34 +70,56 @@
         document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
         return;
       }
-      const mine = memberOf(pair, source.pane_id), partner = partnerOf(pair, source.pane_id);
-      // The partner's agent, not this pane's: the instruction is about to be typed over there.
-      const instruction = shortcutIndex >= 0
-        ? agentSlash(SHORTCUTS[shortcutIndex].text, agentOf(partner.pane_id)) : '';
-      const out = composeTransfer(instruction, mine.role, transferSelection);
-      if (out.error) { document.getElementById('transferPreview').textContent = out.error; return; }
+      const partner = partnerOf(pair, source.pane_id);
+      return prefillTransfer(source, partner.pane_id,
+        transferInstruction(shortcutIndex >= 0 ? [shortcutIndex] : [], partner.pane_id),
+        err => { document.getElementById('transferPreview').textContent = err; });
+    }
+
+    // The instructions, in the order they were chosen, each rewritten for the agent about to read
+    // them. The order is the user's sentence: "@review @test" is review then test, and sorting it
+    // back into the shortcut list's order would be the app rewriting what they said.
+    function transferInstruction(picks, targetPaneId) {
+      return picks.map(i => agentSlash(SHORTCUTS[i].text, agentOf(targetPaneId))).join('\n');
+    }
+
+    // Everything both paths share, and the only place that writes the composer. `onError` is how
+    // the two differ: the sheet has a preview to put the reason in, a chip has a toast.
+    function prefillTransfer(source, targetPaneId, instruction, onError) {
+      const pair = pairFor(pairs, source.pane_id);
+      const mine = pair ? memberOf(pair, source.pane_id) : null;
+      // The role when the pair sheet was given one, the pane's live label when it was not. A pair
+      // built by the Start dialog carries a bare fingerprint with no role at all
+      // (recentFingerprint), and the receiving agent was being told the text came from "undefined".
+      const from = (mine && mine.role) || paneLabel(source) || source.pane_id;
+      const out = composeTransfer(instruction, from, transferSelection);
+      if (out.error) { onError(out.error); return; }
       // What the next send will be measured against. Captured here because this is the last moment
-      // the source pane is the open one — openTerminal below moves to the partner — and because
-      // this function prefills and stops, so the send that classifies against it has not happened.
-      const src = source;
+      // the source pane is the open one — openTerminal below moves to the target — and because the
+      // sheet's path prefills and stops, so the send that classifies against it has not happened.
       pendingTransfer = {
-        key: convMemberKey(src), label: (src && paneLabel(src)) || mine.role || '',
+        key: convMemberKey(source), label: paneLabel(source) || from,
         body: transferSelection, payload: out.text,
         hash: convHash(transferSelection), at: Date.now(),
       };
-      // Before openTerminal moves activePane to the partner: the range being transferred belongs
-      // to this pane, and this is the point at which the user has committed to it.
+      // Before openTerminal moves activePane to the target: the range being transferred belongs to
+      // this pane, and this is the point at which the user has committed to it.
       learnFromSelection();
       closeTransfer();
-      openTerminal(partner.pane_id);
+      openTerminal(targetPaneId);
       const input = document.getElementById('termInput');
-      input.value = out.text;
+      // Whatever was already typed is kept, under the quote: a transfer that overwrote it would
+      // throw away a message someone was in the middle of writing, and a payload with a note of
+      // your own on the end is what `classifyVia` already calls `mixed`.
+      const kept = input.value.trim();
+      input.value = kept ? out.text + '\n\n' + kept : out.text;
       autoGrow(input);
       input.focus();
       // Show the top of the payload, not its tail — reading it is the checkpoint.
       input.setSelectionRange(0, 0);
       input.scrollTop = 0;
       if (window.cue) cue('page');
+      return true;
     }
 
     function insertShortcut(i) {

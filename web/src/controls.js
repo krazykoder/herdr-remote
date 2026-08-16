@@ -124,20 +124,57 @@
       paneLines = Math.min(paneLines + historyStep(), paneHistoryMax());
       refreshPane();
     }
+    // One text into one pane, from whichever composer had it. The pane's own composer is one
+    // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
+    // open — which is why this takes the pane rather than reading `activePane`.
+    function sendTextTo(paneId, text) {
+      if (!text || !ws || !paneId) return false;
+      // Before the send, while the composer still holds what is being sent: a transcript that
+      // cannot tell a transfer from typing claims the user said what another agent said. The whole
+      // text, not a chunk of it — what was sent is one message, however many the wire took.
+      noteSent(text, paneId);
+      lastSentText[paneId] = text;
+      syncResend();
+      // One message per chunk, then the single Enter that submits all of them. Nothing between the
+      // chunks submits, so they land in the agent's composer as one text; the relay handles a
+      // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
+      // is what makes the Enter behind them late enough to count.
+      for (const part of chunkText(text))
+        ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: part }));
+      ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
+      return true;
+    }
+
     function sendText() {
       const i = document.getElementById('termInput');
       if (!i.value || !ws || !activePane) return;
-      if (i.value.length > SEND_TEXT_MAX) {
-        showToast(`Text must be ${SEND_TEXT_MAX} characters or fewer.`); return;
-      }
       const paneId = activePane;
-      // Before the send, while the composer still holds what is being sent: a transcript that
-      // cannot tell a transfer from typing claims the user said what another agent said.
-      noteSent(i.value, paneId);
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: i.value }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
+      if (!sendTextTo(paneId, i.value)) return;
       i.value = ''; autoGrow(i);
+      renderQuickActions();   // the pane has a last send now, so Resend has something to offer
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);
+    }
+
+    function syncResend() {
+      const btn = document.getElementById('resendBtn');
+      if (!btn) return;
+      const again = lastSentText[activePane];
+      btn.hidden = !again;
+      if (again) btn.title = `Load this pane's last message into the composer: ${again.slice(0, 80)}`;
+    }
+
+    // One tap, unlike the buttons it sits beside. Those arm because what they do cannot be taken
+    // back; this one fills a text box you can still edit, empty or send, and a draft already there
+    // is refused rather than overwritten — there is nothing here for a second tap to protect.
+    function resendLast() {
+      const again = lastSentText[activePane];
+      if (!again) return;
+      const i = document.getElementById('termInput');
+      if (i.value.trim()) { showToast('Composer already has a draft. Send or clear it first.'); return; }
+      i.value = again;
+      autoGrow(i);
+      i.focus();
+      closeFireMenu();
     }
     function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
     function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }

@@ -5,25 +5,206 @@
     const NAV_MAX = 20;
     let navHistory = [], navIndex = -1, navigating = false;
 
-    function noteVisit(paneId) {
-      if (navigating || navHistory[navIndex] === paneId) return;
-      navHistory = navPush(navHistory, navIndex, paneId, NAV_MAX);
+    // The browser's session history is the same walk, not a mirror of it: one cursor, held by the
+    // browser, so the phone's Back gesture and the `‹` button cannot end up pointing at different
+    // entries. Each of our entries carries a serial rather than an index, because the list drops
+    // its oldest entry at NAV_MAX and every index below it would shift under a state already
+    // written into the browser's stack.
+    let navSerials = [], navSerial = 0, navDetached = false;
+    function navBrowserHistory() {
+      return typeof window === 'object' && window && window.history &&
+        typeof window.history.pushState === 'function' ? window.history : null;
+    }
+
+    function navPushState() {
+      const api = navBrowserHistory();
+      if (!api) return;
+      // Always a push, never a replace: the document's own entry is the landing page, which is not
+      // on the walk but is where the browser's Back has to be able to reach. Stamping our first
+      // destination onto it would make Back off that destination leave the app instead.
+      api.pushState({herdrNav: navSerials[navIndex]}, '');
+      navDetached = false;   // whatever we had drifted past, this entry is ours again
+    }
+
+    // The gesture, the mouse button and the browser's own chrome all arrive here. Moving the cursor
+    // *to* the entry named in the state — rather than stepping — is what keeps one cursor: the
+    // browser has already moved, and this follows it.
+    //
+    // Guarded because these modules are also run as slices in a vm context, which has no window.
+    if (typeof addEventListener === 'function') addEventListener('popstate', e => {
+      const at = e.state && e.state.herdrNav;
+      // No state at all is the entry the document was loaded on, which is the landing page. It is
+      // not a stop on the walk — nothing is behind the first destination — so the cursor sits
+      // before entry 0, from where Forward is a step of one and Back is nothing. Without this the
+      // phone's Back gesture out of the first pane opened would leave the screen exactly as it was.
+      if (at == null) {
+        navIndex = -1;
+        landNow();
+        syncNavBtns();
+        return;
+      }
+      const i = navSerials.indexOf(at);
+      // A state older than NAV_MAX entries, or one another page wrote. We cannot show it, and we
+      // must not keep computing deltas against a cursor the browser has already moved off — so the
+      // walk stops driving the browser until the next visit re-anchors it.
+      if (i < 0) { navDetached = true; return; }
+      navShow(i);
+    });
+
+    // A conversation window is a stop on this walk, not a place outside it. Reading a conversation,
+    // opening a member's pane from it and then wanting the record back is the ordinary way round a
+    // multi-agent thread, and until this the only way back was the pane's own Back — which lands on
+    // the agent list, from where the conversation has to be found again.
+    //
+    // Held in the same list, prefixed, rather than in a second one: back and forward are one order,
+    // and two lists would have to be interleaved by a timestamp to answer "where was I" — which is
+    // the list this already is.
+    // Everything you can be looking at is an entry, so one walk covers all of it rather than each
+    // destination growing its own one-deep memory of where it came from. Strings, not objects: the
+    // list is compared with `===` in three places and the entry never needs a payload — which view
+    // a pane is read in is a stored per-pane preference, so putting it in the entry would let a
+    // step back override a choice made after the entry was made.
+    //
+    //   'w1:p1'             a pane
+    //   'conv:<id>'         a conversation window
+    //   'panel:settingsView' a panel
+    //   'landing'           screen marker only; never a history entry
+    const NAV_CONV = 'conv:', NAV_PANEL = 'panel:', NAV_LANDING = 'landing';
+    function navIsConv(id) { return typeof id === 'string' && id.startsWith(NAV_CONV); }
+    function navConvId(id) { return id.slice(NAV_CONV.length); }
+    function navIsPanel(id) { return typeof id === 'string' && id.startsWith(NAV_PANEL); }
+    function navPanelId(id) { return id.slice(NAV_PANEL.length); }
+
+    function noteVisit(id) {
+      if (navigating || navHistory[navIndex] === id) return;
+      navHistory = navPush(navHistory, navIndex, id, NAV_MAX);
+      // The same push, on the same cursor and cap, so the two arrays stay index-for-index: the
+      // serial is what a browser history entry carries, because an index shifts under it every
+      // time the list drops its oldest entry.
+      navSerials = navPush(navSerials, navIndex, ++navSerial, NAV_MAX);
       navIndex = navHistory.length - 1;
+      navPushState();
+      syncNavBtns();
+    }
+
+    function noteConvNav(id) { noteVisit(NAV_CONV + id); }
+    function notePanelNav(id) { noteVisit(NAV_PANEL + id); }
+
+    // A conversation is alive while its record exists; a pane is alive while herdr reports it. Both
+    // are skipped when they are not, so a step never lands on a record that was deleted or a pane
+    // that has exited. Panels are always reachable.
+    function navAlive(id) {
+      if (navIsConv(id)) return loadConvIndex().some(c => c.id === navConvId(id));
+      if (navIsPanel(id) || id === NAV_LANDING) return true;
+      return !!paneOf(id);
     }
 
     function navTarget(step) {
       // Both lists, or the history silently steps over every terminal ever visited.
-      return navStep(navHistory, navIndex, step, id => !!paneOf(id), activePane);
+      return navStep(navHistory, navIndex, step, navAlive, navHere());
     }
 
+    // Where the walk currently stands, read off the screen rather than remembered. Passed to
+    // navStep so a step never re-opens what is already open.
+    function navHere() {
+      if (activePane) return activePane;
+      const panel = openPanelId();
+      if (panel === 'convView') return convViewId ? NAV_CONV + convViewId : NAV_LANDING;
+      return panel ? NAV_PANEL + panel : NAV_LANDING;
+    }
+
+    // Returns whether there was anywhere to go, so a caller with its own fallback — the Back
+    // chevrons, which must always leave — can tell "stepped" from "nowhere to step".
     function navGo(step) {
       const i = navTarget(step);
-      if (i < 0) return;
+      if (i < 0) return false;
+      // The browser's own stack holds the cursor where it can, so `‹`, the phone's Back gesture and
+      // a mouse's back button are one action rather than two that can disagree. go() is
+      // asynchronous: popstate below is what actually opens the destination.
+      const api = navBrowserHistory();
+      if (api && !navDetached) api.go(i - navIndex);
+      else navShow(i);
+      return true;
+    }
+
+    function navShow(i) {
       navIndex = i;
       navigating = true;
-      try { openTerminal(navHistory[i]); } finally { navigating = false; }
+      const id = navHistory[i];
+      try {
+        if (navIsConv(id)) openConversation(navConvId(id));
+        else if (navIsPanel(id)) openPanel(navPanelId(id));
+        else if (id === NAV_LANDING) showLanding();
+        else openTerminal(id);
+      } finally { navigating = false; }
+      syncNavBtns();
       if (window.cue) cue('page');
     }
+
+    // Panels use the walk. Pane and conversation header chevrons deliberately return to the list.
+    function goBack() { if (!navGo(-1)) showLanding(); }
+
+    // Exiting to the list is a rewind, not a step: the list is the entry the document was loaded
+    // on, so the browser goes back to *it* and the popstate above does the landing. Without this
+    // the chevron would put the list on screen while the browser's cursor stayed parked on the
+    // destination just left — and the next Back gesture would replay the one before it.
+    //
+    // False where there is no browser history to drive, which is also the vm slices; the caller
+    // lands directly instead.
+    function navRewind() {
+      const api = navBrowserHistory();
+      if (!api || navDetached || navIndex < 0) return false;
+      api.go(-(navIndex + 1));
+      return true;
+    }
+
+    // The walk's own controls live in the status bar, which is the one row on screen in every view —
+    // the pane had arrows and the conversation window had none, and a walk that crosses both needs
+    // a control that does too. Enabled state is recomputed rather than remembered: a pane exiting
+    // can empty the walk without anybody navigating.
+    function syncNavBtns() {
+      [[-1, 'navBack'], [1, 'navFwd']].forEach(([step, id]) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        const label = navLabel(step);
+        // ‹ is live wherever there is anywhere behind, and the list is behind everything.
+        btn.disabled = navTarget(step) < 0 && !(step < 0 && navHere() !== NAV_LANDING);
+        btn.title = btn.disabled ? '' : label;
+        btn.setAttribute('aria-label', btn.disabled ? (step < 0 ? 'Back' : 'Forward') : label);
+      });
+      syncBackLabel();
+    }
+
+    // The pane header always exits to the list; only the status-bar arrows walk history.
+    function syncBackLabel() {
+      const back = document.getElementById('termBack');
+      if (!back) return;
+      back.setAttribute('aria-label', 'Back to the agent list');
+    }
+
+    // What a destination is called in a label. The panel names are the words on the buttons that
+    // open them, not the element IDs.
+    const NAV_NAMES = { settingsView: 'Settings', timelineView: 'Activity' };
+    function navName(id) {
+      if (id === NAV_LANDING) return 'the agent list';
+      if (navIsPanel(id)) return NAV_NAMES[navPanelId(id)] || navPanelId(id);
+      if (!navIsConv(id)) return paneLabel(paneOf(id)) || id;
+      const conv = loadConvIndex().find(c => c.id === navConvId(id));
+      return (conv && conv.name) || 'the conversation';
+    }
+
+    // What the arrow will land on, so the button says where it goes rather than "Previous session"
+    // over a conversation. Falls back to the generic word where there is nowhere to step, which is
+    // where the button is disabled anyway.
+    function navLabel(step) {
+      const i = navTarget(step);
+      // Behind the first destination is the list the document was loaded on — the browser's own
+      // Back leaves to it, so ‹ has to say the same thing rather than going dead one step early.
+      if (i < 0) return step < 0 ? (navHere() === NAV_LANDING ? 'Back' : 'Back to the agent list')
+        : 'Forward';
+      return `${step < 0 ? 'Back to' : 'Forward to'} ${navName(navHistory[i])}`;
+    }
+
 
     const QA_KEY = 'herdr_quick_actions';
     function quickActionsOn() { return localStorage.getItem(QA_KEY) !== 'off'; }
@@ -46,15 +227,15 @@
     //
     // A shell wants none of them. `git commit` capitalised to `Git commit` is a command not found,
     // and autocorrect on a path or a flag is worse — it fails silently and looks like the shell
-    // misbehaved. The agent composer keeps all three: it carries prose far more often than it
-    // carries a command line, and there the keyboard is helping.
+    // misbehaved. An agent's composer carries the same paths and flags, so it starts with none of
+    // them either and the setting is what turns them on for prose.
     function syncComposerMode() {
       const input = document.getElementById('termInput');
       const shell = !!activePane && isShell(activePane);
       input.placeholder = enterSendsOn() && shell ? 'Type…  ⏎ sends' : 'Type…  ⌘/Ctrl+Enter sends';
-      input.setAttribute('autocorrect', shell ? 'off' : 'on');
-      input.setAttribute('autocapitalize', shell ? 'none' : 'sentences');
-      input.spellcheck = !shell;
+      // A shell is a command line and never gets soft input, whatever the setting says: a rewritten
+      // command is a wrong command, and there is no prose case over a terminal to weigh against it.
+      applyAutocorrect(input, autocorrectOn() && !shell);
     }
 
     // Whether the composer stack is folded away. Open by default, and remembered: someone reading
@@ -112,9 +293,20 @@
       btn.title = on ? 'Hide the quick actions bar' : 'Show the quick actions bar';
     }
 
+    // Rebuilt only when what it says changed. This runs on every snapshot, and replacing the row
+    // wholesale a few times a minute takes the fold button out from under the finger already on it —
+    // the tap then lands on a node that has left the document, which is a control that "does not
+    // always work". The conversation dock guards its own row the same way.
+    function setQuickActions(qa, html) {
+      if (qa.dataset.sig === html) return;
+      qa.innerHTML = html;
+      qa.dataset.sig = html;
+    }
+
     function renderQuickActions() {
       const qa = document.getElementById('quickActions');
-      if (!activePane) { qa.innerHTML = ''; return; }
+      if (!activePane) { setQuickActions(qa, ''); return; }
+      syncResend();
       const a = agents.find(x => x.pane_id === activePane);
       const blocked = a && a.status === 'blocked';
       // The nav row carries the fold control, so it also has to survive the bar being switched
@@ -123,10 +315,7 @@
       // An approval prompt is not a quick action the user chose to hide. Turning the bar off
       // leaves the phone able to approve — otherwise the setting would quietly cost it the one
       // thing this app exists to do.
-      if (!blocked && !showNav) { qa.innerHTML = ''; return; }
-      const nav = (step, glyph, label) =>
-        `<button class="nav" onclick="navGo(${step})" aria-label="${label}"` +
-        `${navTarget(step) < 0 ? ' disabled' : ''}>${glyph}</button>`;
+      if (!blocked && !showNav) { setQuickActions(qa, ''); return; }
       const open = bottomDockOpen();
       // Offered only when there is one to select. A button that does nothing on most panes would
       // teach people to stop pressing it on the panes where it works.
@@ -149,14 +338,16 @@
         ? `<button class="qa-conv${threaded ? ' on' : ''}" onclick="toggleConvView()" ` +
         `aria-pressed="${threaded}" ` +
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
-        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">💬</button>`
+        `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">${convGlyph()}</button>`
         : '';
       const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
         `aria-label="${open ? 'Fold the composer away' : 'Bring the composer back'}">` +
         `${open ? 'v' : '^'}</button>${conv}</div>` +
-        `<div class="qa-mid">${nav(-1, '‹', 'Previous session')}${nav(1, '›', 'Next session')}</div>` +
+        // The walk used to sit in a middle column here, where only a pane could reach it. It is in
+        // the status bar now, one row down and on screen in every view, so the middle is empty
+        // track rather than a second pair of arrows disagreeing with the first.
         `<div class="qa-right">${summary}` +
         `<button class="qa-last" onclick="scrollPaneToBottom()" title="Jump to the newest line" ` +
         `aria-label="Jump to the newest line">Last</button></div></div>`;
@@ -172,7 +363,7 @@
       }
       // Approvals first and on their own line, nav underneath: the row order is what puts the
       // thing that needs answering closest to the terminal it is about.
-      qa.innerHTML = middle + (showNav ? navRow : '');
+      setQuickActions(qa, middle + (showNav ? navRow : ''));
     }
 
     let paneLines = 200;

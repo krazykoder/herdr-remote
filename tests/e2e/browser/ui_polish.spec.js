@@ -29,6 +29,38 @@ test.afterEach(async ({page}) => {
   expect(page.__errors, 'the page logged errors').toEqual([]);
 });
 
+test('the composers take no autocorrect until the setting says so', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).first().click();
+  const term = page.locator('#termInput');
+  // Off before a script has run and off after: an agent's composer carries paths and flags, and a
+  // keyboard that capitalises the first word of one has changed it.
+  await expect(term).toHaveAttribute('autocorrect', 'off');
+  await expect(term).toHaveAttribute('autocapitalize', 'none');
+  expect(await term.evaluate(el => el.spellcheck)).toBe(false);
+  await page.locator('#navSettings').click();
+  await page.locator('#autocorrectOn').check();
+  await page.locator('#navSettings').click();
+  await expect(term).toHaveAttribute('autocorrect', 'on');
+  await expect(term).toHaveAttribute('autocapitalize', 'sentences');
+  expect(await term.evaluate(el => el.spellcheck)).toBe(true);
+  // Remembered, and applied to the conversation window's composer as well — both write to an
+  // agent, and a setting that reached one of them would be a setting nobody could trust.
+  await page.reload();
+  await expect(page.locator('#autocorrectOn')).toBeChecked();
+  await expect(page.locator('#convInput')).toHaveAttribute('autocorrect', 'on');
+});
+
+test('a terminal composer refuses autocorrect however the setting is left', async ({page}) => {
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await page.evaluate(() => setAutocorrect(true));
+  // A shell is a command line: `git commit` capitalised is a command not found, and there is no
+  // prose case over a terminal to weigh against it.
+  await page.evaluate(() => openTerminal(shells[0].pane_id));
+  await expect(page.locator('#terminalView')).toBeVisible();
+  await expect(page.locator('#termInput')).toHaveAttribute('autocorrect', 'off');
+  await expect(page.locator('#termInput')).toHaveAttribute('autocapitalize', 'none');
+});
+
 test('section headers carry their word and nothing else', async ({page}) => {
   const header = page.locator('#agents .section-header').first();
   await expect(header).toBeVisible();
@@ -78,6 +110,23 @@ test('the v folds the composer away and leaves the quick actions bar', async ({p
   await expect(page.locator('#quickActions .qa-fold')).toHaveText('v');
 });
 
+// The bar is re-rendered on every snapshot — a few times a minute with a pane open. Replacing the
+// row when nothing in it changed takes the button out from under the finger already on it, and the
+// tap lands on a node that is no longer in the document. That is what "the v is finicky" was.
+test('a poll that changes nothing leaves the fold button alone', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('.term-input')).toBeVisible();
+  const survives = await page.evaluate(() => {
+    const before = document.querySelector('#quickActions .qa-fold');
+    renderQuickActions();
+    return before === document.querySelector('#quickActions .qa-fold');
+  });
+  expect(survives, 'the fold button was replaced by a render that changed nothing').toBe(true);
+  // And it still repaints when the row does have something new to say.
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+});
+
 test('an open keys dock folds away with the rest of the stack', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await page.locator('#keysBtn').click();
@@ -110,7 +159,6 @@ const navBoxes = page => page.locator('#quickActions .qa-nav').evaluate(el => {
   return {
     row: box(el), fold: box(el.querySelector('.qa-fold')),
     right: box(el.querySelector('.qa-right')),
-    arrows: [...el.querySelectorAll('button.nav')].map(box),
   };
 });
 
@@ -125,10 +173,10 @@ test('the fold and Last sit on opposite edges of the nav row', async ({page}) =>
   expect(right.x + right.width).toBeCloseTo(row.x + row.width, 0);
 });
 
-test('Summary never lands on an arrow, at any phone width', async ({page}) => {
-  // The right edge roughly doubles when a pane has a closing message to offer. The arrows used to
-  // reserve room for it by hand, with a min-width under the reserve that silently outranked it —
-  // so on every phone width Summary was drawn straight over the ›.
+test('Summary never lands on the walk, at any phone width', async ({page}) => {
+  // The nav row's right edge roughly doubles when a pane has a closing message to offer, and the
+  // walk is a row below it — so what this now measures is that the two rows stay two rows, and
+  // that the arrows keep a thumb-sized target at the narrowest phone.
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
   // The poll re-reads the pane every few seconds and would put the fake herdr's rows of x back,
@@ -144,26 +192,45 @@ test('Summary never lands on an arrow, at any phone width', async ({page}) => {
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({width, height: 844});
-    const {fold, right, arrows} = await navBoxes(page);
-    expect(arrows.length, `both arrows are there at ${width}`).toBe(2);
-    for (const b of arrows) {
-      expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThan(24);
-      expect(b.x, `an arrow runs under the fold at ${width}`).toBeGreaterThanOrEqual(fold.x + fold.width);
-      expect(b.x + b.width, `an arrow runs under Summary at ${width}`).toBeLessThanOrEqual(right.x);
+    const walk = await page.locator('#statusBar').evaluate(bar => {
+      const box = node => { const {x, width, top} = node.getBoundingClientRect(); return {x, width, top}; };
+      // The .walk wrapper is display:contents on a phone — its children join the bar's own grid,
+      // so it has no box of its own and the group has to be measured from them.
+      return {bar: box(bar), left: box(bar.querySelector('.left')),
+        state: box(bar.querySelector('.state')), mid: box(bar.querySelector('#recentBtn')),
+        arrows: [...bar.querySelectorAll('.nav-btn')].map(box)};
+    });
+    const row = await page.locator('#quickActions .qa-nav').evaluate(el =>
+      el.getBoundingClientRect().bottom);
+    expect(walk.bar.top, `the walk climbed into the nav row at ${width}`).toBeGreaterThanOrEqual(row - 1);
+    expect(walk.arrows.length, `both arrows are there at ${width}`).toBe(2);
+    for (const b of walk.arrows) {
+      expect(b.width, `an arrow collapsed at ${width}`).toBeGreaterThanOrEqual(28);
+      expect(b.x, `an arrow runs under the stamp at ${width}`).toBeGreaterThanOrEqual(walk.left.x);
+      expect(b.x + b.width, `an arrow runs past the state at ${width}`)
+        .toBeLessThanOrEqual(walk.state.x + walk.state.width);
     }
+    // The group is centred on the screen, not on what is left of the bar: the stamp above it
+    // changes on every read, and a control that drifted with it would not be findable by feel.
+    const span = [Math.min(...walk.arrows.map(b => b.x)),
+      Math.max(...walk.arrows.map(b => b.x + b.width))];
+    const centre = walk.bar.x + walk.bar.width / 2;
+    expect(Math.abs((span[0] + span[1]) / 2 - centre),
+      `the walk is off centre at ${width}`).toBeLessThan(2);
+    expect(Math.abs(walk.mid.x + walk.mid.width / 2 - centre),
+      `Recent is off centre at ${width}`).toBeLessThan(2);
   }
 });
 
-test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a desktop', async ({page}) => {
+test('QUIT, CLS and Refresh fold behind f() at every width', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   const fire = page.locator('#fireBtn'), quit = page.locator('#quitBtn'), cls = page.locator('#clsBtn');
   const refresh = page.locator('#refreshBtn');
-  // Wide: unchanged. The fold exists for the width it is not needed at.
-  await expect(fire).toBeHidden();
-  await expect(quit).toBeVisible();
-  await expect(refresh).toBeVisible();
-  // Icon only in the row — the word belongs to the menu, where an icon says nothing.
-  await expect(page.locator('.fire-label')).toBeHidden();
+  // Wide, where the header has the room for all three, they are still behind the one control:
+  // the room is not a reason to leave QUIT a slip away from the button that is safe to press.
+  await expect(fire).toBeVisible();
+  await expect(quit).toBeHidden();
+  await expect(refresh).toBeHidden();
 
   for (const width of [320, 390, 430]) {
     await page.setViewportSize({width, height: 844});
@@ -180,13 +247,15 @@ test('QUIT, CLS and Refresh fold behind f() on a phone, and sit in the row on a 
     expect(over, `something runs off the header at ${width}`).toBe(0);
   }
 
+  // Back to a desktop, which is where the menu had no contents to check until now.
+  await page.setViewportSize({width: 1280, height: 800});
   await fire.click();
   await expect(quit).toBeVisible();
   await expect(cls).toBeVisible();
   await expect(refresh).toBeVisible();
   await expect(page.locator('.fire-label')).toHaveText('Refresh');
   // A menu, read down its left edge: one column, one left edge, one width.
-  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button')]
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#fireMenu button:not([hidden])')]
     .map(b => { const r = b.getBoundingClientRect(); return [r.left, r.width, r.top]; }));
   expect(rows.length).toBe(3);
   expect(new Set(rows.map(r => r[0])).size, 'the rows share a left edge').toBe(1);

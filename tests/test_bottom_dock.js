@@ -23,6 +23,8 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
   const el0 = id => els[id];
   const el = id => els[id] || (els[id] =
     {id, innerHTML: '', style: {}, setAttribute() {}, scrollTop: 0, scrollHeight: 4000,
+     // The bar is only rewritten when its markup changed, and the last markup is remembered here.
+     dataset: {},
      classes: new Set(),
      get classList() {
        return {toggle: (c, on) => { on ? this.classes.add(c) : this.classes.delete(c); }};
@@ -39,15 +41,23 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navStep: () => 0,
     paneOf: () => true,
-    navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {},
+    // The arrows now name where they land, and a conversation is one of the places they can land.
+    // Stubbed like the rest of the recorder: this suite owns the nav row, not the walk.
+    paneLabel: () => 'a pane', convViewId: null, convDockOn: () => false, loadConvIndex: () => [],
+    navGo() {}, renderTermMenuState() {}, syncPromptsBtn() {}, syncResend() {},
     syncComposerMode() {}, isShell: () => false,
     // The conversation switch reads membership and the per-pane view, both of which live in the
     // block below this one. Stubbed rather than sliced in: this suite owns the nav row, not the
     // recorder.
     convsForPane: () => convs, convViewOn: () => threaded, toggleConvView() {},
+    // The mark is drawn by the conversation store, which this slice does not load.
+    convGlyph: () => '<svg class="conv-glyph"></svg>',
     convThreadOn: () => threaded, convLastAgent: threaded ? 3 : -1, selectFinalConvMessage() {},
     // The strip's centre names the pane the composer types into, so the fold has to redraw it.
     renderPairStrip() {},
+    // Resend is offered only where there is something to repeat, and this suite owns the nav row
+    // rather than the composer that would have filled this in.
+    lastSentText: {}, escapeHtml: s => s,
   });
   el('convThread').hidden = !threaded;
   vm.runInContext(HISTORY, ctx);

@@ -91,6 +91,10 @@
     // report the content height — a px cap here would drift the moment the font size changes.
     function autoGrow(el) {
       el.style.height = 'auto';
+      // A field in a view that is not on screen measures 0, and pinning that 0 shut is a composer
+      // that opens as a sliver — the conversation window's is cleared while its view is hidden.
+      // Left at auto it is one row, which is what it grows from anyway.
+      if (!el.offsetParent) return;
       el.style.height = el.scrollHeight + 'px';
     }
 
@@ -240,8 +244,13 @@
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
+        // The mark, then the live dot: what this card is, then how its panes are doing. The dot
+        // alone was doing both jobs, which is why a conversation card and an agent card opened the
+        // same way but did not read as different things.
+        // Dot, mark, name — the dot is the row's live state and reads first on every card in the
+        // list; the mark says what kind of thing the name belongs to.
         `<div class="conversation-title"><span class="dot${r.pulse}" style="background:${r.dot}"` +
-        ` aria-hidden="true"></span>` +
+        ` aria-hidden="true"></span><span class="conv-kind">${convGlyph()}</span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
         // not a marker the app writes into what they typed (D4).
@@ -267,13 +276,22 @@
     function openConversation(id) {
       const conv = loadConvIndex().find(c => c.id === id);
       if (!conv) return;
+      stashConvDraft();   // before the id moves, or the draft is filed under where it is going
       convViewId = id;
+      noteConvVisit(id);   // the Recent switcher's log, which is MRU
+      noteConvNav(id);     // and the ‹ › walk, which is order of visit
+      clearConvDock();
+      restoreConvDraft();   // whatever was left half-written to *this* conversation earlier
       convStandaloneHtml = '';
       convRosterHtmlLast = '';
       convStripSig = '';
       convRosterOpen = false;
       convAdding = false;
       openPanel('convView');
+      syncNavBtns();   // the walk is standing somewhere new, and its arrows are on screen here too
+      // Tabs come from the index and live snapshot, not transcript storage. Draw them before the
+      // IndexedDB read below so first open has navigation while its messages load.
+      renderConvStrip();
       renderConvStandalone(true);
     }
 
@@ -303,6 +321,8 @@
       // The thread panel, on, and showing *this* conversation: a pane in several would otherwise
       // open on whichever one it was last read under.
       convSetView(live, conv.id);
+      // No "return to this conversation" carried along: the conversation is the entry behind this
+      // one on the walk, and Back is that entry.
       jumpToPane(live.pane_id);
     }
 
@@ -724,9 +744,11 @@
     // sideways scroll and the tab they were about to press.
     let convStripSig = '';
 
+    // Returns how many tabs it is holding. The caller in the pane-tabs slot needs that: an empty
+    // strip there hides itself and would leave the header with no tabs at all — see renderAgentTabs.
     function renderConvStrip() {
       const el = document.getElementById('convStrip');
-      if (!el) return;
+      if (!el) return 0;
       const shown = convLandingList().shown;
       // The open conversation is always a tab, even when the reader has the auto ones hidden — a
       // strip that cannot show what is on screen is worse than one carrying an extra tab, which is
@@ -746,7 +768,7 @@
       const now = convCurrentId();
       const sig = rows.map(r => `${r.c.id}|${r.c.name}|${r.c.auto ? 'a' : '-'}|${r.dot}|${r.pulse}`)
         .join(' /// ') + ` @@ ${now}`;
-      if (sig === convStripSig) return;
+      if (sig === convStripSig) return rows.length;
       convStripSig = sig;
       el.innerHTML = rows.map(r =>
         `<button class="conv-tab" data-conv-id="${escapeHtml(r.c.id)}"` +
@@ -757,6 +779,7 @@
         (r.c.auto ? '<span class="tier">auto</span>' : '') + '</span></button>').join('');
       const open = el.querySelector('[aria-current="true"]');
       if (open) open.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      return rows.length;
     }
 
     // Which tab is the one you are looking at. Two views ask it: the standalone one is showing a
@@ -790,9 +813,14 @@
       const view = document.getElementById('convView');
       if (!view || view.style.display === 'none') return;
       const box = document.getElementById('convViewThread');
+      const stick = bottom || view.scrollTop + view.clientHeight >= view.scrollHeight - 24;
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
+      // Written once per open rather than on every redraw: it never changes, and this runs on every
+      // recorded read of every member.
+      const mark = document.getElementById('convViewMark');
+      if (mark && !mark.firstChild) mark.innerHTML = convGlyph();
       const members = conv.members || [], hidden = convHidden(conv.id);
       const shown = members.filter(m => !hidden.has(m.key));
       const open = document.getElementById('convViewOpen');
@@ -828,7 +856,10 @@
       if (rosterHtml !== convRosterHtmlLast) { convRosterHtmlLast = rosterHtml; panel.innerHTML = rosterHtml; }
       panel.hidden = !convRosterOpen;
       const html = (entries.length
-        ? convEntriesHtml(entries, null, false, false)
+        // Same fallback the visibility filter above uses: a single-member thread's entries carry no
+        // key, and the dock reads a bubble's key to know who wrote it — an unkeyed bubble has no
+        // source and so no target to exclude.
+        ? convEntriesHtml(entries, {key: keys[0]}, false, 'toggleConvDockPick')
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +
             'messages only" off in the pane menu to see it.</p>'
@@ -839,8 +870,15 @@
       // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
       // reader's text selection with it mid-copy. Only a thread that actually changed is written.
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
+      // After the thread is on screen: the picks are painted onto its bubbles, and the dock's row
+      // says who is live and what is picked.
+      // What each member is doing right now, on that member's newest bubble — several at once in a
+      // conversation of several, which is the whole point of reading them together.
+      syncConvBadge('convViewThread');
+      syncDockPicks(entries.length);
+      renderConvDock();
       renderConvStrip();
-      if (bottom) view.scrollTop = view.scrollHeight;
+      if (stick) view.scrollTop = view.scrollHeight;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every
@@ -907,7 +945,10 @@
       renderQuickActions();
       renderPairStrip();
       // The view this pane was last read in, restored with it — after activePane is set, which is
-      // what it reads.
+      // what it reads. At its end, whatever the thread being left was doing: the rows already land
+      // there by way of `userScrolledUp`, and a thread that did not would be the only half of a
+      // pane switch that remembered somewhere else.
+      convStickNext = true;
       renderConvView();
       closeFireMenu();
       disarmClear();  // an arm belongs to the pane it was made on, not to the next one opened

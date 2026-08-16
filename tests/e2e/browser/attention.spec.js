@@ -141,7 +141,7 @@ test('opening the pane clears it everywhere at once', async ({page}) => {
   await expect(page).toHaveTitle('herdr-remote');
   expect(await faviconFill(page)).toBe('#7aa2f7');
   await expect(page.locator('#agentTabs .agent-tab.alert')).toHaveCount(0);
-  await page.locator('button.back[aria-label="Back to agent list"]').click();
+  await page.locator('#termBack').click();
   await expect(page.locator('#agents .agent.attention')).toHaveCount(0);
   await expect(page.locator('#agents .section-header', {hasText: 'Needs you'})).toHaveCount(0);
 });

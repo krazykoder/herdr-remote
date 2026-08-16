@@ -64,6 +64,9 @@
     function renderStatusBar() {
       const pane = activePane ? paneOf(activePane) : null;
       paintPaneDot();
+      // The arrows sit in this row and their reach depends on which panes are still alive, which is
+      // a fact the snapshot changes without anybody navigating.
+      syncNavBtns();
       document.getElementById('statusBarLeft').textContent =
         pane && paneStampAt ? `changed ${fmtAgo(paneStampAt)}` : '';
       const right = document.getElementById('statusBarRight');
@@ -118,10 +121,9 @@
       }, { passive: false });
     }
 
-    // A jump is a destination, so it drops any panel the user was in and the pane it would
-    // have returned to — otherwise closing Settings later would yank them back to an older pane.
+    // A jump is a destination, so the panel the user was in is left behind rather than closed back
+    // into — openTerminal pushes the pane onto the walk, and the panel stays where it was on it.
     function jumpToPane(paneId) {
-      panelReturnPane = null;
       hidePanels();
       openTerminal(paneId);
     }
@@ -135,19 +137,165 @@
     }
 
     function toggleTimeline() {
-      if (document.getElementById('timelineView').style.display === 'block') { closePanel(); return; }
+      // Against being on screen, not against a display mode: PANELS decides that, and this view is
+      // a flex column since it grew a scrolling log with the data panel pinned under it.
+      if (document.getElementById('timelineView').style.display !== 'none') { closePanel(); return; }
       openPanel('timelineView');
       renderTimeline();
     }
 
     function renderTimeline() {
       const el = document.getElementById('timelineList');
-      if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
-      el.innerHTML = timeline.map(e => {
-        const t = e.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const color = e.status === 'blocked' ? 'var(--red)' : e.status === 'working' ? 'var(--green)' : 'var(--muted)';
-        return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
-      }).join('');
+      if (!timeline.length) {
+        el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>';
+      } else {
+        el.innerHTML = timeline.map(e => {
+          const t = e.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const color = e.status === 'blocked' ? 'var(--red)' : e.status === 'working' ? 'var(--green)' : 'var(--muted)';
+          return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
+        }).join('');
+      }
+      renderBandwidth();
+    }
+
+    function formatBandwidth(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    function renderBandwidth() {
+      const panel = document.getElementById('bandwidth');
+      const rows = document.getElementById('bandwidthRows');
+      if (!panel || !rows) return;
+      panel.hidden = !bandwidthOn();
+      if (panel.hidden) return;
+      // Called from every snapshot, update and approval so the numbers keep up with the socket —
+      // which means most calls arrive with Activity off screen, where drawing is work nobody sees
+      // and an innerHTML rebuild of rows a reader is not looking at.
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display === 'none') return;
+      const buckets = bandwidthBuckets();
+      const size = bandwidthBucketMs();
+      const liveAt = bandwidthLiveAt();
+      const title = document.getElementById('bandwidthTitle');
+      if (title) {
+        title.textContent = `Data exchange · ${bandwidthStepMin()} min buckets · ` +
+          `latest ${bandwidthCount()}`;
+      }
+      const total = document.getElementById('bandwidthTotal');
+      if (total) {
+        // The same scale the chips under it use. Fixed MB read "0.00 MB" for an hour of a quiet
+        // relay, which is a panel reporting that it is not measuring anything.
+        total.textContent = `Total: ${formatBandwidth(
+          buckets.reduce((n, b) => n + b.sent + b.received, 0))}`;
+        total.title = `Every interval drawn below, added up`;
+        // Green is what this panel uses for "still moving". A sum that includes an interval still
+        // being filled is; one over a stack that stopped an hour ago is not.
+        total.classList.toggle('now', !!liveAt);
+      }
+      const kinds = [
+        ['total', 'Total', b => b.sent + b.received],
+        ['sent', 'Sent', b => b.sent],
+        ['received', 'Received', b => b.received],
+      ];
+      const metric = bandwidthMetric();
+      const paneKind = kinds.find(([key]) => key === metric) || kinds[0];
+      const panesOn = bandwidthPanesOn();
+      document.querySelectorAll('[data-bandwidth-metric]').forEach(button =>
+        button.setAttribute('aria-pressed', String(button.dataset.bandwidthMetric === metric)));
+      const paneToggle = document.getElementById('bandwidthPanes');
+      if (paneToggle) paneToggle.setAttribute('aria-pressed', String(panesOn));
+      // The rows are built when the *window* moves — once a bucket — and never for a number
+      // changing. The chips overflow a phone, so they scroll, and this is redrawn on every message
+      // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
+      // send a reader who had scrolled back to an earlier bucket to the left edge again, three
+      // times a minute. Same rule the dock's chip row follows.
+      const panes = panesOn ? agents.filter(a => a.agent) : [];
+      // What the pane rows cannot account for: snapshots and pushes name no pane, and a pane that
+      // has exited keeps its bytes but loses its row. Without this the split silently fails to add
+      // up to the total above it, which reads as one of the two numbers being wrong.
+      const other = panes.length
+        ? `<div class="bandwidth-row" id="otherBandwidthRow">` +
+          `<span class="bandwidth-label">Shared</span>` +
+          `<div class="bandwidth-chips">${buckets.map(b => {
+            const range = b.empty ? 'No data' : '';
+            return `<span class="bandwidth-chip${b.at && b.at === liveAt ? ' now' : ''}" ` +
+              `title="${paneKind[1]}, not attributable to one pane${range ? ` — ${range}` : ''}">` +
+              `</span>`;
+          }).join('')}</div></div>`
+        : '';
+      const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : [], metric,
+        panes.map(a => a.pane_id)).join(',');
+      if (rows.dataset.sig !== sig) {
+        // One grid for the header and all three rows, so the columns line up and the whole table
+        // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
+        // against Received at 2:40 and never see that they had.
+        rows.style.gridTemplateColumns = `minmax(110px, 1fr) repeat(${buckets.length}, minmax(46px, 1fr))`;
+        const at = b => {
+          if (b.empty) return {range: 'No data', live: false, clock: '—'};
+          const start = new Date(b.at), end = new Date(b.at + size);
+          const day = start.toDateString() === new Date().toDateString() ? '' :
+            start.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ';
+          const range = day + `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
+            end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+          // Live is the interval still being filled, which only the collector knows: a record starts
+          // at the message that opened it, not on a clock boundary, so its time cannot be compared
+          // against one. The stack survives a reload and can hold days, so a column outside today
+          // says which day — HH:MM alone would read as this morning.
+          return {range: range, live: b.at === liveAt,
+            clock: day + `${String(start.getHours()).padStart(2, '0')}:` +
+              `${String(start.getMinutes()).padStart(2, '0')}`};
+        };
+        rows.innerHTML =
+          `<div class="bandwidth-head"><span class="bandwidth-label"></span>` +
+          buckets.map(b => { const t = at(b);
+            return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
+              `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
+          kinds.map(([, label]) =>
+            `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+            `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
+              return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
+                `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
+            }).join('')}</div></div>`).join('') +
+          panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
+            `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
+            `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
+              return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
+                `title="${paneKind[1]}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
+            }).join('')}</div></div>`).join('') + other;
+        rows.dataset.sig = sig;
+      }
+      // The numbers, written into the chips that are already there.
+      const bars = rows.querySelectorAll('.bandwidth-row');
+      kinds.forEach(([, , value], r) => {
+        const chips = bars[r].querySelectorAll('.bandwidth-chip');
+        buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
+      });
+      // Filled as the pane rows are read, so what is left over is exactly what they did not claim.
+      const claimed = buckets.map(() => 0);
+      panes.forEach((a, i) => {
+        const row = bars[i + kinds.length];
+        const b = paneBandwidth[a.pane_id];
+        const dot = row.querySelector('.dot');
+        dot.style.background = statusColor(a);
+        dot.classList.toggle('pulse', a.status === 'working');
+        row.querySelector('.pane-bandwidth-ping').textContent = b && b.ping ? ` · ${fmtAgo(new Date(b.ping))}` : '';
+        const byAt = Object.fromEntries((b ? b.buckets : []).map(entry => [entry.at, entry]));
+        const chips = row.querySelectorAll('.bandwidth-chip');
+        buckets.forEach((bucket, j) => { const entry = byAt[bucket.at];
+          if (entry) claimed[j] += paneKind[2](entry);
+          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : ''; });
+      });
+      const otherRow = panes.length ? bars[kinds.length + panes.length] : null;
+      if (otherRow) {
+        const chips = otherRow.querySelectorAll('.bandwidth-chip');
+        // Clamped: a pane row is written from its own record and the total from another, and a
+        // number below zero would be the panel reporting a rounding difference as traffic.
+        buckets.forEach((b, j) => { chips[j].textContent = b.empty ? '' :
+          formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j])); });
+      }
     }
 
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
@@ -206,6 +354,15 @@
       let wsUrl = url;
       if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       ws = new WebSocket(wsUrl);
+      // Central wire accounting. Every caller goes through this socket, so instrumenting it here
+      // catches polls, sends, pushes and commands without duplicating counters at each call site.
+      const send = ws.send.bind(ws);
+      ws.send = data => {
+        noteBandwidth('sent', data);
+        try { const msg = JSON.parse(data); if (msg.type === 'read_pane') notePaneBandwidth(msg.pane_id, 'sent', data); }
+        catch (e) { /* non-JSON wire payloads have no pane identity */ }
+        return send(data);
+      };
       // Re-announcing the push subscription here rather than only at subscribe time is what makes
       // it survive the socket being down at the wrong moment — on a phone that is most of the time.
       ws.onopen = () => {
@@ -217,11 +374,17 @@
         // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
+        resetBandwidthBucket();
         setStatus('disconnected');
         setTimeout(connect, 3000);
       };
       ws.onerror = () => setStatus('disconnected');
-      ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+      ws.onmessage = (e) => {
+        noteBandwidth('received', e.data);
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'pane_content') notePaneBandwidth(msg.pane_id, 'received', e.data);
+        handleMessage(msg);
+      };
     }
 
     // One update path for every status dot: the app header's and the term header's, so the
@@ -352,6 +515,7 @@
         // after an outage long enough to have missed turns.
         convRecoverOutage();
         render();
+        renderBandwidth();
         // Approvals and the back/forward targets both follow the snapshot: a session that just
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
@@ -396,6 +560,7 @@
         }
         prevStatuses[update.pane_id] = update.status;
         render();
+        renderBandwidth();
         renderQuickActions();
         syncConvBadge();
       }
@@ -411,6 +576,7 @@
         timeline.unshift({ project: msg.project, agent: msg.agent, status: 'blocked', time: new Date() });
         if (timeline.length > 100) timeline.pop();
         render();
+        renderBandwidth();
         renderQuickActions();  // the approval buttons belong on screen the moment it blocks
         syncConvBadge();
       } else if (msg.type === 'pane_content' && msg.pane_id !== activePane) {

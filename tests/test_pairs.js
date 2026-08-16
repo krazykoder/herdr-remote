@@ -15,6 +15,7 @@ const vm = require('node:vm');
 
 const PAIRS_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_pure.js'), 'utf8');
 const TRANSFER = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'transfer.js'), 'utf8');
+const CONV_DOCK = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'conv_dock.js'), 'utf8');
 const SETTINGS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'settings.js'), 'utf8');
 const START_DIALOG = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'start_dialog.js'), 'utf8');
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
@@ -22,7 +23,7 @@ const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX',
+               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
                'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
                'enterAction', 'ctrlChord'];
 
@@ -32,7 +33,7 @@ const ctx = vm.createContext({});
 vm.runInContext(PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX,
+       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX, chunkText,
        parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
        enterAction, ctrlChord} = ctx.__out;
 
@@ -186,18 +187,52 @@ test('an empty selection is refused', () => {
   assert.match(composeTransfer('Review it.', 'Architect 1', '').error, /Select some text/);
 });
 
-test('an over-cap payload is refused with its size and produces no text', () => {
-  const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX));
-  assert.match(out.error, new RegExp(`over the ${SEND_TEXT_MAX} limit`));
-  assert.match(out.error, /^Payload is \d+ characters/);
-  assert.equal(out.text, undefined);
+test('a payload past one message is built, not refused', () => {
+  // It used to come back as "select less", which read as advice about the work and was really the
+  // wire's limit in disguise. The composer splits it now.
+  const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX * 3));
+  assert.equal(out.error, undefined);
+  assert.ok(out.text.length > SEND_TEXT_MAX * 3);
 });
 
-test('a payload exactly at the cap is allowed', () => {
-  const overhead = composeTransfer('', 'Architect 1', 'x').text.length - 1;
-  const out = composeTransfer('', 'Architect 1', 'x'.repeat(SEND_TEXT_MAX - overhead));
-  assert.equal(out.error, undefined);
-  assert.equal(out.text.length, SEND_TEXT_MAX);
+// --- chunkText ---
+
+test('text that fits is one chunk, and the same string', () => {
+  assert.deepEqual(chunkText('hello'), ['hello']);
+  assert.deepEqual(chunkText(''), []);
+  assert.deepEqual(chunkText('x'.repeat(SEND_TEXT_MAX)), ['x'.repeat(SEND_TEXT_MAX)]);
+});
+
+test('every chunk is within the cap and they concatenate back to the input', () => {
+  const text = Array.from({length: 900}, (_, i) => `line ${i} ${'y'.repeat(20)}`).join('\n');
+  const out = chunkText(text);
+  assert.ok(out.length > 1);
+  for (const c of out) assert.ok(c.length <= SEND_TEXT_MAX, `chunk of ${c.length}`);
+  assert.equal(out.join(''), text);
+});
+
+test('a chunk ends on a line boundary when the text has one', () => {
+  const out = chunkText(('a'.repeat(99) + '\n').repeat(20), 300);
+  assert.ok(out.length > 1);
+  // Every chunk but the last ends where a line ended: the audit log records one line per message.
+  for (const c of out.slice(0, -1)) assert.equal(c[c.length - 1], '\n');
+});
+
+test('a single line longer than the cap is cut, because there is nothing to cut on', () => {
+  const out = chunkText('z'.repeat(250), 100);
+  assert.deepEqual(out.map(c => c.length), [100, 100, 50]);
+  assert.equal(out.join(''), 'z'.repeat(250));
+});
+
+test('a cut never lands inside a surrogate pair', () => {
+  // Half an emoji arrives at the agent as a replacement character, and the halves never rejoin.
+  const out = chunkText('a'.repeat(9) + '\u{1F600}'.repeat(4), 10);
+  for (const c of out) assert.ok(!/[\uD800-\uDBFF]$/.test(c), 'chunk ends on a high surrogate');
+  assert.equal(out.join(''), 'a'.repeat(9) + '\u{1F600}'.repeat(4));
+});
+
+test('blank lines survive the split', () => {
+  assert.equal(chunkText('a\n\n\nb', 3).join(''), 'a\n\n\nb');
 });
 
 // --- agent-specific slash prefix ---
@@ -224,15 +259,64 @@ test('text with no slash commands is untouched for codex', () => {
 });
 
 test('transfer picks the prefix from the destination pane, not the source', () => {
-  assert.match(TRANSFER, /agentSlash\(SHORTCUTS\[shortcutIndex\]\.text, agentOf\(partner\.pane_id\)\)/);
+  // One function rewrites the instructions, and it is handed the pane about to read them. Both
+  // callers pass their own target — the sheet's partner, and the row's chosen member.
+  assert.match(TRANSFER,
+    /function transferInstruction\(picks, targetPaneId\) \{[\s\S]*?agentSlash\(SHORTCUTS\[i\]\.text, agentOf\(targetPaneId\)\)/);
+  assert.match(TRANSFER, /transferInstruction\(shortcutIndex >= 0 \? \[shortcutIndex\] : \[\], partner\.pane_id\)/);
+  assert.match(CONV_DOCK, /transferInstruction\(dockPicks, targetPaneId\)/);
 });
 
 // --- constants ---
 
-test('the frontend cap matches the relay cap', () => {
+test('the chunk size matches the cap the relay enforces', () => {
+  // This is what makes a client-side split work against a relay this app did not ship with: the
+  // number is the *oldest* relay's, and the app never sends a message past it.
   const relay = fs.readFileSync(path.join(__dirname, '..', 'relay', 'herdr_relay.py'), 'utf8');
   assert.match(relay, new RegExp(`len\\(text\\) > ${SEND_TEXT_MAX}`),
     'web/src/pairs_pure.js and herdr_relay.py disagree about the send_text cap');
+});
+
+test('a transfer never ends in a send, and exactly one function says otherwise', () => {
+  // The rule and its one documented bypass, asserted against the source because it is a rule about
+  // what a function may do rather than about what it returns. Everything in transfer.js is the
+  // pane view's path and prefills a composer; convDockSend is the conversation window's decision
+  // to skip that checkpoint (spec §4), and it lives in its own file so the rule stays readable.
+  assert.ok(!/\bsendTextTo\(|\bsendText\(/.test(TRANSFER),
+    'the pane view\'s transfer must never end in a send');
+  assert.match(CONV_DOCK, /function convDockSend\(\)[\s\S]*?sendTextTo\(target,/);
+  // And the bypass is scoped: a payload here is a recorded bubble, which *is* the message. In the
+  // pane view it is a range dragged across rows — a guess at where a message starts.
+  assert.match(CONV_DOCK,
+    /querySelectorAll\('#convViewThread \.conv-msg\.picked'\)/);
+  assert.ok(!/#convThread/.test(CONV_DOCK), 'the dock must never reach into the pane\'s thread');
+});
+
+test('the conversation window\'s targets do not require a pair', () => {
+  // A conversation of three with no pair recorded between any two of them is an ordinary thread,
+  // and the dock exists to serve it: membership is what makes an agent a target. The sheet still
+  // needs a pair — it transfers to *the partner*.
+  //
+  // The dock reads a pair in exactly one place, and only to pick a default: no health check, and
+  // nothing that decides who is *in* the row. A pair that is broken, absent, or outside this
+  // conversation simply does not answer, and the row falls back to its first member.
+  assert.ok(!/\bpairHealth\(/.test(CONV_DOCK), 'the dock must never gate on pair health');
+  assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 1);
+  assert.match(CONV_DOCK,
+    /function dockPairTarget\(source, list\) \{[\s\S]*?list\.some\(a => a\.pane_id === partner\.pane_id\) \? partner\.pane_id : ''/);
+  for (const fn of ['dockMembers', 'dockTargets']) {
+    const body = CONV_DOCK.split(`function ${fn}(`)[1].split('\n    }')[0];
+    assert.ok(!/pairFor\(|dockPairTarget\(/.test(body), `${fn} must not consult a pair`);
+  }
+  assert.match(CONV_DOCK, /function dockMembers\(\)[\s\S]*?\(conv\.members \|\| \[\]\)/);
+  assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
+  assert.match(TRANSFER, /function claimTransfer[\s\S]*?pairHealth\(pair, agents\)\.state !== 'healthy'/);
+});
+
+test('every shortcut has a chip name, and no two chips are the same', () => {
+  const ats = SHORTCUTS.map(s => s.at);
+  for (const at of ats) assert.match(at, /^[a-z][a-z0-9-]*$/, `"${at}" is not a chip name`);
+  assert.equal(new Set(ats).size, ats.length, 'two shortcuts claim the same @name');
 });
 
 test('shortcuts reference prompts by path and never inline their copy', () => {

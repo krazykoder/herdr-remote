@@ -118,7 +118,7 @@ test('a harness with no profile records nothing rather than guessing', () => {
 });
 
 test('a long message is cut to TEXT_MAX and says so', () => {
-  const rows = ['❯ go', '', '⏺ ' + 'word '.repeat(2000), '', '❯'];
+  const rows = ['❯ go', '', '⏺ ' + 'word '.repeat(CONV_TEXT_MAX), '', '❯'];
   const text = paneMessages(rows, 'claude')[1].text;
   assert.strictEqual(text.length, CONV_TEXT_MAX);
   assert.ok(text.endsWith('…'));

@@ -419,10 +419,13 @@
         dedupe.hidden = !mine.length;
         // Same test: both repair a transcript, and neither means anything on a pane that has none.
         recover.hidden = !mine.length;
-        conv.textContent = mine.length ? `In "${mine[0].name}"…`
+        // The one the thread is on, not the first in the index. The menu naming a conversation the
+        // thread is not showing is the same off-by-one bug in words.
+        const shown = convViewConv(a);
+        conv.textContent = shown ? `In "${shown.name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
         // A conversation of one has no joint thread to show, so the preference is not offered.
-        joint.hidden = !(mine.length && pairedConvMembers(a, mine[0]).length > 1);
+        joint.hidden = !(shown && pairedConvMembers(a, shown).length > 1);
         joint.textContent = convJointOn()
           ? 'Show this pane alone' : 'Show paired conversation';
         convFont.hidden = !(mine.length && convViewOn(a));

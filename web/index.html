@@ -228,17 +228,14 @@
       border-top: 1px solid var(--border);
     }
 
-    /* The shell's last row at every width. Its bottom padding is as much the point as its
-       contents: ~20px keeps the text clear of the iPhone's bottom curve and home indicator.
-       env() resolves to 0 until P5 adds viewport-fit=cover, so the 20px stands alone for now and
-       the device inset simply adds to it once it starts reporting. */
+    /* Desktop needs only a compact footer; phones add their own safe-area inset below. */
     .status-bar {
       flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 5px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+      padding: 5px 14px calc(5px + env(safe-area-inset-bottom, 0px));
       font-size: 0.65rem;
       font-weight: 500;
       color: var(--muted);
@@ -262,9 +259,69 @@
       min-height: 1.2em;
     }
 
+    /* Equal halves either side of the button, so it is centred on the screen rather than on
+       whatever is left over — the left text changes on every read, and a control that drifted with
+       it would not be findable without looking. */
     .status-bar .left {
+      flex: 1 1 0;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    /* The walk and its destination list, as one group, so it is the group that is centred and the
+       Recent button does not shift sideways when an arrow goes disabled. */
+    .status-bar .walk {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* A disabled arrow is dimmed rather than removed: "there is nowhere back from here" is worth
+       saying, and a control that vanished would take the Recent button's position with it.
+       Sized as a target rather than as a glyph: these are the two most-pressed controls in the app
+       on a phone, and a bare 28px chevron is under every thumb-target floor there is. Bordered like
+       Recent between them, so the three read as one group of buttons rather than as a label with
+       decoration either side. */
+    .status-bar .nav-btn {
+      flex: 0 0 auto;
+      width: 46px;
+      min-height: 30px;
+      padding: 0;
+      font: inherit;
+      font-size: 1.15rem;
+      line-height: 1;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .status-bar .nav-btn:hover:not(:disabled) { color: var(--text); }
+    .status-bar .nav-btn:disabled { opacity: 0.3; cursor: default; }
+
+    /* Sized like the Esc chip beside it and always present, so the bar's height is what it was —
+       the reserved heights above exist because this row must never change size. */
+    .status-bar .recent-btn {
+      flex: 0 0 auto;
+      min-height: 30px;
+      padding: 2px 12px;
+      font: inherit;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .status-bar .recent-btn:hover {
+      color: var(--text);
+      border-color: var(--text);
     }
 
     .status-bar .right {
@@ -284,9 +341,10 @@
     }
 
     .status-bar .state {
-      margin-left: auto;
+      flex: 1 1 0;
       display: flex;
       align-items: center;
+      justify-content: flex-end;
       gap: 7px;
     }
 
@@ -597,6 +655,120 @@
       overflow-y: auto;
     }
 
+    /* Activity keeps its event log readable while the local wire summary stays pinned below it. */
+    #timelineView {
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    #timelineList {
+      flex: 1 1 50%;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .bandwidth {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .bandwidth h2 {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .bandwidth-total {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 2px 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font: 0.62rem monospace;
+      background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
+    .bandwidth-total.now {
+      border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+      background: color-mix(in srgb, var(--green) 8%, var(--bg));
+    }
+
+    /* One grid holding the clock row and all three data rows, so the columns line up and the whole
+       thing scrolls as one table. The rows and the chip strip are display: contents, which keeps
+       the markup readable while every cell sits in the one grid. */
+    #bandwidthRows {
+      display: grid;
+      align-items: center;
+      gap: 5px 4px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      font: 0.62rem monospace;
+    }
+
+    .bandwidth-head,
+    .bandwidth-row,
+    .bandwidth-chips { display: contents; }
+
+    /* The row's name stays put while the hour scrolls past it, so a number is never nameless. */
+    .bandwidth-label {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      padding-right: 4px;
+      color: var(--muted);
+      background: var(--bg);
+    }
+
+    .bandwidth-time {
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .bandwidth-time.now { color: var(--green); }
+
+    .bandwidth-chip {
+      padding: 3px 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      text-align: center;
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
+    /* The bucket still being filled: what is on the wire right now, not a closed total. */
+    .bandwidth-chip.now {
+      border-color: color-mix(in srgb, var(--green) 55%, var(--border));
+      background: color-mix(in srgb, var(--green) 8%, var(--bg));
+    }
+
+    .pane-bandwidth-name {
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
+    .pane-bandwidth-ping { color: var(--muted); font-size: 0.56rem; }
+
+    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; }
+    .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
+    .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
+    #bandwidthPanes { margin-left: auto; }
+
     /* Settings */
     .settings {
       display: none;
@@ -843,6 +1015,17 @@
       min-width: 0;
       color: var(--text);
       font-weight: 600;
+    }
+
+    /* Ahead of the dot and tighter to it than the row's gap: the two together are one badge —
+       what this is, and how it is doing — rather than two things spaced like two. */
+    .conversation-title .conv-kind {
+      flex: 0 0 auto;
+      margin-right: -4px;
+      font-size: 0.95rem;
+      /* Restated: the row sets color for the name, and a descendant selector beats the .conv-kind
+         rule that gives the mark its green. */
+      color: var(--green);
     }
 
     /* The agent list's dot, at the agent list's size: this card stands in for the panes in it,
@@ -1230,6 +1413,18 @@
       font-size: 0.75rem;
     }
 
+    /* The conversation mark. An SVG that takes currentColor, so the green is this rule's to give
+       rather than the emoji font's to refuse. */
+    .conv-kind {
+      color: var(--green);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.05rem;
+    }
+
+    .conv-glyph { display: block; }
+
     .order-row .info,
     .pair-pick .info {
       flex: 1;
@@ -1284,6 +1479,16 @@
     .pair-pick.on {
       background: var(--bg);
       box-shadow: inset 3px 0 0 var(--blue);
+    }
+
+    /* The live dot every list draws, on the right where the tick sits in the sheets that pick
+       something. This list opens a pane rather than choosing one, so the row's right edge says what
+       the pane is doing instead of whether it is selected. */
+    .pair-pick .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
     }
 
     .pair-pick .pair-tick {
@@ -1421,10 +1626,11 @@
       cursor: pointer;
     }
 
-    /* CLS and QUIT sit in the header next to Refresh, which is the one they are easiest to mean
+    /* CLS and QUIT sit in the f() menu next to Refresh, which is the one they are easiest to mean
        instead. Text and not icons: they send a line into a live pane, and a glyph nobody
        recognises is not the thing to put next to a button that is safe to press. Two taps
-       each — see armFire. The 42px floor keeps arming from shuffling the row. */
+       each — see armFire. Resend borrows the look without the arm: it only fills the composer.
+       The 42px floor is what is left for a header that stops folding them away. */
     .term-header .cls-btn {
       font-family: 'SF Mono', 'Menlo', monospace;
       font-size: 0.7rem;
@@ -1466,80 +1672,128 @@
       }
     }
 
-    /* Wide enough, and the three sit in the header exactly as they always did: display:contents
-       takes the wrapper out of the flex line so the header's own gap spaces them. */
-    .fire-wrap { display: contents; }
-    .fire-menu { display: flex; gap: 8px; }
-    .fire-toggle,
-    .fire-label { display: none; }
+    /* One control at every width. These used to unfold into the header on a desktop and hide
+       behind f() only on a phone — two layouts to keep right, and on the wide one QUIT and CLS sat
+       a mouse-slip from Refresh, which is the button they are easiest to mean instead. None of
+       them is frequent: two take two taps, one throws the agent's context away, and the pane
+       re-reads itself anyway. A deliberate tap to reach them is the right price everywhere. */
+    .fire-wrap {
+      display: flex;
+      position: relative;
+      flex-shrink: 0;
+    }
 
-    /* Narrow, and they fold behind one control. None is frequent — two take two taps, one throws
-       away the agent's context, and the pane re-reads itself anyway — so a tap to reach them is
-       the right price for a header that fits. Same breakpoint as the rest of the layout. */
+    /* Shaped like what it is. A bare glyph in a row of icon buttons reads as one more action;
+       the border and the caret say a menu opens, which is the same promise .who-btn makes two
+       buttons to the left of it. */
+    .term-header .fire-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 0.7rem;
+      padding: 4px 8px;
+      min-height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .fire-toggle::after {
+      content: '▾';
+      font-family: system-ui, sans-serif;
+      font-size: 0.8rem;
+      line-height: 1;
+    }
+
+    .term-header .fire-toggle[aria-expanded="true"] {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .fire-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .fire-menu.open { display: flex; }
+
+    /* One column of rows rather than four icons in a popup: a menu is read down its left edge,
+       and the armed label needs the width anyway. */
+    .term-header .fire-menu button {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      min-width: 128px;
+      min-height: 34px;
+      padding: 4px 10px;
+      text-align: left;
+    }
+
+    .fire-label { display: inline; font-size: 0.7rem; }
+
+    /* Narrow, and the rest of the header folds too. Same breakpoint as the rest of the layout. */
     @media (max-width: 767px) {
-      .fire-wrap {
-        display: flex;
-        position: relative;
-        flex-shrink: 0;
+      /* Phone thumbs reach the edges, while the home indicator lives under the centre. Keep the
+         walk's arrows out at the safe edges and leave Recent in the middle.
+         Two rows, not one: the change stamp and the Esc chip were absolutely positioned into the
+         bar's bottom padding, and that padding is 5px — so both landed on top of the arrows they
+         were meant to sit under. A stamp under the ‹ and an Esc chip over the › are not a footer,
+         they are a collision.
+         The arrows take the upper row and the captions the lower one. On a phone the last 30px of
+         the screen are the home indicator's, and a control sitting in them is one the thumb has to
+         aim past the gesture bar to reach — so what goes down there is the 8px stamp, which is
+         read and never pressed. The bar is the same height either way, so the pane above it keeps
+         every pixel it had. */
+      .status-bar {
+        display: grid;
+        grid-template-columns: 68px minmax(0, 1fr) 68px;
+        grid-template-areas:
+          'back  recent forward'
+          'stamp stamp  state';
+        column-gap: 0;
+        row-gap: 2px;
+        padding-left: max(8px, env(safe-area-inset-left, 0px));
+        padding-right: max(8px, env(safe-area-inset-right, 0px));
       }
 
-      /* Shaped like what it is. A bare glyph in a row of icon buttons reads as one more action;
-         the border and the caret say a menu opens, which is the same promise .who-btn makes two
-         buttons to the left of it. */
-      .term-header .fire-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        font-family: 'SF Mono', 'Menlo', monospace;
-        font-size: 0.7rem;
-        padding: 4px 8px;
-        min-height: 28px;
-        border: 1px solid var(--border);
-        border-radius: 6px;
+      .status-bar .walk { display: contents; }
+      .status-bar #navBack { grid-area: back; justify-self: start; width: 68px; min-height: 34px; margin-left: 10vw; }
+      .status-bar #recentBtn { grid-area: recent; justify-self: center; }
+      .status-bar #navFwd { grid-area: forward; justify-self: end; width: 68px; min-height: 34px; margin-right: 10vw; }
+
+      /* Both ends of the top row, at the size of a caption rather than of a control — neither is
+         pressed, and the row exists so the arrows below it can have the whole width. Spanning two
+         columns each, meeting in the middle: the stamp grows to the right and the state grows to
+         the left, so the longer of the two takes the room the other is not using. */
+      .status-bar .left {
+        grid-area: stamp;
+        align-self: center;
+        flex: none;
+        min-height: 0;
+        font-size: 0.5rem;
       }
 
-      .fire-toggle::after {
-        content: '▾';
-        font-family: system-ui, sans-serif;
-        font-size: 0.8rem;
-        line-height: 1;
+      .status-bar #statusBarRight { display: block; font-size: 0.5rem; }
+
+      .status-bar .state {
+        grid-area: state;
+        grid-column: 2 / 4;
+        align-self: center;
+        justify-content: flex-end;
+        flex: none;
       }
 
-      .term-header .fire-toggle[aria-expanded="true"] {
-        border-color: var(--blue);
-        color: var(--blue);
-      }
-
-      .fire-menu {
-        display: none;
-        position: absolute;
-        top: calc(100% + 6px);
-        right: 0;
-        z-index: 20;
-        flex-direction: column;
-        gap: 6px;
-        padding: 8px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-      }
-
-      .fire-menu.open { display: flex; }
-
-      /* One column of rows rather than three icons in a popup: a menu is read down its left edge,
-         and the armed label needs the width anyway. */
-      .term-header .fire-menu button {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        gap: 8px;
-        min-width: 128px;
-        min-height: 34px;
-        padding: 4px 10px;
-        text-align: left;
-      }
-      .fire-label { display: inline; font-size: 0.7rem; }
     }
 
     /* Pane menu — anchored to its gear button, so it needs a positioned ancestor of its own
@@ -1736,9 +1990,15 @@
       flex-direction: column;
     }
 
+    /* Grows to fill the view so the dock below it is at the bottom of the screen and not halfway
+       up it: a conversation of three messages is the ordinary case, and a composer that floats in
+       the middle of an empty view reads as an unfinished layout. */
     #convViewThread {
-      flex: none;
+      flex: 1 0 auto;
       overflow: visible;
+      /* Room to scroll past the floating dock — measured, because the dock grows with the address
+         row, the instruction list and a composer that has been typed into. See syncDockHeight. */
+      padding-bottom: calc(var(--dock-h, 96px) + 8px);
     }
 
     /* Full width, unlike the pane's thread. There the 86% leaves room for the other half of a pair
@@ -1752,6 +2012,140 @@
       position: sticky;
       top: 0;
       z-index: 2;
+    }
+
+    /* The dock floats: sticky pins it to the bottom of the view, and the negative margin takes back
+       the space it would otherwise occupy, so the conversation scrolls behind it rather than
+       stopping above it. #convViewThread's padding is what lets the last bubble clear it. */
+    .conv-dock {
+      position: sticky;
+      bottom: 0;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      margin-top: calc(-1 * var(--dock-h, 96px));
+      /* Not a hard edge: the thread fades into the dock instead of sliding under a line, which is
+         what makes it read as depth rather than as two panels meeting. */
+      background: linear-gradient(to top, var(--bg) 68%, transparent);
+      pointer-events: none;   /* the fade is not a wall; the controls in it take their own taps */
+    }
+
+    .conv-dock[hidden] {
+      display: none;
+    }
+
+    .conv-dock > * {
+      pointer-events: auto;
+    }
+
+    /* The bubble, drawn as what it is: the next message in the thread, elevated a little so it
+       reads as being in front of the conversation rather than beneath it. Who it is addressed to,
+       what is added to it and the text itself are one control — the border says which agent is
+       about to receive it, so the answer is on the thing being written rather than beside it. */
+    .conv-bubble {
+      margin: 4px 8px 8px;
+      border: 1px solid var(--dock-accent, var(--border));
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+      /* A wash of the same colour, so the tint survives on a theme where a 1px border is nearly
+         invisible — and stays under the text at 6%, which no theme's contrast notices. */
+      background-image: linear-gradient(var(--dock-wash, transparent), var(--dock-wash, transparent));
+    }
+
+    /* The field starts at the top of the row. It is shorter than the Send button beside it until a
+       second line arrives, and bottom-aligning it put the first line you type below the button's
+       middle — a box you appear to be typing into from underneath. */
+    .conv-composer {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 4px 8px 8px 12px;
+    }
+
+    /* The field and its ghost, stacked. The ghost is the one that paints the block cursor. */
+    .conv-field {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .conv-composer textarea,
+    .conv-ghost {
+      width: 100%;
+      box-sizing: border-box;
+      /* The pane composer's face and size, from the same setting: this is the same act — writing a
+         message to an agent — and a monospace box is also what makes the block cursor exactly one
+         character wide. 16px by default keeps iOS from zooming on focus. */
+      font-family: monospace;
+      font-size: var(--input-font, 16px);
+      line-height: 1.4;
+      padding: 6px 0;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
+    .conv-composer textarea {
+      display: block;
+      max-height: 40vh;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      resize: none;
+      outline: none;
+      /* The platform's caret is off: the block below is the cursor, and two would be one too many. */
+      caret-color: transparent;
+    }
+
+    /* Behind the text, mirroring it exactly, so the block lands where the caret is. Behind and not
+       over it: a block painted on top hides the character it sits on, and a cursor that eats a
+       letter is worse than no cursor. Nothing here is read by anyone — the textarea is still the
+       field, and this is aria-hidden. */
+    .conv-ghost {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      color: transparent;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .conv-composer textarea {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* A terminal's cursor, because this is a box that types into agents. Always drawn, dimmed when
+       the field is not focused: where the next character lands is worth knowing before tapping in,
+       and a caret that vanishes with focus is the thing a phone keyboard hides anyway. */
+    .conv-ghost .cur {
+      display: inline-block;
+      min-width: 0.6em;
+      border-radius: 1px;
+      background: var(--dock-cursor, var(--text));
+      opacity: 0.4;
+    }
+
+    .conv-field.on .conv-ghost .cur {
+      opacity: 0.85;
+    }
+
+    .conv-composer .send {
+      flex: 0 0 auto;
+      /* Send stays at the bottom while the field grows upward past it: it belongs beside the line
+         being written, which is the last one, and on a phone that is also where the thumb is. */
+      align-self: flex-end;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 50%;
+      background: var(--blue);
+      color: var(--bg);
+      cursor: pointer;
     }
 
     /* Conversation tabs occupy pane tabs' exact slot in the shared bottom header. A second strip
@@ -1850,6 +2244,14 @@
       padding: 8px 12px;
       background: var(--bg);
       border-bottom: 1px solid var(--border);
+    }
+
+    /* Beside the name and out of the row's gap arithmetic: it is a mark, not a control, and a
+       64-character name still gets the width the ellipsis rule below assumes. */
+    .conv-view-head .conv-kind {
+      flex: 0 0 auto;
+      margin-right: -2px;
+      font-size: 0.95rem;
     }
 
     .conv-view-head .count {
@@ -2371,9 +2773,11 @@
       flex: none;
     }
 
-    /* The live state of the pane the last bubble belongs to, hung off its top-right corner. Only
-       the last one carries it: a status is a fact about the pane now, not about the message, and
-       a column of them would read as a per-message history that does not exist. */
+    /* The live state of the pane a bubble belongs to, hung off its top-right corner. One per
+       member, on that member's newest bubble: a status is a fact about the pane now, not about the
+       message, so a column of them would read as a per-message history that does not exist — but a
+       joint thread has more than one pane, and the partner working while someone else spoke last
+       is exactly what a joint thread is for. */
     .conv-badge {
       position: absolute;
       top: -8px;
@@ -2397,6 +2801,40 @@
     .conv-badge.working {
       color: var(--orange);
       border-color: var(--orange);
+    }
+
+    /* Working is the one state that is an activity rather than a result, so it is the one that
+       moves. The dots are drawn by CSS and not by the badge's text: syncConvBadge runs on the poll
+       and writes in place precisely so that nothing re-renders under a reader's finger, and a
+       badge animated by rewriting textContent would be that re-render three times a second.
+
+       Reserved width, revealed by clip-path — the badge is right-anchored, so dots that grew the
+       box would walk its left edge back and forth. `ch` is exact here: the badge is monospace. */
+    .conv-badge.working::after {
+      content: '...';
+      display: inline-block;
+      width: 3ch;
+      overflow: hidden;
+      vertical-align: bottom;
+      animation: conv-dots 1.2s steps(4, jump-none) infinite;
+    }
+
+    @keyframes conv-dots {
+      from {
+        clip-path: inset(0 100% 0 0);
+      }
+
+      to {
+        clip-path: inset(0 0 0 0);
+      }
+    }
+
+    /* Still three dots, still reading as work in progress, without the motion. A pane that is
+       working has to say so whether or not this browser will animate. */
+    @media (prefers-reduced-motion: reduce) {
+      .conv-badge.working::after {
+        animation: none;
+      }
     }
 
     .conv-badge.blocked {
@@ -2650,6 +3088,225 @@
       border-top: 1px solid var(--border);
       background: var(--surface);
       flex-shrink: 0;
+      /* The transfer chips are a full-width row above the rest, so the bar wraps rather than
+         scrolling the two into one line. */
+      flex-wrap: wrap;
+    }
+
+    /* The address line: who the message is going to, and what is added to it. Two lines — who, then
+       what — inside the bubble and above the text, because that is what they modify. Only the
+       conversation window has it; a pane's composer types into its pane. */
+    .xfer-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      width: 100%;
+      padding: 6px 10px 4px;
+      /* Hairline rather than a gap: one bubble divided into what it says and who it is for, not
+         two boxes sharing a shadow. */
+      border-bottom: 1px solid var(--border);
+    }
+
+    .xfer-row[hidden] {
+      display: none;
+    }
+
+    /* Both lines scroll rather than wrap. A conversation can hold more agents than fit across a
+       phone, and a row that wrapped would push the thread up by an unpredictable amount every time
+       one joined. */
+    .xfer-who-row,
+    .xfer-chip-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+
+    .xfer-who-row::-webkit-scrollbar,
+    .xfer-chip-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .xfer-act {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .xfer-act .xfer-chip-row,
+    .xfer-act .xfer-who-row {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    /* The conversation's agents. The one that will receive it is lit; the rest are dimmed rather
+       than hidden, because which agents are in this conversation is information and a row showing
+       only the chosen one would answer a different question. */
+    .xfer-row .xfer-who {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      min-height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      /* Named exactly as the bubbles above name their members — same face, same size, same case —
+         and so sized off the menu's conversation-text control rather than the root. A pill that
+         said "scratch" in a different type from the thread's "SCRATCH" would read as a different
+         scratch. The pill's own padding and 32px floor are untouched: the text scales, the tap
+         target does not. */
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 600;
+      opacity: 0.55;
+    }
+
+    /* Lit in the agent's own colour, the same one the bubble's border takes and the same one that
+       agent's messages wear in the thread — so "who is this going to" is answered once, in one
+       colour, in three places. */
+    .xfer-row .xfer-who.on {
+      border-color: var(--who-accent, var(--text));
+      color: var(--text);
+      opacity: 1;
+    }
+
+    /* The member whose message is picked. Still named, still in the row, but not somewhere this
+       message can go — a transfer back into the session that wrote it is not a transfer. */
+    .xfer-row .xfer-who.from {
+      opacity: 0.35;
+      border-style: dashed;
+      cursor: default;
+    }
+
+    /* Measured in the pill's own ems, so the pill scales as one piece — the same rule the thread's
+       message headers follow. */
+    .xfer-row .xfer-who .badge {
+      font-size: 1em;
+      padding: 0 0.4em;
+    }
+
+    .xfer-row .xfer-who .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    /* An instruction, not a send. Chips are additive — two lit chips are two instructions, in the
+       order they were tapped, which is why a second one wears its position. */
+    .xfer-row .xfer-chip,
+    .xfer-row .xfer-who-more {
+      flex: 0 0 auto;
+      /* The same height as the pills above them: two rows of controls in one bubble that do not
+         line up read as two bars that happened to be stacked. */
+      padding: 3px 11px;
+      min-height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    /* Lit, not filled. Send is the only filled thing on this row: three picked chips in the same
+       solid blue as the button that fires them make four buttons that look equally like the
+       action. Outline for chosen, fill for the one that sends. */
+    .xfer-row .xfer-chip.on {
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .xfer-row .xfer-chip sub {
+      font-size: 0.6em;
+      vertical-align: sub;
+      margin-left: 2px;
+      opacity: 0.8;
+    }
+
+    .xfer-row .xfer-send {
+      flex: 0 0 auto;
+      padding: 4px 13px;
+      min-height: 28px;
+      border-radius: 999px;
+      border: 1px solid var(--blue);
+      background: var(--blue);
+      color: var(--bg);
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    /* Every instruction as a list, for a chip row that has scrolled past the edge of a phone and
+       for reading the full label rather than its @name. Same picks, drawn twice. */
+    .chip-menu {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 40vh;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      /* The dock's own surface, not the thread's: this list floats over messages, and on --bg its
+         border is the only thing separating it from them. */
+      background: var(--surface);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+      padding: 4px;
+    }
+
+    .chip-menu[hidden] {
+      display: none;
+    }
+
+    /* Left-aligned, unlike the bar's buttons: this is a list being read down, and the ticks only
+       line up under each other if the labels start in the same place. */
+    .chip-menu .menu-item {
+      width: 100%;
+      min-height: 40px;
+      padding: 0 10px;
+      justify-content: flex-start;
+      text-align: left;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .chip-menu .menu-item:hover {
+      background: var(--border);
+    }
+
+    .chip-menu .tick {
+      display: inline-block;
+      width: 1.2em;
+      color: var(--blue);
+    }
+
+    /* The same live dot the pills and the pane header carry, so a name in the list and a name in
+       the row are recognisably the same agent. */
+    .chip-menu .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      margin-right: 6px;
+    }
+
+    .chip-menu .menu-item[disabled] {
+      opacity: 0.35;
+      cursor: default;
     }
 
     /* display:flex above outranks the UA rule for [hidden], so it needs saying again. */
@@ -2716,12 +3373,11 @@
       gap: 6px;
     }
 
-    /* Back and forward get their own full-width row under any approval buttons, so the two
-       never compete for the same line. Three columns: the fold, the arrows, and the right-edge
-       group. The edges size to their content and the middle takes the rest, which is what keeps
-       the arrows off them — a track cannot be overrun by its neighbour. These used to be absolute
-       with the arrows reserving width for them by hand, and the hand-written reserve was wrong the
-       moment Summary appeared and made the right edge twice as wide. */
+    /* The pane's own switches get their own full-width row under any approval buttons, so the two
+       never compete for the same line. Three columns: the fold and conversation switch, an empty
+       middle, and the right-edge group. The edges size to their content and the middle takes the
+       rest, so the two groups are pushed apart by the row rather than by a hand-written reserve —
+       which was wrong the moment Summary appeared and made the right edge twice as wide. */
     .qa-nav {
       flex: 1 0 100%;
       display: grid;
@@ -2734,14 +3390,6 @@
       display: flex;
       align-items: center;
       gap: 6px;
-    }
-
-    /* The arrows, centred in whatever the edges leave rather than in the row. Off-centre by the
-       difference between the two edges, which is the price of never sitting under either. */
-    .qa-nav .qa-mid {
-      display: flex;
-      justify-content: center;
-      gap: 8px;
     }
 
     /* Sized to the pair strip, which is the other always-there strip in this view and the only
@@ -2786,6 +3434,10 @@
        has a closing message to offer. One column holding both, so the width the pair needs is
        measured rather than guessed and the middle track gives up exactly that much. */
     .quick-actions .qa-nav .qa-right {
+      /* Third column named rather than counted: the middle track has nothing in it since the walk
+         moved to the status bar, and an empty div held only to fill a grid slot is a box that has
+         to be styled forever to keep its own height out of the row. */
+      grid-column: 3;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -2823,14 +3475,19 @@
       width: 34px;
       height: 22px;
       padding: 0;
+      /* The glyph inside is an SVG at 1em, so the button has to say what an em is here and centre
+         it — a bare text line-height leaves it sitting low in a 22px pill. */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border-radius: 11px;
       border: 1px solid var(--border);
       background: var(--surface);
-      color: var(--muted);
-      font-size: 0.7rem;
+      color: var(--green);
+      font-size: 0.85rem;
       font-weight: 400;
-      filter: grayscale(1);
-      opacity: 0.75;
+      filter: none;
+      opacity: 1;
     }
 
     .quick-actions .qa-nav button.qa-conv.on {
@@ -2847,6 +3504,14 @@
     .terminal-view.dock-folded .term-input,
     .terminal-view.dock-folded .term-keys {
       display: none !important;
+    }
+
+    /* Except with a thread on screen. The fold's trade is height for a control you are not using
+       while you read a long pane — but the thread's equivalent of reading is replying, and a
+       conversation whose composer folded away would be the one view where the fold takes the thing
+       the view is for. The key docks still fold; the text area and Send do not. */
+    .terminal-view.dock-folded.conv-view .term-input {
+      display: flex !important;
     }
 
     /* Every label that sits on an accent fill — these three, the armed keys, Send, Start, the
@@ -3441,6 +4106,57 @@
     </div>
 
     <div class="setting-group">
+      <label for="mruPick">Sort the conversation dock by use</label>
+      <select id="mruPick" onchange="setDockMru(this.value === 'on')">
+        <option value="on">On</option>
+        <option value="off">Off</option>
+      </select>
+      <div class="hint">In a conversation window, the agent you last wrote to and the instruction
+        you last used move to the left end of their rows. Both rows scroll, and the left end is what
+        a phone shows — so what you used last is where your thumb already is. Off holds the rows
+        still: members stay in the order they joined and instructions in the order the list defines,
+        which is the better index once you have learned where things sit.</div>
+    </div>
+
+    <div class="setting-group">
+      <label class="toggle-option"><input type="checkbox" id="bandwidthOn" onchange="setBandwidthOn(this.checked)"> Track WebSocket payload data</label>
+      <div class="hint">Shows sent, received and total payload bytes in Activity, newest interval
+        first. Quiet time adds no bucket, so a gap in the record is time nothing was on the wire
+        rather than a row of zeroes. Kept on this device until it is cleared. WebSocket frame and
+        TLS overhead are not available to the page.</div>
+      <label for="bandwidthStep">Bucket</label>
+      <select id="bandwidthStep" onchange="setBandwidthStep(Number(this.value))">
+        <option value="1">1 minute</option>
+        <option value="5">5 minutes</option>
+        <option value="10">10 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">60 minutes</option>
+      </select>
+      <label for="bandwidthKeep">Show</label>
+      <select id="bandwidthKeep" onchange="setBandwidthKeep(Number(this.value))">
+        <option value="12">12 intervals</option>
+        <option value="60">60 intervals</option>
+      </select>
+      <div class="hint">A narrower bucket is closer to live, a wider one is easier to read across
+        hours. Changing the bucket clears what has been collected: it is already cut on the old
+        boundaries. Changing how much is shown only changes how far back the table draws.</div>
+      <!-- Neutral, not the group's green primary: throwing data away is not the thing this panel
+           wants you to do, it is the thing it owes you a way to do. -->
+      <button class="nav-key" onclick="clearBandwidth()">Clear recorded data</button>
+      <div class="hint">Turning tracking off stops collecting; what was already recorded stays on
+        this device until this throws it away. Per-pane totals go with it.</div>
+    </div>
+
+    <div class="setting-group">
+      <label class="toggle-option"><input type="checkbox" id="autocorrectOn" onchange="setAutocorrect(this.checked)"> Autocorrect in the composer</label>
+      <div class="hint">Off by default. Both composers type into an agent's prompt, where a flag is
+        not a typo and a path is not a sentence — a keyboard that capitalises the first word of one
+        has changed it. On gives you the phone's own correction, capitalisation and spellcheck for
+        writing prose to an agent. A terminal's composer never takes it either way: there it is a
+        command line.</div>
+    </div>
+
+    <div class="setting-group">
       <label for="micPick">Dictation</label>
       <select id="micPick" onchange="setDictationEnabled(this.value === 'on')">
         <option value="off">Off</option>
@@ -3471,6 +4187,15 @@
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
     <div id="timelineList" style="font-family:monospace;font-size:0.75rem;line-height:1.8;"></div>
+    <section class="bandwidth" id="bandwidth" hidden aria-label="WebSocket payload data">
+      <h2><span id="bandwidthTitle">Data exchange</span><span class="bandwidth-metrics" aria-label="Pane metric">
+        <button class="bandwidth-metric" data-bandwidth-metric="total" aria-pressed="true" onclick="setBandwidthMetric('total')">Total</button>
+        <button class="bandwidth-metric" data-bandwidth-metric="sent" aria-pressed="false" onclick="setBandwidthMetric('sent')">Sent</button>
+        <button class="bandwidth-metric" data-bandwidth-metric="received" aria-pressed="false" onclick="setBandwidthMetric('received')">Received</button>
+      </span><span class="bandwidth-total now" id="bandwidthTotal"></span>
+      <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
+      <div id="bandwidthRows"></div>
+    </section>
   </div>
 
   <!-- A conversation read as itself. Its own view and not the pane's thread panel, because the
@@ -3481,11 +4206,14 @@
          under it. -->
     <div class="conv-view-top">
     <div class="conv-view-head">
-      <button class="back" onclick="closePanel()" aria-label="Back to list"><svg width="20" height="20"
+      <button class="back" onclick="showLanding()" aria-label="Back to list"><svg width="20" height="20"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
         </svg></button>
+      <!-- The same mark the card carries, so the window and the card it was opened from say the
+           same thing about what is being read. -->
+      <span class="conv-kind" id="convViewMark"></span>
       <span class="title" id="convViewTitle"></span>
       <span class="count" id="convViewCount"></span>
       <button class="who-btn" id="convViewWho" onclick="toggleConvRoster()" aria-expanded="false"
@@ -3499,6 +4227,37 @@
     <div class="conv-panel" id="convViewRoster" hidden></div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
+    <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
+         modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
+    <div class="conv-dock" id="convDock">
+      <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
+      <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
+      <!-- One bubble: who it goes to, what is added to it, and the message itself. Three stacked
+           panels would read as three controls that happen to be near each other; this is one thing
+           being addressed and written. Its border carries the chosen agent's colour. -->
+      <div class="conv-bubble" id="convBubble">
+        <div class="xfer-row" id="xferRow" hidden></div>
+        <!-- The whole bubble is the field: a tap anywhere in it puts the caret in the text, the way
+             tapping a message box on a phone does. Buttons inside it keep their own taps. -->
+        <div class="conv-composer" id="convComposer" onclick="focusConvInput(event)">
+          <!-- The ghost mirrors the field's text under a transparent caret, so the block cursor is
+               drawn rather than borrowed from the platform — see syncConvCursor. -->
+          <div class="conv-field">
+            <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
+            <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
+              autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+              oninput="autoGrow(this); syncConvCursor(); stickConvLatest()" onkeydown="convInputKey(event)"
+              onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
+              onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
+              onscroll="syncConvCursor()"></textarea>
+          </div>
+          <button class="send" id="convSendBtn" onclick="convSend()" aria-label="Send"><svg width="22" height="22"
+              viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg></button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Shell's last row. Left: when the open pane last changed. Right: whether it is doing
@@ -3506,13 +4265,25 @@
        curve as for what it says. -->
   <div class="status-bar" id="statusBar">
     <span class="left" id="statusBarLeft"></span>
+    <!-- The app's last row, and the only controls in it that belong to no view: the bar is on
+         screen whatever is above it, and so are the questions these answer. Recent is "where else
+         could I be"; the arrows either side of it are "where was I", which is why they flank it
+         rather than sitting somewhere else. The pane's own bar had the arrows first and the
+         conversation window had nothing — one walk deserves one control, in the row that is
+         always there. -->
+    <span class="walk">
+      <button class="nav-btn" id="navBack" onclick="goBack()" aria-label="Back">‹</button>
+      <button class="recent-btn" id="recentBtn" onclick="openRecentSheet()" aria-haspopup="dialog"
+        aria-label="Recent panes">Recent ▴</button>
+      <button class="nav-btn" id="navFwd" onclick="navGo(1)" aria-label="Forward">›</button>
+    </span>
     <span class="state"><button class="abort" id="abortBtn" onclick="abortWorking()" hidden
       aria-label="Stop working agent">Esc</button><span class="right" id="statusBarRight"></span></span>
   </div>
 
   <div class="terminal-view" id="terminalView">
     <div class="term-header">
-      <button class="back" onclick="closeTerminal()" aria-label="Back to agent list"><svg width="20" height="20"
+      <button class="back" id="termBack" onclick="showLanding()" aria-label="Back to agent list"><svg width="20" height="20"
           viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
           <path d="m15 18-6-6 6-6" />
@@ -3527,11 +4298,9 @@
       <button class="who-btn" id="paneConvWho" onclick="toggleConvPaneRoster()" hidden
         aria-expanded="false" aria-controls="convPaneRoster"
         aria-label="Who is in this conversation, and what to do with it"></button>
-      <!-- Left of Refresh, and armed by the first tap: the three sit a thumb apart and two of
-           them are not undoable. See armFire.
-           One pair of buttons, two layouts: side by side where the header has the room, and behind
-           f() where it does not. Moved rather than duplicated, because arming is state on the
-           element — two copies of QUIT would be two arms, and only one of them counting down. -->
+      <!-- Armed by the first tap: two of these are not undoable. See armFire.
+           Behind f() at every width. The room a desktop header has is not a reason to put QUIT
+           next to Refresh, which is the button a slip was aiming for. -->
       <div class="fire-wrap">
         <button class="refresh-btn fire-toggle" id="fireBtn" onclick="toggleFireMenu()"
           aria-haspopup="true" aria-expanded="false"
@@ -3541,11 +4310,15 @@
             aria-label="Quit what is running in this pane">QUIT</button>
           <button class="refresh-btn cls-btn" id="clsBtn" onclick="armClear()"
             aria-label="Clear this pane">CLS</button>
+          <!-- Styled like QUIT and CLS, but one tap: it only loads the text back into the
+               composer, and the composer's own send is the gate. Nothing leaves on this tap. -->
+          <button class="refresh-btn cls-btn" id="resendBtn" onclick="resendLast()" hidden
+            aria-label="Load this pane's last message into the composer">Resend</button>
           <!-- Refresh rides with them. The pane polls itself every few seconds, so this is the
                button for the one state where it does not: past POLL_MAX_LINES the poll stops and
                a manual read is the only way to update. The icon alone says nothing in a menu, so
                the word appears with the fold. -->
-          <button class="refresh-btn" id="refreshBtn" onclick="closeFireMenu(); refreshPane()"
+          <button class="refresh-btn cls-btn" id="refreshBtn" onclick="closeFireMenu(); refreshPane()"
             aria-label="Refresh pane"><svg width="16" height="16"
               viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
@@ -3725,14 +4498,12 @@
         <button id="ctrlKeysBtn" onclick="toggleCtrlDock()" aria-label="Ctrl keys"
           style="border:1px solid var(--red);background:var(--bg);color:var(--red);font-weight:700;font-size:13px">^C</button>
       </div>
-      <!-- Autocorrect on, at the user's direction. It is the composer for prose sent to an agent
-           far more often than it is a command line, and the keyboard's own correction is worth
-           more than a literal transcription of every typo. Anything that must survive verbatim
-           still can: the Keys pad and the / palette do not pass through here.
-           These are the agent values. syncComposerMode turns all three off over a terminal, where
-           the composer *is* a command line — see it for why. -->
-      <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="on"
-        autocapitalize="sentences" spellcheck="true"></textarea>
+      <!-- Off, which is what the markup says before any script runs: a composer that autocorrected
+           for one frame on a slow phone would have already capitalised the first word. The setting
+           turns it back on for prose, and syncComposerMode still refuses it over a terminal
+           whatever the setting says — see it for why. -->
+      <textarea id="termInput" rows="2" maxlength="4000" placeholder="Type…  ⌘/Ctrl+Enter sends" autocomplete="off" autocorrect="off"
+        autocapitalize="none" spellcheck="false"></textarea>
       <div class="term-input-side">
         <button class="send" onclick="sendText()" aria-label="Send"><svg width="24" height="24" viewBox="0 0 24 24"
             fill="currentColor" stroke="none">
@@ -3957,6 +4728,20 @@
     </div>
   </div>
 
+  <!-- Recent — every live pane, agents and terminals, in the order this device opened them. -->
+  <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="Recent panes"
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Recent</span>
+        <button onclick="closeRecentSheet()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="recentList"></div>
+    </div>
+  </div>
+
   <!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
   <div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
@@ -4024,6 +4809,7 @@
   <script src="src/reorder.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
+  <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
   <script src="src/controls.js"></script>
   <script src="src/dictation.js"></script>

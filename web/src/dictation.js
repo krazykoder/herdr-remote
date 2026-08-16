@@ -195,6 +195,22 @@
         if (activePane || window.innerWidth < 768) return;
         if (stepTab(e.shiftKey ? -1 : 1)) { e.preventDefault(); e.stopPropagation(); }
       }
+
+      // Desktop only: , and . walk the same history as the footer arrows — the keys the arrows are
+      // printed on, without the Shift that turns them into < and >. Both forms are taken, because
+      // the arrows are what the keys are labelled with and a held Shift should not go dead.
+      // Never steal text input or a modified shortcut.
+      const WALK_KEYS = {',': -1, '<': -1, '.': 1, '>': 1};
+      if (window.innerWidth < 768 || e.altKey || e.metaKey || e.ctrlKey ||
+          !(e.key in WALK_KEYS) ||
+          (e.target && typeof e.target.closest === 'function' &&
+            e.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
+      // Back is goBack, not navGo(-1): the footer ‹ leaves to the list where the walk has nothing
+      // behind it, and so does the browser's own Back. A key that went dead there instead would be
+      // the third control in the row disagreeing with the other two — and from the first pane
+      // opened, which is the only entry most sessions have, it would look like it does nothing.
+      if (WALK_KEYS[e.key] < 0) { goBack(); e.preventDefault(); }
+      else if (navGo(1)) e.preventDefault();
     }, true);
     document.getElementById('termContent').addEventListener('scroll', function () {
       const el = this;

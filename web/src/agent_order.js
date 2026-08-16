@@ -1,43 +1,61 @@
     // The terminal is a flex sibling, not an overlay: leaving it open would stack two panes.
-    // Settings and Activity are toggles onto wherever the user already was, not one-way doors.
-    // The pane they came from is remembered so a second tap puts it back; without this, leaving
-    // Settings always dumped them on the agent list and they had to find the pane again.
-    let panelReturnPane = null;
+    // Settings and Activity are toggles onto wherever the user already was, not one-way doors —
+    // and where that was is the previous entry on the walk. This used to be a private one-deep
+    // panelReturnPane, which could only remember a pane and could only remember one.
 
     // Every panel that takes the list's place, against the display mode it wants — adding one is a
     // line here rather than a line in each of the four functions below. Settings is display:none in
     // its class, so an empty string would hide it; the conversation view is a flex column.
-    const PANELS = { settingsView: 'block', timelineView: 'block', convView: 'flex' };
+    const PANELS = { settingsView: 'block', timelineView: 'flex', convView: 'flex' };
 
     function hidePanels() {
       for (const id in PANELS) document.getElementById(id).style.display = 'none';
     }
 
-    function panelIsOpen() {
-      return Object.keys(PANELS).some(id => document.getElementById(id).style.display !== 'none');
+    // Which panel is up, or '' for none. Read off the screen rather than tracked, so it cannot go
+    // stale against a view someone hid directly.
+    function openPanelId() {
+      // Computed, not inline: settingsView is hidden by a stylesheet rule and carries no inline
+      // display until it has been opened once, so an inline read calls it open at boot.
+      return Object.keys(PANELS)
+        .find(id => getComputedStyle(document.getElementById(id)).display !== 'none') || '';
     }
 
+    function panelIsOpen() { return !!openPanelId(); }
+
     function openPanel(id) {
-      // Only capture on the way in. Switching Settings → Activity must not overwrite the pane
-      // with the null that closing the terminal already left behind.
-      if (!panelIsOpen()) {
-        panelReturnPane = activePane;
-        if (activePane) closeTerminal();
-      }
+      // Only leave the pane on the way in. Switching Settings → Activity has no pane to close, and
+      // the walk already holds where the pane was.
+      if (!panelIsOpen() && activePane) closeTerminal();
+      // The conversation window pushes its own entry, naming the conversation rather than the
+      // panel — openConversation has done it by the time this runs.
+      if (id !== 'convView') notePanelNav(id);
       document.body.classList.toggle('conversation-open', id === 'convView');
       document.getElementById('agentListView').style.display = 'none';
       for (const p in PANELS) document.getElementById(p).style.display = p === id ? PANELS[p] : 'none';
+      syncNavBtns();
     }
 
-    function closePanel() {
+    // Leaving a panel is a step back, not a return to a remembered pane: the panel is an entry, so
+    // "where I was before this" is simply the one before it — and that survives opening a second
+    // panel on top of the first, which the old one-deep memory did not.
+    function closePanel() { goBack(); }
+
+    // The agent list is an exit, not a history entry. Header back buttons always land here — and
+    // the browser is rewound to the entry the document was loaded on, so its own Back gesture does
+    // not still think it is standing on the pane that was just left.
+    function showLanding() {
+      if (navRewind()) return;   // asynchronous; popstate calls landNow below
+      landNow();
+    }
+
+    function landNow() {
+      // closeTerminal puts the list up itself, and does the rest of the teardown a pane needs.
+      if (activePane) { closeTerminal(); return; }
       hidePanels();
       document.body.classList.remove('conversation-open');
-      const back = panelReturnPane;
-      panelReturnPane = null;
-      // The pane may have died while the panel was open; openTerminal falls back to the ID, so
-      // check the live snapshot first and land on the list rather than on a dead pane.
-      if (back && agents.some(a => a.pane_id === back)) openTerminal(back);
-      else document.getElementById('agentListView').style.display = '';
+      document.getElementById('agentListView').style.display = '';
+      syncNavBtns();
     }
 
     // Jumping between panes is the most frequent move in the app, so every live agent gets a tab
@@ -180,9 +198,14 @@
       // has one row for tabs, and a second saying the same kind of thing is how a bar stops being
       // read. On the landing page there is nothing to leave, so the pane strip is not drawn there
       // either and this changes nothing.
-      const convTabs = tabScope() === 'convs' && !!activePane;
+      // …and only while it has something to hold. The strip draws the landing list, which hides the
+      // auto conversations behind a toggle — so a reader on this setting whose conversations are
+      // all auto, in a pane that is not reading one, got an empty strip *and* no pane tabs, because
+      // the class below hides those. An empty conversation strip falls back to the pane tabs rather
+      // than leaving the header with no way out of the pane at all.
+      const convTabs = tabScope() === 'convs' && !!activePane && !!renderConvStrip();
       document.body.classList.toggle('conv-tabs', convTabs);
-      if (convTabs) { renderConvStrip(); return; }
+      if (convTabs) return;
       // Terminals belong here too: the strip is the live panes, and an open terminal with no tab
       // of its own reads as the strip having lost it.
       // One order for agents and terminals, not an agent block followed by a terminal block. The
@@ -193,8 +216,16 @@
       // open pane is exempt from its own filter — a strip that cannot show the pane on screen is
       // worse than a long one. On the list screen nothing is open, so the strip stays complete.
       const scope = tabScope();
-      const open = scope === 'project' && activePane ? paneOf(activePane) : null;
-      if (open) live = live.filter(a => projectKey(a) === projectKey(open) || a.pane_id === activePane);
+      // The scope is the Tabs setting and only that, whichever view is on screen. Reading a pane as
+      // a thread used to narrow this row to the conversation's members, which quietly overrode the
+      // setting: with the ordinary auto conversations that is one pane plus its pair partner, so
+      // switching to the thread cost the reader every other tab on the machine. The row is how you
+      // get anywhere from here, and it must answer to one thing.
+      if (scope === 'project' && activePane) {
+        const open = paneOf(activePane);
+        if (open) live = live.filter(a =>
+          projectKey(a) === projectKey(open) || a.pane_id === activePane);
+      }
       if (scope === 'pairs') {
         live = pairedTabs(live);
       } else {
