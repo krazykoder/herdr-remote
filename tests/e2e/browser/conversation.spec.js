@@ -834,6 +834,68 @@ test('a working first read keeps replies before its live draft', async ({page}) 
   ]);
 });
 
+// The draft slot at the foot of a pane's thread. Only the browser can see it: the vm slices have
+// no stylesheet and no rendered thread to count bubbles in.
+const thread = (page, status) => page.evaluate(async s => {
+  if (s) paneOf(activePane).status = s;
+  convSetView(paneOf(activePane), loadConvIndex()[0].id);
+  await renderConvView();
+}, status);
+
+test('a working pane holds a draft slot open, and it says it is empty', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await thread(page, 'working');
+  const slot = page.locator('#convThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Nothing parsed out of the live pane yet.');
+  // Drawn as what it is: a draft, and not settled.
+  await expect(slot).toHaveClass(/provisional/);
+  await expect(slot).toHaveClass(/draft/);
+  // Outside the list the count, the picks and Summary index. A pickable, countable blank message
+  // would make Summary select an empty bubble.
+  await expect(page.locator('#convThread .conv-head .count')).toHaveText('2 messages');
+  await expect(slot.locator('.conv-pick')).toHaveCount(0);
+  expect(await page.evaluate(() => convPickedOf)).toBe(2);
+});
+
+test('a pane that is not working holds nothing open — nothing is coming', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await thread(page, 'done');
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
+});
+
+test('the draft slot goes with final messages only', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await thread(page, 'working');
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(1);
+  // The reader has asked for the settled record and nothing else. A slot for what is not settled
+  // yet is the opposite of that.
+  await page.evaluate(async () => { toggleConvFinalOnly(); await renderConvView(); });
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
+});
+
+test('a live draft fills the slot rather than sitting beside it', async ({page}) => {
+  await open(page);
+  await join(page);
+  await page.evaluate(async () => {
+    paneOf(activePane).status = 'working';
+    await recordPane(activePane, ['❯ a question', '', '⏺ Still working.', '', '❯']);
+  });
+  await thread(page);
+  // One bubble at the end in both states, in the same place: what changes is the text in it, not
+  // the shape of the thread.
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
+  const last = page.locator('#convThread .conv-msg').last();
+  await expect(last).toHaveClass(/draft/);
+  await expect(last).toContainText('Still working.');
+});
+
 test('a member found already finished is read once, and recorded only if it is new',
   async ({page}) => {
     await open(page);
