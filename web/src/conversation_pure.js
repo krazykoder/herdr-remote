@@ -262,15 +262,21 @@
     function messagesAfterRecord(fresh, stored) {
       const ms = fresh || [], entries = stored || [], newest = newestAgentAt(entries);
       if (newest < 0) return null;
+      // Who said it is half of what a message is. A context slot matched on text alone would count
+      // the user's "ok" as the agent's, and the two speak in turn — so aligning on the wrong one is
+      // aligning half a turn out, which is exactly the off-by-one this context exists to prevent.
       const back = Math.min(CONV_ANCHOR_CONTEXT, newest + 1);
-      const tail = entries.slice(newest + 1 - back, newest + 1).map(e => convKey(e.text));
+      const tail = entries.slice(newest + 1 - back, newest + 1)
+        .map(e => ({ who: e.who, key: convKey(e.text) }));
+      const same = (m, t) => !!m && m.who === t.who && convKey(m.text) === t.key;
       let at = -1;
       for (let i = ms.length - 1; i >= 0 && at < 0; i--) {
-        if (!(ms[i].who === 'agent' && convKey(ms[i].text) === tail[tail.length - 1])) continue;
+        if (!same(ms[i], tail[tail.length - 1])) continue;
         let lines = true;
         for (let k = 1; k < tail.length && lines; k++) {
-          const m = i - k < 0 ? null : ms[i - k];
-          lines = !m || convKey(m.text) === tail[tail.length - 1 - k];
+          // Above the top of the window there is nothing to disagree with, and a window is allowed
+          // to begin in the middle of the record.
+          lines = i - k < 0 || same(ms[i - k], tail[tail.length - 1 - k]);
         }
         if (lines) at = i;
       }

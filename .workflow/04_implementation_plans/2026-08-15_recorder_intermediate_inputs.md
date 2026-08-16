@@ -97,6 +97,11 @@ of the window is absent rather than a mismatch — a window is allowed to begin 
 Where nothing distinguishes two copies, including their context, the newest still wins and the
 recovery is short: duplicating what is already recorded is permanent, being a turn behind is not.
 
+**The context match is speaker-aware** (ARCH-Codex's review of `4c690b9`). Matched on text alone, a
+context slot would accept the agent's "ok" where the record holds the user's — and the two speak in
+turn, so aligning on the wrong one aligns half a turn out, which is the very off-by-one the context
+exists to prevent.
+
 **An empty answer is not a missing anchor.** `turnEntries` falls back to the last-block rule only
 when the record's end cannot be found at all. When it is found at the end of the window there is
 nothing past it, and that is the answer — falling back there would append the closing message a

@@ -196,6 +196,20 @@ test('a window that cannot find the record still records the turn it ended on', 
   assert.deepStrictEqual(texts(turn(stored, MID_TURN, NOW + 1000, NOW + 900)), ['c', 'R3.']);
 });
 
+test('the anchor context is who said it as well as what was said', () => {
+  // Messages are built by hand here: the point is a window where the same words are said by both
+  // speakers, which no pane fixture produces reliably. Matching the context on text alone lines the
+  // record up half a turn out — the agent's own "ok" standing in for the user's — and everything
+  // between the two positions is then lost.
+  const stored = [{who: 'user', text: 'ok', at: NOW - 2, at_src: 'backfill'},
+                  {who: 'agent', text: 'A1.', at: NOW - 1, at_src: 'backfill'}];
+  const fresh = [{who: 'user', text: 'ok'}, {who: 'agent', text: 'A1.'},
+                 {who: 'agent', text: 'ok'}, {who: 'agent', text: 'A1.'},
+                 {who: 'user', text: 'next'}, {who: 'agent', text: 'A2.'}];
+  assert.deepStrictEqual(texts(turnEntries(fresh, stored, NOW, NOW)),
+    ['ok', 'A1.', 'next', 'A2.']);
+});
+
 test('a prompt already committed at the send is not read back off the pane', () => {
   // The transcript ends on a user entry, which is what "this app sent it" looks like from here.
   const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
