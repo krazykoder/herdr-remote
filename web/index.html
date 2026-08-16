@@ -4668,7 +4668,7 @@
   <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
      so a rejected send_text or rename looked identical to one that worked. -->
   <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
   <!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
