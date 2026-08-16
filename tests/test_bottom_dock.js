@@ -115,10 +115,10 @@ test('the conversation switch is offered only on a pane that is in one', () => {
   assert.match(threaded.el('quickActions').innerHTML, /qa-conv on[^>]*aria-pressed="true"/);
 });
 
-test('Last rides the other edge of the same row', () => {
+test('the row carries no jump of its own — that hangs over the text', () => {
   const {el, run} = dockCtx();
   run('renderQuickActions()');
-  assert.match(el('quickActions').innerHTML, /qa-last[^>]*>Last</);
+  assert.doesNotMatch(el('quickActions').innerHTML, /qa-last/);
 });
 
 test('Last goes to the end of the pane, not part way', () => {

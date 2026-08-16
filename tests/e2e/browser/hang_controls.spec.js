@@ -100,6 +100,28 @@ test('the conversation window scrolls as a whole, and its button knows that', as
   await expect(page.locator('#convLast')).toBeHidden();
 });
 
+// One column, two corners. The jump sits at the bottom and the refresh at the top, and a button a
+// couple of dozen pixels off the one above it reads as a button that missed rather than as a pair.
+const rightEdge = (page, id) => page.locator(id).evaluate(el =>
+  Math.round(el.getBoundingClientRect().right));
+
+test('the jump lines up under the row it belongs to, in both views', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await toTop(page, 'termContent');
+  await expect(page.locator('#paneLast')).toBeVisible();
+  // Against the row rather than against the refresh in it: the pane's row ends with the ↑↓ step
+  // buttons, and it is the edge of the row the eye reads as the column.
+  expect(await rightEdge(page, '#paneLast')).toBe(await rightEdge(page, '#termWrap .hang-float'));
+
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await toTop(page, 'convView');
+  await expect(page.locator('#convLast')).toBeVisible();
+  expect(await rightEdge(page, '#convLast')).toBe(await rightEdge(page, '#convTidy'));
+});
+
 test('the pane refresh reads again and tidies without asking', async ({page}) => {
   await open(page);
   const key = await join(page);

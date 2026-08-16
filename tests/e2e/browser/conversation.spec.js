@@ -2052,10 +2052,11 @@ test('Last goes to the end of the thread, the same button that ends the pane', a
   const top = await page.evaluate(() => {
     const box = document.getElementById('convThread');
     box.scrollTop = 0;
+    box.dispatchEvent(new Event('scroll'));
     return box.scrollHeight > box.clientHeight;
   });
   expect(top, 'the thread has to overflow for the button to have anywhere to go').toBe(true);
-  await page.locator('#quickActions .qa-last').click();
+  await page.locator('#paneLast').click();
   const atEnd = await page.evaluate(() => {
     const box = document.getElementById('convThread');
     return box.scrollHeight - box.scrollTop - box.clientHeight;

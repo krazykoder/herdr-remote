@@ -103,7 +103,7 @@ test('the v folds the composer away and leaves the quick actions bar', async ({p
   await expect(page.locator('#quickActions')).toBeVisible();
   await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
   // The pane takes the height the composer gave up rather than leaving a gap.
-  await expect(page.locator('#quickActions .qa-last')).toBeVisible();
+  await expect(page.locator('#quickActions .qa-nav')).toBeVisible();
 
   await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('.term-input')).toBeVisible();
@@ -318,7 +318,7 @@ test('Last returns a scrolled-up pane to the newest line, and to following it', 
   });
   await expect.poll(() => page.evaluate(() => userScrolledUp)).toBe(true);
 
-  await page.locator('#quickActions .qa-last').click();
+  await page.locator('#paneLast').click();
   await expect.poll(() => page.evaluate(() => {
     const el = document.getElementById('termContent');
     return el.scrollHeight - el.scrollTop - el.clientHeight;

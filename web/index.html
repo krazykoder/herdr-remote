@@ -2968,7 +2968,7 @@
     .hang-float {
       position: absolute;
       top: 6px;
-      right: 36px;
+      right: var(--hang-right, 36px);
       z-index: 5;
       display: flex;
       align-items: center;
@@ -2982,8 +2982,13 @@
        reads as part of the text. */
     .conv-view-top .hang-float {
       top: 100%;
-      right: 22px;
       margin-top: 6px;
+    }
+
+    /* One inset for both corners of this view, so the pair cannot drift apart: there is no ruler
+       to leave room for here, and the bubbles' own edge is where the number comes from. */
+    #convView {
+      --hang-right: 22px;
     }
 
     /* Sized and coloured as the step buttons beside them, because they are the same kind of thing
@@ -3036,10 +3041,12 @@
     }
 
     /* The jump to the end, in the corner the end is in. The pane is not a scroller itself — its
-       rows and its thread are — so an absolute corner holds still here. */
+       rows and its thread are — so an absolute corner holds still here. Same --hang-right as the
+       row at the top: the two corners are one column, and a button 24px off the one above it reads
+       as a button that missed. */
     .hang-corner {
       position: absolute;
-      right: 12px;
+      right: var(--hang-right, 36px);
       bottom: 10px;
       z-index: 5;
     }
@@ -3061,7 +3068,7 @@
        thread's padding, so this rides the same variable. */
     .hang-layer .hang-btn {
       position: absolute;
-      right: 22px;
+      right: var(--hang-right, 36px);
       bottom: calc(var(--dock-h, 96px) + 10px);
       pointer-events: auto;
     }
@@ -3527,12 +3534,16 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      /* Held open at a button's height even while it is empty, which is most panes now that Last
+         hangs over the text and only Summary is left to put here. A collapsed box in a row of
+         centred grid items sits 11px off the group beside it, and the fold on the left edge would
+         read as having slipped out of the row. */
+      min-height: 22px;
     }
 
     /* Mirrors the fold button on the other edge, at the same weight — both are one-offs beside a
-       pair pressed constantly. Sized to their word instead of to a circle, which is the only
-       reason these are not one rule with the fold. */
-    .quick-actions .qa-nav button.qa-last,
+       pair pressed constantly. Sized to its word instead of to a circle, which is the only reason
+       this is not one rule with the fold. */
     .quick-actions .qa-nav button.qa-summary {
       flex: 0 0 auto;
       min-width: 0;
