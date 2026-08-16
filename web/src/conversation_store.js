@@ -375,7 +375,10 @@
         // this one find `lastTurn` already at `end` and append nothing, so the turn-end read and
         // the poll that follows it cannot both write it.
         const found = turnSeeded(a.pane_id);
-        add = turnEntries(fresh, held.entries, now, found ? 0 : end, found);
+        // `body`, not `fresh`: the append is anchored now and takes everything past the record's own
+        // end, so a pane that has already started its next turn would otherwise commit that turn's
+        // half-written block — and a record only ever extends, so it would stay half-written.
+        add = turnEntries(body, held.entries, now, found ? 0 : end, found);
         if (add.length) held.lastTurn = end;
       }
       convNoteDraft(key, working ? fresh[fresh.length - 1] : null, a, now);
