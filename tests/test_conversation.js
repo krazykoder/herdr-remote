@@ -99,6 +99,29 @@ test('everything the agent said in a turn is a message, not only what it closed 
   assert.ok(!ms.some(m => m.text.includes('npm test')), 'a tool call became a message');
 });
 
+test('a tool call whose result scrolled off is still a tool call', () => {
+  // Claude drops the `⎿` line of a result it has scrolled past, and what is left is a header with
+  // a raw diff hanging off it. The glyph is still the rule; the header is the answer for when the
+  // glyph is not on screen. Both blocks below are the same call — one read before the collapse and
+  // one after — and neither is something the agent said.
+  const rows = ['❯ retint it', '', '⏺ Update(web/index.html)', '  ⎿  Added 2 lines', '',
+    '⏺ Update(web/index.html)', "      2264 -      return 'var(--green)';",
+    "      2264 +      return 'var(--dot-green)';", '', '⏺ Done, four call sites.', '', '❯'];
+  assert.deepStrictEqual(texts(paneMessages(rows, 'claude')),
+    ['retint it', 'Done, four call sites.']);
+});
+
+test('a sentence with a bracket in it is not a tool call', () => {
+  // The cost of getting the header rule wrong, and it is paid on closing messages — the one
+  // message per turn that matters most. A looser first cut ate all three of these off a real pane.
+  const said = ['Merged into main (1f9690b), clean auto-merge.', 'Genuine fill (no text on it).',
+    'Confirmed genuine fill (background on .dot).'];
+  for (const text of said) {
+    assert.deepStrictEqual(texts(paneMessages(['❯ go', '', '⏺ ' + text, '', '❯'], 'claude')),
+      ['go', text]);
+  }
+});
+
 test('the empty composer at the foot is not a message', () => {
   // It is a prompt line with nothing typed on it, and a thread full of blank user turns is the
   // most obvious way this feature could look broken.

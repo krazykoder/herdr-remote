@@ -28,8 +28,25 @@
     // composer with the same glyph, so it sits at the foot of every live pane and the closing
     // message is the block above it. pi's composer is a box the extension cannot reach, so pi's
     // last `›` is the newest request and the reply to it is *below*.
+    // `tool` names a block that ran something by its *header* rather than by the result glyph
+    // under it. The glyph is the rule and stays the rule; this is for the case where it is not on
+    // screen. Claude collapses a tool result it has scrolled past — the `⎿ Added 7 lines` line
+    // simply is not in the read — and what is left is `⏺ Update(web/index.html)` with a raw diff
+    // hanging off it, which by shape alone is a block the agent spoke. It was already possible
+    // before the recorder kept every message; it is merely much easier to hit now.
+    //
+    // Deliberately a shape and not a word: every word of the name capitalized, `(` immediately
+    // after it with no space, and an argument starting straight away. No list of tool names to
+    // keep current, and nothing that reads the arguments.
+    //
+    // Both halves are load-bearing, and a looser first cut proved it by eating three real closing
+    // messages — "Merged into main (1f9690b), clean auto-merge" is a sentence whose parenthetical
+    // is the only thing it shares with `Update(web/index.html)`. The space in front of the bracket
+    // is what a sentence has and a call does not; the capitals are what `Web Search(` needs and
+    // "Merged into main" fails on.
+    const CLAUDE_TOOL = /^[A-Z][A-Za-z0-9_-]*(?: [A-Z][A-Za-z0-9_-]*){0,3}\(\S/;
     const GUTTERS = {
-      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
+      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'], tool: CLAUDE_TOOL },
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
       pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
       // OpenCode puts the user's messages, every tool block and the composer itself behind one
@@ -119,6 +136,9 @@
     // a rule, the prompt. Blank lines stay inside it: Codex closes with three paragraphs, and
     // ending on the first blank would take only the last one.
     function blockSpan(rows, g, start) {
+      // The header says it ran something, whether or not its result is still on screen.
+      if (g.tool && g.tool.test(((rows[start] || '').slice(g.indent || 0).replace(/^\S\s*/, ''))))
+        return null;
       let end = start;
       for (let j = start + 1; j < rows.length; j++) {
         const line = (rows[j] || '').trimStart();
