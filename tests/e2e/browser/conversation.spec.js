@@ -1312,6 +1312,59 @@ test('pair strip names its composer target and switching keeps composer focus', 
   await expect(page.locator('#pairStrip .pair-target')).toContainText('scratch');
 });
 
+test('a pair switch keeps the thread when both panes are in it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.evaluate(async () => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    convSetView(paneOf(activePane), 'c1');
+    await renderConvBar();
+  });
+  await expect(page.locator('#convThread')).toBeVisible();
+  await page.locator('#pairStrip .switch').click();
+  // Two panes on one job: stepping across the pair is not a change of what is being read.
+  await expect.poll(() => page.evaluate(() => paneLabel(paneOf(activePane)))).toBe('scratch');
+  expect(await page.evaluate(() => convViewOn(paneOf(activePane)))).toBe(true);
+  // Written against the partner, not inferred: the fallback would have answered c1 here anyway,
+  // and a test that cannot tell those apart proves nothing about the carry.
+  expect(await page.evaluate(() => convViews()[convMemberKey(paneOf(activePane))])).toBe('c1');
+});
+
+test('a pair switch carries nothing to a partner that is not in the conversation',
+  async ({page}) => {
+    await open(page);
+    await joinSeparatePair(page);
+    await read(page);
+    await page.evaluate(async () => {
+      convSetView(paneOf(activePane), 'c1');
+      await renderConvBar();
+    });
+    await page.locator('#pairStrip .switch').click();
+    await expect.poll(() => page.evaluate(() => paneLabel(paneOf(activePane)))).toBe('scratch');
+    // The partner has its own record. Filing its thread under one it never joined would be this
+    // pane answering for a conversation it is not a member of — so nothing is written against it
+    // at all, and its own fallback decides as before.
+    expect(await page.evaluate(() => convViews()[convMemberKey(paneOf(activePane))])).toBe(undefined);
+    expect(await page.evaluate(() => (convViewConv(paneOf(activePane)) || {}).id)).toBe('c2');
+  });
+
+test('a pair switch off a pane read as rows leaves the partner reading rows', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    convSetView(paneOf(activePane), '');
+    renderPairStrip();
+  });
+  await page.locator('#pairStrip .switch').click();
+  await expect.poll(() => page.evaluate(() => paneLabel(paneOf(activePane)))).toBe('scratch');
+  expect(await page.evaluate(() => convViewOn(paneOf(activePane)))).toBe(false);
+});
+
 test('folding the composer away takes the typing target with it', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
@@ -2613,22 +2666,21 @@ test('a reader who scrolled up in a thread stays there through a poll', async ({
   expect(await page.evaluate(() => document.getElementById('convThread').scrollTop)).toBe(0);
 });
 
-test('the composer survives the fold while a thread is on screen', async ({page}) => {
-  // The fold trades height for a control you are not using while you read a long pane. Replying is
-  // what reading a thread is, so in a conversation that trade takes the thing the view is for.
+test('the fold takes the composer with it while a thread is on screen', async ({page}) => {
+  // A thread used to be exempt, on the grounds that reading one means replying to it. With no dock
+  // open the button then folded nothing at all, which is a control that reads as broken — so the
+  // fold means the same thing in both views, and the chevron in the bar is the way back.
   await open(page);
   await join(page);
   await read(page);
   await page.evaluate(() => convSetView(paneOf(activePane), loadConvIndex()[0].id));
   await page.evaluate(() => renderConvView());
-  await page.evaluate(() => {
-    localStorage.setItem('herdr_bottom_dock', 'folded');
-    syncBottomDock();
-  });
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#termInput')).toBeHidden();
+  // And the way back is still on screen, over the thread it folded away from.
+  await expect(page.locator('#quickActions .qa-fold')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('#termInput')).toBeVisible();
-  // The key docks still fold — this is not a way of turning the fold off.
-  expect(await page.evaluate(() =>
-    document.getElementById('terminalView').classList.contains('dock-folded'))).toBe(true);
 });
 
 test('a thread does not narrow the header row — the Tabs setting owns it',
@@ -2857,7 +2909,8 @@ test('chips add up, in the order they were tapped', async ({page}) => {
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');
   await attachMode(page);
-  const at = name => page.locator(`#xferRow .xfer-chip:text-matches("^@${name}")`);
+  // Anchored at both ends — @test and @test-min are two chips, and a prefix match is both.
+  const at = name => page.locator(`#xferRow .xfer-chip:text-matches("^@${name}[0-9]*$")`);
   await at('test').click();
   await at('review').click();
   // Numbered by the order they were chosen, because that order is what gets written.
@@ -2866,8 +2919,8 @@ test('chips add up, in the order they were tapped', async ({page}) => {
   await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (1) ›');
   await sendPicked(page);
   const body = await sentBody(page);
-  expect(body.indexOf('Write the tests')).toBeGreaterThan(-1);
-  expect(body.indexOf('Write the tests')).toBeLessThan(body.indexOf('Review, edit, fix'));
+  expect(body.indexOf('Write /update tests')).toBeGreaterThan(-1);
+  expect(body.indexOf('Write /update tests')).toBeLessThan(body.indexOf('Review, edit, fix'));
 });
 
 test('a chip tapped twice comes back out', async ({page}) => {
@@ -3174,21 +3227,23 @@ test('the agent list closes on a tap past it, and never shares the screen with @
     await expect(who).toBeHidden();
   });
 
-test('the dock opens the addressed pane straight into its terminal', async ({page}) => {
+test('the dock opens the addressed pane on the conversation it was reached from', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   const third = await joinThird(page);
   await tapWire(page);
   await openWindow(page);
+  const id = await page.evaluate(() => convViewId);
   await whoRow(page).filter({hasText: 'amp'}).click();
   await page.locator('#xferRow .xfer-who-more.open').click();
-  // The pane it was addressing, and the rows — not the pane's own thread, which is what the
-  // window being left already was.
+  // The pane it was addressing, reading *this* conversation. It used to arrive as bare rows with
+  // the reader's choice thrown away, so a pane in three records then opened on whichever one the
+  // fallback picked.
   await expect(page.locator('#terminalView')).toBeVisible();
   expect(await page.evaluate(() => activePane)).toBe(third);
-  await expect(page.locator('#convThread')).toBeHidden();
-  await expect(page.locator('#termContent')).toBeVisible();
+  await expect(page.locator('#convThread')).toBeVisible();
+  expect(await page.evaluate(() => (convViewConv(paneOf(activePane)) || {}).id)).toBe(id);
 });
 
 test('the agent list button wears the agent icon', async ({page}) => {
@@ -3214,9 +3269,11 @@ test('what was used last comes back to the left, and the sort can be turned off'
     expect((await names())[0]).toMatch(/Architect 1/);
     const firstChip = (await chips())[0];
     await whoRow(page).filter({hasText: 'amp'}).click();
-    // Choosing who to talk to is not writing to them. The recency promise is about the last agent
-    // written to, so an abandoned choice must not reshuffle the row under the next conversation.
-    expect((await names())[0]).toMatch(/Architect 1/);
+    // The addressed agent leads the row it is chosen from — but that is the row being drawn, not
+    // something learned. Choosing who to talk to is not writing to them, and the recency promise
+    // is about the last agent written to.
+    expect((await names())[0]).toMatch(/amp/);
+    expect(await page.evaluate(() => dockMru('who').length)).toBe(0);
     await compose(page, 'remember this target');
     expect((await names())[0]).toMatch(/amp/);
     await page.locator(`#xferRow .xfer-chip-row .xfer-chip`).nth(1).click();
@@ -3506,6 +3563,7 @@ test('the composer\'s own send carries the picked message too', async ({page}) =
 test('a chip writes its instruction into the box, and the toggle changes that',
   async ({page}) => {
     await open(page);
+    await expect(page.locator('#promptsBtn')).toHaveText('@');
     await joinBoth(page);
     await read(page);
     await tapWire(page);
@@ -3513,14 +3571,23 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     // The default: what the agent will receive is on screen, editable, before anything is sent.
     await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
     await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
-    // Written at the caret, so a chip tapped mid-sentence adds to what was being typed.
+    // Prompts append as their own line; they never splice into the sentence holding the caret.
     await page.locator('#convInput').fill('here is the branch: ');
     await page.evaluate(() => {
       const i = document.getElementById('convInput');
       i.setSelectionRange(i.value.length, i.value.length);
     });
-    await page.locator(`#xferRow .xfer-chip:text-matches("^@test")`).click();
-    await expect(page.locator('#convInput')).toHaveValue(/^here is the branch: Write the tests/);
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@test$")`).click();
+    await expect(page.locator('#convInput')).toHaveValue(/^here is the branch: \nWrite \/update tests/);
+    // The pane composer uses the same rule: an @ prompt appends after the draft, regardless of
+    // where its caret was left.
+    await page.evaluate(() => {
+      const input = document.getElementById('termInput');
+      input.value = 'keep this sentence';
+      input.setSelectionRange(0, 0);
+      insertShortcut(0);
+    });
+    await expect(page.locator('#termInput')).toHaveValue(/^keep this sentence\nReview, edit, fix/);
     // Nothing is lit, because the instruction is not waiting anywhere — it is in the box.
     await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(1);  // the toggle
     await page.locator('#convInput').fill('just this');

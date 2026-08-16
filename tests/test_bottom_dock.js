@@ -64,18 +64,19 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
   return {el, store, run: src => vm.runInContext(src, ctx)};
 }
 
-test('open by default, and the v offers to fold', () => {
+test('open by default, and the chevron offers to fold', () => {
   const {el, run} = dockCtx();
   run('syncBottomDock(); renderQuickActions()');
   assert.ok(!el('terminalView').classes.has('dock-folded'));
-  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*>v</);
+  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*aria-expanded="true"/);
 });
 
-test('the fold hides the composer and flips the glyph to ^', () => {
+test('the fold hides the composer and turns the chevron over', () => {
   const {el, run} = dockCtx();
   run('toggleBottomDock()');
   assert.ok(el('terminalView').classes.has('dock-folded'), 'the CSS hook the docks hang off');
-  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*>\^</, 'the way back is on screen');
+  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*aria-expanded="false"/,
+    'the way back is on screen');
   run('toggleBottomDock()');
   assert.ok(!el('terminalView').classes.has('dock-folded'), 'and the same button brings it back');
 });
@@ -93,7 +94,7 @@ test('folding with the bar switched off still leaves a way back', () => {
   // Off *and* folded is the corner that would otherwise strand the composer off screen with no
   // control left to restore it: an empty .quick-actions is display:none.
   run("localStorage.setItem('herdr_quick_actions', 'off'); toggleBottomDock()");
-  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*>\^</);
+  assert.match(el('quickActions').innerHTML, /qa-fold[^>]*aria-expanded="false"/);
 });
 
 test('the bar switched off while unfolded is still empty, as it was before', () => {

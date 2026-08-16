@@ -94,25 +94,25 @@ test('a working agent gets the size pulse, an idle one gets nothing', async ({pa
   await expect(dotOf(AGENT)).toHaveCSS('animation-name', 'none');
 });
 
-test('the v folds the composer away and leaves the quick actions bar', async ({page}) => {
+test('the chevron folds the composer away and leaves the quick actions bar', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('.term-input')).toBeVisible();
 
   await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('.term-input')).toBeHidden();
   await expect(page.locator('#quickActions')).toBeVisible();
-  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+  await expect(page.locator('#quickActions .qa-fold')).toHaveAttribute('aria-expanded', 'false');
   // The pane takes the height the composer gave up rather than leaving a gap.
   await expect(page.locator('#quickActions .qa-nav')).toBeVisible();
 
   await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('.term-input')).toBeVisible();
-  await expect(page.locator('#quickActions .qa-fold')).toHaveText('v');
+  await expect(page.locator('#quickActions .qa-fold')).toHaveAttribute('aria-expanded', 'true');
 });
 
 // The bar is re-rendered on every snapshot — a few times a minute with a pane open. Replacing the
 // row when nothing in it changed takes the button out from under the finger already on it, and the
-// tap lands on a node that is no longer in the document. That is what "the v is finicky" was.
+// tap lands on a node that is no longer in the document. That is what "the fold is finicky" was.
 test('a poll that changes nothing leaves the fold button alone', async ({page}) => {
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('.term-input')).toBeVisible();
@@ -124,7 +124,7 @@ test('a poll that changes nothing leaves the fold button alone', async ({page}) 
   expect(survives, 'the fold button was replaced by a render that changed nothing').toBe(true);
   // And it still repaints when the row does have something new to say.
   await page.locator('#quickActions .qa-fold').click();
-  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+  await expect(page.locator('#quickActions .qa-fold')).toHaveAttribute('aria-expanded', 'false');
 });
 
 test('an open keys dock folds away with the rest of the stack', async ({page}) => {
@@ -146,7 +146,7 @@ test('the fold survives a reload', async ({page}) => {
   await page.reload();
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('.term-input')).toBeHidden();
-  await expect(page.locator('#quickActions .qa-fold')).toHaveText('^');
+  await expect(page.locator('#quickActions .qa-fold')).toHaveAttribute('aria-expanded', 'false');
 });
 
 // One DOM turn: renderQuickActions replaces this whole row, so separate locator measurements can

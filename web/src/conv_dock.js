@@ -165,15 +165,13 @@
       if (window.cue) cue('tick');
     }
 
-    // The instruction, rewritten for the agent about to read it, at the caret. The composer keeps
-    // whatever is already in it — a chip tapped mid-sentence is someone adding to what they wrote.
+    // The instruction is appended as its own line. A prompt is a new instruction, not an edit to
+    // whatever sentence happens to hold the caret.
     function insertDockShortcut(i) {
       const input = document.getElementById('convInput');
       const text = agentSlash(SHORTCUTS[i].text, agentOf(dockAddressed()));
-      const at = input.selectionStart ?? input.value.length;
-      const end = input.selectionEnd ?? at;
-      input.value = input.value.slice(0, at) + text + input.value.slice(end);
-      input.selectionStart = input.selectionEnd = at + text.length;
+      input.value += input.value && !input.value.endsWith('\n') ? '\n' + text : text;
+      input.selectionStart = input.selectionEnd = input.value.length;
       autoGrow(input);
       syncConvCursor();
       input.focus();
@@ -369,7 +367,13 @@
       // The member whose message is picked stays in the row, marked as the one it came from rather
       // than removed: it is still in the conversation, it is still who you were reading, and a row
       // that lost a pill on every pick would flicker its own membership.
-      const who = list.map(a => {
+      // Addressed first. Only in the row that is drawn — dockMembers stays roster order, because
+      // the fallback target is read off its first entry and a list that reordered itself around
+      // the current choice could never fall back to anything else. Stable, so the rest keep the
+      // order they joined in.
+      const who = list.slice()
+        .sort((a, b) => (b.pane_id === target) - (a.pane_id === target))
+        .map(a => {
         // Not marked when it is the only member there is: a conversation of one still types into
         // the pane it is reading, and a pill drawn dead beside a composer that works would be lying.
         const from = !!source && a.pane_id === source.pane_id && !noSend;
@@ -510,8 +514,11 @@
     function openDockPane() {
       const live = agents.find(a => a.pane_id === dockAddressed());
       if (!live) { showToast('That agent is no longer running.'); return; }
-      convSetView(live, '');
-      jumpToPane(live.pane_id);
+      // On the conversation it was reached from, the same as every other way out of this view.
+      // It used to clear the pane's view instead, which dropped the one thing the reader had
+      // chosen: a pane in three conversations then opened on whichever the fallback picked, and a
+      // two-member thread arrived as somebody else's five-member one.
+      openConvMemberPane(convMemberKey(live));
     }
 
     // Each list's button is its own toggle: a second tap on the control that opened it closes it,

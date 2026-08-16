@@ -125,9 +125,9 @@
     function insertShortcut(i) {
       const input = document.getElementById('termInput');
       const text = agentSlash(SHORTCUTS[i].text, agentOf(activePane));
-      const at = input.selectionStart ?? input.value.length;
-      input.value = input.value.slice(0, at) + text + input.value.slice(input.selectionEnd ?? at);
-      input.selectionStart = input.selectionEnd = at + text.length;
+      // A prompt is a new instruction, never an edit to the sentence under the caret.
+      input.value += input.value && !input.value.endsWith('\n') ? '\n' + text : text;
+      input.selectionStart = input.selectionEnd = input.value.length;
       autoGrow(input);
       // Close the sheet: the text is in the composer now and the user needs to see it.
       closePalette();

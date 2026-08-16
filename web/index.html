@@ -1518,8 +1518,16 @@
       display: flex;
     }
 
+    /* One height for the top of every view. A header that is 47px over a pane and 66px over a
+       conversation is the app changing shape as you walk through it, and the taller one is paying
+       for that with thread. Both are laid out to fit this and both reserve it. */
+    :root {
+      --head-h: 47px;
+    }
+
     .term-header {
       padding: 6px 12px;
+      min-height: var(--head-h);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -1732,12 +1740,19 @@
       .status-bar #navFwd { grid-area: forward; justify-self: end; width: 68px; min-height: 34px; margin-right: 10vw; }
 
       /* The lower row, at the size of a caption rather than of a control — it is not pressed, and
-         the row exists so the arrows above it can have the whole width. */
+         the row exists so the arrows above it can have the whole width.
+         Its height is held whether or not there is a stamp to put in it. The conversation window
+         has no open pane and so never has one, and a row that collapsed when empty moved the
+         arrows down against the home indicator in that one view — the bar has to be the same
+         height in every view, which is the same reason the desktop rule reserves it.
+         Indented to the arrow above it rather than to the bar's own edge: the stamp is about the
+         walk, and a caption starting 39px left of the control it belongs to reads as a stray. */
       .status-bar .left {
         grid-area: stamp;
         align-self: center;
         flex: none;
-        min-height: 0;
+        min-height: 1.2em;
+        margin-left: 10vw;
         font-size: 0.5rem;
       }
 
@@ -2188,13 +2203,78 @@
       opacity: 0.8;
     }
 
+    /* Two rows, and the back button spans both — so the second line starts where the name does
+       rather than at a hand-written indent. Row one is the name and the controls that act on the
+       conversation; row two is what the record is, which nobody taps. */
     .conv-view-head {
-      display: flex;
+      display: grid;
+      grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        'back mark title who  open'
+        'back sub  sub   sub  sub';
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      column-gap: 8px;
+      row-gap: 0;
+      /* Two rows inside the one height every header gets. This one is sticky as well, so a pixel
+         spent here is a pixel the thread never gets back at any scroll position — and the second
+         row is a caption, not a control, so it is what gets sized down to make them fit. */
+      padding: 3px 12px 4px;
+      min-height: var(--head-h);
       background: var(--bg);
       border-bottom: 1px solid var(--border);
+    }
+
+    /* The controls set the first row's height; nothing in it may set a taller one, and the back
+       chevron's own padding was doing exactly that. */
+    .conv-view-head .back {
+      padding: 0 6px;
+      align-self: center;
+    }
+
+    .conv-view-head .who-btn,
+    .conv-view-head .open-pane {
+      min-height: 24px;
+      padding: 2px 7px;
+      font-size: 0.65rem;
+    }
+
+    .conv-view-head > .back { grid-area: back; }
+    .conv-view-head .conv-kind { grid-area: mark; }
+    .conv-view-head .title { grid-area: title; }
+    .conv-view-head #convViewWho { grid-area: who; }
+    .conv-view-head .open-pane { grid-area: open; }
+
+    /* The size of the record and the harnesses in it, on one line under the name. Badges and not
+       labels: "who is in this" is answered by the roster panel, and what belongs here is what kind
+       of agent wrote it — the same mark those panes wear everywhere else in the app. */
+    .conv-view-head .sub {
+      grid-area: sub;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0 6px;
+      min-width: 0;
+      line-height: 1.15;
+    }
+
+    /* `kinds` and not `agents`: that class is the landing page's agent list, and this row was
+       silently taking its 12px of bottom padding.
+       Its own font size, too, not the root's. A flex line is at least as tall as its strut, so a
+       box holding nothing but 14px badges stands 26px high on the root's 16px text. */
+    .conv-view-head .sub .kinds {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.56rem;
+      line-height: 1;
+    }
+
+    /* Smaller than a badge anywhere else in the app. This one is a caption on a caption line, and
+       at its usual 1.55 line-height it alone made the two rows taller than a pane's one. */
+    .conv-view-head .sub .badge {
+      font-size: 0.56rem;
+      line-height: 1.35;
+      padding: 0 4px;
     }
 
     /* Beside the name and out of the row's gap arithmetic: it is a mark, not a control, and a
@@ -2274,22 +2354,31 @@
       white-space: nowrap;
     }
 
+    /* Name on one line, how much of it on the next — the same two lines the conversation window's
+       header carries, for the same reason: a 64-character name is the ordinary case, and a count
+       sharing its row either pushed it into an ellipsis or wrapped itself in half. */
     .conv-head {
       display: flex;
+      flex-wrap: wrap;
       align-items: baseline;
-      gap: 8px;
+      gap: 0 8px;
       font-size: 0.75rem;
       color: var(--muted);
       padding-bottom: 2px;
     }
 
     .conv-head .name {
+      flex: 1 1 100%;
+      min-width: 0;
       color: var(--text);
       font-weight: 600;
-      /* A 64-character name must not push the count off the row. */
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .conv-head .count {
+      flex: 0 0 100%;
     }
 
     /* The picker a pane in more than one conversation gets. Sized and coloured as the name it
@@ -3521,6 +3610,20 @@
       color: var(--muted);
       font-size: 0.7rem;
       font-weight: 400;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* One chevron, turned. A `v` and a `^` are two letters doing a glyph's job — they sit on
+       different baselines, so the control jumped by a pixel every time it was pressed. The
+       rotation is the state, and the transition is what makes the two readings one control. */
+    .quick-actions .qa-nav button.qa-fold svg {
+      transition: transform 0.15s ease;
+    }
+
+    .quick-actions .qa-nav button.qa-fold[aria-expanded="false"] svg {
+      transform: rotate(180deg);
     }
 
     /* The right edge of the nav row. Last is always there; Summary joins it only when the pane
@@ -3594,21 +3697,17 @@
       opacity: 1;
     }
 
-    /* The v folds the whole composer stack away — the button rail, the text area, and whichever
-       dock is open — and leaves the quick actions bar itself on screen, so approvals and ‹ › stay
-       reachable while a long pane gets the height back. !important because each dock's open state
-       lives in its own inline `display`, which a plain class could not outrank. */
+    /* The chevron folds the whole composer stack away — the button rail, the text area, and
+       whichever dock is open — and leaves the quick actions bar itself on screen, so approvals and
+       ‹ › stay reachable while a long pane gets the height back. !important because each dock's
+       open state lives in its own inline `display`, which a plain class could not outrank.
+       With a thread on screen too. It used to be exempt, on the grounds that reading a thread means
+       replying to it — but with no dock open the button then folded nothing at all, which is a
+       control that reads as broken. One rule, one behaviour, and the chevron in the bar is the way
+       back in either view. */
     .terminal-view.dock-folded .term-input,
     .terminal-view.dock-folded .term-keys {
       display: none !important;
-    }
-
-    /* Except with a thread on screen. The fold's trade is height for a control you are not using
-       while you read a long pane — but the thread's equivalent of reading is replying, and a
-       conversation whose composer folded away would be the one view where the fold takes the thing
-       the view is for. The key docks still fold; the text area and Send do not. */
-    .terminal-view.dock-folded.conv-view .term-input {
-      display: flex !important;
     }
 
     /* Every label that sits on an accent fill — these three, the armed keys, Send, Start, the
@@ -4312,11 +4411,18 @@
            same thing about what is being read. -->
       <span class="conv-kind" id="convViewMark"></span>
       <span class="title" id="convViewTitle"></span>
-      <span class="count" id="convViewCount"></span>
       <button class="who-btn" id="convViewWho" onclick="toggleConvRoster()" aria-expanded="false"
         aria-controls="convViewRoster" aria-label="Who is in this conversation, and what to do with it"></button>
       <button class="open-pane" id="convViewOpen" onclick="openConvPane()" hidden
         aria-label="Open the live pane in this conversation">Open pane</button>
+      <!-- Second line, under the name rather than beside it: a 64-character conversation name is
+           the ordinary case, and everything that shared its row was taking width off it. What is
+           down here answers "how much, and who from" — the size of the record and the harnesses
+           that wrote it, as the same badges the panes wear. -->
+      <span class="sub">
+        <span class="kinds" id="convViewAgents"></span>
+        <span class="count" id="convViewCount"></span>
+      </span>
     </div>
     <!-- The roster and the conversation's own actions, out of the thread and under the header that
          names them. They are reference and ownership, not reading: a panel two taps deep beats a
@@ -4598,8 +4704,10 @@
       <div class="term-input-side">
         <button id="commandBtn" onclick="openPalette('commands')" aria-label="Commands"
           style="border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px">/</button>
+        <!-- @, not P: what it opens is the list of @-prompts, and the chips in the conversation
+             dock already name themselves that way. One name for one thing. -->
         <button id="promptsBtn" onclick="openShortcutPalette()" aria-label="Prompts"
-          style="border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">P</button>
+          style="border:1px solid var(--border);background:var(--bg);color:var(--muted);font-weight:700;font-size:14px">@</button>
         <button id="quickDockBtn" onclick="toggleQuickDock()" aria-label="Quick actions"
           style="border:1px solid var(--border);background:var(--bg);color:var(--orange)"><svg width="18" height="18"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"

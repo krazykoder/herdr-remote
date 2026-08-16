@@ -53,6 +53,24 @@
       catch (e) { /* private mode: this session only */ }
     }
 
+    // Carry the thread across a pair switch. A pair is two panes on one job, so stepping between
+    // them should not change which record you are reading — the partner arrives showing the same
+    // conversation, the way a pane opened from the conversation window does.
+    //
+    // Only when the partner is actually in it. A pane in three conversations still has its own
+    // answer to "which of them", and forcing this one on it would file its thread under a record
+    // it never joined. Then it keeps whatever it had, and the fallback decides as before.
+    //
+    // Nothing carries off a pane being read as rows either: the source is not reading a thread, so
+    // there is no thread to keep, and switching would turn one on for the partner unasked.
+    function carryConvToPane(from, to) {
+      if (!from || !to || !convViewOn(from)) return;
+      const conv = convViewConv(from);
+      const key = to && convMemberKey(to);
+      if (!conv || !key || !(conv.members || []).some(m => m.key === key)) return;
+      convSetView(to, conv.id);
+    }
+
     function toggleConvView() {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
@@ -478,7 +496,8 @@
           mine.map(c => `<option value="${escapeHtml(c.id)}"${c.id === conv.id ? ' selected' : ''}>` +
             `${escapeHtml(c.name)}</option>`).join('') + '</select>'
         : `<span class="name">${escapeHtml(conv.name)}</span>`;
-      return `<div class="conv-head">${name}<span>${n} message${n === 1 ? '' : 's'}</span></div>`;
+      return `<div class="conv-head">${name}` +
+        `<span class="count">${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
     // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue

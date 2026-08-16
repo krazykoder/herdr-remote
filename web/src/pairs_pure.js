@@ -51,7 +51,12 @@
       { at: 'review', label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
       { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
       { at: 'test', label: 'Test',
-        text: 'Write the tests this needs, run them, and report what actually failed.' },
+        text: 'Write /update tests this needs, run them, and report what actually failed.' },
+      { at: 'test-min', label: 'Test, minimally',
+        text: 'Dont rerun passing tests. Only tests relevant to code changes you make or ' +
+          'essential for you.' },
+      { at: 'status-now', label: 'Status of what was asked',
+        text: 'At the end also list out the features requested with brief status of each.' },
       { at: 'architect', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
     ];
 
