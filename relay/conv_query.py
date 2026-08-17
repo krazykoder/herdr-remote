@@ -22,6 +22,7 @@ import os
 import sqlite3
 import sys
 import time
+from pathlib import Path
 
 # Bounds, applied together: whichever runs out first ends the answer.
 QUERY_ROWS_MAX = 200
@@ -64,15 +65,9 @@ def db_path():
     explicit = os.environ.get("HERDR_ARBITER_DB")
     if explicit:
         return explicit
-    log_dir = os.environ.get("HERDR_LOG_DIR")
-    if not log_dir:
-        if sys.platform == "darwin":
-            log_dir = os.path.expanduser("~/Library/Logs/herdr-remote")
-        elif os.path.isdir("/var/log") and os.access("/var/log", os.W_OK):
-            log_dir = "/var/log/herdr-remote"
-        else:
-            log_dir = os.path.expanduser("~/.local/state/herdr-remote/log")
-    return os.path.join(log_dir, "arbitration.sqlite3")
+    root = Path(__file__).resolve().parents[1]
+    state = os.environ.get("HERDR_STATE_DIR") or str(root / ".herdr-remote")
+    return os.path.join(state, "arbitration.sqlite3")
 
 
 def open_ro(path):

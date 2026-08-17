@@ -162,7 +162,8 @@ cd herdi-ios && xcodegen generate
 | `HERDR_VAPID_SUBJECT` | Contact URI in the VAPID claim (default: `mailto:herdr@localhost`) |
 | `HERDR_PUSH_SUMMARY` | `1` makes a "finished" push carry the agent's closing message, read out of the pane by `relay/pane_summary.py`. Off by default: unset sends the last few lines of the pane, which is also what any pane with no readable message gets |
 | `HERDR_CONV_LOG` | `1` keeps a durable record of what agents said: one row per turn end, plus every prompt this relay delivered. Off by default — it puts agent output on disk, which is the user's call. Read back with `conv_log` or `relay/conv_query.py` |
-| `HERDR_ARBITER_DB` | Where that record lives (default: `<log dir>/arbitration.sqlite3`) |
+| `HERDR_STATE_DIR` | Project-owned runtime state directory (default: `.herdr-remote/`) — config, secrets, logs, push subscriptions and conversation record |
+| `HERDR_ARBITER_DB` | Where that record lives (default: `.herdr-remote/arbitration.sqlite3`) |
 | `HERDR_CONV_LOG_MAX` | Rows kept before the oldest are pruned (default: 50000). Arbitrated sends and decisions are never pruned |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |

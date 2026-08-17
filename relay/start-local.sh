@@ -9,7 +9,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="$HOME/.config/herdr-remote/config.env"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATE_DIR="${HERDR_STATE_DIR:-$PROJECT_DIR/.herdr-remote}"
+CONFIG_FILE="$STATE_DIR/config.env"
 WS_PORT="${HERDR_RELAY_PORT:-8375}"
 
 RELAY_PID=""
@@ -30,6 +32,7 @@ echo ""
 
 # Config first, then override. Anything the config sets for tunnel use is dropped below.
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+export HERDR_STATE_DIR="$STATE_DIR"
 
 # Remembered before the unset below, and used for nothing except finding a tunnel start.sh may
 # have left running against it. This script must not open that port; it only cleans up after it.

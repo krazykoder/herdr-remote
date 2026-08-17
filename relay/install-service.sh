@@ -5,7 +5,9 @@ LABEL_RELAY="com.herdr-remote.relay"
 LABEL_TUNNEL="com.herdr-remote.tunnel"
 LABEL_TELEGRAM="com.herdr-remote.telegram"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_DIR="$HOME/.config/herdr-remote"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATE_DIR="${HERDR_STATE_DIR:-$PROJECT_DIR/.herdr-remote}"
+CONFIG_DIR="$STATE_DIR"
 CONFIG_FILE="$CONFIG_DIR/config.env"
 SECRETS_FILE="$CONFIG_DIR/secrets.env"
 
@@ -40,18 +42,10 @@ fi
 
 WS_PORT="${HERDR_RELAY_PORT:-8375}"
 
-# --- Log directory (matches relay's _get_log_dir) ---
+# --- Project state ---
 
-if [ -n "${HERDR_LOG_DIR:-}" ]; then
-    LOG_DIR="$HERDR_LOG_DIR"
-elif [ "$OS" = "macos" ]; then
-    LOG_DIR="$HOME/Library/Logs/herdr-remote"
-elif [ -d "/var/log" ] && [ -w "/var/log" ]; then
-    LOG_DIR="/var/log/herdr-remote"
-else
-    LOG_DIR="$HOME/.local/state/herdr-remote/log"
-fi
-mkdir -p "$LOG_DIR"
+LOG_DIR="$STATE_DIR"
+mkdir -p "$STATE_DIR"
 
 # --- Detect binaries ---
 
@@ -789,7 +783,7 @@ HERDR_EXTERNAL_PORT=${HERDR_EXTERNAL_PORT:-}
 HERDR_LAN_OPEN=${HERDR_LAN_OPEN:-}
 HERDR_LAN_BIND=${HERDR_LAN_BIND:-}
 HERDR_BIN=${HERDR_PATH:-herdr}
-HERDR_LOG_DIR=$LOG_DIR
+HERDR_STATE_DIR=$STATE_DIR
 HERDR_TUNNEL_MODE=$CONFIG_TUNNEL_MODE
 HERDR_TUNNEL_NAME=${TUNNEL_NAME:-}
 HERDR_TUNNEL_HOSTNAME=${TUNNEL_HOSTNAME:-}
@@ -890,7 +884,7 @@ if [ "$OS" = "macos" ]; then
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>set -a; source "\$HOME/.config/herdr-remote/config.env"; source "\$HOME/.config/herdr-remote/secrets.env"; set +a; exec "\$HERDR_UV_PATH" run "\$HERDR_RELAY_DIR/herdr_relay.py"</string>
+        <string>set -a; source "$CONFIG_FILE"; source "$SECRETS_FILE"; set +a; exec "\$HERDR_UV_PATH" run "\$HERDR_RELAY_DIR/herdr_relay.py"</string>
     </array>
     <key>WorkingDirectory</key>
     <string>$SCRIPT_DIR</string>
@@ -976,7 +970,7 @@ if [ "$TELEGRAM_ENABLED" = true ]; then
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>set -a; source "\$HOME/.config/herdr-remote/config.env"; source "\$HOME/.config/herdr-remote/secrets.env"; set +a; exec "\$HERDR_UV_PATH" run "\$HERDR_RELAY_DIR/herdr_telegram.py"</string>
+        <string>set -a; source "$CONFIG_FILE"; source "$SECRETS_FILE"; set +a; exec "\$HERDR_UV_PATH" run "\$HERDR_RELAY_DIR/herdr_telegram.py"</string>
     </array>
     <key>WorkingDirectory</key>
     <string>$SCRIPT_DIR</string>
