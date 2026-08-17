@@ -209,7 +209,7 @@ class Capture(Log):
 
     def test_a_restarted_pane_keeps_its_fingerprint_anchor(self):
         # pane_id belongs to herdr and changes on restart. The record's identity is the stable
-        # (host, agent, cwd) fingerprint, otherwise the unchanged scrollback is backfilled again.
+        # (host, agent, cwd, label) fingerprint, otherwise unchanged scrollback is backfilled.
         content = fixture("pane_claude_done.txt")
         self.assertTrue(self.log.record_turn_end(PANE, content, "working", "idle"))
         restarted = dict(PANE, pane_id="%99")
@@ -217,12 +217,14 @@ class Capture(Log):
 
     def test_two_panes_sharing_a_fingerprint_do_not_answer_for_each_other(self):
         # A pair of claudes in one project is an ordinary thing to run, and they are one
-        # fingerprint. Once each has written, each anchors against its own id — otherwise the
-        # second one's turn aligns against the first one's record and is dropped as already held.
+        # base fingerprint. Their labels separate their restart fallbacks; otherwise the second
+        # pane's first turn is dropped as already held.
         content = fixture("pane_claude_done.txt")
         one, two = PANE, dict(PANE, pane_id="%2", label="Architect 2")
-        self.log.record_turn_end(one, content, "working", "idle")
-        self.log.record_turn_end(two, content, "working", "idle")
+        self.assertTrue(self.log.record_turn_end(one, content, "working", "idle"))
+        self.assertTrue(self.log.record_turn_end(two, content, "working", "idle"))
+        rows, _ = self.log.query(last=20)
+        self.assertEqual({r["pane_id"] for r in rows}, {"%1", "%2"})
         said = content.split("\n")
         said[9] = "⏺ Both of us said this."
         for pane in (one, two):

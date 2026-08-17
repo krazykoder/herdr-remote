@@ -248,9 +248,9 @@ class ConversationLog:
         return out
 
     def _has_record(self, pane):
+        where, params = self._scope(pane)
         return self.conn.execute(
-            "SELECT 1 FROM turns WHERE host = ? AND agent = ? AND cwd = ? LIMIT 1",
-            self._fingerprint(pane)).fetchone() is not None
+            f"SELECT 1 FROM turns WHERE {where} LIMIT 1", params).fetchone() is not None
 
     def _messages_after_record(self, pane, fresh):
         """What this window holds past the record's own end.
@@ -288,15 +288,18 @@ class ConversationLog:
         from anchoring against each other and each deciding the other's turn was already recorded.
 
         It is also the one thing herdr changes on every restart, so a pane with no rows under its
-        current id falls back to the fingerprint: the restarted pane then finds its own history and
-        does not backfill the unchanged scrollback a second time. One row written under the new id
-        is enough to move it back onto the sharp scope, so the fallback applies once per restart.
+        current id falls back to its stable label within the fingerprint. A bare fingerprint is not
+        enough: two Claudes in one project share it. An unlabelled restarted pane backfills rather
+        than borrowing another pane's record; that may repeat history, but never loses a turn.
         """
         pane_id = pane.get("pane_id") or ""
         if self.conn.execute("SELECT 1 FROM turns WHERE pane_id = ? LIMIT 1",
                              (pane_id,)).fetchone():
             return "pane_id = ?", (pane_id,)
-        return "host = ? AND agent = ? AND cwd = ?", self._fingerprint(pane)
+        label = pane.get("label") or ""
+        if label:
+            return "host = ? AND agent = ? AND cwd = ? AND label = ?", (*self._fingerprint(pane), label)
+        return "pane_id = ?", (pane_id,)
 
     def _anchor_keys(self, pane, limit):
         """The record's newest messages that were read off this pane, oldest first."""
