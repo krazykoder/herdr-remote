@@ -220,6 +220,13 @@ def final_message(rows, agent):
 _MARGIN = re.compile(r"^[\s│┃⏺•❯>›⋯]+")
 
 
+def _stripped(rows, at):
+    """The lines of a detected block, margins removed, empties dropped."""
+    return [line for line in
+            (_MARGIN.sub("", rows[i].rstrip().rstrip("│┃")).strip() for i in range(at[0], at[1] + 1))
+            if line]
+
+
 def summary_body(content, agent, limit=140):
     """The agent's closing message as one line of push text, or None if there is not one.
 
@@ -231,8 +238,39 @@ def summary_body(content, agent, limit=140):
     at = final_message(rows, agent)
     if not at:
         return None
-    kept = [_MARGIN.sub("", rows[i].rstrip().rstrip("│┃")).strip() for i in range(at[0], at[1] + 1)]
-    text = " ".join(line for line in kept if line)
+    text = " ".join(_stripped(rows, at))
     if not text:
         return None
     return text[:limit - 1] + "…" if len(text) > limit else text
+
+
+def message_block(content, agent):
+    """The closing message with its line breaks kept, as (text, (start, end)).
+
+    ('', None) when there is not one. summary_body's sibling and its opposite trade-off: a push
+    body is one line because a Lock Screen is one line, while a record keeps the paragraphs the
+    agent wrote — the same block, joined differently.
+    """
+    rows = (content or "").splitlines()
+    at = final_message(rows, agent)
+    if not at:
+        return "", None
+    text = "\n".join(_stripped(rows, at))
+    return (text, at) if text else ("", None)
+
+
+# --- Turn ends ---
+
+# The statuses that end a turn, and the same list the browser holds as TURN_END_STATES in
+# web/src/state.js. A turn is over when the pane stops working, however it stopped: an agent that
+# finishes and drops to idle has said its piece exactly as much as one that reports done, and
+# watching `done` alone loses every turn that ends the other way — which for some harnesses is
+# most of them.
+#
+# tests/test_conversation_log.py reads the list back out of the JS and asserts the two agree, the
+# way test_pane_summary.py and test_summary_detect.js already hold the detector to one answer.
+TURN_END_STATES = ("idle", "done", "blocked")
+
+
+def ends_turn(status):
+    return status in TURN_END_STATES

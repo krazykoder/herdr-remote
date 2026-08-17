@@ -4,10 +4,12 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, subprocess, tempfile, time
+import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, tempfile, time
 
 from agent_state import complete_agent_update_message
-from pane_summary import summary_body
+from conversation_log import ConversationLog
+from conv_query import QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire
+from pane_summary import ends_turn, summary_body
 from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
@@ -105,6 +107,21 @@ VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
 PUSH_SUMMARY = os.environ.get("HERDR_PUSH_SUMMARY", "") == "1"
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
+
+# The durable conversation record. Off by default: it keeps what agents said on disk, which is a
+# decision about the user's data and not one to make for them. On, it is written once per turn end
+# and read back by `conv_log` — and later by an arbitrator deciding what happens next.
+CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(LOG_DIR, "arbitration.sqlite3")
+conv_log = None
+if os.environ.get("HERDR_CONV_LOG", "") == "1":
+    try:
+        conv_log = ConversationLog(
+            CONV_LOG_DB, max_rows=int(os.environ.get("HERDR_CONV_LOG_MAX", "") or 50000))
+    except (sqlite3.Error, OSError, ValueError) as e:
+        # A record that cannot be opened is not a reason to refuse to relay. Everything else here
+        # works without it, and a relay that will not start because a log file is unwritable is a
+        # worse failure than one that says so and carries on.
+        print(f"herdr-remote: conversation log disabled: {e}", file=sys.stderr)
 
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -568,6 +585,30 @@ async def broadcast(msg):
     clients.difference_update(dead)
 
 
+async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
+    """A prompt this relay delivered, into the record.
+
+    `human_web` is claimed only here, because this is the one place the relay *knows* a person put
+    those words in: it performed the send. Text typed straight into a terminal is seen later as an
+    echo in the pane and can never be attributed to anyone, so it is never given this origin.
+
+    Agent panes only. A shell has no conversation to be part of.
+    """
+    if conv_log is None:
+        return
+    pane = agent_cache.get(pane_id)
+    if not pane:
+        return
+    try:
+        await asyncio.to_thread(
+            conv_log.record, agent=pane.get("agent") or "", pane_id=pane_id,
+            host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
+            label=pane.get("label") or "", project=pane.get("project") or "",
+            kind=kind, origin=origin, at_src="sent", text=text)
+    except (sqlite3.Error, OSError) as e:
+        log.warning("conversation log write failed for %s: %s", pane_id, e)
+
+
 async def poll_loop():
     while True:
         try:
@@ -877,7 +918,9 @@ async def _poll_once():
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
-            if status == "blocked" and last_statuses.get(pid) != "blocked":
+            was = last_statuses.get(pid)
+            content = None
+            if status == "blocked" and was != "blocked":
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
                 options = detect_options(content)
                 await broadcast({
@@ -899,7 +942,7 @@ async def _poll_once():
             # blocked, so a pane already sitting done at startup does not announce itself. Sharing
             # the pane's tag means this *replaces* its blocked notification rather than stacking
             # under it, which is why it is also the clear for the approve-then-finish path.
-            elif status == "done" and last_statuses.get(pid) in ("working", "blocked"):
+            elif status == "done" and was in ("working", "blocked"):
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
                 # Only the finished push reads the closing message. A blocked pane's news is the
                 # question in the box at its foot, which is what notify_body already reads; the
@@ -912,8 +955,25 @@ async def _poll_once():
                 )
             # Unblocked into anything else — someone answered it elsewhere, so take the
             # notification off this device's Lock Screen too.
-            elif status != "blocked" and last_statuses.get(pid) == "blocked":
+            elif status != "blocked" and was == "blocked":
                 await send_web_push("", "", clear=True, tag=push_tag(pid))
+            # The record, on any move into an ending state — the same rule the browser's recorder
+            # uses (endsTurn in web/src/state.js), and deliberately not "on done". A pane that
+            # finishes and drops to idle has said its piece exactly as much as one that reports
+            # done, and several harnesses end that way every time.
+            #
+            # `was` being None is first sight: a pane already sitting in an ending state when the
+            # relay started finished a turn that is still on screen and readable, and refusing to
+            # look at it would throw away a recording plainly available. What stops that becoming
+            # a re-record on every restart is record_turn_end, which drops a turn whose message it
+            # already holds.
+            if conv_log is not None and status != was and ends_turn(status):
+                if content is None:
+                    content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
+                try:
+                    await asyncio.to_thread(conv_log.record_turn_end, a, content, was, status)
+                except (sqlite3.Error, OSError) as e:
+                    log.warning("conversation log write failed for %s: %s", pid, e)
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
         current_pane_ids = {p["pane_id"] for p in agents + shells}
@@ -1227,8 +1287,30 @@ async def handle_client(ws, listener="lan"):
                 await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
                 await asyncio.sleep(SEND_SETTLE)
                 await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+                await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
+            elif msg_type == "conv_log":
+                # Answered to the asking client and never broadcast: this is the one message that
+                # carries what an agent actually said, and a client that did not ask for a
+                # transcript should not be handed one.
+                if conv_log is None:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "conversation log is off"}))
+                    continue
+                try:
+                    rows, truncated = await asyncio.to_thread(
+                        conv_log.query,
+                        pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
+                        cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
+                        since=msg.get("since"), until=msg.get("until"),
+                        last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
+                except (sqlite3.Error, OSError, ValueError, TypeError) as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))
+                    continue
+                await ws.send(json.dumps({
+                    "type": "conv_log", "truncated": truncated,
+                    "turns": [conv_as_wire(r) for r in rows]}))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -1304,6 +1386,7 @@ async def handle_client(ws, listener="lan"):
                 audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
                 await asyncio.to_thread(run_herdr, "pane", "run" if submit else "send-text",
                                         pane_id, text, remote=remote)
+                await record_sent(pane_id, text)
                 # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
                 # right behind this — which is what a client that submits for itself does — lands
                 # late enough to submit. One choke point, rather than a delay in each client.

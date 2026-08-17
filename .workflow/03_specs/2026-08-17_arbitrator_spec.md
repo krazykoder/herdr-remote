@@ -109,6 +109,50 @@ Reasons the record is a database and not a directory of JSON:
 SQLite, stdlib `sqlite3`, `journal_mode=WAL`, `foreign_keys=ON`. Times are integer epoch
 milliseconds throughout — the front end's clock unit, so no conversion at the boundary.
 
+#### 4.3.1 The record is global, not per session
+
+**`turns` belongs to no session.** Capture is per pane, keyed by fingerprint, and happens once
+whether or not any arbitration exists. This is what makes S0 shippable on its own, and it is also the
+honest model: a pane can be in more than one conversation over its life, and its turns do not belong
+to whichever session happened to be running.
+
+An arbitration session reads the turns it cares about by **roster fingerprints and a time window** —
+its members' `(host, agent, cwd)` and everything at or after `created_at`. No session-scoped copy of
+the same text, no capture that only happens when a session is active, and nothing to reconcile when
+one pane is in two conversations.
+
+```sql
+CREATE TABLE IF NOT EXISTS turns (
+  id                INTEGER PRIMARY KEY,
+  seq               INTEGER NOT NULL,          -- global monotonic, assigned at insert
+  host              TEXT NOT NULL DEFAULT 'local',
+  agent             TEXT NOT NULL,             -- harness kind: claude, codex, …
+  cwd               TEXT NOT NULL DEFAULT '',
+  pane_id           TEXT NOT NULL,             -- as observed; not an identity, see §5.1
+  label             TEXT NOT NULL DEFAULT '',
+  project           TEXT NOT NULL DEFAULT '',
+  kind              TEXT NOT NULL,             -- §6.2
+  origin            TEXT NOT NULL,             -- §6.3
+  text              TEXT NOT NULL,             -- the detected message, or the sent instruction
+  tail              TEXT NOT NULL DEFAULT '',  -- pane tail fallback when detection found nothing
+  range_start       INTEGER,                   -- detected line range, null when there was none
+  range_end         INTEGER,
+  status_from       TEXT,
+  status_to         TEXT,
+  at                INTEGER NOT NULL,          -- when it was said, best available
+  at_src            TEXT NOT NULL,             -- how good that answer is, §6.4
+  decision_id       INTEGER                    -- set on arbitrated sends; no FK, turns outlive sessions
+);
+CREATE INDEX IF NOT EXISTS turns_time  ON turns(at, seq);
+CREATE INDEX IF NOT EXISTS turns_fp    ON turns(host, agent, cwd, at, seq);
+CREATE INDEX IF NOT EXISTS turns_pane  ON turns(pane_id, at, seq);
+```
+
+`decision_id` carries no foreign key on purpose: a turn outlives the session that caused it, and a
+pruned session must not cascade away the record of what was said.
+
+#### 4.3.2 Arbitration tables (S2 and later)
+
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
   id                TEXT PRIMARY KEY,          -- relay-assigned, never client-supplied
@@ -142,26 +186,6 @@ CREATE TABLE IF NOT EXISTS members (
   PRIMARY KEY (session_id, member_id)
 );
 
-CREATE TABLE IF NOT EXISTS entries (
-  id                INTEGER PRIMARY KEY,
-  session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  seq               INTEGER NOT NULL,          -- monotonic per session, assigned at insert
-  from_member       TEXT NOT NULL,             -- member_id, or 'arbitrator', or 'human'
-  kind              TEXT NOT NULL,             -- §6.2
-  origin            TEXT NOT NULL,             -- §6.3
-  text              TEXT NOT NULL,             -- the detected message, or the sent instruction
-  tail              TEXT NOT NULL DEFAULT '',  -- pane tail fallback when detection found nothing
-  range_start       INTEGER,                   -- detected line range, null when there was none
-  range_end         INTEGER,
-  status_from       TEXT,
-  status_to         TEXT,
-  at                INTEGER NOT NULL,          -- when it was said, best available
-  at_src            TEXT NOT NULL,             -- how good that answer is, §6.4
-  decision_id       INTEGER REFERENCES decisions(id)   -- set on arbitrated sends
-);
-CREATE INDEX IF NOT EXISTS entries_thread ON entries(session_id, at, seq);
-CREATE INDEX IF NOT EXISTS entries_member ON entries(session_id, from_member, at, seq);
-
 CREATE TABLE IF NOT EXISTS prompts (
   id                INTEGER PRIMARY KEY,
   session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -183,10 +207,10 @@ CREATE TABLE IF NOT EXISTS decisions (
   gate              TEXT,
   to_member         TEXT,
   instruction       TEXT,
-  why               TEXT,
+  why               TEXT NOT NULL,
   ambiguity         TEXT,                      -- 'low' | 'medium' | 'high'
   complexity        TEXT,                      -- 'low' | 'medium' | 'high'
-  stop              INTEGER NOT NULL DEFAULT 0,
+  raw_sha256        TEXT NOT NULL,             -- content hash of the drop-box, §12.1
   at                INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS decisions_seq ON decisions(session_id, sequence, id);
@@ -202,11 +226,13 @@ CREATE TABLE IF NOT EXISTS sends (
 );
 ```
 
-Only one session may be `active` at a time in v1 (§9.2), enforced by a partial unique index:
+Only one session may be **running** at a time in v1 (§9.2). Running means `active` *or* `awaiting` —
+a session whose arbitrator is mid-decision is very much still running, and an index over `active`
+alone would let a second session start in exactly that window:
 
 ```sql
-CREATE UNIQUE INDEX IF NOT EXISTS one_active_session
-  ON sessions(state) WHERE state = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_session
+  ON sessions(state IN ('active','awaiting')) WHERE state IN ('active','awaiting');
 ```
 
 ## 5. Identity
@@ -311,15 +337,16 @@ share an `at` and would otherwise order arbitrarily.
 ### 6.6 Per-agent logs in one table
 
 The model is the front end's: each participant has its own timestamped messages, merged
-chronologically for the joint view. One table does not flatten that — `from_member` is on every row,
-so the separation is a column rather than a file:
+chronologically for the joint view. One table does not flatten that — the fingerprint is on every
+row, so the separation is a set of columns rather than a file:
 
 ```sql
 -- one participant's own log, exactly what a separate file would hold
-SELECT * FROM entries WHERE session_id=? AND from_member='member-2' ORDER BY at, seq;
+SELECT * FROM turns WHERE (host, agent, cwd) = (?, ?, ?)  ORDER BY at, seq;
 
--- the merged thread, every participant
-SELECT * FROM entries WHERE session_id=?                            ORDER BY at, seq;
+-- the merged thread: a session's roster over its window
+SELECT * FROM turns
+ WHERE (host, agent, cwd) IN (…roster…) AND at >= ?       ORDER BY at, seq;
 ```
 
 The browser splits into a record per member because IndexedDB cannot order across stores — the only
@@ -334,7 +361,7 @@ instead of the obvious one.
 |---|---|---|
 | `text` | 16 KB | Truncated, marked with a trailing `…` and `kind` unchanged |
 | `tail` | 4 KB | Truncated from the front (the end of a pane is the interesting end) |
-| entries per session | 20 000 | Oldest `agent_final` rows pruned first; `decision` and `arbitrated` never pruned |
+| rows in `turns` | 50 000 | Oldest `agent_final` rows pruned first; `decision` and `arbitrated` never pruned |
 
 ### 6.8 Relationship to the front end's store
 
@@ -359,21 +386,27 @@ Read-only, opened as `sqlite3.connect("file:…?mode=ro", uri=True)`. No write p
 module. Named in the arbitrator's starter prompt.
 
 ```
-python3 relay/conv_query.py --session <id> [selector] [--format text|json]
+python3 relay/conv_query.py [selector …] [--format text|json]
 
-selectors (combinable):
-  --member <member_id>     only this participant's entries
+selectors (combinable, AND-ed):
+  --session <id>           a session's roster and window; resolves to fingerprints
+  --member <member_id>     one member of that session
+  --pane <pane_id>         one pane as currently observed
+  --agent <kind>           one harness kind
+  --cwd <path>             one working directory
   --last <n>               the most recent n (default 20, max 200)
   --grep <pattern>         case-insensitive substring over text
-  --since <sequence>       everything after decision <sequence>
-  --between <a> <b>        entries between two decision sequences
+  --since <ms|sequence>    everything after a time, or after a decision sequence
   --kind <kind>            filter by kind
 ```
 
-Output, one entry per block:
+With no `--session`, it queries the global record — which is what makes it useful before any
+arbitration exists.
+
+Output, one turn per block:
 
 ```
-[0041] 11:04:22  member-1  Architect/claude  agent_final  (poll)
+[0041] 11:04:22  claude ~/code/herdr-remote  Architect 1  agent_final  (poll)
 Implemented the mobile footer change. The composer now…
 ```
 
@@ -386,17 +419,21 @@ misleading.
 **Client → server**
 
 ```json
-{"type": "conv_log", "session": "<id>", "member": "member-2", "last": 50, "grep": "footer"}
+{"type": "conv_log", "pane": "%12", "last": 50, "grep": "footer"}
 ```
+
+Accepts any of `session`, `member`, `pane`, `agent`, `cwd`, `last`, `grep`, `since`, `kind`.
 
 **Server → client**, answered to the asking client only and never broadcast, because it is the
 message that carries agent prose:
 
 ```json
-{"type": "conv_log", "session": "<id>", "truncated": false,
- "entries": [{"seq": 41, "from": "member-2", "kind": "agent_final", "origin": "agent",
-              "text": "…", "at": 1755423862000, "at_src": "poll",
-              "range": [412, 430], "decision_id": null}]}
+{"type": "conv_log", "truncated": false,
+ "turns": [{"seq": 41, "pane_id": "%12", "host": "local", "agent": "claude",
+            "cwd": "/Users/…/herdr-remote", "label": "Architect 1", "project": "herdr-remote",
+            "kind": "agent_final", "origin": "agent", "text": "…", "tail": "",
+            "at": 1755423862000, "at_src": "poll",
+            "range": [412, 430], "decision_id": null}]}
 ```
 
 Same caps as §7.1. Requires the relay's normal token; not gated on `HERDR_ENABLE_ARBITER`, because
@@ -466,7 +503,7 @@ send_text(resolve(decision["to"]), render(gate, decision["instruction"]), submit
 All must hold, checked in this order, each with its own error:
 
 1. `HERDR_ENABLE_ARBITER=1` **and** `HERDR_ENABLE_WRITE_EXT=1` **and** `HERDR_CONV_LOG=1`.
-2. No other session is `active`.
+2. No other session is running — `active` **or** `awaiting`.
 3. Exactly **two** members are enrolled (v1, §14.1), plus one arbitrator, all distinct panes.
 4. Every member and the arbitrator resolve to exactly one live pane by fingerprint.
 5. All participants are on `host = 'local'` (v1, D13).
@@ -487,8 +524,8 @@ All must hold, checked in this order, each with its own error:
 | `member_ambiguous` | A member's fingerprint matches more than one | Disambiguate by hand, then Resume |
 | `arbitrator_gone` | The arbitrator pane vanished | Re-point, then Resume |
 | `invalid_record` | Two consecutive invalid decisions | Resume; the sequence is retried |
-| `call_human` | The arbitrator chose the `call_human` gate | Resume |
-| `stopped` | The arbitrator set `stop: true` | Resume |
+| `call_human` | The arbitrator chose the `call_human` gate | Resume, or Cancel to end the session |
+| `restart` | The relay restarted while the session was running (§9.4) | Resume, after reading the last send |
 
 Every pause sends a Web Push through the relay's existing `send_web_push`, so an unattended loop that
 stops is not discovered hours later.
@@ -558,7 +595,10 @@ Write exactly one JSON object to the path named in the trigger message. Fields:
   why                  one short paragraph, for the person reading the thread
   ambiguity            low | medium | high — does this turn leave the next step underdetermined
   decision_complexity  low | medium | high — is this beyond what should be auto-continued
-  stop                 true to end the session
+
+For gate call_human, omit `to` and `instruction` entirely; `why` is still required,
+and it is what the person will read. call_human pauses the session — the person
+decides whether to resume it or end it.
 
 Nothing else in your pane is read. Your reasoning, your tool calls and your prose
 are ignored by the relay. Only the file counts.
@@ -614,9 +654,14 @@ it can avoid naming one that cannot be written to, rather than discovering it by
 4. On the arbitrator's transition into an end state, the relay reads that exact path — **the path it
    already knew.** The arbitrator never tells the relay where to look.
 5. Missing file, unparseable JSON, or failed validation → **one** re-prompt naming the failure. The
-   relay then waits for the file's `(mtime, size)` to **change**, not for another end state, because
-   an agent that answers instantly would otherwise be read before it wrote.
+   relay then waits for the file's **SHA-256 to change**, not for another end state, because an agent
+   that answers instantly would otherwise be read before it wrote.
 6. A second failure pauses the session with `invalid_record`.
+
+The hash, not `(mtime, size)`: a corrected record is very often the same length as the one it
+replaces — one enum swapped, one member id changed — and filesystem timestamp granularity is not
+fine enough to rely on either. A content hash is the only comparison that cannot say "unchanged"
+about a file whose contents changed. `decisions.raw_sha256` stores it.
 
 ### 12.2 Shape
 
@@ -629,12 +674,26 @@ it can avoid naming one that cannot be written to, rather than discovering it by
   "instruction": "Review the footer change for mobile layout regressions.",
   "why": "The implementation is ready for an independent check.",
   "ambiguity": "low",
-  "decision_complexity": "low",
-  "stop": false
+  "decision_complexity": "low"
 }
 ```
 
+**There is no `stop` field.** An arbitrator that wants the loop to end chooses `call_human`, which
+pauses; the person then resumes or cancels. Two ways to say "send nothing" would differ only in
+whether a human could restart the loop afterwards — which is the person's call, not the arbitrator's.
+One no-send outcome, and the human owns ending.
+
 ### 12.3 Validation
+
+The required shape is **conditional on the gate**:
+
+| Gate | `to` | `instruction` | `why` |
+|---|---|---|---|
+| An action gate (`implement`, `review`, `phase_plan`, …) | Required | Required, non-empty | Required |
+| `call_human` | Must be absent | Must be absent | Required |
+
+`why` is required everywhere: a decision the person cannot read the reason for is not reviewable, and
+`call_human` without a reason is the least useful message the system can produce.
 
 Checked in order; the first failure is the `reject_code`.
 
@@ -645,6 +704,9 @@ Checked in order; the first failure is the `reject_code`.
 | `session_mismatch` | `session_id` equals the running session |
 | `sequence_mismatch` | `sequence` equals the sequence that was asked for |
 | `unknown_gate` | `gate` is in this session's gate list |
+| `why_missing` | `why` is non-empty after stripping, ≤ 2 000 characters |
+| `field_not_allowed` | `call_human` carries a `to` or an `instruction` |
+| `field_required` | An action gate is missing `to` or `instruction` |
 | `unknown_member` | `to` is a `member_id` on the roster |
 | `target_not_live` | `to` resolves to exactly one live pane (§5.2) |
 | `target_working` | The target's status is not `working` (N7) |
@@ -652,9 +714,6 @@ Checked in order; the first failure is the `reject_code`.
 | `instruction_too_long` | ≤ 4 000 characters — the relay's existing `send_text` bound |
 | `instruction_control_chars` | No control characters except `\n` and `\t` |
 | `bad_enum` | `ambiguity` and `decision_complexity` ∈ {low, medium, high} |
-| `bad_type` | `stop` is a boolean |
-
-`gate: "call_human"` and `stop: true` skip target validation — they name no recipient.
 
 **A decision naming a working member is rejected, never queued.** By the time that member finishes,
 its state and the reason for the decision have both moved; delivering a stale instruction is worse
@@ -677,7 +736,7 @@ consecutive" means.
 
 ### 13.2 Steps
 
-On a valid decision that is neither `call_human` nor `stop`:
+On a valid decision that is not `call_human`:
 
 1. Re-resolve `to` (§5.2). Changed since validation → treat as `target_not_live` and re-prompt.
 2. Render the gate's template around `instruction` (§14.2).
@@ -685,7 +744,7 @@ On a valid decision that is neither `call_human` nor `stop`:
    one herdr call. A busy agent handed a paste and then, moments later, an Enter swallows the Enter
    and leaves the message unsent; this is the existing `send_text` lesson at
    `relay/herdr_relay.py:1301`.
-4. In one transaction: insert `sends`, insert an `entries` row with `kind='arbitrated'`,
+4. In one transaction: insert `sends`, insert a `turns` row with `kind='arbitrated'`,
    `origin='arbitrator'`, `at_src='sent'` and `decision_id`, increment `steps_used` and
    `consecutive`.
 5. `audit("arbitrated_send", …)` through the relay's existing JSONL audit log.
@@ -696,10 +755,11 @@ The send happens **before** the transaction commits only in the sense that herdr
 transactional: if the relay dies between step 3 and step 4, the send happened and the row is missing.
 Recovery (§9.4) therefore pauses rather than replays, and the person is shown the last send.
 
-### 13.3 `call_human` and `stop`
+### 13.3 `call_human`
 
-No send. The decision is recorded, an `entries` row with `kind='decision'` carries `why` into the
-thread, the session pauses with `pause_reason` `call_human` or `stopped`, and a push goes out.
+No send. The decision is recorded, a `turns` row with `kind='decision'` carries `why` into the
+thread, the session pauses with `pause_reason = 'call_human'`, and a push goes out. The person
+resumes it or cancels it; the arbitrator has no way to end a session itself.
 
 ## 14. Configuration
 
@@ -802,13 +862,15 @@ No second product. The existing conversation thread, plus:
 
 | ID | Level | Asserts |
 |---|---|---|
-| **T1** | Python unit | Schema creation, insert, ordering by `(at, seq)`, per-member filter, caps, pruning |
+| **T1** | Python unit | Schema creation, insert, ordering by `(at, seq)`, per-fingerprint filter, caps, pruning |
+| **T1b** | Python unit | **`turns` is global.** Rows are written and read with no session in existence, and a session's view is a fingerprint-and-window query over the same rows — no second copy |
 | **T2** | Parity | `ends_turn()` and `TURN_END_STATES` agree with `web/src/state.js` — the same list, asserted from both sides, as `test_summary_detect.js` / `test_pane_summary.py` already do for the detector |
 | **T3** | Python unit | Capture fires on every `→ end state` transition and not on repeats; `idle` is captured, not only `done` |
 | **T4** | Python unit | `origin` is never inferred: a pane echo yields `human_terminal`/`unknown`, only a relay send yields `human_web` |
 | **T5** | Python unit | **N1 guard.** Feed the executor entries containing `accepted`, `LGTM`, `approved`, `ship it` with no valid decision record. Assert: no send, no state change, no budget movement |
 | **T6** | Python unit | Every `reject_code` in §12.3, one case each, including `unknown_field` and `target_working` |
-| **T7** | Python unit | Re-prompt happens once; the second failure pauses with `invalid_record`; the wait is on file change, not on a second end state |
+| **T7** | Python unit | Re-prompt happens once; the second failure pauses with `invalid_record`; the wait is on the SHA-256 changing, not on a second end state — including a corrected record of identical length |
+| **T7b** | Python unit | Two sessions cannot run at once, including while the first is `awaiting` |
 | **T8** | Python unit | Budget arithmetic: steps, consecutive reset on human entry, wall clock; each exhaustion pauses with its own reason |
 | **T9** | Python unit | Roster: fingerprint re-resolution adopts a single match, pauses on zero, pauses on two |
 | **T10** | Python unit | Restart recovery pauses rather than resuming; no replayed send |

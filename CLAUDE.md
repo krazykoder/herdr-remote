@@ -111,6 +111,8 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | Path | What | Language |
 |------|------|----------|
 | `relay/herdr_relay.py` | WebSocket+HTTP relay server | Python (websockets, zeroconf) |
+| `relay/conversation_log.py` | Durable record of what agents said — SQLite, one global `turns` table | Python (stdlib) |
+| `relay/conv_query.py` | Read-only query over that record. Also a CLI, so an agent can read it from its own shell | Python (stdlib) |
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
 | `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 26 script modules) | HTML/CSS/JS |
@@ -159,6 +161,9 @@ cd herdi-ios && xcodegen generate
 | `HERDR_VAPID_PUBLIC` / `HERDR_VAPID_PRIVATE` | Web Push keypair, from `relay/make-vapid.py`. Unset = no push is ever sent |
 | `HERDR_VAPID_SUBJECT` | Contact URI in the VAPID claim (default: `mailto:herdr@localhost`) |
 | `HERDR_PUSH_SUMMARY` | `1` makes a "finished" push carry the agent's closing message, read out of the pane by `relay/pane_summary.py`. Off by default: unset sends the last few lines of the pane, which is also what any pane with no readable message gets |
+| `HERDR_CONV_LOG` | `1` keeps a durable record of what agents said: one row per turn end, plus every prompt this relay delivered. Off by default — it puts agent output on disk, which is the user's call. Read back with `conv_log` or `relay/conv_query.py` |
+| `HERDR_ARBITER_DB` | Where that record lives (default: `<log dir>/arbitration.sqlite3`) |
+| `HERDR_CONV_LOG_MAX` | Rows kept before the oldest are pruned (default: 50000). Arbitrated sends and decisions are never pruned |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 | `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |
@@ -174,9 +179,9 @@ line ruler for picking a range of pane lines with a finger.
 
 Messages are JSON with a `type` field:
 
-**Server → Client:** `agents` (complete state snapshot; carries `shells` when terminal mode is on), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols` and the `source` it was read from)
+**Server → Client:** `agents` (complete state snapshot; carries `shells` when terminal mode is on), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read, carries the pane's width in cells as `cols` and the `source` it was read from), `conv_log` (turns from the durable record — answered to the client that asked and never broadcast, because it is the message carrying agent prose)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content; optional `source` — `recent-unwrapped` by default, or `visible` for the live frame with no backlog), `send_keys` (send key sequences), `send_text` (raw text without newline; optional `submit` sends the text *and* its Enter in one herdr call, which is what keeps a busy agent from swallowing an Enter that arrived separately), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate), `open_terminal` (create a shell pane at a Project's cwd; needs `HERDR_ENABLE_TERMINAL` **and** `HERDR_ENABLE_WRITE_EXT`)
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content; optional `source` — `recent-unwrapped` by default, or `visible` for the live frame with no backlog), `send_keys` (send key sequences), `send_text` (raw text without newline; optional `submit` sends the text *and* its Enter in one herdr call, which is what keeps a busy agent from swallowing an Enter that arrived separately), `rename_pane` (relabel a pane, 1–32 chars, no control characters), `start_agent` (gated on `HERDR_ENABLE_WRITE_EXT`, takes an optional `slot`), `set_slot` (put a pane in the `wide` or `narrow` slot; same gate), `open_terminal` (create a shell pane at a Project's cwd; needs `HERDR_ENABLE_TERMINAL` **and** `HERDR_ENABLE_WRITE_EXT`), `conv_log` (read the durable record; selectors `pane`, `host`, `agent`, `cwd`, `kind`, `grep`, `since`, `until`, `last`; needs `HERDR_CONV_LOG`)
 
 ## Deployment
 
