@@ -370,6 +370,8 @@
       const all = hidden.size ? composed.all.filter(shows) : composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
+      // Nobody else is speaking here, so the bubbles take the width back off the empty column.
+      box.classList.toggle('conv-solo', !joint);
       // While the panel is open it is this conversation the actions act on. convViewId is "the
       // conversation being managed" and not "the one the standalone view is showing" — the two
       // views are never on screen at once, so one variable answers for both.

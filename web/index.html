@@ -2829,6 +2829,15 @@
       overflow-wrap: anywhere;
     }
 
+    /* One speaker in the thread — "show this pane only", or a conversation with a single member.
+       The 86% exists to leave the other side of a two-column thread visible; with no other side
+       it is a strip of empty surface down the right of every bubble, and a diff or a plan is the
+       thing paying for it. */
+    .conv-thread.conv-solo .conv-msg,
+    .conv-thread.conv-solo .conv-slot {
+      width: 100%;
+    }
+
     .conv-msg.user {
       color: var(--green);
       font-family: inherit;

@@ -855,6 +855,9 @@
       // the second one in its tint.
       // A single-member thread is read straight off its one record and its entries carry no key —
       // there was never another member to tell them from. That member is keys[0].
+      // Same rule as the pane's own thread: one member on screen is one speaker, and a bubble that
+      // stops at 86% is leaving room for a column nothing is drawn in.
+      box.classList.toggle('conv-solo', shown.length <= 1);
       const visible = e => !hidden.has(e.key || keys[0]);
       const entries = hidden.size ? composed.entries.filter(visible) : composed.entries;
       const all = hidden.size ? composed.all.filter(visible) : composed.all;

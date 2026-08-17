@@ -1394,6 +1394,34 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
 
+// The 86% is a two-column layout leaving the other column visible. With one speaker there is no
+// other column, only a strip of empty surface down the right of every bubble — and a plan or a
+// diff is what pays for it.
+test('a thread with one speaker gives the bubble the whole width', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const width = () => page.evaluate(() => {
+    const box = document.getElementById('convThread');
+    const msg = box.querySelector('.conv-msg');
+    const pad = getComputedStyle(box);
+    return {solo: box.classList.contains('conv-solo'),
+      bubble: Math.round(msg.getBoundingClientRect().width),
+      // The room a bubble has, which is the thread minus its own gutters.
+      thread: Math.round(box.clientWidth
+        - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight))};
+  });
+  const both = await width();
+  expect(both.solo).toBe(false);
+  expect(both.bubble).toBeLessThan(both.thread);
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConvJoint').click();          // show this pane alone
+  await expect(page.locator('#convThread.conv-solo')).toBeVisible();
+  const alone = await width();
+  expect(alone.bubble).toBe(alone.thread);
+});
+
 test('the transfer sheet names the pane it will write into', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
