@@ -188,6 +188,8 @@
       // land on a key some *other* ended session already recorded under. Copying over it would
       // delete a transcript a conversation still names. Refused instead: the caller falls back to
       // joining as a new member, which is what a restart did before it could continue anything.
+      const taken = convHeld.get(newKey) || (await convGet([newKey]))[0];
+      if (taken && (taken.entries || []).length && convReferenced().has(newKey)) return false;
       const next = Object.assign({}, old, {
         key: newKey, label: label || old.label || '', entries: (old.entries || []).slice(),
         // The new pane cannot be aligned to the old pane's output. Keep the continuation boundary
