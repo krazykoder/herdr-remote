@@ -858,6 +858,16 @@
       // Same rule as the pane's own thread: one member on screen is one speaker, and a bubble that
       // stops at 86% is leaving room for a column nothing is drawn in.
       box.classList.toggle('conv-solo', shown.length <= 1);
+      // A pair reads as two columns here as well: one agent's words down the left, the other's
+      // indented to the right, which is the shape the pane's own thread has always drawn a pair in.
+      // The right side is the pane the reader has open when that is one of the two — the same rule
+      // the pane thread follows — and the second member otherwise, so the columns are stable for a
+      // reader who has no pane open at all.
+      const shownKeys = shown.map(m => m.key);
+      const openKey = activePane ? convMemberKey(paneOf(activePane)) : '';
+      const twoCol = shownKeys.length === 2 && !!(conv.pair_id ||
+        agents.some(x => shownKeys.includes(convMemberKey(x)) && pairFor(pairs, x.pane_id)));
+      const rightKey = shownKeys.includes(openKey) ? openKey : shownKeys[1];
       const visible = e => !hidden.has(e.key || keys[0]);
       const entries = hidden.size ? composed.entries.filter(visible) : composed.entries;
       const all = hidden.size ? composed.all.filter(visible) : composed.all;
@@ -891,7 +901,7 @@
         // Same fallback the visibility filter above uses: a single-member thread's entries carry no
         // key, and the dock reads a bubble's key to know who wrote it — an unkeyed bubble has no
         // source and so no target to exclude.
-        ? convEntriesHtml(entries, {key: keys[0]}, false, 'toggleConvDockPick')
+        ? convEntriesHtml(entries, {key: twoCol ? rightKey : keys[0]}, twoCol, 'toggleConvDockPick')
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +
             'messages only" off in the pane menu to see it.</p>'

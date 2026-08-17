@@ -2870,6 +2870,28 @@ const openWindow = async page => {
   await expect(page.locator('#convView')).toBeVisible();
 };
 
+// A pair is two columns wherever it is read: one agent down the left, the other indented to the
+// right. The window drew every bubble on the left, so a pair that reads as a conversation in the
+// pane read as one long monologue here.
+test('a pair reads as two columns in the conversation window too', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const sides = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#convViewThread .conv-msg')).map(m => ({
+      text: m.textContent, right: m.classList.contains('conv-right'),
+      align: getComputedStyle(m).alignSelf})));
+  const right = sides.filter(s => s.right);
+  expect(right.length).toBeGreaterThan(0);
+  expect(sides.length).toBeGreaterThan(right.length);
+  // One agent's words, all of them, on the same side.
+  expect(right.every(s => s.text.includes('other pane') || s.text.includes('and again'))).toBe(true);
+  expect(right[0].align).toBe('flex-end');
+  // Two columns means both sides are drawn, so the bubbles keep the width that leaves room for it.
+  await expect(page.locator('#convViewThread.conv-solo')).toHaveCount(0);
+});
+
 test('a half-written message waits in the conversation it was being written to', async ({page}) => {
   await open(page);
   await join(page);
