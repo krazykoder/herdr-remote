@@ -280,22 +280,42 @@ class ConversationLog:
     def _fingerprint(pane):
         return (pane.get("host") or "local", pane.get("agent") or "", pane.get("cwd") or "")
 
+    def _scope(self, pane):
+        """Which rows in the record are this pane's own, as a (SQL, params) pair.
+
+        The pane's own id is the sharpest identity there is, and it is what keeps two panes sharing
+        one fingerprint — a pair of claudes in the same project, which is an ordinary thing to run —
+        from anchoring against each other and each deciding the other's turn was already recorded.
+
+        It is also the one thing herdr changes on every restart, so a pane with no rows under its
+        current id falls back to the fingerprint: the restarted pane then finds its own history and
+        does not backfill the unchanged scrollback a second time. One row written under the new id
+        is enough to move it back onto the sharp scope, so the fallback applies once per restart.
+        """
+        pane_id = pane.get("pane_id") or ""
+        if self.conn.execute("SELECT 1 FROM turns WHERE pane_id = ? LIMIT 1",
+                             (pane_id,)).fetchone():
+            return "pane_id = ?", (pane_id,)
+        return "host = ? AND agent = ? AND cwd = ?", self._fingerprint(pane)
+
     def _anchor_keys(self, pane, limit):
         """The record's newest messages that were read off this pane, oldest first."""
+        where, params = self._scope(pane)
         rows = self.conn.execute(
-            "SELECT kind, text FROM turns WHERE host = ? AND agent = ? AND cwd = ?"
+            f"SELECT kind, text FROM turns WHERE {where}"
             " AND at_src != 'sent' AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
-            (*self._fingerprint(pane), limit)).fetchall()
+            (*params, limit)).fetchall()
         return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
 
     def _trailing_user_keys(self, pane):
         """The prompts the record already ends on: the trailing run of user rows, past any agent
         rows above them. Their echoes are in the window and are not new; anything else the user
         said is — an input made while the agent worked is exactly the one nothing else records."""
+        where, params = self._scope(pane)
         rows = self.conn.execute(
-            "SELECT kind, text FROM turns WHERE host = ? AND agent = ? AND cwd = ?"
+            f"SELECT kind, text FROM turns WHERE {where}"
             " AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
-            (*self._fingerprint(pane), TRAILING_USER_MAX)).fetchall()
+            (*params, TRAILING_USER_MAX)).fetchall()
         out, seen_user = set(), False
         for r in rows:
             if _who(r["kind"]) == "user":
@@ -306,9 +326,10 @@ class ConversationLog:
         return out
 
     def _last_tail(self, pane):
+        where, params = self._scope(pane)
         row = self.conn.execute(
-            "SELECT tail FROM turns WHERE host = ? AND agent = ? AND cwd = ? AND text = ''"
-            " ORDER BY at DESC, id DESC LIMIT 1", self._fingerprint(pane)).fetchone()
+            f"SELECT tail FROM turns WHERE {where} AND text = ''"
+            " ORDER BY at DESC, id DESC LIMIT 1", params).fetchone()
         return row["tail"] if row else None
 
     def _prune(self):

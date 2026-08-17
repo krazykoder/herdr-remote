@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, tempfile, time
+import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
 from conversation_log import ConversationLog
@@ -982,8 +982,10 @@ async def _poll_once():
             # finishes and drops to idle has said its piece exactly as much as one that reports
             # done, and several harnesses end that way every time.
             #
-            # First sight seeds the state; it is not a transition. Recording it would make a fresh
-            # database immediately fill with every old idle pane's scrollback after a relay restart.
+            # First sight seeds the state; it is not a transition. Reading it would fill a fresh
+            # database, on the first poll, with the scrollback of every pane that happened to be
+            # sitting idle — most of which will never say another word. A pane that does go on to
+            # end a turn backfills its window then, when there is a reason to believe it is live.
             if conv_log is not None and was is not None and status != was and ends_turn(status):
                 # Its own read. `content` above is the push preview, which is the wrong shape for a
                 # parser — see read_pane_for_record. Two reads of a pane that just ended a turn is

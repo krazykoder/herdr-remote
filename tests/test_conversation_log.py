@@ -215,6 +215,20 @@ class Capture(Log):
         restarted = dict(PANE, pane_id="%99")
         self.assertEqual(self.log.record_turn_end(restarted, content, "working", "idle"), [])
 
+    def test_two_panes_sharing_a_fingerprint_do_not_answer_for_each_other(self):
+        # A pair of claudes in one project is an ordinary thing to run, and they are one
+        # fingerprint. Once each has written, each anchors against its own id — otherwise the
+        # second one's turn aligns against the first one's record and is dropped as already held.
+        content = fixture("pane_claude_done.txt")
+        one, two = PANE, dict(PANE, pane_id="%2", label="Architect 2")
+        self.log.record_turn_end(one, content, "working", "idle")
+        self.log.record_turn_end(two, content, "working", "idle")
+        said = content.split("\n")
+        said[9] = "⏺ Both of us said this."
+        for pane in (one, two):
+            self.assertTrue(self.log.record_turn_end(pane, "\n".join(said), "working", "idle"),
+                            f"{pane['pane_id']} lost its turn to the other pane's record")
+
     def test_a_pane_with_no_detectable_message_keeps_its_tail(self):
         rowid = self.log.record_turn_end(
             dict(PANE, agent="nosuchharness"), "line one\nline two\n", "working", "idle")

@@ -69,12 +69,12 @@ const test = base.test.extend({
           // advertises nothing on the network.
           HERDR_LAN_BIND: '127.0.0.1',
           HERDR_LAN_OPEN: '1',       // no token: the browser connects straight to its own origin
-          HERDR_LOG_DIR: logs,
+          HERDR_STATE_DIR: logs,
           HERDR_ENABLE_TERMINAL: '1',
           HERDR_ENABLE_WRITE_EXT: '1',
           // The durable record, so the thread's "read the relay's record" toggle has something to
-          // read. It lands in this worker's own HERDR_LOG_DIR, which is a temp directory torn down
-          // with the worker — no developer's real record is opened or written by a test run.
+          // read. It lands in this worker's own HERDR_STATE_DIR, which is a temp directory torn
+          // down with the worker — no developer's real record is opened or written by a test run.
           HERDR_CONV_LOG: '1',
           // No HERDR_REMOTES: one host keeps the fake's deliberate cross-host pane-ID collisions
           // out of the way, and the Projects fixture is not loaded because its entries name it.

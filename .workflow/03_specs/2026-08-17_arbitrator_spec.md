@@ -74,15 +74,18 @@ These are the rules everything else serves. Each has a test named in §16.
 
 | Thing | Path |
 |---|---|
-| Database | `$LOG_DIR/arbitration.sqlite3` |
-| Drop-boxes | `$LOG_DIR/arbitration/<session_id>/NNNN-decision.json` |
-| Prompt copies | `$LOG_DIR/arbitration/<session_id>/NNNN-prompt.txt` |
+| Database | `$STATE_DIR/arbitration.sqlite3` |
+| Drop-boxes | `$STATE_DIR/arbitration/<session_id>/NNNN-decision.json` |
+| Prompt copies | `$STATE_DIR/arbitration/<session_id>/NNNN-prompt.txt` |
 
-`$LOG_DIR` is the relay's existing `LOG_DIR` — `HERDR_LOG_DIR`, else
-`~/Library/Logs/herdr-remote` on darwin, `/var/log/herdr-remote` where writable, else
-`~/.local/state/herdr-remote/log` (`relay/herdr_relay.py:51`). The directory is created `0700`, files
-`0600`. Nothing is written into a project checkout, so there is no git-ignore precondition and a
-session is not tied to one repository.
+`$STATE_DIR` is `HERDR_STATE_DIR`, else `.herdr-remote/` beside the relay's own checkout
+(`relay/herdr_relay.py:54`). The directory is created `0700`, files `0600`.
+
+**This reverses D4**, which put state under `$HERDR_LOG_DIR` precisely so that nothing was written
+into a checkout. The state directory is now *in* one, and `/.herdr-remote/` in `.gitignore` is what
+keeps it out of history — a git-ignore precondition D4 was written to avoid. What was bought is a
+relay whose whole runtime state is in one place a person can find, delete, and back up. What was
+sold is that the secrets file now sits inside a git working tree.
 
 ### 4.2 Why a database, with files beside it
 
