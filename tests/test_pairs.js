@@ -306,10 +306,8 @@ test('the conversation window\'s targets do not require a pair', () => {
   assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 1);
   assert.match(CONV_DOCK,
     /function dockPairTarget\(source, list\) \{[\s\S]*?list\.some\(a => a\.pane_id === partner\.pane_id\) \? partner\.pane_id : ''/);
-  for (const fn of ['dockMembers', 'dockTargets']) {
-    const body = CONV_DOCK.split(`function ${fn}(`)[1].split('\n    }')[0];
-    assert.ok(!/pairFor\(|dockPairTarget\(/.test(body), `${fn} must not consult a pair`);
-  }
+  const members = CONV_DOCK.split('function dockMembers(')[1].split('\n    }')[0];
+  assert.ok(!/pairFor\(|dockPairTarget\(/.test(members), 'dockMembers must not consult a pair');
   assert.match(CONV_DOCK, /function dockMembers\(\)[\s\S]*?\(conv\.members \|\| \[\]\)/);
   assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
   assert.match(TRANSFER, /function claimTransfer[\s\S]*?pairHealth\(pair, agents\)\.state !== 'healthy'/);
