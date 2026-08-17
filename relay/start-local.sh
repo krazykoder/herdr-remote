@@ -17,6 +17,9 @@ RELAY_PID=""
 
 cleanup() {
     STATUS=$?
+    # Once. Ctrl-C fires INT, whose handler exits, which fires EXIT — so this ran twice, printing
+    # the shutdown twice and sending the relay a second SIGTERM it had already acted on.
+    trap - INT TERM EXIT
     echo ""
     echo "Shutting down..."
     [ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null && wait "$RELAY_PID" 2>/dev/null
@@ -30,7 +33,15 @@ echo "herdr-remote relay — local mode"
 echo ""
 
 # Config first, then override. Anything the config sets for tunnel use is dropped below.
+#
+# `set -a`, as start.sh does: config.env is written with `export` today, and a line without one
+# would otherwise set a shell variable the relay never sees — a setting that looks applied and is
+# not. secrets.env is deliberately *not* sourced here; that is where the token lives, and this
+# script's whole job is to run without one.
+set -a
+# shellcheck disable=SC1090
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+set +a
 
 # Remembered before the unset below, and used for nothing except finding a tunnel start.sh may
 # have left running against it. This script must not open that port; it only cleans up after it.
