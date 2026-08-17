@@ -24,6 +24,7 @@ import sqlite3
 import time
 
 from conv_query import QUERY_ROWS_DEFAULT, as_wire, query  # noqa: F401  (re-exported for the relay)
+from pane_summary import pane_messages, turn_messages
 
 # A message is kept whole up to here. Past it the record is still the message, minus the middle of
 # a wall of text nobody was going to read out of a log.
@@ -41,6 +42,54 @@ AT_SRCS = frozenset({"sent", "poll", "backfill"})
 # Turns that are evidence of an automated decision are never pruned: they are the record of what
 # the machine did on its own, which is the part a person most needs to be able to go back to.
 KEEP_ALWAYS = ("arbitrated", "decision")
+
+# The kinds a person is behind. Which side of a conversation a row is on is a fact about its kind,
+# and one place answers it so the anchor and the record agree.
+USER_KINDS = ("human_prompt", "arbitrated")
+
+# How many of the record's own messages have to line up for a position in a window to be its end.
+# One is not enough: agents close turns with the same words constantly, and a bare match on "Done."
+# lands on whichever copy is newest — which is the *last* one on screen when the agent has just
+# said it twice, and the turn between them is then invisible. Mirrors CONV_ANCHOR_CONTEXT.
+ANCHOR_CONTEXT = 3
+
+# How far back the fallback looks for the prompts the record ends on. A bound rather than a rule:
+# the run being looked for is the last one or two rows, and this only stops the scan on a pane
+# whose record is nothing but prompts.
+TRAILING_USER_MAX = 20
+
+
+def _who(kind):
+    return "user" if kind in USER_KINDS else "agent"
+
+
+def _key(text):
+    """The comparison key, and only ever that.
+
+    Whitespace is dropped entirely rather than collapsed, because that is exactly the difference a
+    terminal's own wrap makes: the same sentence read at a phone width and at a desktop width
+    breaks in different places, and one of those breaks lands mid-word — "our loca l database"
+    against "our local database". Stored text stays exactly as it was extracted; only what is
+    compared is normalized. Mirrors convKey in web/src/conversation_pure.js.
+    """
+    return "".join((text or "").split())
+
+
+def _aligns(fresh, i, keys):
+    """Does the record's trailing run end at `fresh[i]`?
+
+    A context message that falls off the top of the window is not a mismatch — it is absent, and a
+    window is allowed to begin in the middle of the record. Who said it is half of what a message
+    is: matching on text alone would count the user's "ok" as the agent's, and the two speak in
+    turn, so aligning on the wrong one is aligning half a turn out.
+    """
+    for back, (who, key) in enumerate(reversed(keys)):
+        j = i - back
+        if j < 0:
+            return True
+        if fresh[j][0] != who or _key(fresh[j][1]) != key:
+            return False
+    return True
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
@@ -132,31 +181,128 @@ class ConversationLog:
     def record_turn_end(self, pane, content, status_from, status_to, at=None):
         """A pane that just stopped working, from the content of its pane.
 
-        Returns the new row's id, or None when this turn is already recorded. The duplicate is
-        real and ordinary: a pane goes blocked, a person answers, it finishes — and unless it
-        wrote something new in between, both transitions read back the same closing message. The
-        front end's store dedupes the same way, by what was said rather than by how it ended.
-        """
-        from pane_summary import message_block
+        Returns the ids written, oldest first — usually one or two, and empty when this turn is
+        already recorded. The duplicate is real and ordinary: a pane goes blocked, a person answers,
+        it finishes — and unless it wrote something new in between, both transitions read back the
+        same messages.
 
-        text, span = message_block(content, pane.get("agent"))
+        What is written is the same thing the browser's recorder writes, out of the same parser:
+        every message the window holds past the record's own end. That is the agent's narration as
+        well as its closing line, and any prompt typed straight into the terminal — the one input no
+        send event will ever report. `pane_summary.pane_messages` is the port; the anchor below is
+        the port of `messagesAfterRecord`.
+        """
+        agent = pane.get("agent")
+        pane_id = pane["pane_id"]
         rows = (content or "").splitlines()
-        tail = "\n".join(rows[-12:])
-        if text and self._last_text(pane["pane_id"]) == text:
-            return None
-        return self.record(
-            agent=pane.get("agent") or "", pane_id=pane["pane_id"],
+        fresh = pane_messages(rows, agent)
+        # First sight of this pane: everything on screen was said before the relay was watching, so
+        # the whole window is history rather than one turn. Its order is all that can honestly be
+        # claimed about it, which is what `backfill` means — the same answer the browser gives a
+        # pane's first read. Anything after this is anchored against what this wrote.
+        backfilled = bool(fresh) and not self._has_record(pane_id)
+        if not fresh:
+            new = []
+        elif backfilled:
+            new = fresh
+        else:
+            new = self._messages_after_record(pane_id, fresh)
+        common = dict(
+            agent=agent or "", pane_id=pane_id,
             host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
             label=pane.get("label") or "", project=pane.get("project") or "",
-            kind="agent_blocked" if status_to == "blocked" else "agent_final",
-            origin="agent", at_src="poll", text=text, tail=tail, span=span,
-            status_from=status_from, status_to=status_to, at=at)
+            at_src="backfill" if backfilled else "poll",
+            status_from=status_from, status_to=status_to)
+        if not fresh:
+            # Nothing readable at all: a harness with no profile, a pane showing its own banner, a
+            # window that begins mid-block. The tail is the honest fallback and saying "a turn ended
+            # here and this is what was on screen" beats saying nothing — but only once, or every
+            # poll of a quiet pane would write the same screen again.
+            tail = "\n".join(rows[-12:])
+            if self._last_tail(pane_id) == tail:
+                return []
+            return [self.record(kind="agent_blocked" if status_to == "blocked" else "agent_final",
+                                origin="agent", text="", tail=tail, at=at, **common)]
+        base = at if at is not None else now_ms()
+        last_agent = max((i for i, m in enumerate(new) if m[0] == "agent"), default=-1)
+        out = []
+        for i, (who, text, span) in enumerate(new):
+            # Backfill claims an order and not a time: every one of these was said before the relay
+            # looked, so they are dated in the milliseconds *under* the read that found them. A run
+            # dated `now` would sort after history recorded later by another pane in the same
+            # conversation, which is the one thing the order is asked.
+            when = base - (len(new) - i) if backfilled else base
+            if who == "user":
+                # `human_terminal`, never `human_web`: this was read off a pane. The relay knows a
+                # person put those words there and does not know which person, and only a send it
+                # performed itself may claim more than that (N4).
+                out.append(self.record(kind="human_prompt", origin="human_terminal",
+                                       text=text, span=span, at=when, **common))
+            else:
+                # Only the agent's closing block is the one the end state is about. The blocks above
+                # it are what it said on the way there — and a prompt typed after it does not move
+                # the state, so the last message of the window is not always the agent's.
+                out.append(self.record(
+                    kind="agent_blocked" if i == last_agent and status_to == "blocked" else "agent_final",
+                    origin="agent", text=text, span=span, at=when, **common))
+        return out
 
-    def _last_text(self, pane_id):
+    def _has_record(self, pane_id):
+        return self.conn.execute(
+            "SELECT 1 FROM turns WHERE pane_id = ? LIMIT 1", (pane_id,)).fetchone() is not None
+
+    def _messages_after_record(self, pane_id, fresh):
+        """What this window holds past the record's own end.
+
+        The record is anchored by its newest messages *that were read off a pane* — a prompt the
+        relay sent is in the record whether the pane has echoed it or not, so it cannot say where
+        the record ends inside a window. Three of them, because agents close turns with the same
+        words constantly and a bare match on "Done." lands on whichever copy is newest.
+
+        Where more than one position lines up, the newest wins: it is the one that recovers *less*,
+        and a run short by a message is a smaller wrong than a run that duplicates what is already
+        recorded, because the record is permanent and the duplicate is in it forever.
+        """
+        keys = self._anchor_keys(pane_id, ANCHOR_CONTEXT)
+        if keys:
+            for i in range(len(fresh) - 1, -1, -1):
+                if _aligns(fresh, i, keys):
+                    return fresh[i + 1:]
+        # The window cannot be placed against the record: a `/clear`, a record holding nothing read
+        # off this pane, or a message whose text changed. The last-block rule cannot see an input
+        # made mid-turn, but it does see the turn — and a turn recorded without its interruptions
+        # beats a turn not recorded.
+        said = self._trailing_user_keys(pane_id)
+        return [m for m in turn_messages(fresh) if not (m[0] == "user" and _key(m[1]) in said)]
+
+    def _anchor_keys(self, pane_id, limit):
+        """The record's newest messages that were read off this pane, oldest first."""
+        rows = self.conn.execute(
+            "SELECT kind, text FROM turns WHERE pane_id = ? AND at_src != 'sent' AND text != ''"
+            " ORDER BY at DESC, id DESC LIMIT ?", (pane_id, limit)).fetchall()
+        return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
+
+    def _trailing_user_keys(self, pane_id):
+        """The prompts the record already ends on: the trailing run of user rows, past any agent
+        rows above them. Their echoes are in the window and are not new; anything else the user
+        said is — an input made while the agent worked is exactly the one nothing else records."""
+        rows = self.conn.execute(
+            "SELECT kind, text FROM turns WHERE pane_id = ? AND text != ''"
+            " ORDER BY at DESC, id DESC LIMIT ?", (pane_id, TRAILING_USER_MAX)).fetchall()
+        out, seen_user = set(), False
+        for r in rows:
+            if _who(r["kind"]) == "user":
+                seen_user = True
+                out.add(_key(r["text"]))
+            elif seen_user:
+                break
+        return out
+
+    def _last_tail(self, pane_id):
         row = self.conn.execute(
-            "SELECT text FROM turns WHERE pane_id = ? AND kind IN ('agent_final','agent_blocked')"
+            "SELECT tail FROM turns WHERE pane_id = ? AND text = ''"
             " ORDER BY at DESC, id DESC LIMIT 1", (pane_id,)).fetchone()
-        return row["text"] if row else None
+        return row["tail"] if row else None
 
     def _prune(self):
         """Oldest first, and never the record of something automated (KEEP_ALWAYS).

@@ -116,35 +116,96 @@ class TurnEnds(unittest.TestCase):
 
 
 class Capture(Log):
+    # A pane whose record already holds this window's history, so the next call is an ordinary turn
+    # rather than a first sight. First sight is its own case and is asserted below.
+    def seen(self, content, pane=PANE):
+        self.log.record_turn_end(pane, content, "working", "idle")
+
     def test_a_finished_pane_records_its_closing_message(self):
         content = fixture("pane_claude_done.txt")
-        rowid = self.log.record_turn_end(PANE, content, "working", "idle")
-        self.assertIsNotNone(rowid)
+        written = self.log.record_turn_end(PANE, content, "working", "idle")
+        self.assertTrue(written)
         rows, _ = self.log.query()
-        row = rows[0]
+        row = next(r for r in rows if r["origin"] == "agent")
         self.assertEqual(row["kind"], "agent_final")
-        self.assertEqual(row["origin"], "agent")
-        self.assertEqual(row["at_src"], "poll")
         self.assertEqual(row["status_to"], "idle")
         self.assertIn("Ready. Name the change.", row["text"])
         # The line breaks the agent wrote are kept — this is a record, not a push body.
         self.assertIn("\n", row["text"])
         self.assertIsNotNone(row["range_start"])
 
+    def test_first_sight_of_a_pane_is_history_and_says_so(self):
+        # Everything on screen the first time the relay looks was said before it was watching. Its
+        # order is all that can honestly be claimed about it, which is what `backfill` means — and
+        # the stamps have to sort under the read that found them, or a run dated `now` would land
+        # after history another pane records later in the same conversation.
+        content = fixture("pane_claude_done.txt")
+        self.log.record_turn_end(PANE, content, "working", "idle", at=1_000_000)
+        rows, _ = self.log.query()
+        self.assertEqual({r["at_src"] for r in rows}, {"backfill"})
+        self.assertTrue(all(r["at"] < 1_000_000 for r in rows))
+        self.assertEqual([r["at"] for r in rows], sorted(r["at"] for r in rows))
+
+    def test_a_turn_after_that_is_stamped_by_the_poll_that_caught_it(self):
+        content = fixture("pane_claude_done.txt")
+        self.seen(content)
+        # A new closing message, so there is something past the anchor to write.
+        rows = content.split("\n")
+        rows[9] = "⏺ And now it is finished."
+        self.log.record_turn_end(PANE, "\n".join(rows), "working", "idle")
+        latest, _ = self.log.query()
+        self.assertEqual(latest[-1]["at_src"], "poll")
+
     def test_a_blocked_pane_is_recorded_as_blocked(self):
         content = fixture("pane_claude_done.txt")
         self.log.record_turn_end(PANE, content, "working", "blocked")
         rows, _ = self.log.query()
-        self.assertEqual(rows[0]["kind"], "agent_blocked")
+        # only the agent's closing block is the prompt — a line typed under it does not move the
+        # state, and the narration above it stays agent_final
+        agent = [r for r in rows if r["origin"] == "agent"]
+        self.assertEqual(agent[-1]["kind"], "agent_blocked")
+        self.assertNotIn("agent_blocked", [r["kind"] for r in agent[:-1]])
 
     def test_the_same_message_twice_is_recorded_once(self):
         # blocked, answered, finished — with nothing new written in between, both transitions read
-        # back the same closing message.
+        # back the same closing message, and it is in the record once. What matters is that the
+        # window is never re-read as new: by the third transition there is nothing left in it.
         content = fixture("pane_claude_done.txt")
-        self.assertIsNotNone(self.log.record_turn_end(PANE, content, "working", "blocked"))
-        self.assertIsNone(self.log.record_turn_end(PANE, content, "blocked", "done"))
+        self.assertTrue(self.log.record_turn_end(PANE, content, "working", "blocked"))
+        self.log.record_turn_end(PANE, content, "blocked", "done")
+        self.assertEqual(self.log.record_turn_end(PANE, content, "done", "idle"), [])
         rows, _ = self.log.query()
-        self.assertEqual(len(rows), 1)
+        said = [r["text"] for r in rows if r["origin"] == "agent"]
+        self.assertEqual(len(said), 1)
+        self.assertIn("Ready. Name the change.", said[0])
+
+    def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
+        # N4. The relay knows a person put those words in the pane and does not know which person;
+        # only a send it performed itself may say more than that.
+        content = fixture("pane_claude_done.txt")
+        self.log.record_turn_end(PANE, content, "working", "idle")
+        rows, _ = self.log.query()
+        typed = [r for r in rows if r["kind"] == "human_prompt"]
+        self.assertEqual(len(typed), 1)
+        self.assertEqual(typed[0]["origin"], "human_terminal")
+        self.assertEqual(typed[0]["text"], "allow the test commands without prompting")
+
+    def test_the_narration_of_a_turn_is_recorded_and_not_only_its_conclusion(self):
+        # A turn is minutes of work and the agent narrates it. The browser's recorder keeps all of
+        # it; a record holding only closing lines is a record of conclusions with the reasoning cut
+        # out. agy, because its blocks are found positionally — the case most easily got wrong.
+        content = fixture("pane_agy_done.txt")
+        self.log.record_turn_end(dict(PANE, agent="agy"), content, "working", "idle")
+        rows, _ = self.log.query()
+        self.assertGreater(len([r for r in rows if r["origin"] == "agent"]), 1)
+        self.assertEqual(rows[-1]["text"], "OK")
+
+    def test_a_second_read_of_an_unchanged_pane_adds_nothing(self):
+        content = fixture("pane_agy_done.txt")
+        pane = dict(PANE, agent="agy")
+        first = self.log.record_turn_end(pane, content, "working", "idle")
+        self.assertTrue(first)
+        self.assertEqual(self.log.record_turn_end(pane, content, "idle", "done"), [])
 
     def test_a_pane_with_no_detectable_message_keeps_its_tail(self):
         rowid = self.log.record_turn_end(

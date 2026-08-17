@@ -562,6 +562,31 @@ def read_pane(pane_id, remote=None):
     return "\n".join(lines[-20:])
 
 
+# What the record reads, and deliberately not what `read_pane` above reads. That one squashes a
+# pane into a push preview — blank lines dropped, chrome lines dropped, the last twenty kept — and
+# every one of those three is destructive to the detector:
+#
+#   * the last twenty lines are usually not the whole closing block, so the block is clipped or
+#     missed outright;
+#   * blank lines are structure. `block_span` keeps them inside a block, and agy has no speaker
+#     glyph at all — its blocks are found positionally off the blank line above them, so a pane
+#     with its blanks removed detects nothing;
+#   * CHROME_RE matches `❯`, `›` and `⏵`, which are the *prompt gutters* of claude, codex and pi.
+#     Stripping them removes every line the user typed, which is the whole of input detection.
+#
+# Measured over the panes on this machine, the preview detected a closing message on 8 of 20 and
+# this read on 14 of 20, with no pane going the other way. So capture asks for what the browser's
+# recorder asks for — `convReadTurnEnd` in web/src/conversation_store.js — and hands the parser the
+# rows exactly as herdr returned them.
+CAPTURE_LINES = 200
+CAPTURE_SOURCE = "recent-unwrapped"
+
+
+def read_pane_for_record(pane_id, remote=None):
+    return run_herdr("pane", "read", pane_id, "--lines", str(CAPTURE_LINES),
+                     "--source", CAPTURE_SOURCE, remote=remote)
+
+
 def detect_options(text):
     lower = text.lower()
     if "yes, single permission" in lower:
@@ -969,10 +994,14 @@ async def _poll_once():
             # a re-record on every restart is record_turn_end, which drops a turn whose message it
             # already holds.
             if conv_log is not None and status != was and ends_turn(status):
-                if content is None:
-                    content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
+                # Its own read. `content` above is the push preview, which is the wrong shape for a
+                # parser — see read_pane_for_record. Two reads of a pane that just ended a turn is
+                # the price of the record being right, and it is paid once per turn rather than
+                # once per poll.
                 try:
-                    await asyncio.to_thread(conv_log.record_turn_end, a, content, was, status)
+                    captured = await asyncio.to_thread(
+                        read_pane_for_record, pid, remote=a.get("remote"))
+                    await asyncio.to_thread(conv_log.record_turn_end, a, captured, was, status)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
             last_statuses[pid] = status

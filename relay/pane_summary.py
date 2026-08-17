@@ -244,19 +244,143 @@ def summary_body(content, agent, limit=140):
     return text[:limit - 1] + "…" if len(text) > limit else text
 
 
-def message_block(content, agent):
-    """The closing message with its line breaks kept, as (text, (start, end)).
+# --- Everything said in a window ---
+#
+# `final_message` above answers "what is the closing message", which is what a Lock Screen asks.
+# A *record* asks something wider, and the browser's recorder has always answered it: a turn is
+# minutes of work and the agent narrates it — what it is about to do, what a test reported, what it
+# found on the way — and a transcript holding only the closing line of each turn is a transcript of
+# conclusions with the reasoning cut out. The user's own prompts are the other half, and a prompt
+# typed straight into the terminal is one no send event will ever report.
+#
+# Ported from `messageBlocks` and `userInputLines` in web/src/summary_detect.js and `convText` and
+# `paneMessages` in web/src/conversation_pure.js. Same rule and same fixtures as the detector above,
+# for the same reason: a change made to one copy and not the other breaks a test rather than a user.
 
-    ('', None) when there is not one. summary_body's sibling and its opposite trade-off: a push
-    body is one line because a Lock Screen is one line, while a record keeps the paragraphs the
-    agent wrote — the same block, joined differently.
+
+def message_blocks(rows, agent):
+    """Every block that said something, in window order. Tool blocks are not messages — block_span
+    returns None for a block with a result glyph under it, the same rule the summary uses."""
+    g = profile_for(agent)
+    out = []
+    if not g or not rows:
+        return out
+    i = 0
+    while i < len(rows):
+        if starts_block(rows, g, i):
+            at = block_span(rows, g, i)
+            if at:
+                out.append(at)
+                # Past the end of the block, not past its first line, or an indented harness opens
+                # a second block inside the first.
+                i = at[1]
+        i += 1
+    return out
+
+
+def user_input_lines(rows, agent):
+    """The rows the user typed: each prompt gutter plus its continuation lines, as a set.
+
+    A turn runs until the agent speaks. On agy that reply carries no glyph and is not in column 0,
+    so `starts_block` is checked as well as `ends_block` — without it a prompt would swallow the
+    answer to it.
     """
-    rows = (content or "").splitlines()
-    at = final_message(rows, agent)
-    if not at:
-        return "", None
-    text = "\n".join(_stripped(rows, at))
-    return (text, at) if text else ("", None)
+    g = profile_for(agent)
+    lines = set()
+    if not g or not rows:
+        return lines
+    in_turn = False
+    pending = []
+    for i, row in enumerate(rows):
+        if is_user_input(row, agent, rows, i):
+            in_turn = True
+            pending = []
+        elif ends_block(row, g) or starts_block(rows, g, i):
+            in_turn = False
+        if not in_turn:
+            continue
+        # A blank line inside the turn belongs to it only if more of the turn follows. Trailing
+        # blanks are the gap before the agent answers.
+        if (row or "").strip():
+            lines.update(pending)
+            pending = []
+            lines.add(i)
+        else:
+            pending.append(i)
+    return lines
+
+
+# Codex's idle composer shares its prompt gutter, and its model/context status line immediately
+# follows — unlike a sent prompt, which is followed by the agent's reply.
+_CODEX_STATUS = re.compile(r"^\s*\S+(?:\s+\S+)*\s+· Context \d+% used(?:\s|$)")
+
+
+def conv_text(rows, at):
+    """A range of rows as one message, with its line breaks kept.
+
+    Codex closes in three paragraphs and a record that ran them together would be lying about what
+    it said. A *run* of blank lines is not structure though — it is the gap before the next glyph —
+    so runs collapse to one blank. Deliberately different from `_stripped`, which drops every blank
+    because a push body is one line either way.
+    """
+    out = []
+    for i in range(at[0], at[1] + 1):
+        row = rows[i] if i < len(rows) else ""
+        out.append(_MARGIN.sub("", (row or "").rstrip().rstrip("│┃")))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+def pane_messages(rows, agent):
+    """Everything said in this window, in window order: every agent message, and each run of the
+    user's own lines as one message rather than one per line.
+
+    Untrimmed on purpose. The browser's learned trim is one browser's preference and belongs to its
+    view; the relay has no user to have taught it anything.
+    """
+    if not profile_for(agent) or not rows:
+        return []
+    found = [("agent", at) for at in message_blocks(rows, agent)]
+    user_lines = user_input_lines(rows, agent)
+    # One forward scan: a pane read at the ceiling must not rescan its tail once per prompt.
+    if agent == "codex":
+        for i, row in enumerate(rows):
+            if not _CODEX_STATUS.match(row or ""):
+                continue
+            start = i
+            while start >= 0 and start in user_lines:
+                start -= 1
+            user_lines = {j for j in user_lines if j <= start}
+            break
+    lines = sorted(user_lines)
+    i = 0
+    while i < len(lines):
+        j = i
+        while j + 1 < len(lines) and lines[j + 1] == lines[j] + 1:
+            j += 1
+        found.append(("user", (lines[i], lines[j])))
+        i = j + 1
+    found.sort(key=lambda m: m[1][0])
+    out = [(who, conv_text(rows, at), at) for who, at in found]
+    # The empty composer at the foot of a live pane is a prompt line with nothing typed on it.
+    return [m for m in out if m[1]]
+
+
+def turn_messages(messages):
+    """The turn that just ended: the agent's closing message, and the prompt run directly above it.
+
+    Walks back from the end — an agent that ran twice on one prompt has no prompt of its own above
+    the second reply, and correctly contributes only the reply.
+    """
+    ms = messages or []
+    end = len(ms) - 1
+    while end >= 0 and ms[end][0] != "agent":
+        end -= 1
+    if end < 0:
+        return []
+    start = end
+    while start - 1 >= 0 and ms[start - 1][0] == "user":
+        start -= 1
+    return ms[start:end + 1]
 
 
 # --- Turn ends ---
