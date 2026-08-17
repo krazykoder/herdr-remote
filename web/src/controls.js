@@ -91,16 +91,16 @@
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands
     // are slash commands like everyone else's.
     function sendLine(text) {
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: text }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      if (!submitText(activePane, text)) return false;
       burstPoll();
+      return true;
     }
 
     function armClear() {
       armFire('clsBtn', () => {
         closeFireMenu();
         const line = isShell(activePane) ? 'clear' : '/clear';
-        sendLine(line);
+        if (!sendLine(line)) return;
         // The screen the pane repaints after a clear is the live frame; the backlog behind it is
         // history the user did not ask to keep looking at. Undone by Load more or reopening it.
         paneSource = 'visible';
@@ -112,7 +112,7 @@
       armFire('quitBtn', () => {
         closeFireMenu();
         const line = isShell(activePane) ? 'exit' : '/quit';
-        sendLine(line);
+        if (!sendLine(line)) return;
         showToast(`Sent ${line}`);
       });
     }

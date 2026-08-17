@@ -378,6 +378,18 @@ test('an armed button is painted armed, not just labelled armed', async ({page})
     .toEqual({fill: true, drain: 'arm-drain'});
 });
 
+test('CLS submits its line with Enter rather than after it', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
+  const sent = await page.evaluate(() => {
+    const out = [];
+    ws.send = data => out.push(JSON.parse(data));
+    armClear(); armClear();
+    return out;
+  });
+  expect(sent).toContainEqual({type: 'send_text', pane_id: 'w8:p1', text: '/clear', submit: true});
+  expect(sent.filter(m => m.type === 'send_keys')).toHaveLength(0);
+});
+
 test('the bubble Esc is painted armed too, on the longer window it gets', async ({page}) => {
   await workingThread(page);
   await page.locator('#convThread .conv-esc').click();
