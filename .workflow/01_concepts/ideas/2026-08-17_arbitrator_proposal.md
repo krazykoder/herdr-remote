@@ -58,7 +58,8 @@ arbitrator does not need it to be useful.
 
 **In scope**
 
-- Chat arbitration: one conversation, its enrolled members, one arbitrator.
+- Chat arbitration: one conversation, **two** enrolled members, one arbitrator — three panes.
+- Backend history for every participant, the arbitrator included, queryable on demand.
 - Feature-level CRFN automation: create, review, fix, next-step.
 - Four gates: `implement`, `review`, `phase_plan`, `call_human`.
 - Four measured signals fed to the arbitrator: ambiguity, decision complexity, idle, long runtime.
@@ -69,7 +70,8 @@ arbitrator does not need it to be useful.
 
 - Starting or killing panes from a decision. The arbitrator addresses members that already exist.
 - Worktrees, commits, pushes, required-check running, working-tree drift.
-- More than one arbitrated conversation at a time, or arbitration across projects/hosts.
+- More than two members in a session, more than one session at a time, or arbitration across
+  projects and hosts.
 - Remote hosts: v1 is local-host only, because the decision record is a file on the relay's machine.
 - Anything reading a full transcript for a decision. Summaries and enrolled entries only.
 
@@ -157,55 +159,158 @@ Python is the failure mode to avoid — it would be prose-parsing wearing a metr
 ## 6. Architecture
 
 ```
-web app  ── arbitration controls, thread badges, Pause
+web app  ── arbitration controls, thread badges, Pause, on-demand log query
    │ WebSocket
    ▼
 relay ──────────────────────────────────────────────
-   │  turn capture      status transitions + pane_summary.py
+   │  turn capture      end-state transitions + pane_summary.py
    │  metrics           idle / runtime clocks
    │  arbitration       trigger → prompt → validate → execute
-   │  SQLite            turns, sessions, decisions
+   │  SQLite            entries, sessions, prompts, decisions   ← the record of truth
+   │  drop-box          one JSON file per decision, read once   ← inbound channel only
    ▼
 herdr CLI ── member panes + one arbitrator pane
+                         │
+                         └── read-only log query, over the DB, from its own shell
 ```
 
-Three new relay modules, no new dependency, no second server:
+Four new relay modules, no new dependency, no second server:
 
 | File | What |
 |---|---|
-| `relay/conversation_log.py` | SQLite: `turns`, `sessions`, `decisions`. Turn capture is useful on its own. |
+| `relay/conversation_log.py` | SQLite store and its schema. Turn capture is useful on its own. |
+| `relay/conv_query.py` | Read-only query surface over that store: one function the relay calls, and a `__main__` the arbitrator's shell can call. |
 | `relay/arbitrator.py` | Pure: prompt building, decision schema validation, budget arithmetic, gate resolution. No I/O, so it is unit-testable the way `orchestrator.py`'s state machine was. |
-| `relay/arbitrator_runner.py` | The impure half: wired to poll transitions, sends prompts, executes decisions, broadcasts. |
+| `relay/arbitrator_runner.py` | The impure half: wired to poll transitions, sends prompts, reads the drop-box, executes decisions, broadcasts. |
 
-### 6.1 Backend turn capture (the piece with independent value)
+### 6.1 Backend recording (the piece with independent value)
 
-The hook already exists. `_poll_once` in `relay/herdr_relay.py:857` reacts to `working|blocked → done`
-by reading the pane and calling `finished_body`, which calls `summary_body` from
+The hook already exists. `_poll_once` in `relay/herdr_relay.py:857` reacts to status transitions and,
+on a finish, reads the pane and calls `finished_body`, which calls `summary_body` from
 `relay/pane_summary.py` — the same final-message detector the browser uses, held to line-range parity
 by `tests/test_summary_detect.js` and `tests/test_pane_summary.py`.
 
-So the relay can already find a pane's closing message. What it does not do is *keep* it. Turn capture
-writes one row per turn end: pane fingerprint, agent kind, project, status transition, the detected
-summary range and text, the pane tail as fallback, and a timestamp.
+So the relay can already find a pane's closing message. What it does not do is *keep* it.
 
-This is worth shipping even if arbitration is never enabled:
+**A turn ends on a transition to an end state, not on `done`.** The browser already settled this:
+`TURN_END_STATES = ['idle', 'done', 'blocked']` and `endsTurn(status)` in `web/src/state.js:328`,
+which `convReadTurnEnd` gates on. The relay's poll loop currently branches on `done` and `blocked`
+separately and has no notion of the set. S0 adds `ends_turn()` to `pane_summary.py` mirroring that
+list, and holds the two to parity in tests the way the detector already is. Capturing only `done`
+would silently lose every turn that ends by going idle.
+
+**Every entry carries an explicit origin.** The store is a record of who said what, so authorship is a
+field and never an inference:
+
+```json
+{
+  "session_id": "…", "seq": 41,
+  "from": "member-2",
+  "kind": "agent_final",
+  "origin": "agent",
+  "text": "…", "tail": "…", "range": [412, 430],
+  "status_from": "working", "status_to": "idle",
+  "at": "2026-08-17T11:04:22Z"
+}
+```
+
+`origin` is one of `agent`, `human_web`, `human_terminal`, `arbitrator`, `unknown`. The distinction
+that matters: a prompt sent through the relay is known to be `human_web`; text typed directly into a
+terminal is seen only as an echo in the pane and is therefore `human_terminal` at best and `unknown`
+when even that cannot be established. **The relay never claims to know which human typed into a
+terminal.** The FE's thread already models this — `classifyVia` calls an unmatched send `typed`
+because provenance is only knowable where the send happened — and the backend inherits the same
+honesty.
+
+This slice is worth shipping even if arbitration is never enabled:
 
 - A conversation survives the browser being closed, which the IndexedDB store cannot promise.
 - Telegram, the TUI and the mac app get summaries without each porting the detector.
 - The FE store and the BE log stay **separate stores**, joined by pane fingerprint — no sync
   protocol, no merge, no ownership question. The browser keeps the rich thread; the relay keeps the
-  arbitration-grade subset.
+  ground truth.
 
 Gate: `HERDR_CONV_LOG=1`. Off means no rows are written and the wire is unchanged.
 
-### 6.2 An arbitration session
+### 6.2 The record of truth is the database; the file is the channel
+
+Two different jobs, and conflating them is what makes file-based state unpleasant:
+
+| | Job | Lives in |
+|---|---|---|
+| **Drop-box** | How an agent, which can only write files, hands a decision to the relay | `$HERDR_LOG_DIR/arbitration/<session>/NNNN-decision.json`, mode 0700 |
+| **Record** | What the session is, what was decided, what was sent, what was said | SQLite, `$HERDR_LOG_DIR/arbitration.sqlite3` |
+
+The relay reads the drop-box file **once**, validates it, and writes the accepted decision into the
+database along with the prompt that produced it. From that moment the row is authoritative: the FE,
+the arbitrator's own queries, and any later audit read the database. The file stays on disk
+unmodified as the raw artifact — a backup of the row and evidence of exactly what the agent wrote,
+including a rejected version.
+
+Why the database is worth having rather than a directory of JSON:
+
+- Ordering, budgets and "what is the current session" are queries, not directory listings.
+- A partially written file during a relay restart is a corrupt state; a transaction is not.
+- The arbitrator's on-demand context (§6.3) is a query with a bound, which a directory cannot answer.
+- One store already holds the entries, so decisions living beside them means a session's history is
+  one join rather than two formats.
+
+Schema, small on purpose:
+
+```
+sessions   id, conversation, scope, gates_json, budget_json, triggers_json,
+           arbitrator_fingerprint, state, created_at, ended_at, ended_reason
+members    session_id, member_id, fingerprint(host, agent, cwd), label, role, enrolled_at
+entries    id, session_id, seq, from_member, kind, origin, text, tail,
+           range_start, range_end, status_from, status_to, at
+prompts    id, session_id, sequence, body, sent_at, trigger
+decisions  id, session_id, sequence, prompt_id, raw_path, valid, reject_reason,
+           gate, to_member, instruction, why, ambiguity, complexity, stop, at
+sends      id, session_id, decision_id, to_member, text, at
+```
+
+Storage location is relay-owned (`$HERDR_LOG_DIR`), not the project's checkout. That drops the
+git-ignore precondition the orchestrator branch needed, keeps arbitration state out of product
+history by construction rather than by check, and means a session is not tied to one repository.
+
+### 6.3 Ground truth, on demand
+
+The default is push: each prompt carries a bounded digest (§6.5). But "the arbitrator can see both
+agents' logs *if needed*" is a pull, and a digest cap is exactly the thing that makes a pull
+necessary sometimes.
+
+Two readers, one store:
+
+- **The human**, from the web app: a `conv_log` request over the existing WebSocket, answered to the
+  asking client only — the same shape `run_detail` used on the orchestrator branch, and for the same
+  reason: it is the message that carries agent prose.
+- **The arbitrator**, from its own shell:
+
+```bash
+python3 relay/conv_query.py --session <id> --member member-2 --last 20
+python3 relay/conv_query.py --session <id> --grep "footer"        # back through the whole thread
+python3 relay/conv_query.py --session <id> --since 0007           # everything after a decision
+```
+
+It opens the SQLite file **read-only** (`file:…?mode=ro`) and prints matching entries with their
+author, origin and time. No endpoint, no token in a pane, no write path, and nothing exposed that is
+not already in the log. The command is named in the starter prompt.
+
+**Every participant is logged, the arbitrator included.** Its own turns are entries like anyone
+else's, so going back through the three-way conversation means reading one table — the two members'
+work and its own past decisions and reasoning in one ordered thread. An arbitrator that cannot see
+what it decided four steps ago repeats itself.
+
+That the arbitrator can grep back is what lets the pushed digest stay small without making it blind.
+
+### 6.4 An arbitration session
 
 Started from the conversation view. It carries:
 
 ```
 session:
   conversation      the roster it arbitrates over
-  members[]         enrolled panes; the only addresses a decision may name
+  members[]         enrolled panes, snapshotted at start; the only addresses a decision may name
   arbitrator        one pane, not a member
   scope             the user's brief, in prose, injected into every arbitrator prompt
   gates[]           gate names + instruction templates (CRFN default set)
@@ -219,18 +324,62 @@ session:
     runtime_minutes      0 = off
 ```
 
+**Membership comes from the front end.** Which panes are in a conversation is already a thing the
+person decides in the app; the session enrols that roster rather than inventing its own. The relay
+never picks participants.
+
+**v1 arbitrates exactly two members.** Three panes in total: two working agents and the arbitrator
+that decides between them. The store, the schema and the prompt are written for N because writing
+them for two would cost the same and close the door; the *session* refuses to start with more until
+a two-member loop has been watched running for real.
+
+The roster is **snapshotted when the session starts**. A pane that joins the conversation afterwards
+is not addressable until the human enrols it, so the set of things a decision can name never grows
+underneath a running loop.
+
 Exactly one session may be active at a time (v1). It is paused by the user, by budget exhaustion, by
 any member becoming `blocked` — the existing approval UI already owns that — or by a malformed
 decision surviving its one re-prompt.
 
-### 6.3 The decision channel
+### 6.5 The arbitrator's prompts
 
-On a trigger, the relay sends the arbitrator pane one prompt containing: the scope, the roster with
-each member's role and current status, the triggering turn's summary, a digest of recent turns, the
-gate list, the remaining budget, and the fixed path it must write its answer to.
+The arbitrator is an ordinary agent pane configured by prose, not a privileged relay component. It
+gets its instructions in two parts, because most of them never change:
 
-The arbitrator writes JSON to that path and finishes. On the arbitrator's own `done`, the relay reads
-the path it already knew:
+- **A fixed starter prompt, once**, when the session starts: what it is, the decision schema, the
+  path to write to, the read-only query command, and the rule that only the file is read.
+- **Only the changing context, per trigger**: the roster with live statuses, what fired, the turn
+  itself, any human instruction since the last decision, the allowed gates, and the remaining budget.
+
+```
+Roster:
+  member-1  Architect / claude / idle
+  member-2  Reviewer  / codex  / idle
+
+Trigger: member-1 finished (working → idle)
+
+[Architect] Implemented the mobile footer change…
+
+[Human, web] Keep the footer compact.
+
+Allowed gates: implement, review, phase_plan, call_human
+Budget: 7 steps / 3 consecutive / 44 minutes
+Need more? python3 relay/conv_query.py --session … --member member-2 --last 20
+
+Write one decision record to:
+  ~/.local/state/herdr-remote/arbitration/<session>/0007-decision.json
+```
+
+Every prompt sent is stored (`prompts` table) beside the decision it produced, so a decision can
+always be read against exactly what the arbitrator was looking at.
+
+Its pane will also show ordinary prose — reasoning, tool calls, whatever the harness renders. None of
+it is read by the relay. Only the file is authoritative.
+
+### 6.6 The decision channel
+
+The arbitrator writes JSON to the path it was given and finishes. On the arbitrator's own turn end,
+the relay reads the path it already knew:
 
 ```json
 {
@@ -247,23 +396,28 @@ the path it already knew:
 ```
 
 Validation: session and sequence must match what was asked; `gate` must be in the session's gate
-list; `to` must be an enrolled, live member; `instruction` is capped and stripped of control
-characters; unknown fields are rejected rather than ignored. A record that fails gets **one** re-prompt
-naming the failure, and the relay waits for the file to *change* rather than for a second `done`.
-A second failure pauses the session and calls the human.
+list; `to` must be an enrolled member whose pane is live and **not working**; `instruction` is capped
+and stripped of control characters; unknown fields are rejected rather than ignored. A record that
+fails gets **one** re-prompt naming the failure, and the relay waits for the file to *change* rather
+than for a second turn end. A second failure pauses the session and calls the human.
 
-Why a file rather than an HTTP call from the pane: the file is durable across a relay restart, it is
-reviewable after the fact, it needs no token inside an agent's shell, and it makes the "read the path
-you already expect" rule enforceable. Cost: local host only. Named, not hidden — see D4.
+A decision naming a member that has since started working is **not queued.** By the time that member
+finishes, its state and the reason for the decision have both moved, and delivering a stale
+instruction is worse than delivering none. It counts as a failed record: the arbitrator is re-prompted
+with the current roster and picks another target or `call_human`.
 
-### 6.4 Execution
+Why a file rather than an HTTP call from the pane: it needs no relay token inside an agent's shell,
+it survives a relay restart, and it leaves the raw artifact on disk beside the row it became. Cost:
+local host only in v1.
+
+### 6.7 Execution
 
 `gate: call_human` or `stop: true` pauses the session and pushes a notification. Otherwise the relay:
 
 1. renders the gate's instruction template around the arbitrator's `instruction`,
 2. sends it to `to` with the existing `send_text` + `submit` path, so the text and its Enter arrive in
    one herdr call,
-3. records the send as a turn with `via: "arbitrator"` and the decision id,
+3. writes a `sends` row and an entry with `origin: "arbitrator"` and the decision id,
 4. decrements the budget and broadcasts the new session state.
 
 `via: "arbitrator"` is a fourth value alongside the thread's existing `typed`, `transfer` and `mixed`
@@ -273,9 +427,12 @@ you already expect" rule enforceable. Cost: local host only. Named, not hidden �
 
 Deliberate, and none of it optional:
 
-- The arbitrator may address **only** enrolled members. Not the arbitrator itself, not a pane that
-  joined after the session started.
+- The arbitrator may address **only** members on the roster snapshotted at start. Not itself, not a
+  pane that joined afterwards.
 - A decision carries prose and a target. Never argv, never a path, never a cwd, never an agent kind.
+- A working member is never written to, and a decision that names one is rejected rather than held.
+- The arbitrator's query path is read-only, over a `mode=ro` handle, and reaches nothing but the log.
+- Arbitration state lives under `$HERDR_LOG_DIR` at mode 0700, never in a project checkout.
 - Budgets are hard stops, not warnings.
 - Every auto-send appears in the thread with its badge and the arbitrator's `why`. Nothing happens
   off-screen.
@@ -288,40 +445,43 @@ Deliberate, and none of it optional:
 
 | Slice | Contents | Independently useful |
 |---|---|---|
-| **S0** | Turn capture, `conversation_log.py`, `turn` broadcast, `HERDR_CONV_LOG` | Yes — durable summaries for every client |
+| **S0** | `conversation_log.py` + `conv_query.py`: the SQLite store, `ends_turn()` with FE parity, capture for every participant with explicit `origin`, the `conv_log` WebSocket query, the read-only CLI, `HERDR_CONV_LOG` | Yes — durable ground truth for every client, greppable |
 | **S1** | `arbitrator.py` pure: schema, validation, budgets, prompt building, gate rendering + unit tests, including the §5.1 guard that prose alone moves nothing | Reviewable before anything can send |
-| **S2** | `arbitrator_runner.py`, session start/pause/cancel, turn-end trigger, execution | The loop works, manual triggers only |
+| **S2** | `arbitrator_runner.py`, session start/pause/cancel, turn-end trigger, drop-box read, execution | The loop works, turn-end trigger only |
 | **S3** | Idle and runtime triggers | The loop runs unattended |
-| **S4** | FE: start dialog, session strip, `via: arbitrator` badge, decision detail | The loop is legible |
+| **S4** | FE: start dialog, session strip, arbitrated badge, decision detail | The loop is legible |
 
-S0 and S1 are the two worth doing first regardless of how the open decisions land.
+Build order is S0, then S1 reviewed in full before any unattended send path exists, then S2. S0 gets
+live-tested on real sessions before S2 is wired at all.
 
-## 9. Open decisions
+## 9. Decisions
 
-Recommendations given; say which you want changed.
+Settled with ARCH-Codex, 2026-08-17:
 
-- **D1 — Is the conversation really the unit, rather than a feature?**
-  *Recommend yes.* It is what exists, what people use, and what makes the loop reusable outside CRFN.
-- **D2 — Decision by file record, or by HTTP call from the arbitrator's shell?**
-  *Recommend file.* Durable, reviewable, no token in a pane. Accepts local-host-only for v1.
-- **D3 — May the arbitrator start a new agent?**
-  *Recommend no for v1.* Enrolled members only. It is the single largest jump in blast radius and it
-  is additive later.
-- **D4 — Where do decision records live?**
-  *Recommend `.herdr/arbitration/<session>/`, refusing to start unless that path is git-ignored* —
-  the same precondition the orchestrator branch enforced, for the same reason: run state must not
-  dirty the product's history.
-- **D5 — Does the arbitrator see full turn summaries, or the whole thread?**
-  *Recommend summaries plus user inputs, with a digest cap.* The whole thread is unbounded context
-  and most of it is tool noise.
-- **D6 — What does the human see while it runs?**
-  *Recommend: the thread, unchanged, with arbitrated messages badged and the session strip on top.*
-  No separate run view — a run view is what makes it feel like a second product.
-- **D7 — Is the arbitrator allowed to send to a member that is still `working`?**
-  *Recommend no.* Queue until that member's turn ends, or pick someone else. Interrupting a working
-  agent is how instructions get swallowed.
-- **D8 — Default budgets?**
-  *Recommend 12 steps, 4 consecutive, 60 minutes.* Small enough that a wrong scope costs minutes.
+| | Decision | Settled as |
+|---|---|---|
+| **D1** | The unit | The conversation, roster snapshotted at start |
+| **D2** | Decision channel | File drop-box — durable, inspectable, no relay token in a pane |
+| **D3** | May the arbitrator spawn agents | No in v1. Enrolled members only |
+| **D4** | Where state lives | Relay-owned `$HERDR_LOG_DIR`, mode 0700 — no project `.herdr/`, no git-ignore precondition |
+| **D5** | Context | Turn summaries + user inputs + a bounded digest, plus on-demand pull. Never a full transcript |
+| **D6** | UI | The existing thread with badges and a session strip. No second product |
+| **D7** | A working target | Never written to, and never queued — the decision is rejected and the arbitrator re-prompted |
+| **D8** | Budgets | 8 steps, 3 consecutive, 45 minutes. Raised only on real-session evidence |
+| **D9** | Record of truth | SQLite. The drop-box file is the inbound channel and the raw artifact, not the state |
+| **D10** | Who is logged | Every participant, the arbitrator included, so it can grep its own past decisions |
+| **D11** | Session size | Two members plus the arbitrator in v1. Schema written for N, session refuses more |
+
+Corrections folded in from the same review: a turn ends on any transition to an end state
+(`idle`, `done`, `blocked`) through a shared `ends_turn()`, not on `done` alone; and every entry
+carries an explicit `origin`, because the relay cannot know which human typed into a terminal.
+
+Still open:
+
+- **D12 — Retention.** How long entries and decisions are kept, and whether the FE's Activity storage
+  view grows a backend row. Not a blocker for S0; a `vacuum` policy is cheaper to add than to undo.
+- **D13 — Remote hosts.** The drop-box is a local file, so v1 is local-only. Whether remote members
+  are worth an SSH read or whether the arbitrator must be co-located stays undecided.
 
 ## 10. What would make this fail
 
