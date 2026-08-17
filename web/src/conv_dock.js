@@ -608,15 +608,17 @@
     // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
     function renderNewAgent() {
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
-        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`)).join('');
+        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
       document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
         badgeHtml(`# ${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
-          roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet')).join('');
+          {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
+        .join('');
       document.getElementById('newAgentProjects').innerHTML = projects.map(p =>
-        badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`)).join('');
+        badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`,
+          {proj: true})).join('');
       // Kept on screen when the row is longer than the line, so the chosen Project is never the one
       // that scrolled off.
-      const on = document.querySelector('#newAgentProjects .chip.active');
+      const on = document.querySelector('#newAgentProjects .badge.pick.on');
       if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest', inline: 'nearest'});
     }
 

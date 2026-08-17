@@ -18,6 +18,10 @@
     // Carried in the state object, so a Back that jumps several entries at once still reports where
     // it landed.
     let navSerials = [], navSerial = 0, navDetached = false, navDepth = 0;
+    // Set while a rewind to the landing page is in flight. The screen is already home by then, so
+    // whatever entry the browser actually arrives on must not open itself — a depth that has
+    // drifted would otherwise put a pane back up one tick after the user left it.
+    let navLanding = false;
     function navBrowserHistory() {
       return typeof window === 'object' && window && window.history &&
         typeof window.history.pushState === 'function' ? window.history : null;
@@ -43,6 +47,18 @@
     // Guarded because these modules are also run as slices in a vm context, which has no window.
     if (typeof addEventListener === 'function') addEventListener('popstate', e => {
       const at = e.state && e.state.herdrNav;
+      // The tail of a rewind we asked for. Wherever it landed, the walk stands before its first
+      // entry — the screen is the landing page — and nothing is opened.
+      if (navLanding) {
+        navLanding = false;
+        navIndex = -1;
+        navDepth = e.state && typeof e.state.depth === 'number' ? e.state.depth : 0;
+        // Still detached if it landed on somebody else's entry: navDetached is about whether our
+        // deltas can be trusted, and this says nothing either way about that.
+        landNow();
+        syncNavBtns();
+        return;
+      }
       // No state at all is the entry the document was loaded on, which is the landing page. It is
       // not a stop on the walk — nothing is behind the first destination — so the cursor sits
       // before entry 0, from where Forward is a step of one and Back is nothing. Without this the
@@ -167,7 +183,14 @@
     // lands directly instead.
     function navRewind() {
       const api = navBrowserHistory();
-      if (!api || navDetached || navIndex < 0 || navDepth < 1) return false;
+      if (!api || navDetached || navIndex < 0 || navDepth < 1) {
+        // Nothing to rewind, so the cursor is where it is and the walk simply steps off its list:
+        // the caller has already put the landing page up.
+        navIndex = -1;
+        syncNavBtns();
+        return false;
+      }
+      navLanding = true;
       api.go(-navDepth);
       return true;
     }

@@ -13,12 +13,25 @@
     const START_PLACE_KEY = 'herdr_start_placement';
     const START_ROLE_KEY = 'herdr_start_role';
 
-    // The app's own chip, the one the workspace and status filters are picked with — active in the
-    // same blue, so a choice made here looks like a choice made anywhere else. Shared with the
-    // conversation's New agent dialog, which asks the same questions in a smaller box.
-    function badgeHtml(label, on, call, title) {
-      return `<button class="chip${on ? ' active' : ''}" onclick="${call}" aria-pressed="${on}"` +
-        (title ? ` title="${escapeHtml(title)}"` : '') + `>${escapeHtml(label)}</button>`;
+    // The app's own badge, the one a pane header wears — `[name @project agent]` — offered as a
+    // choice. Same shape, same colours, same rule about which of them is coloured: the harness
+    // carries agentBadge's kind colour, and the role and the Project stay uncoloured beside it,
+    // because colour in that row already means the kind. Shared with the conversation's New agent
+    // dialog, which asks the same three questions in a smaller box.
+    //
+    // opts: {agent} colours it by kind, {proj} takes the Project badge's weight, {title} explains.
+    function badgeHtml(label, on, call, opts) {
+      const o = opts || {};
+      const own = o.agent ? agentColor(o.agent) : '';
+      // Picked wears its colour outright, over a wash of it; unpicked keeps the header's own
+      // treatment — the kind tinted at the border, everything else neutral.
+      const c = own || 'var(--blue)';
+      const tint = on
+        ? `color:${c};border-color:${c};background:color-mix(in srgb, ${c} 16%, transparent)`
+        : (own ? `color:${own};border-color:color-mix(in srgb, ${own} 55%, transparent)` : '');
+      return `<button type="button" class="badge pick${o.proj ? ' proj' : ''}${on ? ' on' : ''}" ` +
+        `onclick="${call}" aria-pressed="${on}"` + (tint ? ` style="${tint}"` : '') +
+        (o.title ? ` title="${escapeHtml(o.title)}"` : '') + `>${escapeHtml(label)}</button>`;
     }
 
     // Only the roles this relay will actually accept. A badge whose wire role it does not know
@@ -171,8 +184,25 @@
 
     function renderStartRoles() {
       document.getElementById('startRoles').innerHTML = startRoles().map(r =>
-        badgeHtml(r.name, r.at === startRolePick, `pickStartRole('${r.at}')`,
-          roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet')).join('');
+        badgeHtml(`# ${r.name}`, r.at === startRolePick, `pickStartRole('${r.at}')`,
+          {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
+        .join('');
+    }
+
+    // The harness, in the same row of badges rather than in a select beside them: the sheet asks
+    // three questions about what a session *is*, and one of them reading as a form control while
+    // the other two read as badges was the whole inconsistency.
+    let startAgentPick = '';
+
+    function renderStartAgents() {
+      document.getElementById('startAgents').innerHTML = ((startOptions || {}).agents || []).map(k =>
+        badgeHtml(k, k === startAgentPick, `pickStartAgent('${k}')`, {agent: k})).join('');
+    }
+
+    function pickStartAgent(kind) {
+      startAgentPick = kind;
+      renderStartAgents();
+      if (window.cue) cue('tick');
     }
 
     // Tapping the one already on takes it off: the row is the only way back to no role, and a
@@ -243,7 +273,9 @@
       if (terminal && !startOptions.terminal) return;
       startProjectId = projectId;
       const p = projects.find(x => x.id === projectId);
-      document.getElementById('startProject').textContent = p ? p.label : '';
+      const badge = document.getElementById('startProject');
+      badge.textContent = p ? `@${p.label}` : '';
+      badge.hidden = !p;   // an empty badge is a stray outline, not a Project
       document.getElementById('startTitle').textContent = terminal ? 'New terminal' : 'Start session';
       document.getElementById('startAgentRows').style.display = terminal ? 'none' : '';
       document.getElementById('startSubmit').textContent = terminal ? 'Open terminal' : 'Start session';
@@ -253,9 +285,13 @@
       startRolePick = startRoles().some(r => r.at === localStorage.getItem(START_ROLE_KEY))
         ? localStorage.getItem(START_ROLE_KEY) : '';
       renderStartRoles();
-      fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
+      // The harness is not optional, so unlike the role it falls back to the first offered rather
+      // than to none — a remembered kind the relay has since dropped picks nothing otherwise.
+      const kinds = startOptions.agents || [];
+      const remembered = localStorage.getItem(START_AGENT_KEY);
+      startAgentPick = kinds.includes(remembered) ? remembered : (kinds[0] || '');
+      renderStartAgents();
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
-      restoreStartChoice('startAgent', START_AGENT_KEY);
       restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
       document.getElementById('startName').value = '';  // blank means "let the relay name it"
       setStartError('');
@@ -329,10 +365,13 @@
         ? { type: 'open_terminal', project_id: startProjectId, placement: placement }
         : Object.assign({
           type: 'start_agent',
-          name: document.getElementById('startAgent').value,
+          name: startAgentPick,
           project_id: startProjectId,
           placement: placement,
         }, startRoleFields(role, typed));
+      // A relay that offers no harness has nothing to start; the row is empty and the press would
+      // reach the relay only to be refused for a missing name.
+      if (!terminal && !msg.name) { setStartError('This relay starts no agents'); return; }
       // Spawn at the width of the screen doing the spawning, so a session started from a phone is
       // readable on it without a second round trip. Not for a split: "beside that pane" is already
       // a statement about width, and a desktop asking for "wide" would move the new session

@@ -114,6 +114,24 @@ test('the header chevron still leaves after more visits than the walk keeps', as
   expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
 });
 
+// The chevron is an exit, and an exit cannot be conditional on the browser's cursor being where
+// the walk thinks it is. It used to only rewind and let the popstate that came back do the
+// landing — so a cursor that had drifted (a detached entry, a depth the browser clamped) left the
+// user exactly where they were. Home lands first; the rewind is housekeeping behind it.
+test('the header chevron leaves even when the browser cursor has drifted', async ({page}) => {
+  await openPane(page);
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#settingsView')).toBeVisible();
+  await page.locator('#navSettings').click();          // back onto the pane, three entries deep
+  await expect(page.locator('#terminalView')).toBeVisible();
+  // Detached: the walk can no longer drive the browser, which is exactly the state an entry
+  // written by another page — or one older than the cap — puts it in.
+  await page.evaluate(() => { navDetached = true; });
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+});
+
 test('desktop , and . walk history without stealing composer input', async ({page}) => {
   await openPane(page);
   // The same edge the footer ‹ has: with nothing behind the first destination, Back is the way

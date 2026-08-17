@@ -3603,9 +3603,9 @@ test('a new agent is started from the membership list, into this conversation', 
   await tapWire(page);
   await openNewAgentModal(page);
   // Both defaults are read off the agent being talked to: its harness, and the Project it runs in.
-  await expect(page.locator('#newAgentKinds .chip.active')).toHaveText('claude');
-  await expect(page.locator('#newAgentProjects .chip.active')).toHaveText('@herdr-remote');
-  await page.locator('#newAgentKinds .chip', {hasText: 'codex'}).click();
+  await expect(page.locator('#newAgentKinds .badge.pick.on')).toHaveText('claude');
+  await expect(page.locator('#newAgentProjects .badge.pick.on')).toHaveText('@herdr-remote');
+  await page.locator('#newAgentKinds .badge.pick', {hasText: 'codex'}).click();
   await page.locator('#newAgentName').fill('Reviewer 9');
   await page.locator('#newAgentSubmit').click();
   await expect(page.locator('#newAgentModal')).toBeHidden();
@@ -3637,16 +3637,16 @@ test('the role badge is what the session is started as, and what opens it', asyn
   await tapWire(page);
   await openNewAgentModal(page);
   // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
-  await expect(page.locator('#newAgentRoles .chip'))
+  await expect(page.locator('#newAgentRoles .badge.pick'))
     .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
-  await page.locator('#newAgentRoles .chip', {hasText: 'Arbitrator'}).click();
-  await expect(page.locator('#newAgentRoles .chip.active')).toHaveText('# Arbitrator');
+  await page.locator('#newAgentRoles .badge.pick', {hasText: 'Arbitrator'}).click();
+  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('# Arbitrator');
   // A second Project, chosen from the list behind @+ rather than from the line.
   await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
-  await page.locator('.chip-line .chip.more').click();
+  await page.locator('.chip-line .badge.more').click();
   await page.locator('#newAgentProjMenu .menu-item', {hasText: '@charts'}).click();
   await expect(page.locator('#newAgentProjMenu')).toBeHidden();
-  await expect(page.locator('#newAgentProjects .chip.active')).toHaveText('@charts');
+  await expect(page.locator('#newAgentProjects .badge.pick.on')).toHaveText('@charts');
   await page.locator('#newAgentSubmit').click();
 
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
@@ -3674,14 +3674,27 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   await tapWire(page);
   await page.evaluate(() => openStartDialog('p1'));
   await expect(page.locator('#startSheet')).toBeVisible();
-  await expect(page.locator('#startRoles .chip'))
-    .toHaveText(['Architect', 'Reviewer', 'Arbitrator', 'Orchestrator']);
+  await expect(page.locator('#startRoles .badge.pick'))
+    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
   // Nothing lit until something is picked: the field recommends, it does not answer for the user.
-  await expect(page.locator('#startRoles .chip.active')).toHaveCount(0);
-  await page.locator('#startRoles .chip', {hasText: 'Architect'}).click();
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
+  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
+  // The harness is picked in the same badges, and painted the way the pane header paints it: the
+  // kind's own colour, so a badge in a dialog and a badge on a header mean the same thing.
+  await expect(page.locator('#startAgents .badge.pick.on')).toHaveText('claude');
+  expect(await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--agent-claude)';
+    document.body.appendChild(probe);
+    const lit = getComputedStyle(document.querySelector('#startAgents .badge.pick.on')).color;
+    const want = getComputedStyle(probe).color;
+    probe.remove();
+    return lit === want;
+  })).toBe(true);
   await page.locator('#startSubmit').click();
 
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.name).toBe('claude');
   expect(sent.role).toBe('architect');
   expect(sent.label).toBeUndefined();      // the relay names it after the role it was given
   await page.evaluate(() => {
@@ -3693,9 +3706,9 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   // Reopens on what it last started as — spawning is repetitive, like the harness and the
   // placement beside it — and the same tap takes it off again.
   await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
-  await expect(page.locator('#startRoles .chip.active')).toHaveText('Architect');
-  await page.locator('#startRoles .chip', {hasText: 'Architect'}).click();
-  await expect(page.locator('#startRoles .chip.active')).toHaveCount(0);
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('# Architect');
+  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
   await page.evaluate(() => { window.__sent.length = 0; });
   await page.locator('#startSubmit').click();
   const bare = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
