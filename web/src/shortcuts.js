@@ -50,8 +50,8 @@
         return;
       }
       disarmShortcut();
+      if (!submitText(activePane, s.text)) return;
       if (window.cue) cue('success');
-      submitText(activePane, s.text);
       closePalette();
       burstPoll();
     }
@@ -559,8 +559,13 @@
         type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
       }, starter ? startRoleFields(starter, '') : {role: respawnRole(spawn)});
+      // This is continuation, not duplicate: keep the exact name the user recognises in the thread.
+      // Only where the relay will take it — a label over 32 characters is refused outright, and a
+      // restart that fails over the name is worse than one that comes up as "Architect 2".
+      const same = String(rec.label || spawn.label || '').trim();
+      if (same && same.length <= 32) msg.label = same;
       if (tab) msg.workspace_id = spawn.workspace_id;
-      startIntent = { conv: conv.id };
+      startIntent = { conv: conv.id, replace: key };
       startPrompt = roleStarter(starter);
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
       ws.send(JSON.stringify(msg));

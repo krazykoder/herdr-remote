@@ -176,6 +176,29 @@
       }
     }
 
+    // A deliberate conversation restart is the one safe exception to per-pane identity: the user
+    // chose the dead member and asked its replacement to continue the same thread. Copy its record
+    // under the new physical pane key; the old key remains for any other conversation that still
+    // names that ended session.
+    async function convContinueTranscript(oldKey, newKey, label) {
+      if (!oldKey || !newKey || oldKey === newKey) return true;
+      const old = convHeld.get(oldKey) || (await convGet([oldKey]))[0];
+      if (!old) return true;
+      // herdr recycles pane IDs, and a key is [host, pane_id, agent, cwd] — so the replacement can
+      // land on a key some *other* ended session already recorded under. Copying over it would
+      // delete a transcript a conversation still names. Refused instead: the caller falls back to
+      // joining as a new member, which is what a restart did before it could continue anything.
+      const next = Object.assign({}, old, {
+        key: newKey, label: label || old.label || '', entries: (old.entries || []).slice(),
+        // The new pane cannot be aligned to the old pane's output. Keep the continuation boundary
+        // until its first completed turn, then append that whole turn after this history.
+        continued: true, backfilled: true, depth: 0, lastTurn: 0,
+      });
+      if (!(await convPut(next))) return false;
+      convHeld.set(newKey, next);
+      return true;
+    }
+
     // Which keys any conversation still names. Read from the index, which is why the index is the
     // synchronous half: eviction must not wait on a database to know what is protected.
     function convReferenced() {
@@ -350,7 +373,14 @@
       const depth = held.depth || 0;
       const deep = held.backfilled && (asked ? rows.length >= depth : rows.length > depth);
       let before = [], add = [], noteGap = false;
-      if (!held.backfilled) {
+      if (held.continued) {
+        // A replacement pane starts with a fresh terminal. Its first finished turn belongs after
+        // the copied record, not before it as scrollback and not against it as an overlap anchor.
+        if (end) {
+          add = sentTurnEntries(body, held.entries, now, end);
+          if (add.length) { held.lastTurn = end; held.continued = false; }
+        }
+      } else if (!held.backfilled) {
         // The first read.
         const first = splitFirstRead(body, held.entries);
         before = backfillEntries(first.history, now);

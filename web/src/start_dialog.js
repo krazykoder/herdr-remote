@@ -67,7 +67,7 @@
     // pane lands versus what it is told first — and every route in can ask both.
     let startPrompt = '';
 
-    function openPendingStart() {
+    async function openPendingStart() {
       if (!pendingStart) return;
       // Both lists: an opened terminal arrives in `shells`, and looking only at `agents` would
       // leave the pending id set for good, reopening nothing on every poll from then on.
@@ -101,13 +101,27 @@
           (paired ? ' and paired.' : ' — confirm the pair.'), 'success');
         return;
       }
-      // A respawn asked from a conversation: the new session joins it as a new member, and the
-      // pane opens on the thread — continuing a conversation is asking to say the next thing in it.
+      // A respawn asked from a conversation replaces the ended member in that conversation. The
+      // old terminal is gone, but its local thread is continued under this new pane's key.
       if (intent && intent.conv) {
+        const next = convMemberKey(a);
+        // The copy happens before the index is read, and the index is read again after it. The
+        // recorder writes members' previews on every poll, so an index loaded before an await and
+        // saved after it puts back a snapshot taken seconds ago — and the copy is the one step here
+        // that waits on a database. A refusal (quota, a blocked store) falls back to joining as a
+        // new member rather than dropping the pane out of the conversation altogether.
+        const replacing = ((loadConvIndex().find(c => c.id === intent.conv) || {}).members || [])
+          .find(m => m.key === intent.replace);
+        const continued = replacing &&
+          await convContinueTranscript(replacing.key, next, replacing.label).catch(() => false);
         const items = loadConvIndex();
         const conv = items.find(c => c.id === intent.conv);
         if (conv) {
-          conv.members = (conv.members || []).concat(convMemberOf(a));
+          const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
+          conv.members = continued && prior
+            ? conv.members.map(m => m.key === prior.key
+              ? Object.assign({}, m, {key: next, label: prior.label || paneLabel(a)}) : m)
+            : (conv.members || []).concat(convMemberOf(a));
           saveConvIndex(items);
           // This conversation and not merely "on": the new pane is a member of exactly one so far,
           // but a respawn into a grouping the user chose must open on that grouping.
@@ -119,7 +133,7 @@
         // was missing from the thread would be a turn nobody could see the start of. After the
         // membership above, so the thread it is recorded into is the one it was started for.
         if (prompt) sendTextTo(a.pane_id, prompt);
-        showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} joined "${conv.name}".`
+        showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} continued "${conv.name}".`
           : `${a.label || a.agent || 'Session'} started.`, 'success');
         return;
       }

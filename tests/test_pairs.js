@@ -519,7 +519,9 @@ test('New tab with a live workspace in this project is offered', () => {
 
 function runStartRoleFields(roles, role, typed) {
   const start = START_DIALOG.indexOf('function startRoles');
-  const end = START_DIALOG.indexOf('function openPendingStart', start);
+  // Ends at the comment above the next block, not at its `function` keyword: openPendingStart is
+  // declared `async`, and cutting between the two words left a bare `async` in the slice.
+  const end = START_DIALOG.indexOf('// A session the relay just started', start);
   const c = vm.createContext({startOptions: {roles}, START_ROLES, escapeHtml});
   vm.runInContext(START_DIALOG.slice(start, end) +
     `\n;__out = {fields: startRoleFields(role, typed), offered: startRoles().map(r => r.at)};`,

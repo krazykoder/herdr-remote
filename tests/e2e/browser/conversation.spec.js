@@ -611,6 +611,7 @@ const endMember = page => page.evaluate(async () => {
   const old = items[0].members[0];
   const rec = (await convGet([old.key]))[0];
   rec.key = 'dead:pane';
+  rec.entries = [{who: 'agent', text: 'history before restart', at: Date.now(), at_src: 'read'}];
   rec.spawn = {agent: 'claude', role: 'architect', label: 'Architect 1', project_id: 'p1',
     project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local', workspace_id: 'w404'};
   await convPut(rec);
@@ -619,7 +620,7 @@ const endMember = page => page.evaluate(async () => {
   await renderConvStandalone(false);
 });
 
-test('an ended session can be started again, and the new pane joins as a new member', async ({page}) => {
+test('an ended session restarts under its name and continues its member thread', async ({page}) => {
   await openCard(page);
   await endMember(page);
   await tapWire(page);
@@ -639,6 +640,7 @@ test('an ended session can be started again, and the new pane joins as a new mem
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
   expect(sent.name).toBe('claude');
   expect(sent.role).toBe('architect');
+  expect(sent.label).toBe('Architect 1');
   expect(sent.project_id).toBe('p1');
   // The relay takes a new session's cwd from the Project and never from the client. The recorded
   // cwd is a record of where it ran, and sending it would make it an instruction.
@@ -647,19 +649,78 @@ test('an ended session can be started again, and the new pane joins as a new mem
   expect(sent.placement).toBe('new_workspace');
   expect(sent.workspace_id).toBeUndefined();
 
-  // The reply lands, the pane shows up on the next snapshot, and it joins as a NEW member: a new
-  // pane means a new key, which means a new transcript, so no recycled id inherits dead words.
-  await page.evaluate(() => {
+  // The reply lands and replaces this conversation's dead member. The physical key is new, but its
+  // local record starts with the history the reader deliberately chose to continue.
+  await page.evaluate(async () => {
     handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
-    openPendingStart();
+    await openPendingStart();
   });
-  const members = await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key));
-  expect(members.length).toBe(2);
-  expect(members[0]).toBe('dead:pane');
-  expect(members[1]).not.toBe('dead:pane');
+  const state = await page.evaluate(async () => {
+    const member = loadConvIndex()[0].members[0];
+    return {members: loadConvIndex()[0].members.length, label: member.label,
+      key: member.key, entries: (await convGet([member.key]))[0].entries.map(e => e.text)};
+  });
+  expect(state.members).toBe(1);
+  expect(state.key).not.toBe('dead:pane');
+  expect(state.label).toBe('Architect 1');
+  expect(state.entries).toContain('history before restart');
+  // The continuation boundary consumes the first completed turn whole: it must append the new
+  // pane's interim narration after the copied record, never try to align this fresh terminal to
+  // the dead one's output.
+  const continued = await page.evaluate(async () => {
+    const pane = activePane;
+    noteStatus(pane, 'working');
+    await new Promise(resolve => setTimeout(resolve, 2));
+    noteStatus(pane, 'idle');
+    paneOf(pane).status = 'idle';
+    await recordPane(pane, ['❯ continue', '', '⏺ First step.', '', '⏺ Finished.', '', '❯']);
+    return (await convGet([convMemberKey(paneOf(pane))]))[0].entries.map(e => e.text);
+  });
+  expect(continued).toEqual(expect.arrayContaining(['history before restart', 'First step.', 'Finished.']));
   // And it opens on the thread — continuing a conversation is asking to say the next thing in it.
   await expect(page.locator('#convThread')).toBeVisible();
 });
+
+// herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
+// can come up on a key another ended session already recorded under. Continuing by copying over it
+// would delete a transcript some other conversation still names, which is the one thing a restart
+// must not do: it falls back to joining as a new member instead.
+test('a restart that would land on another conversation\'s record leaves it alone',
+  async ({page}) => {
+    await openCard(page);
+    await endMember(page);
+    await tapWire(page);
+    // The key the replacement will have already holds a recording — this browser has read that
+    // pane — and a second conversation names it, so it is not an orphan waiting to be evicted.
+    await page.evaluate(() => {
+      const items = loadConvIndex();
+      items.push({id: 'c-other', name: 'somebody else\'s thread', created: Date.now(),
+        members: [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Someone else'}]});
+      saveConvIndex(items);
+    });
+    const again = page.locator('#convView .conv-again');
+    await again.click();
+    await again.click();
+    await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
+      .toHaveLength(1);
+    await page.evaluate(async () => {
+      handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+      await openPendingStart();
+    });
+    const state = await page.evaluate(async () => {
+      const key = convMemberKey(paneOf('w1:p1'));
+      const conv = loadConvIndex().find(c => c.id !== 'c-other');
+      return {members: conv.members.map(m => m.key),
+        theirs: ((await convGet([key]))[0] || {}).entries.map(e => e.text)};
+    });
+    // Joined as a new member beside the dead one, the way a restart did before it could continue.
+    expect(state.members).toHaveLength(2);
+    expect(state.members[0]).toBe('dead:pane');
+    // And the other conversation's record is still its own: what that pane actually said, with
+    // none of the dead session's history copied over the top of it.
+    expect(state.theirs.some(t => t.includes('Ready. Name the change.'))).toBe(true);
+    expect(state.theirs).not.toContain('history before restart');
+  });
 
 test('an ended session with no Project the relay knows is offered no button', async ({page}) => {
   await openCard(page);
@@ -3800,13 +3861,19 @@ test('the composer\'s own send carries the picked message too', async ({page}) =
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');
-  await page.locator('#convInput').fill('and this is why');
+  // Default prompt mode writes into the composer. The following note makes this the exact
+  // transfer + @ prompt + typed text path, which must still use one atomic final submit.
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+  await page.locator('#convInput').pressSequentially('\nand this is why');
   // Two sends in one bubble that did different things would be a way to lose the quote by tapping
   // the nearer button. There is one message being written, so both send it.
   await page.locator('#convSendBtn').click();
   const body = await sentBody(page);
   expect(body).toContain('the other pane spoke first');
   expect(body.endsWith('and this is why')).toBe(true);
+  const sent = await sentText(page);
+  expect(sent[sent.length - 1].submit).toBe(true);
+  expect(sent.slice(0, -1).every(m => !m.submit)).toBe(true);
 });
 
 test('a chip writes its instruction into the box, and the toggle changes that',
