@@ -1,6 +1,11 @@
 # Arbitrator — automated chat arbitration
 
-Status: proposal, for discussion. Branch `feat/arbitrator`, off `main` at `1dd25e3`.
+Status: proposal, decisions settled. Branch `feat/arbitrator`, off `main` at `1dd25e3`.
+
+**The buildable form of this is `.workflow/03_specs/2026-08-17_arbitrator_spec.md`** — schema,
+validation table, prompts, wire messages, test plan. This document keeps the reasoning: why the unit
+is a conversation, why the relay does not judge, why the database is the record. Where the two
+disagree about behaviour, the spec is the one to correct.
 
 ## 1. What this is
 
