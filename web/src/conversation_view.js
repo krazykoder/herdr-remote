@@ -16,6 +16,9 @@
     // history. Not measured, because there is nothing yet to measure: the answer is decided by the
     // switch, not by where the last thread happened to sit.
     let convStickNext = false;
+    // The thread last written into the pane's own view, so a render that would draw the same one
+    // again can leave the DOM — and the reader's selection and scroll — alone.
+    let convViewHtml = '';
 
     function convViews() {
       try {
@@ -355,6 +358,7 @@
       box.hidden = !on;
       if (!on) {
         box.innerHTML = '';
+        convViewHtml = '';   // emptied here, so the diff below must not skip redrawing the same thread
         // The pane switched to reads as rows, so nothing will consume this. Left armed it would
         // yank the next thread to its end under a reader who had scrolled up in it.
         convStickNext = false;
@@ -394,6 +398,10 @@
       // flight and only the newest token draws.
       const stick = convStickNext || box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
       convStickNext = false;
+      // Where the reader actually is. Rewriting innerHTML below sets scrollTop to 0, and a reader
+      // who has scrolled up is not sticking — so without this the poll that arrives every three
+      // seconds throws them to the top of the thread. Kept whether or not the write happens.
+      const at = box.scrollTop;
       // Filtered in the composer rather than in the renderer: picks, Summary and the count are all
       // positions in the list that was drawn, so the list that was drawn has to be the list they
       // index.
@@ -416,7 +424,7 @@
       // the conversation view's, and drawn separately so an arriving message cannot rewrite the
       // roster under a reader who has just opened it.
       renderConvPaneChrome(conv, recs, hidden, key, entries);
-      box.innerHTML = convHeadHtml(thread, key, joint ? -1 : entries.length,
+      const html = convHeadHtml(thread, key, joint ? -1 : entries.length,
         joint ? entries.length : -1, convsForPane(a)) +
         (joint ? convMembersHtml(thread, recs) : '') + (entries.length
         ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
@@ -428,6 +436,10 @@
         // No slot over the relay's record: it holds turns that have ended, and the slot is a place
         // held open for one that has not.
         (convLiveOn() ? '' : convDraftSlotHtml(a, key, drafts, paired));
+      // Only a thread that changed is written, exactly as the conversation window's is. The
+      // snapshot redraws this every three seconds, and an innerHTML the reader cannot see any
+      // difference from still costs them their text selection and their place in the scroll.
+      if (html !== convViewHtml) { convViewHtml = html; box.innerHTML = html; }
       // Which bubble Summary means, found once here rather than by the button every render. The
       // button is only rebuilt when the answer changed — it is on the poll path.
       const wasFinal = convLastAgent;
@@ -440,7 +452,7 @@
       convPickedOf = entries.length;
       syncConvBadge();
       drawConvSel();
-      if (stick) box.scrollTop = box.scrollHeight;
+      box.scrollTop = stick ? box.scrollHeight : at;
     }
 
     // The draft slot at the foot of a pane's thread: one bubble held open for as long as the pane

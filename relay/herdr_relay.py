@@ -89,6 +89,28 @@ EXTERNAL_PORT = int(os.environ.get("HERDR_EXTERNAL_PORT", "0") or 0)
 # needs longer, make this per-agent rather than raising it for everyone.
 SEND_SETTLE = 0.15
 
+# What a bigger paste needs. 0.15 was measured against a one-line approval, and a TUI given a
+# transferred payload or an edited prompt is still laying it out when an Enter that close behind
+# arrives — which is the "the text is sitting in the composer" report, intermittent because it
+# depends on how much there was to lay out. Scaled by length rather than raised for everyone: a
+# short send stays as quick as it was.
+# ponytail: still a guess with a ceiling, same as SEND_SETTLE. The real answer is reading the pane
+# back and pressing Enter again if the composer still holds the text; do that if this is not enough.
+SEND_SETTLE_MAX = 0.9
+
+# The longest text one send_text may carry. 4000, not 1000: a transferred selection is usually code
+# or a diff (P3 spec §6). Mirrors SEND_TEXT_MAX in web/src/pairs_pure.js, which is what the browser
+# chunks against — the two are one number and a client that splits by a different one would be
+# refused mid-message.
+SEND_TEXT_MAX = 4000
+
+
+def submit_settle(text):
+    """How long to leave a TUI between the paste and the Enter that submits it."""
+    span = SEND_SETTLE_MAX - SEND_SETTLE
+    return SEND_SETTLE + span * min(1.0, len(text or "") / SEND_TEXT_MAX)
+
+
 # VAPID Web Push
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
 VAPID_PRIVATE_KEY = os.environ.get("HERDR_VAPID_PRIVATE", "")
@@ -1302,7 +1324,9 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                log.info("Response from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
+                # The allowlist name, not free text: a response is one of SAFE_RESPONSES by the
+                # check above, so this says everything the console needs without echoing input.
+                log.info("Response from %s (%s): pane=%s", ip, device, pane_id)
                 audit("respond", ip, device, pane_id, f"text={text!r}")
                 # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
                 # inserted as literal text and the approval never submits. Paste, let the TUI
@@ -1393,29 +1417,38 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
-                # 4000, not 1000: a transferred selection is usually code or a diff (P3 spec §6).
                 # The bound stays — an unbounded write is a real abuse vector.
-                if not text or len(text) > 4000:
+                if not text or len(text) > SEND_TEXT_MAX:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                # `submit` asks for the Enter to go with the text rather than behind it. herdr's
-                # `pane run` sends both in one call, which is the only way they cannot be separated:
-                # a busy agent handed a paste and then, a moment later, an Enter would swallow the
-                # Enter and leave the message sitting unsent in its composer. Optional, because the
-                # other clients still send their own send_keys ["Enter"] and must keep working.
+                # `submit` asks the relay to press Enter, rather than the client sending its own
+                # `send_keys` behind this message. That part matters and is why the flag exists: an
+                # Enter that travels as a separate client message can arrive whenever the network
+                # feels like it, and an agent still busy with the paste swallows it.
+                #
+                # It is *not* `pane run`. That form leaves no gap at all between the paste and the
+                # Enter, and herdr pastes with bracketed paste — the same thing the respond handler
+                # above documents. A TUI still laying out a transferred payload drops an Enter that
+                # close behind, which is why a long or edited message would sit in the composer
+                # while a short one went straight through. Paste, let it settle, then press Enter,
+                # all inside this one handler so nothing else can land in the middle.
                 submit = bool(msg.get("submit"))
-                log.info("Text from %s (%s): pane=%s submit=%s text=%r",
-                         ip, device, pane_id, submit, text)
+                # Length, not the text: this line goes to the console the relay was started from,
+                # and a person watching their own terminal has not asked to be shown every message
+                # they send from their phone. The audit log below keeps the text itself.
+                log.info("Text from %s (%s): pane=%s submit=%s chars=%d",
+                         ip, device, pane_id, submit, len(text))
                 audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
-                await asyncio.to_thread(run_herdr, "pane", "run" if submit else "send-text",
-                                        pane_id, text, remote=remote)
+                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
                 await record_sent(pane_id, text)
-                # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
-                # right behind this — which is what a client that submits for itself does — lands
-                # late enough to submit. One choke point, rather than a delay in each client.
-                if not submit:
-                    await asyncio.sleep(SEND_SETTLE)
+                # Hold the handler until the pane has settled — for the Enter this sends itself, and
+                # for a `send_keys ["Enter"]` arriving right behind this, which is what a client that
+                # submits for itself does. One choke point, rather than a delay in each client.
+                await asyncio.sleep(submit_settle(text) if submit else SEND_SETTLE)
+                if submit:
+                    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter",
+                                            remote=remote)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,

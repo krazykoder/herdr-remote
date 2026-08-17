@@ -89,7 +89,10 @@
       convLiveRows = Array.isArray(msg.turns) ? msg.turns : [];
       if (!convLiveOn()) return;
       renderConvView();
-      if (typeof renderConvStandalone === 'function') renderConvStandalone(true);
+      // `false`: an answer arriving is not the reader asking to be moved. Both views already follow
+      // the newest message for anyone sitting at the bottom, and forcing it here dragged a reader
+      // who had scrolled up back down every time the record was re-read — every five seconds.
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
     }
 
     // The one refusal worth catching: the record is off, so there is nothing to read and no amount
