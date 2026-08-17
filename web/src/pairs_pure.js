@@ -82,6 +82,20 @@
       return ((SHORTCUTS.find(s => s.at === (r || {}).at) || {}).text || '').trim();
     }
 
+    // `at` is the badge's name on disk as well as in SHORTCUTS: a conversation records which role a
+    // session was started as so a respawn can start as the same one, and a name is the one part of
+    // this list that will still mean something after the list has been reordered.
+    function startRoleOf(at) {
+      return START_ROLES.find(r => r.at === at) || null;
+    }
+
+    // The badge a live pane was started as, read back off its label — every started pane is named
+    // for its role ("Architect 1", "Arbitrator"), by the relay or by the dialog. A pane renamed
+    // since matches nothing, which is right: what it is called is all there is left to go on.
+    function startRoleFromLabel(label) {
+      return startRoleOf(String(label || '').trim().split(/\s+/)[0].toLowerCase());
+    }
+
     // The terminal half of the same idea, and the opposite verb: an agent prompt is inserted into
     // the composer to be read before it is sent, a terminal command is the thing being sent.
     const TERM_KEY = 'herdr_term_shortcuts';

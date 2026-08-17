@@ -1312,6 +1312,21 @@
       opacity: 0.5;
     }
 
+    /* Beside a field's label, saying what the field expects rather than what it is. */
+    .field-note {
+      opacity: 0.7;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    /* The badge rows in the sheet sit level with the fields around them: the strip's own inset is
+       for a row that runs edge to edge, and here it would step the chips in from the selects. */
+    #startRoles {
+      padding: 0;
+      gap: 6px;
+    }
+
     .start-field textarea {
       font-family: monospace;
       resize: vertical;
@@ -4945,7 +4960,12 @@
         <!-- Hidden whole for a terminal: there is no agent to choose and no role for it to play.
              Everything below this — where it goes, what it is called — is the same question. -->
         <div id="startAgentRows" style="display:flex;flex-direction:column;gap:12px">
-          <label class="start-field">Role<select id="startRole"></select></label>
+          <!-- Badges rather than a select, and the same four the conversation's New agent dialog
+               offers: a role is how a session is started here, so it is picked the same way in
+               both places. Leaving the row empty is a start with no role — allowed, not advised. -->
+          <div class="start-field">Role <span class="field-note">optional · recommended</span>
+            <div id="startRoles" class="chip-strip wrap"></div>
+          </div>
           <label class="start-field">Agent<select id="startAgent"></select></label>
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>

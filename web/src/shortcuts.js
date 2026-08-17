@@ -550,13 +550,18 @@
       // session was in. New tab only where that workspace is live on that host right now.
       const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
         && (x.host || 'local') === (spawn.host || 'local'));
-      const msg = {
-        type: 'start_agent', name: spawn.agent, role: respawnRole(spawn),
-        project_id: spawn.project_id,
+      // The starter role it was begun as, from the record or — for a record that predates it — from
+      // the name it was given, which is derived from the same badge. A session started as an
+      // Architect is started again as one, opening prompt and all; one that matches no badge keeps
+      // the old behaviour of its bare wire role.
+      const starter = startRoleOf(spawn.starter) || startRoleFromLabel(spawn.label);
+      const msg = Object.assign({
+        type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
-      };
+      }, starter ? startRoleFields(starter, '') : {role: respawnRole(spawn)});
       if (tab) msg.workspace_id = spawn.workspace_id;
       startIntent = { conv: conv.id };
+      startPrompt = roleStarter(starter);
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
       ws.send(JSON.stringify(msg));
     }

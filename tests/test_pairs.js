@@ -23,7 +23,8 @@ const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
+               'SHORTCUTS', 'START_ROLES', 'roleStarter', 'startRoleOf', 'startRoleFromLabel',
+               'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
                'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
                'enterAction', 'ctrlChord'];
 
@@ -33,7 +34,8 @@ const ctx = vm.createContext({});
 vm.runInContext(PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX, chunkText,
+       navStep, navPush, SHORTCUTS, START_ROLES, roleStarter, startRoleOf, startRoleFromLabel,
+       MAX_PAIRS, SEND_TEXT_MAX, chunkText,
        parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
        enterAction, ctrlChord} = ctx.__out;
 
@@ -507,6 +509,65 @@ test('New tab with a live workspace in this project is offered', () => {
     [{pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', project: 'Charts'}], 'new_tab');
   assert.equal(els.startSubmit.disabled, false);
   assert.equal(els.startError.textContent, '');
+});
+
+// --- Starter roles ---
+// A role badge is two things at once: a role the relay knows, and a way of working it does not.
+// The relay names a pane after the role it is given, so a badge riding on `agent` has to carry
+// its own name or come up called "Agent 1" — and the name is what a respawn reads the badge back
+// off, which is what makes "start it again as the same thing" work at all.
+
+function runStartRoleFields(roles, role, typed) {
+  const start = START_DIALOG.indexOf('function startRoles');
+  const end = START_DIALOG.indexOf('function openPendingStart', start);
+  const c = vm.createContext({startOptions: {roles}, START_ROLES, escapeHtml});
+  vm.runInContext(START_DIALOG.slice(start, end) +
+    `\n;__out = {fields: startRoleFields(role, typed), offered: startRoles().map(r => r.at)};`,
+    Object.assign(c, {role, typed}));
+  return c.__out;
+}
+
+const RELAY_ROLES = ['architect', 'reviewer', 'agent'];
+
+test('a role the relay names panes for is sent bare, so the relay names the pane', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('architect'), '');
+  assert.deepEqual(fields, {role: 'architect'});
+});
+
+test('a way of working the relay has no role for carries its own name', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('arbitrator'), '');
+  assert.deepEqual(fields, {role: 'agent', label: 'Arbitrator'});
+});
+
+test('no role at all is still a start, on the neutral role', () => {
+  assert.deepEqual(runStartRoleFields(RELAY_ROLES, null, '').fields, {role: 'agent'});
+});
+
+test('a typed name wins over the one the badge would have given', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('arbitrator'), 'Judge');
+  assert.deepEqual(fields, {role: 'agent', label: 'Judge'});
+});
+
+test('only badges this relay will accept are offered', () => {
+  // An older relay knows architect and agent but not reviewer; the badge for it is absent rather
+  // than a refusal after the tap.
+  const {offered} = runStartRoleFields(['architect', 'agent'], null, '');
+  assert.deepEqual(offered, ['architect', 'arbitrator', 'orchestrator']);
+});
+
+test('the badge is read back off the name the pane was given', () => {
+  assert.equal((startRoleFromLabel('Architect 1') || {}).at, 'architect');
+  assert.equal((startRoleFromLabel('Arbitrator') || {}).at, 'arbitrator');
+  // Renamed since, so there is nothing left to read: a respawn falls back to the bare wire role
+  // rather than inventing a way of working the session never had.
+  assert.equal(startRoleFromLabel('nightly build'), null);
+  assert.equal(startRoleFromLabel(''), null);
+});
+
+test('a badge whose prompt is still to be written opens with nothing', () => {
+  assert.match(roleStarter(startRoleOf('architect')), /System_Prompt_2_Architect/);
+  assert.equal(roleStarter(startRoleOf('orchestrator')), '');
+  assert.equal(roleStarter(null), '');
 });
 
 // --- terminal shortcuts (T2) ---

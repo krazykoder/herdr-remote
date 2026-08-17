@@ -811,6 +811,10 @@
     function convSpawn(a, now) {
       return {
         agent: a.agent || '', role: roleOf(a) || '', label: paneLabel(a) || '',
+        // Which of the standard starter roles it was begun as, so starting it again begins it the
+        // same way — including the opening prompt, which `role` alone cannot say: Arbitrator and
+        // Orchestrator both go on the wire as `agent`.
+        starter: (startRoleFromLabel(paneLabel(a)) || {}).at || '',
         project_id: a.project_id || '', project: a.project || '', cwd: a.cwd || '',
         host: a.host || '', workspace_id: a.workspace_id || '', tab_id: a.tab_id || '',
         captured: now,

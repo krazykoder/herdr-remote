@@ -3665,6 +3665,44 @@ test('the role badge is what the session is started as, and what opens it', asyn
   expect(await sentBody(page)).toBe('');
 });
 
+// The same four badges in the sheet a session is normally started from, doing the same two jobs:
+// what goes on the wire, and what the session is told first. Optional there as well — a start with
+// the row left empty is a start, on the neutral role and with nothing said to it.
+test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
+  await open(page);
+  await startable(page);
+  await tapWire(page);
+  await page.evaluate(() => openStartDialog('p1'));
+  await expect(page.locator('#startSheet')).toBeVisible();
+  await expect(page.locator('#startRoles .chip'))
+    .toHaveText(['Architect', 'Reviewer', 'Arbitrator', 'Orchestrator']);
+  // Nothing lit until something is picked: the field recommends, it does not answer for the user.
+  await expect(page.locator('#startRoles .chip.active')).toHaveCount(0);
+  await page.locator('#startRoles .chip', {hasText: 'Architect'}).click();
+  await page.locator('#startSubmit').click();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.role).toBe('architect');
+  expect(sent.label).toBeUndefined();      // the relay names it after the role it was given
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await sentBody(page)).toContain('System_Prompt_2_Architect.md');
+
+  // Reopens on what it last started as — spawning is repetitive, like the harness and the
+  // placement beside it — and the same tap takes it off again.
+  await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
+  await expect(page.locator('#startRoles .chip.active')).toHaveText('Architect');
+  await page.locator('#startRoles .chip', {hasText: 'Architect'}).click();
+  await expect(page.locator('#startRoles .chip.active')).toHaveCount(0);
+  await page.evaluate(() => { window.__sent.length = 0; });
+  await page.locator('#startSubmit').click();
+  const bare = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(bare.role).toBe('agent');
+  expect(bare.label).toBeUndefined();
+});
+
 test('a double tap on a bubble addresses the agent that wrote it', async ({page}) => {
   await open(page);
   await joinBoth(page);

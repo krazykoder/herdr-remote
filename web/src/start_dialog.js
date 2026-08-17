@@ -11,6 +11,36 @@
     // the tax. Browser-local, like the rest of the per-device preferences.
     const START_AGENT_KEY = 'herdr_start_agent';
     const START_PLACE_KEY = 'herdr_start_placement';
+    const START_ROLE_KEY = 'herdr_start_role';
+
+    // The app's own chip, the one the workspace and status filters are picked with — active in the
+    // same blue, so a choice made here looks like a choice made anywhere else. Shared with the
+    // conversation's New agent dialog, which asks the same questions in a smaller box.
+    function badgeHtml(label, on, call, title) {
+      return `<button class="chip${on ? ' active' : ''}" onclick="${call}" aria-pressed="${on}"` +
+        (title ? ` title="${escapeHtml(title)}"` : '') + `>${escapeHtml(label)}</button>`;
+    }
+
+    // Only the roles this relay will actually accept. A badge whose wire role it does not know
+    // would be a refusal after the tap rather than a choice that was never offered.
+    function startRoles() {
+      const known = (startOptions && startOptions.roles) || [];
+      return START_ROLES.filter(r => known.includes(r.role));
+    }
+
+    // What a starter role puts on the wire. The relay names a pane for the role it was given, and
+    // it knows only its own three; a badge riding on one of those carries its own name as the label
+    // instead, or an Arbitrator would come up called "Agent 1". A typed name always wins, and no
+    // badge at all is a start with no role asked for — the field is a recommendation, not a gate.
+    function startRoleFields(role, typed) {
+      const known = (startOptions && startOptions.roles) || [];
+      const wire = role && known.includes(role.role) ? role.role
+        : (known.includes('agent') ? 'agent' : known[0]);
+      const label = typed || (role && role.at !== role.role ? role.name : '');
+      const out = wire ? {role: wire} : {};
+      if (label) out.label = label;
+      return out;
+    }
 
     // A session the relay just started, waiting for the poll to catch up so it can be opened.
     let pendingStart = null;
@@ -19,6 +49,10 @@
     // chosen. null — every other route in — keeps the old deferring behaviour. Set at request
     // time and cleared when it is acted on, so an abandoned dialog cannot claim a later start.
     let startIntent = null;
+    // What the next successful start opens with: the starter role's prompt, or '' for a start made
+    // without one. Kept apart from startIntent because it is a different question — where the new
+    // pane lands versus what it is told first — and every route in can ask both.
+    let startPrompt = '';
 
     function openPendingStart() {
       if (!pendingStart) return;
@@ -31,6 +65,10 @@
       pendingStart = null;
       const intent = startIntent;
       startIntent = null;
+      // Read once here for the same reason: a start that never came up must not leave its opening
+      // words to be said to whatever is started next.
+      const prompt = startPrompt;
+      startPrompt = '';
       // The pair dialog reopens on the pane it was left from, with the session that was started
       // for it already chosen, and saves itself. "Start a session and pair with it" already said
       // what the pair is; stopping at a filled-in form asks the user to confirm a decision they
@@ -45,6 +83,7 @@
         // Nor when saving refuses — at the pair ceiling the dialog stays up holding the reason.
         if (![intent.pair, a.pane_id].some(id => pairFor(pairs, id))) savePair();
         const paired = !pairSource;   // savePair closes the dialog; a refusal leaves it open
+        if (prompt) sendTextTo(a.pane_id, prompt);
         showSpawnStatus(`${a.label || a.agent || 'Session'} started` +
           (paired ? ' and paired.' : ' — confirm the pair.'), 'success');
         return;
@@ -64,8 +103,9 @@
         openTerminal(a.pane_id);
         // Started with something to say to it. The send goes through the same path a typed message
         // does, so the conversation records it as the user's — it is, and a first instruction that
-        // was missing from the thread would be a turn nobody could see the start of.
-        if (intent.prompt) sendTextTo(a.pane_id, intent.prompt);
+        // was missing from the thread would be a turn nobody could see the start of. After the
+        // membership above, so the thread it is recorded into is the one it was started for.
+        if (prompt) sendTextTo(a.pane_id, prompt);
         showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} joined "${conv.name}".`
           : `${a.label || a.agent || 'Session'} started.`, 'success');
         return;
@@ -74,6 +114,7 @@
       // phone terms, and yanking them out of what they are reading is worse than not landing.
       // Unless the start was a Duplicate, which is a request made from that very pane.
       if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+      if (prompt) sendTextTo(a.pane_id, prompt);
       showSpawnStatus(`${a.label || a.agent || 'Session'} started.`, 'success');
     }
 
@@ -120,6 +161,26 @@
       const a = agents.find(x => x.pane_id === activePane);
       if (!a || !a.project_id) return;
       openStartDialog(a.project_id);
+    }
+
+    // Which starter role the sheet is holding, as the badge's `at`, or '' for none. A session is
+    // better started as something, and the standard four are how this project works — but a start
+    // with no role is still a start, so the badges are a row that can be left empty rather than a
+    // select that always has an answer.
+    let startRolePick = '';
+
+    function renderStartRoles() {
+      document.getElementById('startRoles').innerHTML = startRoles().map(r =>
+        badgeHtml(r.name, r.at === startRolePick, `pickStartRole('${r.at}')`,
+          roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet')).join('');
+    }
+
+    // Tapping the one already on takes it off: the row is the only way back to no role, and a
+    // choice that cannot be unmade is not optional.
+    function pickStartRole(at) {
+      startRolePick = startRolePick === at ? '' : at;
+      renderStartRoles();
+      if (window.cue) cue('tick');
     }
 
     function restoreStartChoice(id, key, fallback) {
@@ -187,7 +248,11 @@
       document.getElementById('startAgentRows').style.display = terminal ? 'none' : '';
       document.getElementById('startSubmit').textContent = terminal ? 'Open terminal' : 'Start session';
       document.getElementById('startName').placeholder = terminal ? 'Auto — Terminal N' : 'Auto — Role N';
-      fillSelect('startRole', startOptions.roles.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]));
+      // Reopens on the role it last started as, which is usually the one being started again —
+      // and on none when that badge is gone, rather than silently on a different way of working.
+      startRolePick = startRoles().some(r => r.at === localStorage.getItem(START_ROLE_KEY))
+        ? localStorage.getItem(START_ROLE_KEY) : '';
+      renderStartRoles();
       fillSelect('startAgent', startOptions.agents.map(a => [a, a]));
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
       restoreStartChoice('startAgent', START_AGENT_KEY);
@@ -256,26 +321,27 @@
       if (!ws || !startProjectId) return;
       const terminal = startMode === 'terminal';
       const placement = document.getElementById('startPlacement').value;
+      const role = startRoleOf(startRolePick);
+      const typed = document.getElementById('startName').value.trim();
       // Agent fields are omitted rather than blanked: the relay refuses an open_terminal carrying
       // a name or a role as an unexpected field, which is what keeps the two messages distinct.
       const msg = terminal
         ? { type: 'open_terminal', project_id: startProjectId, placement: placement }
-        : {
+        : Object.assign({
           type: 'start_agent',
           name: document.getElementById('startAgent').value,
-          role: document.getElementById('startRole').value,
           project_id: startProjectId,
           placement: placement,
-        };
+        }, startRoleFields(role, typed));
       // Spawn at the width of the screen doing the spawning, so a session started from a phone is
       // readable on it without a second round trip. Not for a split: "beside that pane" is already
       // a statement about width, and a desktop asking for "wide" would move the new session
       // straight back out of the split the user picked.
       if (placement !== 'split') msg.slot = slotFor();
-      // Omitted, not empty: the relay derives "Role N" when the field is absent, and an empty
-      // string is a label it would reject.
-      const name = document.getElementById('startName').value.trim();
-      if (name) msg.label = name;
+      // A terminal takes the typed name too, and has no role to have been named after: startRoleFields
+      // answered that for an agent, this answers it for the other message. Omitted, not empty — the
+      // relay derives "Terminal N" from an absent label and refuses a blank one.
+      if (terminal && typed) msg.label = typed;
       if (placement !== 'new_workspace') {
         const target = document.getElementById('startTarget');
         if (!target || !target.value) { setStartError('Select a target first'); return; }
@@ -289,7 +355,13 @@
       try {
         if (msg.name) localStorage.setItem(START_AGENT_KEY, msg.name);
         localStorage.setItem(START_PLACE_KEY, placement);
+        if (!terminal) localStorage.setItem(START_ROLE_KEY, startRolePick);
       } catch (e) { /* private mode: session-only */ }
+      // Said to it as soon as it comes up, so the session starts as the thing it was started as
+      // rather than waiting to be told. Set here and not above the target check: a submit that
+      // refused must leave nothing behind for the next start to open with. Nothing to say for a
+      // terminal, or for a role whose prompt is still to be written.
+      startPrompt = terminal ? '' : roleStarter(role);
       ws.send(JSON.stringify(msg));
     }
 

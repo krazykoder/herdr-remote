@@ -571,13 +571,6 @@
       return !!(startOptions && (startOptions.agents || []).length && projects.length);
     }
 
-    // Only the roles this relay will actually accept. A badge whose wire role it does not know
-    // would be a refusal after the tap rather than a choice that was never offered.
-    function newAgentRoles() {
-      const known = (startOptions && startOptions.roles) || [];
-      return START_ROLES.filter(r => known.includes(r.role));
-    }
-
     function openNewAgent() {
       closeDockMenu();
       if (!canStartFromConv()) { showToast('This relay does not start sessions.'); return; }
@@ -611,19 +604,12 @@
       el.style.display = text ? 'block' : 'none';
     }
 
-    // The app's own chip, the one the workspace and status filters are picked with — active in the
-    // same blue, so a choice made here looks like a choice made anywhere else.
-    function badgeHtml(label, on, call, title) {
-      return `<button class="chip${on ? ' active' : ''}" onclick="${call}" aria-pressed="${on}"` +
-        (title ? ` title="${escapeHtml(title)}"` : '') + `>${escapeHtml(label)}</button>`;
-    }
-
     // Three rows of badges, in the order the decision is made. The Project row is one line that
     // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
     function renderNewAgent() {
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
         .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`)).join('');
-      document.getElementById('newAgentRoles').innerHTML = newAgentRoles().map((r, i) =>
+      document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
         badgeHtml(`# ${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
           roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet')).join('');
       document.getElementById('newAgentProjects').innerHTML = projects.map(p =>
@@ -668,28 +654,27 @@
 
     function submitNewAgent() {
       if (!ws) return;
-      const role = newAgentRoles()[newAgentRole];
+      const role = startRoles()[newAgentRole];
       if (!newAgentProject || !newAgentKind || !role) { setNewAgentError('Pick a project first'); return; }
-      const msg = {
-        type: 'start_agent', name: newAgentKind, role: role.role,
+      // Omitted, not empty: the relay derives "Role N" from an absent label and refuses a blank one.
+      // A badge the relay has no role for is named here instead, or the pane would come up called
+      // "Agent 1" when what was asked for was an Arbitrator. Same rule the Start sheet follows.
+      const typed = document.getElementById('newAgentName').value.trim();
+      const msg = Object.assign({
+        type: 'start_agent', name: newAgentKind,
         project_id: newAgentProject, slot: slotFor(),
-      };
+      }, startRoleFields(role, typed));
       // Where is not asked: beside what this Project is already running, which is what a new member
       // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
       // gets a workspace of its own.
       const beside = agents.find(a => a.project_id === newAgentProject && a.workspace_id);
       msg.placement = beside ? 'new_tab' : 'new_workspace';
       if (beside) msg.workspace_id = beside.workspace_id;
-      // Omitted, not empty: the relay derives "Role N" from an absent label and refuses a blank one.
-      // A badge the relay has no role for is named here instead, or the pane would come up called
-      // "Agent 1" when what was asked for was an Arbitrator.
-      const typed = document.getElementById('newAgentName').value.trim();
-      const label = typed || (role.role === role.name.toLowerCase() ? '' : role.name);
-      if (label) msg.label = label;
       // Joins this conversation when it comes up, and is opened with the role's prompt — the same
-      // intent a respawn uses, which is what makes the new pane open on the thread.
-      startIntent = {conv: convViewId, prompt: roleStarter(role)};
-      showSpawnStatus(`Starting ${label || newAgentKind}…`, 'busy');
+      // pair a respawn sets, which is what makes the new pane open on the thread and speak into it.
+      startIntent = {conv: convViewId};
+      startPrompt = roleStarter(role);
+      showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
       closeNewAgent();
     }
