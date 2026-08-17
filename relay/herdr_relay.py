@@ -94,9 +94,39 @@ SEND_SETTLE = 0.15
 # arrives — which is the "the text is sitting in the composer" report, intermittent because it
 # depends on how much there was to lay out. Scaled by length rather than raised for everyone: a
 # short send stays as quick as it was.
-# ponytail: still a guess with a ceiling, same as SEND_SETTLE. The real answer is reading the pane
-# back and pressing Enter again if the composer still holds the text; do that if this is not enough.
 SEND_SETTLE_MAX = 0.9
+
+# --- Submitting a paste, and knowing whether it took ---
+#
+# The history matters, because this is the third attempt at it and each of the first two fixed a
+# real bug while introducing the next one.
+#
+#   1. The client sent `send_text` and then its own `send_keys ["Enter"]`, two WebSocket messages,
+#      with SEND_SETTLE holding the first handler so the second landed late enough. That works for
+#      a TUI that is *running*. It does not work for one that is *starting*: a claude or codex that
+#      has been alive for 200 ms is not at a composer yet, and the Enter goes nowhere. Which is
+#      exactly the New agent dialog's opening prompt, every time.
+#   2. So `submit` was served by herdr's `pane run`, which sends text and Enter in one call and
+#      cannot be interrupted. That fixed the interruption and removed the beat — and herdr pastes
+#      with bracketed paste, so a TUI still laying out a transferred payload dropped the Enter.
+#      Short generated commands went through; long or hand-edited ones sat in the composer.
+#   3. Both of those are the same mistake in two sizes: guessing a duration for something that has
+#      no fixed duration. A boot can take five seconds; a paste can take fifty milliseconds. No
+#      constant is right for both.
+#
+# So: stop guessing, and ask. herdr already reports `agent_status` per pane, and it is the readiness
+# signal this file's older comments say does not exist — a pane whose TUI has not started reports
+# no agent at all, and one that has taken a prompt reports `working` or `blocked`. Paste, then press
+# Enter and watch that field until it says the pane is acting on something.
+#
+# The one thing this must never do is press Enter into a pane that is `blocked`, because the box a
+# blocked agent is showing is a permission prompt and Enter accepts its default. That is the whole
+# reason this verifies rather than simply pressing twice and hoping.
+SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something to submit
+SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
+SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
+SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
+SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
 
 # The longest text one send_text may carry. 4000, not 1000: a transferred selection is usually code
 # or a diff (P3 spec §6). Mirrors SEND_TEXT_MAX in web/src/pairs_pure.js, which is what the browser
@@ -106,7 +136,12 @@ SEND_TEXT_MAX = 4000
 
 
 def submit_settle(text):
-    """How long to leave a TUI between the paste and the Enter that submits it."""
+    """How long to leave a TUI between the paste and the *first* Enter.
+
+    Still a guess, and deliberately only used for the first press — a long paste usually needs a
+    beat and waiting one costs nothing, but nothing depends on this number being right. What makes
+    the submit land is submit_paste watching the pane afterwards.
+    """
     span = SEND_SETTLE_MAX - SEND_SETTLE
     return SEND_SETTLE + span * min(1.0, len(text or "") / SEND_TEXT_MAX)
 
@@ -770,6 +805,74 @@ def dig_panes(data):
     return panes if isinstance(panes, list) else []
 
 
+def pane_agent_status(pane_id, remote=None):
+    """What herdr says this pane's agent is doing, right now.
+
+    Straight from herdr rather than out of `agent_cache`, because the cache is only as fresh as the
+    last poll and the caller is deciding, this instant, whether a keystroke landed.
+
+    An empty string is "herdr does not know": no such pane, or — the case that matters — a pane
+    whose agent has not finished starting and is not being reported as an agent yet.
+    """
+    data, err = _herdr_json("pane", "list", remote=remote)
+    if err:
+        return ""
+    for p in dig_panes(data):
+        if p.get("pane_id") == pane_id:
+            return p.get("agent_status") or ""
+    return ""
+
+
+async def submit_paste(pane_id, text, remote=None):
+    """Press Enter until the pane says it took what it was handed. Returns whether it did.
+
+    The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
+    and hoped. This one watches `agent_status` instead, which turns three separate problems into
+    one loop:
+
+      * a TUI that has not started yet reports no status, so nothing is pressed until it does —
+        that is the New agent dialog's opening prompt, which no fixed delay ever covered;
+      * a TUI that is still laying out a big paste is still `idle`, so the next pass presses again;
+      * a pane that has taken the prompt reports `working` or `blocked`, and the loop stops.
+
+    Never presses Enter at a `blocked` pane. That box is a permission prompt and Enter accepts its
+    default, which is the one outcome worse than a message that did not send.
+
+    A pane already `working` when the paste arrives is a message queued behind what the agent is
+    doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
+    nothing to watch. One press after the settle, exactly as before, and the return says so.
+    """
+    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
+    await asyncio.sleep(submit_settle(text))
+    deadline = time.monotonic() + SUBMIT_TIMEOUT
+    presses, first = 0, True
+    while time.monotonic() < deadline:
+        status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
+        # Already busy when the paste landed, which only the first look can tell apart from busy
+        # *because* of it. Press once and say nothing was proven — `working` is what this pane will
+        # keep reporting either way.
+        if first and status == "working":
+            await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            return False
+        first = False
+        if status in SUBMIT_TOOK:
+            return True
+        if status in SUBMIT_READY:
+            if presses >= SUBMIT_TRIES:
+                break
+            await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            presses += 1
+        # Anything else is a pane herdr has no status for — a TUI still starting. Wait for it
+        # rather than pressing into a terminal that is not listening yet.
+        await asyncio.sleep(SUBMIT_POLL)
+    # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is
+    # in the composer and a person has to press Enter. Silence here is what made this bug take
+    # three attempts to find.
+    log.warning("submit: pane=%s never left %s after %d Enter press(es) — text may be unsent",
+                pane_id, SUBMIT_READY, presses)
+    return False
+
+
 def log_tab_geometry():
     """Report at boot how wide the two slots land, and what to change if narrow is off target.
 
@@ -1422,17 +1525,17 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                # `submit` asks the relay to press Enter, rather than the client sending its own
-                # `send_keys` behind this message. That part matters and is why the flag exists: an
-                # Enter that travels as a separate client message can arrive whenever the network
-                # feels like it, and an agent still busy with the paste swallows it.
+                # `submit` asks the relay to submit the text, rather than the client sending its own
+                # `send_keys ["Enter"]` behind this message. Two separate reasons, and both of them
+                # were bugs first:
                 #
-                # It is *not* `pane run`. That form leaves no gap at all between the paste and the
-                # Enter, and herdr pastes with bracketed paste — the same thing the respond handler
-                # above documents. A TUI still laying out a transferred payload drops an Enter that
-                # close behind, which is why a long or edited message would sit in the composer
-                # while a short one went straight through. Paste, let it settle, then press Enter,
-                # all inside this one handler so nothing else can land in the middle.
+                #   * an Enter travelling as its own client message arrives whenever the network
+                #     feels like it, and there is nothing at this end that can hold it to the text;
+                #   * whoever presses it has to know *when*, and neither end can know that from a
+                #     clock — see SUBMIT_READY. submit_paste watches the pane instead.
+                #
+                # Optional, because the other clients still send their own Enter and must keep
+                # working; those get the old fixed settle below and nothing more.
                 submit = bool(msg.get("submit"))
                 # Length, not the text: this line goes to the console the relay was started from,
                 # and a person watching their own terminal has not asked to be shown every message
@@ -1440,15 +1543,16 @@ async def handle_client(ws, listener="lan"):
                 log.info("Text from %s (%s): pane=%s submit=%s chars=%d",
                          ip, device, pane_id, submit, len(text))
                 audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
-                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
-                await record_sent(pane_id, text)
-                # Hold the handler until the pane has settled — for the Enter this sends itself, and
-                # for a `send_keys ["Enter"]` arriving right behind this, which is what a client that
-                # submits for itself does. One choke point, rather than a delay in each client.
-                await asyncio.sleep(submit_settle(text) if submit else SEND_SETTLE)
                 if submit:
-                    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter",
+                    await submit_paste(pane_id, text, remote=remote)
+                else:
+                    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)
+                    # Hold the handler until the pane has settled, so a `send_keys ["Enter"]`
+                    # arriving right behind this — which is what a client that submits for itself
+                    # does — lands late enough. One choke point, rather than a delay in each client.
+                    await asyncio.sleep(SEND_SETTLE)
+                await record_sent(pane_id, text)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
