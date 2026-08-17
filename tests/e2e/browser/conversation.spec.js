@@ -3583,9 +3583,16 @@ test('autocorrect is a switch on the composer, and it is off to begin with', asy
 const startable = page => page.evaluate(() => {
   projects = [{id: 'p1', label: 'herdr-remote', host: 'local'},
     {id: 'p2', label: 'charts', host: 'local'}];
-  startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect', 'coder']};
+  startOptions = {type: 'start_options', agents: ['claude', 'codex'],
+    roles: ['architect', 'reviewer', 'agent']};
   for (const a of agents) { a.project_id = 'p1'; a.workspace_id = 'w1'; }
 });
+
+const openNewAgentModal = async page => {
+  await page.locator('.xfer-who-more.list').click();
+  await page.locator('#whoMenu .menu-item', {hasText: 'New agent'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+};
 
 test('a new agent is started from the membership list, into this conversation', async ({page}) => {
   await open(page);
@@ -3594,19 +3601,12 @@ test('a new agent is started from the membership list, into this conversation', 
   await openWindow(page);
   await startable(page);
   await tapWire(page);
-  await page.locator('.xfer-who-more.list').click();
-  await page.locator('#whoMenu .menu-item', {hasText: 'New agent'}).click();
-  await expect(page.locator('#newAgentModal')).toBeVisible();
+  await openNewAgentModal(page);
   // Both defaults are read off the agent being talked to: its harness, and the Project it runs in.
   await expect(page.locator('#newAgentKinds .xfer-chip.on')).toHaveText('claude');
-  await expect(page.locator('#newAgentProject')).toHaveValue('p1');
+  await expect(page.locator('#newAgentProjects .xfer-chip.on')).toHaveText('@herdr-remote');
   await page.locator('#newAgentKinds .xfer-chip', {hasText: 'codex'}).click();
   await page.locator('#newAgentName').fill('Reviewer 9');
-  await page.locator('#newAgentPrompt').fill('take a look at the auth rewrite');
-  // The composer's own instructions, on the first thing the new session is told.
-  await page.locator(`#newAgentChips .xfer-chip:text-matches("^@review")`).click();
-  await expect(page.locator('#newAgentPrompt'))
-    .toHaveValue(/^take a look at the auth rewrite\nReview, edit, fix/);
   await page.locator('#newAgentSubmit').click();
   await expect(page.locator('#newAgentModal')).toBeHidden();
 
@@ -3614,17 +3614,55 @@ test('a new agent is started from the membership list, into this conversation', 
   expect(sent.name).toBe('codex');
   expect(sent.project_id).toBe('p1');
   expect(sent.label).toBe('Reviewer 9');
+  expect(sent.role).toBe('architect');   // the first badge, which is the one lit
   // Where is never asked: beside what the Project is already running.
   expect(sent.placement).toBe('new_tab');
   expect(sent.workspace_id).toBe('w1');
 
-  // It joins as a new member when the poll catches up, and is told the first thing there.
+  // It joins as a new member when the poll catches up, and is opened with the role's own prompt.
   await page.evaluate(() => {
     handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
     openPendingStart();
   });
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
-  expect(await sentBody(page)).toContain('take a look at the auth rewrite\nReview, edit, fix');
+  expect(await sentBody(page)).toContain('System_Prompt_2_Architect.md');
+});
+
+test('the role badge is what the session is started as, and what opens it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await startable(page);
+  await tapWire(page);
+  await openNewAgentModal(page);
+  // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
+  await expect(page.locator('#newAgentRoles .xfer-chip'))
+    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
+  await page.locator('#newAgentRoles .xfer-chip', {hasText: 'Arbitrator'}).click();
+  await expect(page.locator('#newAgentRoles .xfer-chip.on')).toHaveText('# Arbitrator');
+  // A second Project, chosen from the list behind @+ rather than from the line.
+  await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
+  await page.locator('.badge-line .xfer-chip.more').click();
+  await page.locator('#newAgentProjMenu .menu-item', {hasText: '@charts'}).click();
+  await expect(page.locator('#newAgentProjMenu')).toBeHidden();
+  await expect(page.locator('#newAgentProjects .xfer-chip.on')).toHaveText('@charts');
+  await page.locator('#newAgentSubmit').click();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  // The relay knows three roles and Arbitrator is not one of them, so it rides on `agent` and
+  // carries its name as the label — otherwise the pane would come up called "Agent 1".
+  expect(sent.role).toBe('agent');
+  expect(sent.label).toBe('Arbitrator');
+  expect(sent.project_id).toBe('p2');
+  // Nothing live in that Project, so there is nothing to be beside.
+  expect(sent.placement).toBe('new_workspace');
+  // Its prompt is still to be written, so the session is started and told nothing.
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await sentBody(page)).toBe('');
 });
 
 test('a double tap on a bubble addresses the agent that wrote it', async ({page}) => {

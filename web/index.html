@@ -1294,6 +1294,10 @@
     .start-field select,
     .start-field textarea,
     .start-field input {
+      /* Read at the size the rest of the app reads at. The label above is small caps because it is
+         a label; what the user typed is content, and inheriting the label's 0.65rem made every
+         field in every sheet render its own value smaller than anything around it. */
+      font-size: 0.85rem;
       padding: 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -1311,6 +1315,50 @@
     .start-field textarea {
       font-family: monospace;
       resize: vertical;
+    }
+
+    /* The New agent dialog: a column of badge rows, tighter than a sheet of form fields because
+       nothing in it is typed except the name. */
+    .new-agent-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px 14px 12px;
+    }
+
+    .new-agent-body .start-field input {
+      padding: 8px 10px;
+    }
+
+    /* Badges that wrap: every choice visible at once, however many there are. */
+    .badge-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 0;
+    }
+
+    /* One line that scrolls, with the way to see the rest pinned beside it — the same shape the
+       dock's chip row has. */
+    .badge-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .badge-scroll {
+      display: flex;
+      gap: 6px;
+      padding: 0;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .badge-scroll::-webkit-scrollbar {
+      display: none;
     }
 
     #startSubmit:disabled {
@@ -3408,6 +3456,8 @@
     /* An instruction, not a send. Chips are additive — two lit chips are two instructions, in the
        order they were tapped, which is why a second one wears its position. */
     .xfer-row .xfer-chip,
+    /* The New agent dialog picks with the same badges; only their container differs. */
+    .new-agent-body .xfer-chip,
     .xfer-row .xfer-who-more {
       flex: 0 0 auto;
       /* The same height as the pills above them: two rows of controls in one bubble that do not
@@ -3426,7 +3476,8 @@
     /* Lit, not filled. Send is the only filled thing on this row: three picked chips in the same
        solid blue as the button that fires them make four buttons that look equally like the
        action. Outline for chosen, fill for the one that sends. */
-    .xfer-row .xfer-chip.on {
+    .xfer-row .xfer-chip.on,
+    .new-agent-body .xfer-chip.on {
       border-color: var(--blue);
       color: var(--blue);
     }
@@ -5000,24 +5051,32 @@
         <button onclick="closeNewAgent()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
-      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+      <!-- Top down in the order the decision is actually made: what it is, what it does, what it
+           is called, and where it runs. Three of the four are badges — a start is picked, not
+           filled in, and a column of selects would be four taps and a scroll for the same answer. -->
+      <div class="new-agent-body">
+        <div class="start-field">Agent
+          <div id="newAgentKinds" class="badge-wrap"></div>
+        </div>
+        <!-- What it is started as. The badge carries both halves: the role the relay names the pane
+             for, and the @ prompt that opens the session — see START_ROLES. -->
+        <div class="start-field">Role
+          <div id="newAgentRoles" class="badge-wrap"></div>
+        </div>
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>
-        <!-- Chips, not a select: the harness is the one choice worth seeing all of at once, and it
-             is the same badge the panes wear. -->
-        <div class="start-field">Agent
-          <div id="newAgentKinds" class="xfer-row" style="display:flex;flex-wrap:wrap;gap:6px;padding:0"></div>
-        </div>
-        <label class="start-field">Project<select id="newAgentProject"></select></label>
-        <div class="start-field">First message
-          <textarea id="newAgentPrompt" rows="3" maxlength="16000" autocomplete="off" autocorrect="off"
-            autocapitalize="none" spellcheck="false"
-            placeholder="what it should start on — optional"></textarea>
-          <div id="newAgentChips" class="xfer-row" style="display:flex;flex-wrap:wrap;gap:6px;padding:0"></div>
+        <!-- One line, because there is usually one Project in play and the rest are a tap away. -->
+        <div class="start-field">Project
+          <div class="badge-line">
+            <div id="newAgentProjects" class="badge-scroll"></div>
+            <button class="xfer-chip more" onclick="toggleNewAgentProjects()"
+              aria-label="Every project, as a list">@+</button>
+          </div>
+          <div class="chip-menu" id="newAgentProjMenu" role="menu" hidden></div>
         </div>
         <p id="newAgentError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
         <button id="newAgentSubmit" onclick="submitNewAgent()"
-          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
+          style="padding:11px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Add
           agent</button>
       </div>
     </div>

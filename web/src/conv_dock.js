@@ -559,14 +559,23 @@
     // --- New agent, from inside the conversation ---
     //
     // The membership list is where "who is in this conversation" is answered, so it is also where
-    // another one is added. The full Start session sheet asks where the session goes and what role
-    // it plays; from here both are already answered — beside what this conversation is running, in
-    // the Project it is running in — and what is left is a name, a harness and the first message.
+    // another one is added. The full Start session sheet asks where the session goes; from here that
+    // is already answered — beside what this conversation is running — and what is left is four
+    // choices, three of them made by tapping a badge: harness, role, name, Project.
     let newAgentKind = '';
+    let newAgentRole = 0;
+    let newAgentProject = '';
 
     // The relay must be willing to start, and there must be a Project to start into.
     function canStartFromConv() {
       return !!(startOptions && (startOptions.agents || []).length && projects.length);
+    }
+
+    // Only the roles this relay will actually accept. A badge whose wire role it does not know
+    // would be a refusal after the tap rather than a choice that was never offered.
+    function newAgentRoles() {
+      const known = (startOptions && startOptions.roles) || [];
+      return START_ROLES.filter(r => known.includes(r.role));
     }
 
     function openNewAgent() {
@@ -579,21 +588,21 @@
       // work is what this is usually for. Falls back to the first the relay will start.
       const kinds = startOptions.agents || [];
       newAgentKind = from && kinds.includes(from.agent) ? from.agent : kinds[0];
-      fillSelect('newAgentProject', projects.map(p => [p.id, p.label]));
-      // Spawned where the conversation lives. Not a rule — the picker is right there — but a
-      // Project chosen for you is one fewer question in a dialog that exists to be quick.
-      if (from && from.project_id && projects.some(p => p.id === from.project_id))
-        document.getElementById('newAgentProject').value = from.project_id;
+      newAgentRole = 0;
+      // Spawned where the conversation lives. Not a rule — the row is right there — but a Project
+      // chosen for you is one fewer question in a dialog that exists to be quick.
+      newAgentProject = from && projects.some(p => p.id === from.project_id)
+        ? from.project_id : (projects[0] || {}).id || '';
       document.getElementById('newAgentName').value = '';
-      document.getElementById('newAgentPrompt').value = '';
       setNewAgentError('');
+      closeDockMenu('newAgentProjMenu');
       renderNewAgent();
       document.getElementById('newAgentModal').style.display = 'block';
-      document.getElementById('newAgentName').focus();
     }
 
     function closeNewAgent() {
       document.getElementById('newAgentModal').style.display = 'none';
+      closeDockMenu('newAgentProjMenu');
     }
 
     function setNewAgentError(text) {
@@ -602,16 +611,25 @@
       el.style.display = text ? 'block' : 'none';
     }
 
-    // The two rows that are chosen from rather than typed into: which harness, and the standing
-    // instructions. Both are the composer's own controls, reused — an @ prompt is the same @ prompt
-    // whether it is written into a live pane or into the first thing a new one is told.
+    function badgeHtml(label, on, call, title) {
+      return `<button class="xfer-chip${on ? ' on' : ''}" onclick="${call}" aria-pressed="${on}"` +
+        (title ? ` title="${escapeHtml(title)}"` : '') + `>${escapeHtml(label)}</button>`;
+    }
+
+    // Three rows of badges, in the order the decision is made. The Project row is one line that
+    // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
     function renderNewAgent() {
-      document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || []).map(k =>
-        `<button class="xfer-chip${k === newAgentKind ? ' on' : ''}" onclick="pickNewAgentKind('${k}')" ` +
-        `aria-pressed="${k === newAgentKind}">${escapeHtml(k)}</button>`).join('');
-      document.getElementById('newAgentChips').innerHTML = SHORTCUTS.map((s, i) =>
-        `<button class="xfer-chip" onclick="addNewAgentPrompt(${i})" title="${escapeHtml(s.label)}" ` +
-        `aria-label="Add the instruction ${escapeHtml(s.label)}">@${escapeHtml(s.at)}</button>`).join('');
+      document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
+        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`)).join('');
+      document.getElementById('newAgentRoles').innerHTML = newAgentRoles().map((r, i) =>
+        badgeHtml(`# ${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
+          roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet')).join('');
+      document.getElementById('newAgentProjects').innerHTML = projects.map(p =>
+        badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`)).join('');
+      // Kept on screen when the row is longer than the line, so the chosen Project is never the one
+      // that scrolled off.
+      const on = document.querySelector('#newAgentProjects .xfer-chip.on');
+      if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest', inline: 'nearest'});
     }
 
     function pickNewAgentKind(kind) {
@@ -620,42 +638,55 @@
       if (window.cue) cue('tick');
     }
 
-    // Appended on its own line, the same rule the composers use: an instruction spliced into the
-    // middle of the sentence being written is a different sentence.
-    function addNewAgentPrompt(i) {
-      const box = document.getElementById('newAgentPrompt');
-      const text = (SHORTCUTS[i] || {}).text;
-      if (!box || !text) return;
-      box.value = box.value.trim() ? `${box.value.replace(/\s+$/, '')}\n${text}` : text;
-      box.focus();
+    function pickNewAgentRole(i) {
+      newAgentRole = i;
+      renderNewAgent();
       if (window.cue) cue('tick');
+    }
+
+    function pickNewAgentProject(id) {
+      newAgentProject = id;
+      closeDockMenu('newAgentProjMenu');
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    // Every Project as a list, for the ones the line could not hold — the same @+ the instruction
+    // row uses, doing the same job.
+    function toggleNewAgentProjects() {
+      const box = document.getElementById('newAgentProjMenu');
+      if (!box.hidden) { box.hidden = true; return; }
+      box.innerHTML = projects.map(p =>
+        `<button class="menu-item" role="menuitemradio" aria-checked="${p.id === newAgentProject}" ` +
+        `onclick="pickNewAgentProject('${p.id}')">` +
+        `<span class="tick">${p.id === newAgentProject ? '✓' : ''}</span>` +
+        `@${escapeHtml(p.label)}</button>`).join('');
+      box.hidden = false;
     }
 
     function submitNewAgent() {
       if (!ws) return;
-      const projectId = document.getElementById('newAgentProject').value;
-      if (!projectId || !newAgentKind) { setNewAgentError('Pick a project first'); return; }
-      const from = paneOf(dockAddressed());
+      const role = newAgentRoles()[newAgentRole];
+      if (!newAgentProject || !newAgentKind || !role) { setNewAgentError('Pick a project first'); return; }
       const msg = {
-        type: 'start_agent', name: newAgentKind,
-        // Not asked for: a role is how the relay names an unnamed pane, and this dialog either has
-        // a name or wants the same kind of one the pane it was opened beside got.
-        role: (from && roleOf(from)) || (startOptions.roles || [])[0],
-        project_id: projectId, slot: slotFor(),
+        type: 'start_agent', name: newAgentKind, role: role.role,
+        project_id: newAgentProject, slot: slotFor(),
       };
-      // Where is not asked either: beside what this Project is already running, which is what a new
-      // member of an ongoing conversation wants. A Project with nothing live has nowhere to be
-      // beside, and gets a workspace of its own.
-      const beside = agents.find(a => a.project_id === projectId && a.workspace_id);
+      // Where is not asked: beside what this Project is already running, which is what a new member
+      // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
+      // gets a workspace of its own.
+      const beside = agents.find(a => a.project_id === newAgentProject && a.workspace_id);
       msg.placement = beside ? 'new_tab' : 'new_workspace';
       if (beside) msg.workspace_id = beside.workspace_id;
       // Omitted, not empty: the relay derives "Role N" from an absent label and refuses a blank one.
-      const label = document.getElementById('newAgentName').value.trim();
+      // A badge the relay has no role for is named here instead, or the pane would come up called
+      // "Agent 1" when what was asked for was an Arbitrator.
+      const typed = document.getElementById('newAgentName').value.trim();
+      const label = typed || (role.role === role.name.toLowerCase() ? '' : role.name);
       if (label) msg.label = label;
-      const prompt = document.getElementById('newAgentPrompt').value.trim();
-      // Joins this conversation when it comes up, and is told the first thing there — the same
+      // Joins this conversation when it comes up, and is opened with the role's prompt — the same
       // intent a respawn uses, which is what makes the new pane open on the thread.
-      startIntent = {conv: convViewId, prompt: prompt};
+      startIntent = {conv: convViewId, prompt: roleStarter(role)};
       showSpawnStatus(`Starting ${label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
       closeNewAgent();
@@ -849,6 +880,11 @@
         if (dockMenuOpen() && !e.target.closest('#chipMenu, .xfer-chip')) closeDockMenu('chipMenu');
         if (whoMenuOpen() && !e.target.closest('#whoMenu, .xfer-who-more')) closeDockMenu('whoMenu');
         if (optMenuOpen() && !e.target.closest('#optMenu, .xfer-chip.opts')) closeDockMenu('optMenu');
+        // The New agent dialog's own list, by the same rule — including a tap on the badge row it
+        // covers, which is a choice being made rather than the list being dismissed.
+        const projMenu = document.getElementById('newAgentProjMenu');
+        if (projMenu && !projMenu.hidden && !e.target.closest('#newAgentProjMenu, .badge-line'))
+          projMenu.hidden = true;
       }, true);
       const thread = document.getElementById('convViewThread');
       if (thread) thread.addEventListener('dblclick', e => {

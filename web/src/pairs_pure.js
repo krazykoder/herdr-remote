@@ -60,6 +60,28 @@
       { at: 'architect', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
     ];
 
+    // What a session is started as. Functionally an @ prompt like the ones above — it is text sent
+    // into a fresh pane — but chosen as a badge rather than tapped in as a chip, because it is the
+    // one instruction that is given before there is anything to talk about.
+    //
+    // `role` is what goes on the wire, and the relay knows only its own three; the rest are ways of
+    // working, not roles it can name a pane for, so they ride on `agent` and carry their name as the
+    // pane's label instead. `at` names the SHORTCUTS entry that opens the session — absent from the
+    // list means no opening text, which is where the three undefined ones sit until they are written.
+    // ponytail: prompts for reviewer/arbitrator/orchestrator are TBD; add them to SHORTCUTS under
+    // these `at` names and the badges pick them up with no change here.
+    const START_ROLES = [
+      { name: 'Architect', role: 'architect', at: 'architect' },
+      { name: 'Reviewer', role: 'reviewer', at: 'reviewer' },
+      { name: 'Arbitrator', role: 'agent', at: 'arbitrator' },
+      { name: 'Orchestrator', role: 'agent', at: 'orchestrator' },
+    ];
+
+    // The opening text a role badge carries, or '' while its prompt is still to be written.
+    function roleStarter(r) {
+      return ((SHORTCUTS.find(s => s.at === (r || {}).at) || {}).text || '').trim();
+    }
+
     // The terminal half of the same idea, and the opposite verb: an agent prompt is inserted into
     // the composer to be read before it is sent, a terminal command is the thing being sent.
     const TERM_KEY = 'herdr_term_shortcuts';
