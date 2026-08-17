@@ -2850,8 +2850,12 @@ const pickBubble = async (page, text) => {
 // Instructions attached to the send rather than written into the box. The default is the other
 // way round — the instruction on screen where it can be read — so the tests about lit chips say so.
 const attachMode = async page => {
-  await page.locator('#xferRow .xfer-chip.fill').click();
-  await expect(page.locator('#xferRow .xfer-chip.fill')).toHaveAttribute('aria-pressed', 'false');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const item = page.locator('#optMenu .menu-item', {hasText: 'Show inline prompt'});
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  await expect(page.locator('#optMenu')).toBeHidden();
 };
 
 const whoRow = page => page.locator('#xferRow .xfer-who');
@@ -3529,6 +3533,100 @@ test('the composer draws its own block cursor, and it is always there', async ({
   await expect(page.locator('#convInput')).toHaveCSS('caret-color', 'rgba(0, 0, 0, 0)');
 });
 
+// Past the field's max height it scrolls itself, and `autoGrow` measures by setting the height to
+// `auto` first — a reflow that puts `scrollTop` back to the top. Without a scroll of its own every
+// keystroke past the fold left the caret below the visible band, revealed only by scrolling by hand.
+test('typing past the fold keeps the caret on screen', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await input.click();
+  // Typed rather than filled: the bug is in what happens per keystroke.
+  for (let i = 0; i < 40; i++) await input.press(`Digit${i % 10}`), await input.press('Enter');
+  // The field is scrolling — otherwise this proves nothing.
+  expect(await input.evaluate(el => el.scrollHeight - el.clientHeight)).toBeGreaterThan(4);
+  const seen = await page.evaluate(() => {
+    const el = document.getElementById('convInput');
+    const cur = document.querySelector('#convGhost .cur');
+    return cur.offsetTop >= el.scrollTop &&
+      cur.offsetTop + cur.offsetHeight <= el.scrollTop + el.clientHeight + 1;
+  });
+  expect(seen).toBe(true);
+});
+
+// Off by default and on by asking: this box types filenames, flags and branch names into a
+// terminal, and a phone keyboard rewrites every one of them.
+test('autocorrect is a switch on the composer, and it is off to begin with', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await expect(input).toHaveAttribute('autocorrect', 'off');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const item = page.locator('#optMenu .menu-item', {hasText: 'Autocorrect'});
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await expect(input).toHaveAttribute('autocorrect', 'on');
+  await expect(input).toHaveAttribute('autocapitalize', 'sentences');
+  // A standing preference, not a mode of the moment: it survives the page.
+  await page.reload();
+  await expect(page.locator('#convInput')).toHaveAttribute('autocorrect', 'on');
+});
+
+// The harness relay runs without Projects, so what a start needs is seeded — the same two globals
+// the respawn tests seed. The addressed pane is given a Project and a workspace, because "beside
+// what this conversation is already running" is the placement the dialog answers for itself.
+const startable = page => page.evaluate(() => {
+  projects = [{id: 'p1', label: 'herdr-remote', host: 'local'},
+    {id: 'p2', label: 'charts', host: 'local'}];
+  startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect', 'coder']};
+  for (const a of agents) { a.project_id = 'p1'; a.workspace_id = 'w1'; }
+});
+
+test('a new agent is started from the membership list, into this conversation', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await startable(page);
+  await tapWire(page);
+  await page.locator('.xfer-who-more.list').click();
+  await page.locator('#whoMenu .menu-item', {hasText: 'New agent'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+  // Both defaults are read off the agent being talked to: its harness, and the Project it runs in.
+  await expect(page.locator('#newAgentKinds .xfer-chip.on')).toHaveText('claude');
+  await expect(page.locator('#newAgentProject')).toHaveValue('p1');
+  await page.locator('#newAgentKinds .xfer-chip', {hasText: 'codex'}).click();
+  await page.locator('#newAgentName').fill('Reviewer 9');
+  await page.locator('#newAgentPrompt').fill('take a look at the auth rewrite');
+  // The composer's own instructions, on the first thing the new session is told.
+  await page.locator(`#newAgentChips .xfer-chip:text-matches("^@review")`).click();
+  await expect(page.locator('#newAgentPrompt'))
+    .toHaveValue(/^take a look at the auth rewrite\nReview, edit, fix/);
+  await page.locator('#newAgentSubmit').click();
+  await expect(page.locator('#newAgentModal')).toBeHidden();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.name).toBe('codex');
+  expect(sent.project_id).toBe('p1');
+  expect(sent.label).toBe('Reviewer 9');
+  // Where is never asked: beside what the Project is already running.
+  expect(sent.placement).toBe('new_tab');
+  expect(sent.workspace_id).toBe('w1');
+
+  // It joins as a new member when the poll catches up, and is told the first thing there.
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
+  expect(await sentBody(page)).toContain('take a look at the auth rewrite\nReview, edit, fix');
+});
+
 test('a double tap on a bubble addresses the agent that wrote it', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3651,7 +3749,7 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     });
     await expect(page.locator('#termInput')).toHaveValue(/^keep this sentence\nReview, edit, fix/);
     // Nothing is lit, because the instruction is not waiting anywhere — it is in the box.
-    await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(1);  // the toggle
+    await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
     await page.locator('#convInput').fill('just this');
     await compose(page, 'just this');
     expect(await sentBody(page)).toBe('just this');

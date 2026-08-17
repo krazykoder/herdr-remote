@@ -162,7 +162,48 @@
       dockPicks = [];
       renderConvDock();
       if (dockMenuOpen()) openDockMenu();
+      if (optMenuOpen()) openOptMenu();
       if (window.cue) cue('tick');
+    }
+
+    // The keyboard's own correction — Settings' switch, reached from the composer it is about. One
+    // setting and not two: it is already applied to both composers from one key, and a second copy
+    // living beside this box would disagree with the one in Settings the moment either was used.
+    function toggleDockAutocorrect() {
+      setAutocorrect(!autocorrectOn());
+      if (optMenuOpen()) openOptMenu();
+      if (window.cue) cue('tick');
+    }
+
+    // Everything about how the composer behaves, in one list. Both are switches rather than one
+    // being a button and the other a menu item: they are the same kind of thing — a standing
+    // preference about this box — and a row of lone toggles says nothing about what each one is.
+    function openOptMenu() {
+      const box = document.getElementById('optMenu');
+      const opts = [
+        ['Show inline prompt', dockFill(), 'toggleDockFill()',
+          'Write an instruction into the message box instead of attaching it at the send'],
+        ['Autocorrect', autocorrectOn(), 'toggleDockAutocorrect()',
+          "Let the keyboard correct what you type. Off by default — this box types filenames and flags"],
+      ];
+      box.innerHTML = opts.map(([label, on, call, why]) =>
+        `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
+        `onclick="${call}" title="${escapeHtml(why)}">` +
+        `<span class="tick">${on ? '✓' : ''}</span>${escapeHtml(label)}</button>`).join('') +
+        `<button class="menu-item" role="menuitem" onclick="closeDockMenu('optMenu')">Done</button>`;
+      closeDockMenu('chipMenu');
+      closeDockMenu('whoMenu');
+      box.hidden = false;
+      syncDockHeight();
+    }
+
+    function optMenuOpen() {
+      const box = document.getElementById('optMenu');
+      return !!box && !box.hidden;
+    }
+
+    function toggleOptMenu() {
+      if (optMenuOpen()) closeDockMenu('optMenu'); else openOptMenu();
     }
 
     // The instruction is appended as its own line. A prompt is a new instruction, not an edit to
@@ -337,6 +378,31 @@
       input.parentElement.classList.toggle('on', document.activeElement === input);
     }
 
+    // The caret, kept on screen inside the field.
+    //
+    // Past its max height the field scrolls itself, and a browser scrolls a textarea to its own
+    // caret on input — but `autoGrow` re-measures by setting the height to `auto` first, and that
+    // reflow puts `scrollTop` back to the top on every keystroke. So writing past the fold left
+    // the caret below the visible band: the line being typed was off screen, and it came back only
+    // by scrolling down by hand to find it.
+    //
+    // Measured off the ghost, which already mirrors the text exactly and already marks the caret —
+    // there is nothing else in a textarea that says which pixel row the caret is on. Only from the
+    // events that move the caret, never from the field's own scroll: scrolling up to reread what
+    // you wrote must not be undone by the thing that follows the caret.
+    function keepConvCaret() {
+      const input = document.getElementById('convInput');
+      const ghost = document.getElementById('convGhost');
+      syncConvCursor();
+      if (!input || !ghost) return;
+      const cur = ghost.querySelector('.cur');
+      if (!cur) return;
+      const top = cur.offsetTop, bottom = top + cur.offsetHeight, view = input.clientHeight;
+      if (bottom > input.scrollTop + view) input.scrollTop = bottom - view;
+      else if (top < input.scrollTop) input.scrollTop = top;
+      ghost.scrollTop = input.scrollTop;
+    }
+
     // The caret moves for more reasons than a key going down: a held arrow repeats without ever
     // firing keyup, a drag selects while the mouse moves, and undo, autocorrect and dictation move
     // it with no key at all. So the block follows the *selection* rather than the events that might
@@ -347,12 +413,12 @@
     function watchConvCursor() {
       const input = document.getElementById('convInput');
       if (!input) return;
-      const sync = () => { if (document.activeElement === input) syncConvCursor(); };
+      const sync = () => { if (document.activeElement === input) keepConvCaret(); };
       document.addEventListener('selectionchange', sync);
       input.addEventListener('selectionchange', sync);
       // The fallback, for a browser that fires neither: a key that moves the caret is read after
       // the browser has moved it, not while it is still where it was.
-      input.addEventListener('keydown', () => requestAnimationFrame(syncConvCursor));
+      input.addEventListener('keydown', () => requestAnimationFrame(keepConvCaret));
     }
 
     function dockRowHtml(list, noSend) {
@@ -400,12 +466,11 @@
           `@${escapeHtml(s.at)}${at >= 0 && dockPicks.length > 1 ? `<sub>${at + 1}</sub>` : ''}` +
           `</button>`;
       }).join('');
-      // Which of the two a chip does, said by the control that changes it. Pressed is "into the
-      // box", because that is the mode where the instruction is visible.
-      const fillBtn = `<button class="xfer-chip fill${fill ? ' on' : ''}" onclick="toggleDockFill()" ` +
-        `aria-pressed="${fill}" title="${fill ? 'Instructions are written into the message' :
-          'Instructions are added to the message when it is sent'}" ` +
-        `aria-label="Write instructions into the message box">⤵</button>`;
+      // What a chip does is one of the composer's settings, not a mode of its own, so it is behind
+      // the settings list with the rest of them rather than beside the chips as a lone toggle.
+      const fillBtn = `<button class="xfer-chip opts" onclick="toggleOptMenu()" ` +
+        `aria-expanded="${optMenuOpen()}" ` +
+        `title="How the composer behaves" aria-label="How the composer behaves">⚙</button>`;
       const n = dockPicked.size;
       // Send belongs to the bubbles. With nothing picked there is nothing for it to carry and the
       // composer's own send is what fires, so the row would be offering a second button for a
@@ -454,6 +519,7 @@
         `<span class="tick">${!fill && dockPicks.includes(i) ? '✓' : ''}</span>` +
         `@${escapeHtml(s.at)} — ${escapeHtml(s.label)}</button>`).join('') +
         `<button class="menu-item" role="menuitem" onclick="closeDockMenu()">Done</button>`;
+      closeDockMenu('optMenu');
       box.hidden = false;
       syncDockHeight();
     }
@@ -477,10 +543,122 @@
           `<span class="tick">${on ? '✓' : ''}</span>` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
-      }).join('');
+      }).join('') +
+        // Last, under the membership: another agent in this conversation is one more of the same
+        // list, and the place that answers "who is in this" is the place to add to it.
+        (canStartFromConv()
+          ? `<button class="menu-item" role="menuitem" onclick="openNewAgent()">` +
+            `<span class="tick">+</span>New agent</button>`
+          : '');
       closeDockMenu('chipMenu');   // one list open at a time; two would cover the thread twice over
+      closeDockMenu('optMenu');
       box.hidden = false;
       syncDockHeight();
+    }
+
+    // --- New agent, from inside the conversation ---
+    //
+    // The membership list is where "who is in this conversation" is answered, so it is also where
+    // another one is added. The full Start session sheet asks where the session goes and what role
+    // it plays; from here both are already answered — beside what this conversation is running, in
+    // the Project it is running in — and what is left is a name, a harness and the first message.
+    let newAgentKind = '';
+
+    // The relay must be willing to start, and there must be a Project to start into.
+    function canStartFromConv() {
+      return !!(startOptions && (startOptions.agents || []).length && projects.length);
+    }
+
+    function openNewAgent() {
+      closeDockMenu();
+      if (!canStartFromConv()) { showToast('This relay does not start sessions.'); return; }
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const from = paneOf(dockAddressed());
+      document.getElementById('newAgentConv').textContent = conv ? conv.name : '';
+      // The harness the conversation is already being had in, because a second opinion on the same
+      // work is what this is usually for. Falls back to the first the relay will start.
+      const kinds = startOptions.agents || [];
+      newAgentKind = from && kinds.includes(from.agent) ? from.agent : kinds[0];
+      fillSelect('newAgentProject', projects.map(p => [p.id, p.label]));
+      // Spawned where the conversation lives. Not a rule — the picker is right there — but a
+      // Project chosen for you is one fewer question in a dialog that exists to be quick.
+      if (from && from.project_id && projects.some(p => p.id === from.project_id))
+        document.getElementById('newAgentProject').value = from.project_id;
+      document.getElementById('newAgentName').value = '';
+      document.getElementById('newAgentPrompt').value = '';
+      setNewAgentError('');
+      renderNewAgent();
+      document.getElementById('newAgentModal').style.display = 'block';
+      document.getElementById('newAgentName').focus();
+    }
+
+    function closeNewAgent() {
+      document.getElementById('newAgentModal').style.display = 'none';
+    }
+
+    function setNewAgentError(text) {
+      const el = document.getElementById('newAgentError');
+      el.textContent = text || '';
+      el.style.display = text ? 'block' : 'none';
+    }
+
+    // The two rows that are chosen from rather than typed into: which harness, and the standing
+    // instructions. Both are the composer's own controls, reused — an @ prompt is the same @ prompt
+    // whether it is written into a live pane or into the first thing a new one is told.
+    function renderNewAgent() {
+      document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || []).map(k =>
+        `<button class="xfer-chip${k === newAgentKind ? ' on' : ''}" onclick="pickNewAgentKind('${k}')" ` +
+        `aria-pressed="${k === newAgentKind}">${escapeHtml(k)}</button>`).join('');
+      document.getElementById('newAgentChips').innerHTML = SHORTCUTS.map((s, i) =>
+        `<button class="xfer-chip" onclick="addNewAgentPrompt(${i})" title="${escapeHtml(s.label)}" ` +
+        `aria-label="Add the instruction ${escapeHtml(s.label)}">@${escapeHtml(s.at)}</button>`).join('');
+    }
+
+    function pickNewAgentKind(kind) {
+      newAgentKind = kind;
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    // Appended on its own line, the same rule the composers use: an instruction spliced into the
+    // middle of the sentence being written is a different sentence.
+    function addNewAgentPrompt(i) {
+      const box = document.getElementById('newAgentPrompt');
+      const text = (SHORTCUTS[i] || {}).text;
+      if (!box || !text) return;
+      box.value = box.value.trim() ? `${box.value.replace(/\s+$/, '')}\n${text}` : text;
+      box.focus();
+      if (window.cue) cue('tick');
+    }
+
+    function submitNewAgent() {
+      if (!ws) return;
+      const projectId = document.getElementById('newAgentProject').value;
+      if (!projectId || !newAgentKind) { setNewAgentError('Pick a project first'); return; }
+      const from = paneOf(dockAddressed());
+      const msg = {
+        type: 'start_agent', name: newAgentKind,
+        // Not asked for: a role is how the relay names an unnamed pane, and this dialog either has
+        // a name or wants the same kind of one the pane it was opened beside got.
+        role: (from && roleOf(from)) || (startOptions.roles || [])[0],
+        project_id: projectId, slot: slotFor(),
+      };
+      // Where is not asked either: beside what this Project is already running, which is what a new
+      // member of an ongoing conversation wants. A Project with nothing live has nowhere to be
+      // beside, and gets a workspace of its own.
+      const beside = agents.find(a => a.project_id === projectId && a.workspace_id);
+      msg.placement = beside ? 'new_tab' : 'new_workspace';
+      if (beside) msg.workspace_id = beside.workspace_id;
+      // Omitted, not empty: the relay derives "Role N" from an absent label and refuses a blank one.
+      const label = document.getElementById('newAgentName').value.trim();
+      if (label) msg.label = label;
+      const prompt = document.getElementById('newAgentPrompt').value.trim();
+      // Joins this conversation when it comes up, and is told the first thing there — the same
+      // intent a respawn uses, which is what makes the new pane open on the thread.
+      startIntent = {conv: convViewId, prompt: prompt};
+      showSpawnStatus(`Starting ${label || newAgentKind}…`, 'busy');
+      ws.send(JSON.stringify(msg));
+      closeNewAgent();
     }
 
     // Chosen from the list rather than the row, so the list has said what it was opened to say and
@@ -544,7 +722,7 @@
     // Named for one list or, with nothing named, for both — the callers that are leaving the
     // conversation or have just sent something mean every list, not one of them.
     function closeDockMenu(id) {
-      const ids = id ? [id] : ['chipMenu', 'whoMenu'];
+      const ids = id ? [id] : ['chipMenu', 'whoMenu', 'optMenu'];
       for (const one of ids) {
         const box = document.getElementById(one);
         if (box && !box.hidden) { box.hidden = true; syncDockHeight(); }
@@ -670,6 +848,7 @@
         if (!e.target.closest) return;
         if (dockMenuOpen() && !e.target.closest('#chipMenu, .xfer-chip')) closeDockMenu('chipMenu');
         if (whoMenuOpen() && !e.target.closest('#whoMenu, .xfer-who-more')) closeDockMenu('whoMenu');
+        if (optMenuOpen() && !e.target.closest('#optMenu, .xfer-chip.opts')) closeDockMenu('optMenu');
       }, true);
       const thread = document.getElementById('convViewThread');
       if (thread) thread.addEventListener('dblclick', e => {

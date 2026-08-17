@@ -62,6 +62,10 @@
           convSetView(a, conv.id);
         }
         openTerminal(a.pane_id);
+        // Started with something to say to it. The send goes through the same path a typed message
+        // does, so the conversation records it as the user's — it is, and a first instruction that
+        // was missing from the thread would be a turn nobody could see the start of.
+        if (intent.prompt) sendTextTo(a.pane_id, intent.prompt);
         showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} joined "${conv.name}".`
           : `${a.label || a.agent || 'Session'} started.`, 'success');
         return;

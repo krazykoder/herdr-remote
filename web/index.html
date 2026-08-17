@@ -1292,6 +1292,7 @@
     }
 
     .start-field select,
+    .start-field textarea,
     .start-field input {
       padding: 10px;
       border-radius: 8px;
@@ -1305,6 +1306,11 @@
 
     .start-field select:disabled {
       opacity: 0.5;
+    }
+
+    .start-field textarea {
+      font-family: monospace;
+      resize: vertical;
     }
 
     #startSubmit:disabled {
@@ -4468,6 +4474,8 @@
     <div class="conv-dock" id="convDock">
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
+      <!-- How the composer behaves: standing switches, not a mode of the moment. -->
+      <div class="chip-menu" id="optMenu" role="menu" hidden></div>
       <!-- One bubble: who it goes to, what is added to it, and the message itself. Three stacked
            panels would read as three controls that happen to be near each other; this is one thing
            being addressed and written. Its border carries the chosen agent's colour. -->
@@ -4482,7 +4490,7 @@
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-              oninput="autoGrow(this); syncConvCursor(); stickConvLatest()" onkeydown="convInputKey(event)"
+              oninput="autoGrow(this); keepConvCaret(); stickConvLatest()" onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
               onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
               onscroll="syncConvCursor()"></textarea>
@@ -4974,6 +4982,43 @@
         <button id="convSubmit" onclick="saveNewConv()"
           style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
           conversation</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New agent, from inside a conversation. Deliberately not the Start session sheet: that one
+       asks where the session goes and what role it plays, and this one is the quick path — a name,
+       a harness, the Project it is spawned beside, and the first thing to say to it. Centred rather
+       than raised from the bottom, because it is opened from a menu in the middle of the screen and
+       a sheet sliding up under the composer would land under the keyboard. -->
+  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:120;">
+    <div onclick="closeNewAgent()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="New agent"
+      style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">New agent · <span id="newAgentConv"></span></span>
+        <button onclick="closeNewAgent()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
+            autocomplete="off" placeholder="Auto — Role N" /></label>
+        <!-- Chips, not a select: the harness is the one choice worth seeing all of at once, and it
+             is the same badge the panes wear. -->
+        <div class="start-field">Agent
+          <div id="newAgentKinds" class="xfer-row" style="display:flex;flex-wrap:wrap;gap:6px;padding:0"></div>
+        </div>
+        <label class="start-field">Project<select id="newAgentProject"></select></label>
+        <div class="start-field">First message
+          <textarea id="newAgentPrompt" rows="3" maxlength="16000" autocomplete="off" autocorrect="off"
+            autocapitalize="none" spellcheck="false"
+            placeholder="what it should start on — optional"></textarea>
+          <div id="newAgentChips" class="xfer-row" style="display:flex;flex-wrap:wrap;gap:6px;padding:0"></div>
+        </div>
+        <p id="newAgentError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="newAgentSubmit" onclick="submitNewAgent()"
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
+          agent</button>
       </div>
     </div>
   </div>
