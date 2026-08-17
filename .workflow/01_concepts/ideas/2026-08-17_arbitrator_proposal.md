@@ -45,7 +45,7 @@ Four ideas from that branch are worth keeping, and they are the only ones this p
 
 | Idea | Why it survives |
 |---|---|
-| **No lifecycle decision is ever inferred from terminal prose** | A closing message can be *located* mechanically; whether it means "accepted" cannot. The arbitrator states its decision as fields, not as sentences we regex. |
+| **The relay never infers a decision from terminal prose** | A closing message can be *located* mechanically; whether it means "accepted" cannot. Interpreting prose is the arbitrator's entire job — the rule is about who does it, and in what shape the answer comes back. See §5.1. |
 | **A record protocol has to earn its trust with a validator** | The decision record is schema-checked, path-fixed, size-capped. One bounded re-prompt on a malformed record, then it stops for a human. |
 | **The agent's `done` is a wake-up, not a result** | `done` means "go read the thing you were already expecting", never "the step passed". |
 | **Prompt text is data; argv, cwd and write scopes are not** | The arbitrator may compose the *words* a member receives. It may never supply a command, a path, or a process to start. |
@@ -88,6 +88,57 @@ The thing that must stay general is the **loop**, not the workflow. So:
   means it can be swapped, read, corrected mid-run, and paused by the same controls as everyone else.
 
 ## 5. Where judgement lives, and where it does not
+
+### 5.1 Who reads the prose
+
+Reading the summary, working out what should happen next, writing the instruction and choosing who
+receives it — that is the arbitrator's job and the whole point of the feature. It is doing what the
+person does today when they pick a message out of one pane and send it to another with an
+`@instruction` on top.
+
+The rule the orchestrator branch left us is narrower than it first sounds. It does not say prose goes
+uninterpreted; it says **the relay** does not interpret it, and the arbitrator's conclusion leaves as
+fields rather than as a paragraph something downstream has to grep.
+
+| Actor | Reads the prose | Interprets it | What it emits |
+|---|---|---|---|
+| `relay/pane_summary.py` | yes | no — counts gutter characters, returns a line range | line numbers |
+| relay, building the prompt | passes it through | no | the arbitrator's prompt |
+| **arbitrator agent** | **yes** | **yes — this is the job** | a decision record |
+| relay, executing | never re-reads it | no | `send_text` to `to` |
+
+Banned:
+
+```python
+if "looks good" in summary_text:
+    advance_gate()          # a sentence fragment moved the loop
+```
+
+Intended:
+
+```python
+prompt = render_prompt(scope, roster, summary_text, gates, budget)
+send_text(arbitrator_pane, prompt, submit=True)
+# …on the arbitrator's own `done`:
+decision = validate(read_record(path))            # gate ∈ gates, to ∈ live members
+send_text(decision["to"], render(decision["gate"], decision["instruction"]), submit=True)
+```
+
+`instruction` and `why` are free prose written by the arbitrator; the relay only delivers and
+displays them, never parses them. Only `gate` and `to` are checked, because those two are what move
+state — and both are enums over sets the session already fixed.
+
+`to` may be any enrolled member, **including the one whose turn just ended** — sending an agent back
+to its own work with a correction is a normal outcome, not a special case. It is not restricted to a
+pair partner; a pair is a two-pane view, while a session roster can be larger.
+
+This invariant is worth a test rather than a paragraph: a suite that feeds the executor a summary
+containing every phrase a prose parser would trip on (`accepted`, `LGTM`, `approved`) with no valid
+decision record present, and asserts that nothing was sent and no state moved. Reviewed against
+`main` on 2026-08-17 and it complies today by construction — `pane_summary.py` only locates ranges,
+and `finished_body` reaches nothing but a push body — so the test exists to keep it that way.
+
+### 5.2 Which signals are measured, and which are judged
 
 The four metrics the concept names split cleanly in two, and it matters:
 
@@ -238,7 +289,7 @@ Deliberate, and none of it optional:
 | Slice | Contents | Independently useful |
 |---|---|---|
 | **S0** | Turn capture, `conversation_log.py`, `turn` broadcast, `HERDR_CONV_LOG` | Yes — durable summaries for every client |
-| **S1** | `arbitrator.py` pure: schema, validation, budgets, prompt building, gate rendering + unit tests | Reviewable before anything can send |
+| **S1** | `arbitrator.py` pure: schema, validation, budgets, prompt building, gate rendering + unit tests, including the §5.1 guard that prose alone moves nothing | Reviewable before anything can send |
 | **S2** | `arbitrator_runner.py`, session start/pause/cancel, turn-end trigger, execution | The loop works, manual triggers only |
 | **S3** | Idle and runtime triggers | The loop runs unattended |
 | **S4** | FE: start dialog, session strip, `via: arbitrator` badge, decision detail | The loop is legible |
