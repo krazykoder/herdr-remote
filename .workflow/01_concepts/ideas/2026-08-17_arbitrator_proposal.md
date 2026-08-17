@@ -210,7 +210,7 @@ field and never an inference:
   "origin": "agent",
   "text": "…", "tail": "…", "range": [412, 430],
   "status_from": "working", "status_to": "idle",
-  "at": "2026-08-17T11:04:22Z"
+  "at": "2026-08-17T11:04:22Z", "at_src": "poll"
 }
 ```
 
@@ -262,7 +262,7 @@ sessions   id, conversation, scope, gates_json, budget_json, triggers_json,
            arbitrator_fingerprint, state, created_at, ended_at, ended_reason
 members    session_id, member_id, fingerprint(host, agent, cwd), label, role, enrolled_at
 entries    id, session_id, seq, from_member, kind, origin, text, tail,
-           range_start, range_end, status_from, status_to, at
+           range_start, range_end, status_from, status_to, at, at_src
 prompts    id, session_id, sequence, body, sent_at, trigger
 decisions  id, session_id, sequence, prompt_id, raw_path, valid, reject_reason,
            gate, to_member, instruction, why, ambiguity, complexity, stop, at
@@ -272,6 +272,44 @@ sends      id, session_id, decision_id, to_member, text, at
 Storage location is relay-owned (`$HERDR_LOG_DIR`), not the project's checkout. That drops the
 git-ignore precondition the orchestrator branch needed, keeps arbitration state out of product
 history by construction rather than by check, and means a session is not tied to one repository.
+
+#### Per-agent logs, in one table
+
+The model is the front end's: each participant has its own timestamped messages, and the joint view
+is those merged chronologically so it is clear what happened after what, and from whom. One table
+does not flatten that — every row carries `from_member`, so the separation is a column rather than a
+file, and both views are one query:
+
+```sql
+-- one agent's own log, exactly what a separate file would hold
+SELECT * FROM entries WHERE session_id=? AND from_member='member-2' ORDER BY at, seq;
+
+-- the merged three-way thread
+SELECT * FROM entries WHERE session_id=?                            ORDER BY at, seq;
+```
+
+The browser splits into a record per member because IndexedDB cannot order across stores — which is
+why `mergeEntries` in `web/src/conversation_pure.js` exists at all, walking the head of each member's
+array and taking the oldest. SQL orders for free, so per-agent tables would mean rewriting that merge
+in Python for nothing, and would make "everything between decision 6 and 7, whoever said it" the
+awkward query instead of the obvious one.
+
+**The merge key is the part that needs care**, and the front end already paid for the lesson: an
+entry's time is only as good as where it came from, so `convAt` prefers `at` over `seen` and
+`CONV_AT_RANK` grades the answer, because a backfilled scrollback entry stamped "now" sorts after the
+history it was prepended to. The backend has better clocks and the same obligation to say how good
+they are:
+
+| `at_src` | Accuracy | Where it comes from |
+|---|---|---|
+| `sent` | exact | the relay sent it — an arbitrated instruction, a prompt from the app |
+| `poll` | within one poll interval | an end-state transition the relay observed |
+| `backfill` | ordering only | pane scrollback predating the session |
+
+`seq` is a monotonic per-session counter assigned at insert, and the sort is always `ORDER BY at,
+seq`: `at` is when it happened, `seq` is the order the relay saw it, and the second only ever breaks
+ties in the first. Two members whose turns end inside one poll cycle share an `at` and would
+otherwise order arbitrarily.
 
 ### 6.3 Ground truth, on demand
 
