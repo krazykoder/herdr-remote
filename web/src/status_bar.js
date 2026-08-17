@@ -196,7 +196,14 @@
       // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
-      const panes = panesOn ? agents.filter(a => a.agent) : [];
+      // By name, because a reader looking for one pane's row scans for its name and the snapshot's
+      // own order is whatever herdr listed. Shared stays under them all: it is what the named rows
+      // did not account for, which only reads as that when it comes last.
+      const panes = panesOn
+        ? agents.filter(a => a.agent)
+          .sort((x, y) => String(paneLabel(x)).localeCompare(String(paneLabel(y)),
+            undefined, {sensitivity: 'base', numeric: true}))
+        : [];
       // What the pane rows cannot account for: snapshots and pushes name no pane, and a pane that
       // has exited keeps its bytes but loses its row. Without this the split silently fails to add
       // up to the total above it, which reads as one of the two numbers being wrong.
@@ -216,7 +223,10 @@
         // One grid for the header and all three rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
-        rows.style.gridTemplateColumns = `minmax(110px, 1fr) repeat(${buckets.length}, minmax(46px, 1fr))`;
+        // The name column takes exactly what the longest name and its badge need — a pane called
+        // "Architect 1 [claude]" is not worth abbreviating, and the buckets are the half that can
+        // afford to scroll under it.
+        rows.style.gridTemplateColumns = `max-content repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -684,7 +694,7 @@
         renderAgentList(agents);
         return;
       }
-      let html = hoistHtml(agents) + layoutHtml(agents);
+      let html = agentKindsHtml(agents) + hoistHtml(ofKind(agents)) + layoutHtml(agents);
       if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }
@@ -692,7 +702,7 @@
     // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
-      let html = hoistHtml(agents);
+      let html = agentKindsHtml(agents) + hoistHtml(ofKind(agents));
       html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
@@ -705,7 +715,7 @@
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
-        const rest = agents.filter(a => !hoisted(a));
+        const rest = ofKind(agents).filter(a => !hoisted(a));
         if (rest.length) html += section('Agents', rest);
       } else {
         if (startOptions) {
@@ -720,7 +730,8 @@
         // Terminals below it kept a heading. It gets a separator of its own, saying why it is
         // empty in the header rather than under it.
         const mine = agents.filter(a => a.project_id === activeProject);
-        html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
+        html += ofKind(mine).length ? layoutHtml(mine)
+          : section('Agents', [], agentKind ? `No ${agentKind} sessions` : 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
     }
@@ -751,6 +762,36 @@
     ${start}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
+    }
+
+    // Which harness the landing page is showing, or '' for all of them. A view, not a setting:
+    // it is answered by what is running right now, so it is not kept across a reload — a filter
+    // that survives a restart is a page that looks empty for a reason nobody remembers.
+    let agentKind = '';
+
+    // The harnesses in this list, as the badges they wear everywhere else. Only when there is more
+    // than one: a machine running nothing but claude has no choice to offer, and a lone badge that
+    // filters to what is already on screen is a control that does nothing.
+    function agentKindsHtml(list) {
+      const kinds = [...new Set(list.map(a => a.agent).filter(Boolean))].sort();
+      // The last pane of a kind exiting takes its filter with it, rather than leaving the page
+      // filtered to a harness that is no longer here.
+      if (agentKind && !kinds.includes(agentKind)) agentKind = '';
+      if (kinds.length < 2) return '';
+      return `<div class="chip-strip"><span class="chip-label">Agents</span>` +
+        kinds.map(k => badgeHtml(k, k === agentKind, `pickAgentKind('${k}')`,
+          {agent: k, title: `Show only the ${k} sessions`})).join('') + `</div>`;
+    }
+
+    function ofKind(list) {
+      return agentKind ? list.filter(a => a.agent === agentKind) : list;
+    }
+
+    // Tapping the lit badge takes the filter off, the same as every other badge in this app.
+    function pickAgentKind(k) {
+      agentKind = agentKind === k ? '' : k;
+      renderBody();
+      if (window.cue) cue('tick');
     }
 
     // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
@@ -799,7 +840,9 @@
       }
       // Agent list (filtered). Only what the hoist took is dropped here, so a done pane appears
       // exactly once — under Done, where it belongs — instead of being lifted into Needs you.
-      let filtered = list.filter(a => !hoisted(a));
+      // The harness filter narrows the cards and never the Spaces and Tabs above them: those are
+      // navigation, and a strip that shed a tab because of a filter would be a second filter.
+      let filtered = ofKind(list).filter(a => !hoisted(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
@@ -812,19 +855,24 @@
     }
 
     function renderAgentList(list) {
+      const strip = agentKindsHtml(list);
+      const shown = ofKind(list);
       // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
       // sections below get everything else. Blocked still keeps a section for the acked ones —
       // a pane you have seen is blocked is not news, but it is still stuck.
-      const rest = list.filter(a => !hoisted(a));
+      const rest = shown.filter(a => !hoisted(a));
       const blocked = rest.filter(a => a.status === 'blocked');
       const working = rest.filter(a => a.status === 'working');
       const done = rest.filter(a => a.status === 'done');
       const idle = rest.filter(a => a.status === 'idle' || a.status === 'unknown');
-      let html = hoistHtml(list);
+      let html = strip + hoistHtml(shown);
       if (blocked.length) html += section('Blocked', blocked);
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);
       if (idle.length) html += section('Idle', idle);
+      // A filter that matches nothing says so under its own strip, rather than dropping the page
+      // to a bare line with no way back to the rest of the sessions.
+      if (!shown.length && list.length) html += section('Agents', [], `No ${agentKind} sessions`);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }

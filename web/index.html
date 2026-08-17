@@ -640,6 +640,7 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
+      row-gap: 6px;
       margin: 0 0 8px;
       font-size: 0.75rem;
       color: var(--muted);
@@ -710,13 +711,12 @@
       background: color-mix(in srgb, var(--green) 8%, var(--bg));
     }
 
+    /* Named in full. The column is sized to the longest of them (see renderBandwidth), so the
+       buckets scroll under this rather than the name being cut to fit beside them. */
     .pane-bandwidth-name {
       position: sticky;
       left: 0;
       z-index: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
       text-align: left;
       color: var(--text);
@@ -726,7 +726,11 @@
     .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
     .pane-bandwidth-ping { color: var(--muted); font-size: 0.56rem; }
 
-    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; }
+    /* The title owns the first line, and everything that is a control drops to the second. Sharing
+       one line put four chips and a running total behind a heading that already wraps on a phone. */
+    #bandwidthTitle { flex: 1 1 100%; }
+
+    .bandwidth-metrics { display: inline-flex; gap: 3px; }
     .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
     .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
     #bandwidthPanes { margin-left: auto; }

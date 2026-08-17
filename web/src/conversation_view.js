@@ -1,8 +1,14 @@
     // --- Conversation view ---
-    // The same pane read as a thread. Which view a pane was last read in is remembered per pane:
-    // a pane being watched as a terminal and one being followed as a thread are two different
-    // jobs, and a global switch would keep answering the wrong one.
+    // The same pane read as a thread. Rows or thread is one switch for the whole app: a reader who
+    // is following threads means it for the next pane too, and remembering it per pane meant every
+    // pane opened in whatever mode it happened to be left in a week ago — including the pane a
+    // conversation's own 🖥 button opens, which arrived as a thread on top of the thread it was
+    // opened from.
+    //
+    // *Which* conversation a pane is showing stays per pane. That is a fact about the pane, not a
+    // preference about how to read.
     const CONV_VIEW_KEY = 'herdr_conv_view';
+    const CONV_MODE_KEY = 'herdr_conv_mode';
 
     // Set by a pane switch, consumed by the next render that completes. `stick` below is measured
     // against the box as it stands, and on a switch that box still holds the thread you left — so
@@ -18,9 +24,22 @@
       } catch (e) { return {}; }
     }
 
+    // Off until it has been turned on, except for a browser that was already reading threads before
+    // the switch became one: a pane filed under the old per-pane key stands in for the answer that
+    // was never stored.
+    function convMode() {
+      const v = localStorage.getItem(CONV_MODE_KEY);
+      return v === null ? Object.keys(convViews()).length > 0 : v === 'on';
+    }
+
+    function setConvMode(on) {
+      try { localStorage.setItem(CONV_MODE_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
+    // A pane with nothing recorded has no thread to be in, whatever the switch says.
     function convViewOn(a) {
-      const key = convMemberKey(a);
-      return !!(key && convViews()[key]);
+      return convMode() && !!convsForPane(a).length;
     }
 
     // Which of a pane's conversations its thread is showing. The stored value is the conversation's
@@ -71,11 +90,18 @@
       convSetView(to, conv.id);
     }
 
+    // The switch itself, thrown for every pane at once. Which conversation this one lands on is
+    // still its own: turning the thread on here names the record the fallback would have picked, so
+    // the pane keeps it when the reader comes back to it under a different one.
     function toggleConvView() {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
-      const on = convViewOn(a), conv = on ? null : convViewConv(a);
-      convSetView(a, on ? '' : ((conv && conv.id) || 1));
+      const on = convViewOn(a);
+      setConvMode(!on);
+      if (!on) {
+        const conv = convViewConv(a);
+        if (conv) convSetView(a, conv.id);
+      }
       renderConvBar();
       if (window.cue) cue('page');
     }

@@ -55,6 +55,8 @@
       { at: 'test-min', label: 'Test, minimally',
         text: 'Dont rerun passing tests. Only tests relevant to code changes you make or ' +
           'essential for you.' },
+      { at: 'no-test', label: 'No tests, just finish',
+        text: 'Dont test, just finish implementation.' },
       { at: 'status-now', label: 'Status of what was asked',
         text: 'At the end also list out the features requested with brief status of each.' },
       { at: 'architect', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
