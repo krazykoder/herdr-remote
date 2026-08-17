@@ -3935,7 +3935,7 @@ test('a double tap on a bubble addresses the agent that wrote it', async ({page}
   expect((await sentText(page)).map(m => m.pane_id)).toEqual([third]);
 });
 
-test('a double tap on the picked message\'s own bubble changes nothing', async ({page}) => {
+test('a double tap on the picked message\'s own bubble addresses its author', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -3945,10 +3945,11 @@ test('a double tap on the picked message\'s own bubble changes nothing', async (
   await page.evaluate(() => setDockMru(false));
   await whoRow(page).filter({hasText: 'amp'}).click();
   await pickBubble(page, 'the other pane spoke first');           // scratch's
-  // scratch cannot receive what scratch said, so the gesture has nothing to do — and must not
-  // quietly move the target somewhere else on the way to doing nothing.
+  // Handing an agent its own words back is a real thing to want — "look at this again" — so the
+  // author is a target like any other, and the gesture that says "talk to whoever wrote this"
+  // means the same thing when the writer is also the pick.
   await page.locator('#convViewThread .conv-msg', {hasText: 'the other pane spoke first'}).dblclick();
-  await expect(litWho(page)).toHaveText(/amp/);
+  await expect(litWho(page)).toHaveText(/scratch/);
 });
 
 test('the pane\'s own thread is not addressed by a double tap', async ({page}) => {
