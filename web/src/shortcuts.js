@@ -516,10 +516,13 @@
         && projects.some(p => p.id === spawn.project_id) && respawnRole(spawn));
     }
 
-    // Continuing is adding a member, and a respawn is a **new** one — a new pane means a new
-    // convMemberKey, which means a new transcript (D3). That is what stops a recycled pane id
-    // inheriting a dead session's words, and the joint view's time merge is what makes the two
-    // read as one thread across the seam.
+    // A restart replaces the member it was asked for rather than joining beside it: same name,
+    // same row, and the dead session's transcript copied under the new pane's key so the thread
+    // reads on across the seam. D3 said a respawn is always a new member — that rule was about a
+    // *recycled pane id* silently inheriting a dead session's words, which this is not: the reader
+    // picked the member and asked for it. Where the two do meet — a replacement landing on a key
+    // some other conversation still records under — convContinueTranscript refuses the copy and
+    // this falls back to D3's new member.
     // What the first tap says, because the second one starts a real session on a real host and a
     // drain cannot carry a sentence. The relay takes a new session's cwd from the Project and
     // never from the client, so the recorded cwd is *shown* rather than sent: if the Project has
