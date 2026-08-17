@@ -65,9 +65,7 @@ def db_path():
     explicit = os.environ.get("HERDR_ARBITER_DB")
     if explicit:
         return explicit
-    root = Path(__file__).resolve().parents[1]
-    state = os.environ.get("HERDR_STATE_DIR") or str(root / ".herdr-remote")
-    return os.path.join(state, "arbitration.sqlite3")
+    return str(Path(__file__).resolve().parents[1] / ".herdr-remote" / "arbitration.sqlite3")
 
 
 def open_ro(path):

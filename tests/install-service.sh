@@ -96,7 +96,6 @@ run_install() {
         HERDR_INSTALL_SKIP_WEBSOCKET_SMOKE=1 \
         HERDR_INSTALL_SETTLE_SECONDS=0 \
         HERDR_INSTALL_SERVICE_DELAY=0 \
-        HERDR_STATE_DIR="$home/herdr-state" \
         HERDR_TEST_PGREP="${HERDR_TEST_PGREP:-0}" \
         bash "$ROOT/relay/install-service.sh"
 }
@@ -110,7 +109,6 @@ run_uninstall() {
         HERDR_TEST_CALLS="$CALLS" \
         HERDR_INSTALL_OS="$os" \
         HERDR_INSTALL_SKIP_CLOUDFLARED=1 \
-        HERDR_STATE_DIR="$home/herdr-state" \
         bash "$ROOT/relay/install-service.sh" --uninstall
 }
 
@@ -133,18 +131,18 @@ run_install macos "$MAC_HOME" $'yy123456:ABC_def\n\nyn' > "$TMP/mac-new.log" || 
 }
 assert_file "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.relay.plist"
 assert_file "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.telegram.plist"
-assert_file "$MAC_HOME/herdr-state/secrets.env"
+assert_file "$MAC_HOME/.config/herdr-remote/secrets.env"
 assert_contains "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.telegram.plist" 'herdr_telegram.py'
 assert_contains "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.relay.plist" 'secrets.env'
 assert_not_contains "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.telegram.plist" '123456:ABC_def'
-python3 -c 'import os, stat, sys; mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode); raise SystemExit(0 if mode == 0o600 else 1)' "$MAC_HOME/herdr-state/secrets.env"
+python3 -c 'import os, stat, sys; mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode); raise SystemExit(0 if mode == 0o600 else 1)' "$MAC_HOME/.config/herdr-remote/secrets.env"
 assert_contains "$TMP/mac-new.log" 'Telegram bot verified as @installer_test_bot'
 
 run_install macos "$MAC_HOME" 'yyyyn' > "$TMP/mac-retain.log" || {
     cat "$TMP/mac-retain.log"
     exit 1
 }
-assert_contains "$MAC_HOME/herdr-state/secrets.env" 'HERDR_TG_CHAT_ID=123456'
+assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_TG_CHAT_ID=123456'
 assert_contains "$TMP/mac-retain.log" 'Existing destination: 123456'
 
 run_install macos "$MAC_HOME" 'nn' > "$TMP/mac-disable.log" || {
@@ -155,7 +153,7 @@ run_install macos "$MAC_HOME" 'nn' > "$TMP/mac-disable.log" || {
     echo "Telegram LaunchAgent was not removed" >&2
     exit 1
 }
-assert_contains "$MAC_HOME/herdr-state/secrets.env" 'HERDR_TG_TOKEN=123456:ABC_def'
+assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_TG_TOKEN=123456:ABC_def'
 
 run_install macos "$MAC_HOME" 'nn' > "$TMP/mac-still-disabled.log" || {
     cat "$TMP/mac-still-disabled.log"
@@ -190,7 +188,7 @@ run_uninstall linux "$LINUX_HOME" > "$TMP/linux-uninstall.log"
     echo "Telegram unit was not removed by uninstall" >&2
     exit 1
 }
-assert_file "$LINUX_HOME/herdr-state/secrets.env"
+assert_file "$LINUX_HOME/.config/herdr-remote/secrets.env"
 assert_contains "$TMP/linux-uninstall.log" 'Configuration and secrets preserved'
 
 CONFLICT_HOME="$TMP/conflict-home"
@@ -206,12 +204,12 @@ if run_install linux "$INVALID_HOME" $'yybad-token\n' > "$TMP/invalid.log" 2>&1;
     exit 1
 fi
 assert_contains "$TMP/invalid.log" 'Invalid BotFather token format'
-[ ! -f "$INVALID_HOME/herdr-state/secrets.env" ] || {
+[ ! -f "$INVALID_HOME/.config/herdr-remote/secrets.env" ] || {
     echo "invalid credentials were persisted" >&2
     exit 1
 }
 
-assert_contains "$MAC_HOME/herdr-state/secrets.env" 'HERDR_RELAY_TOKEN='
+assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TOKEN='
 assert_contains "$TMP/calls.log" 'launchctl bootstrap'
 assert_contains "$TMP/calls.log" 'systemctl --user enable herdr-telegram.service'
 

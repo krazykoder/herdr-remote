@@ -13,7 +13,7 @@ arrives there is no way to tell which link failed — the phone never subscribed
 wrong, or Apple rejected it. This exercises the same path the relay uses and prints the push
 service's own answer per device.
 
-Reads the keys from the environment, falling back to the project's .herdr-remote/secrets.env so it
+Reads the keys from the environment, falling back to ~/.config/herdr-remote/secrets.env so it
 behaves the same in a plain shell as under the launchd service. Nothing secret is printed.
 """
 
@@ -22,10 +22,10 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-STATE = Path(os.environ.get("HERDR_STATE_DIR") or ROOT / ".herdr-remote")
-SECRETS = STATE / "secrets.env"
-SUBS = STATE / "push_subs.json"
+CONFIG = Path.home() / ".config" / "herdr-remote"
+LOGS = Path.home() / "Library" / "Logs" / "herdr-remote"
+SECRETS = CONFIG / "secrets.env"
+SUBS = LOGS / "push_subs.json"
 
 
 def load_env():

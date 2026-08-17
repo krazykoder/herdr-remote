@@ -2,10 +2,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_DIR="${HERDR_STATE_DIR:-$PROJECT_DIR/.herdr-remote}"
-CONFIG_FILE="$STATE_DIR/config.env"
-SECRETS_FILE="$STATE_DIR/secrets.env"
+CONFIG_DIR="$HOME/.config/herdr-remote"
+CONFIG_FILE="$CONFIG_DIR/config.env"
+SECRETS_FILE="$CONFIG_DIR/secrets.env"
 WS_PORT="${HERDR_RELAY_PORT:-8375}"
 
 RELAY_PID=""
@@ -40,8 +39,6 @@ set -a
 # shellcheck disable=SC1090
 [ -f "$SECRETS_FILE" ] && source "$SECRETS_FILE"
 set +a
-export HERDR_STATE_DIR="$STATE_DIR"
-
 # 1. Start relay
 # Reclaim the ports from a previous run of this script. A holder that is not our relay is still a
 # hard error — see relay/lib-ports.sh for why that distinction is the whole point.

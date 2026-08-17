@@ -6,8 +6,7 @@ LABEL_TUNNEL="com.herdr-remote.tunnel"
 LABEL_TELEGRAM="com.herdr-remote.telegram"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_DIR="${HERDR_STATE_DIR:-$PROJECT_DIR/.herdr-remote}"
-CONFIG_DIR="$STATE_DIR"
+CONFIG_DIR="$HOME/.config/herdr-remote"
 CONFIG_FILE="$CONFIG_DIR/config.env"
 SECRETS_FILE="$CONFIG_DIR/secrets.env"
 
@@ -44,8 +43,8 @@ WS_PORT="${HERDR_RELAY_PORT:-8375}"
 
 # --- Project state ---
 
-LOG_DIR="$STATE_DIR"
-mkdir -p "$STATE_DIR"
+LOG_DIR="$HOME/Library/Logs/herdr-remote"
+mkdir -p "$CONFIG_DIR" "$LOG_DIR"
 
 # --- Detect binaries ---
 
@@ -783,7 +782,6 @@ HERDR_EXTERNAL_PORT=${HERDR_EXTERNAL_PORT:-}
 HERDR_LAN_OPEN=${HERDR_LAN_OPEN:-}
 HERDR_LAN_BIND=${HERDR_LAN_BIND:-}
 HERDR_BIN=${HERDR_PATH:-herdr}
-HERDR_STATE_DIR=$STATE_DIR
 HERDR_TUNNEL_MODE=$CONFIG_TUNNEL_MODE
 HERDR_TUNNEL_NAME=${TUNNEL_NAME:-}
 HERDR_TUNNEL_HOSTNAME=${TUNNEL_HOSTNAME:-}

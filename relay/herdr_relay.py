@@ -51,8 +51,7 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from logging.handlers import RotatingFileHandler
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-STATE_DIR = os.environ.get("HERDR_STATE_DIR") or os.path.join(PROJECT_ROOT, ".herdr-remote")
-LOG_DIR = STATE_DIR
+LOG_DIR = os.path.expanduser("~/Library/Logs/herdr-remote")
 os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "relay.log")
 AUDIT_FILE = os.path.join(LOG_DIR, "audit.log")
@@ -106,7 +105,8 @@ PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 # The durable conversation record. Off by default: it keeps what agents said on disk, which is a
 # decision about the user's data and not one to make for them. On, it is written once per turn end
 # and read back by `conv_log` — and later by an arbitrator deciding what happens next.
-CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(LOG_DIR, "arbitration.sqlite3")
+CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(
+    PROJECT_ROOT, ".herdr-remote", "arbitration.sqlite3")
 conv_log = None
 if os.environ.get("HERDR_CONV_LOG", "") == "1":
     try:
