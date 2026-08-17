@@ -105,6 +105,10 @@
       // old terminal is gone, but its local thread is continued under this new pane's key.
       if (intent && intent.conv) {
         const next = convMemberKey(a);
+        // The pair goes with it. A restart is the same colleague in a new pane, and the pair record
+        // names panes by id — so without this the strip in the surviving partner reported the pair
+        // stale and dropped the switch, the name and the badge.
+        if (intent.replace) repointPair(convKeyPaneId(intent.replace), a);
         // The copy happens before the index is read, and the index is read again after it. The
         // recorder writes members' previews on every poll, so an index loaded before an await and
         // saved after it puts back a snapshot taken seconds ago — and the copy is the one step here

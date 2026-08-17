@@ -380,6 +380,16 @@
       return a ? JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']) : '';
     }
 
+    // The pane a member key was made from. Only the pane_id is recoverable as a fact about a live
+    // terminal — the rest of the key describes a session that has usually ended by the time anyone
+    // asks. Used by a restart, to find what the dead pane was still named in.
+    function convKeyPaneId(key) {
+      try {
+        const parts = JSON.parse(key);
+        return Array.isArray(parts) ? String(parts[1] || '') : '';
+      } catch (e) { return ''; }
+    }
+
     // When a conversation last had anything said in it, across its members. `convNoteCounts` stamps
     // each member as it records, so this is the record's own clock and not the browser's. Asked by
     // the landing list, by the tab strip's order, and by which thread a pane opens on.
@@ -581,6 +591,76 @@
         const next = `${base} (copy${n > 1 ? ' ' + n : ''})`.slice(0, 64);
         if (!used.has(next)) return next;
       }
+    }
+
+    // Total storage footprint and statistics per conversation across index and transcripts.
+    function calcConvAnalytics(convs, recordsMap) {
+      const list = convs || [];
+      const records = (recordsMap && typeof recordsMap.get === 'function')
+        ? recordsMap
+        : new Map(Object.entries(recordsMap || {}));
+      return list.map(c => {
+        const members = c.members || [];
+        let msgCount = 0;
+        let transcriptBytes = 0;
+        const seenKeys = new Set();
+        for (const m of members) {
+          if (!m || !m.key || seenKeys.has(m.key)) continue;
+          seenKeys.add(m.key);
+          const rec = records.get(m.key);
+          if (rec) {
+            const entries = rec.entries || [];
+            msgCount += entries.length;
+            try {
+              transcriptBytes += JSON.stringify(rec).length;
+            } catch (e) { /* ignore */ }
+          }
+        }
+        let indexBytes = 0;
+        try {
+          indexBytes = JSON.stringify(c).length;
+        } catch (e) { /* ignore */ }
+
+        const totalBytes = transcriptBytes + indexBytes;
+        const sizeMb = totalBytes / (1024 * 1024);
+
+        return {
+          id: c.id,
+          name: c.name || 'Untitled',
+          auto: !!c.auto,
+          panes: members.length,
+          msgCount: msgCount,
+          totalBytes: totalBytes,
+          sizeMb: sizeMb,
+          touched: c.touched || 0,
+        };
+      });
+    }
+
+    function sortConvAnalyticsRows(rows, col, dir) {
+      const d = dir === 'asc' ? 1 : -1;
+      const list = (rows || []).slice();
+      return list.sort((a, b) => {
+        if (col === 'name') {
+          return d * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true });
+        }
+        if (col === 'msgCount') {
+          return d * ((a.msgCount || 0) - (b.msgCount || 0));
+        }
+        if (col === 'panes') {
+          return d * ((a.panes || 0) - (b.panes || 0));
+        }
+        return d * ((a.totalBytes || 0) - (b.totalBytes || 0));
+      });
+    }
+
+    function formatConvSize(bytes) {
+      const b = bytes || 0;
+      if (b === 0) return '0 MB';
+      const mb = b / (1024 * 1024);
+      if (mb >= 0.01) return mb.toFixed(2) + ' MB';
+      if (b < 1024) return b + ' B';
+      return (b / 1024).toFixed(1) + ' KB';
     }
     // --- Conversation recorder (pure) --- end
 

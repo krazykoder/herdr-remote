@@ -41,6 +41,7 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEnt
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
+               'calcConvAnalytics', 'sortConvAnalyticsRows', 'formatConvSize',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -51,6 +52,7 @@ const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessa
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
+       calcConvAnalytics, sortConvAnalyticsRows, formatConvSize,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -817,3 +819,88 @@ test('a member with nothing recorded yet contributes nothing and breaks nothing'
   assert.deepStrictEqual(texts(mergeEntries(recs)), ['b1']);
   assert.deepStrictEqual(texts(mergeEntries([])), []);
 });
+
+test('calcConvAnalytics accurately aggregates message count, panes, and total size', () => {
+  const convs = [
+    {
+      id: 'c1',
+      name: 'Alpha Plan',
+      auto: false,
+      members: [
+        { key: 'm1', pane_id: 'w1:p1', agent: 'claude' },
+        { key: 'm2', pane_id: 'w1:p2', agent: 'codex' },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Beta Review',
+      auto: true,
+      members: [
+        { key: 'm3', pane_id: 'w1:p3', agent: 'pi' },
+      ],
+    },
+  ];
+
+  const recordsMap = new Map([
+    ['m1', { key: 'm1', entries: [{ who: 'user', text: 'hi' }, { who: 'agent', text: 'hello' }] }],
+    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'working on it' }] }],
+    ['m3', { key: 'm3', entries: [] }],
+  ]);
+
+  const stats = calcConvAnalytics(convs, recordsMap);
+  assert.strictEqual(stats.length, 2);
+
+  // c1: 2 members/panes, 2 + 1 = 3 messages, totalBytes > 0
+  assert.strictEqual(stats[0].id, 'c1');
+  assert.strictEqual(stats[0].name, 'Alpha Plan');
+  assert.strictEqual(stats[0].auto, false);
+  assert.strictEqual(stats[0].panes, 2);
+  assert.strictEqual(stats[0].msgCount, 3);
+  assert.ok(stats[0].totalBytes > 0);
+  assert.ok(stats[0].sizeMb > 0);
+
+  // c2: 1 member, 0 messages
+  assert.strictEqual(stats[1].id, 'c2');
+  assert.strictEqual(stats[1].name, 'Beta Review');
+  assert.strictEqual(stats[1].auto, true);
+  assert.strictEqual(stats[1].panes, 1);
+  assert.strictEqual(stats[1].msgCount, 0);
+  assert.ok(stats[1].totalBytes > 0);
+});
+
+test('sortConvAnalyticsRows sorts rows by column and direction', () => {
+  const rows = [
+    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, totalBytes: 5000 },
+    { id: '2', name: 'Beta', msgCount: 50, panes: 3, totalBytes: 20000 },
+    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, totalBytes: 1000 },
+  ];
+
+  // Sort by size (totalBytes) descending
+  const bySizeDesc = sortConvAnalyticsRows(rows, 'size', 'desc');
+  assert.deepStrictEqual(bySizeDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by size ascending
+  const bySizeAsc = sortConvAnalyticsRows(rows, 'size', 'asc');
+  assert.deepStrictEqual(bySizeAsc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
+
+  // Sort by name ascending
+  const byNameAsc = sortConvAnalyticsRows(rows, 'name', 'asc');
+  assert.deepStrictEqual(byNameAsc.map(r => r.name), ['Alpha', 'Beta', 'Zeta']);
+
+  // Sort by msgCount descending
+  const byMsgDesc = sortConvAnalyticsRows(rows, 'msgCount', 'desc');
+  assert.deepStrictEqual(byMsgDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by panes descending
+  const byPanesDesc = sortConvAnalyticsRows(rows, 'panes', 'desc');
+  assert.deepStrictEqual(byPanesDesc.map(r => r.name), ['Beta', 'Alpha', 'Zeta']);
+});
+
+test('formatConvSize formats bytes to MB, KB, and B correctly', () => {
+  assert.strictEqual(formatConvSize(0), '0 MB');
+  assert.strictEqual(formatConvSize(512), '512 B');
+  assert.strictEqual(formatConvSize(2048), '2.0 KB');
+  assert.strictEqual(formatConvSize(1024 * 1024), '1.00 MB');
+  assert.strictEqual(formatConvSize(1024 * 1024 * 3.5), '3.50 MB');
+});
+

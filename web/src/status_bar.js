@@ -141,6 +141,7 @@
         }).join('');
       }
       renderBandwidth();
+      renderConvAnalytics();
     }
 
     function formatBandwidth(bytes) {
@@ -290,6 +291,127 @@
         // number below zero would be the panel reporting a rounding difference as traffic.
         buckets.forEach((b, j) => { chips[j].textContent = b.empty ? '' :
           formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j])); });
+      }
+    }
+
+    // --- Conversation storage analytics ---
+    let convAnalyticsSort = { col: 'size', dir: 'desc' };
+    let convAnalyticsData = [];
+
+    async function fetchConvAnalytics() {
+      const convs = typeof loadConvIndex === 'function' ? loadConvIndex() : [];
+      if (!convs.length) return [];
+      const recordsMap = new Map();
+      if (typeof openConvDB === 'function') {
+        const db = await openConvDB();
+        if (db) {
+          try {
+            const read = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
+            const all = await idbReq(read.getAll());
+            for (const r of all) if (r && r.key) recordsMap.set(r.key, r);
+          } catch (e) { /* use fallbacks */ }
+        }
+      }
+      if (typeof convFallbackAll === 'function') {
+        const fallback = convFallbackAll();
+        for (const [k, r] of Object.entries(fallback)) {
+          if (!recordsMap.has(k) && r) recordsMap.set(k, r);
+        }
+      }
+      if (typeof convHeld !== 'undefined' && convHeld instanceof Map) {
+        for (const [k, r] of convHeld.entries()) {
+          if (r) recordsMap.set(k, r);
+        }
+      }
+      return typeof calcConvAnalytics === 'function' ? calcConvAnalytics(convs, recordsMap) : [];
+    }
+
+    async function renderConvAnalytics() {
+      const section = document.getElementById('convAnalytics');
+      const tableWrap = document.getElementById('convAnalyticsWrap');
+      if (!section || !tableWrap) return;
+
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display === 'none') return;
+
+      convAnalyticsData = await fetchConvAnalytics();
+      drawConvAnalyticsTable();
+    }
+
+    function sortConvAnalytics(col) {
+      if (convAnalyticsSort.col === col) {
+        convAnalyticsSort.dir = convAnalyticsSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        convAnalyticsSort.col = col;
+        convAnalyticsSort.dir = (col === 'name' ? 'asc' : 'desc');
+      }
+      drawConvAnalyticsTable();
+    }
+
+    function drawConvAnalyticsTable() {
+      const tableWrap = document.getElementById('convAnalyticsWrap');
+      const totalEl = document.getElementById('convAnalyticsTotal');
+      if (!tableWrap) return;
+
+      const totalBytes = convAnalyticsData.reduce((acc, c) => acc + (c.totalBytes || 0), 0);
+      if (totalEl) {
+        const n = convAnalyticsData.length;
+        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
+          formatConvSize(totalBytes);
+        totalEl.title = `${totalBytes.toLocaleString()} bytes on this device`;
+      }
+
+      if (!convAnalyticsData.length) {
+        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">No conversations stored yet</div>';
+        return;
+      }
+
+      const sorted = typeof sortConvAnalyticsRows === 'function'
+        ? sortConvAnalyticsRows(convAnalyticsData, convAnalyticsSort.col, convAnalyticsSort.dir)
+        : convAnalyticsData.slice();
+
+      const arrow = col => convAnalyticsSort.col === col ? `<span class="sort-arrow">${convAnalyticsSort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
+      const ariaSort = col => convAnalyticsSort.col === col ? (convAnalyticsSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+
+      const th = (col, label, alignRight) =>
+        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')" style="${alignRight ? 'text-align:right;' : ''}">` +
+        `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
+
+      const rowsHtml = sorted.map(c => {
+        // Rounded the way the rest of the app rounds bytes: a conversation of four messages is
+        // kilobytes, and "0.00 MB" beside it read as a row that had failed to measure itself.
+        const size = formatConvSize(c.totalBytes);
+        const titleTip = `${escapeHtml(c.name)} · ${c.totalBytes.toLocaleString()} bytes`;
+        // The id rides in a data attribute rather than inside the handler's quotes: a name or an
+        // id with an apostrophe in it would otherwise end the string and break the row.
+        return `<tr>` +
+          `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
+          `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
+          `${escapeHtml(c.name)}</button>${c.auto ? ' <span class="conv-analytics-auto-badge">auto</span>' : ''}</td>` +
+          `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
+          `<td class="conv-analytics-num">${c.panes.toLocaleString()}</td>` +
+          `<td class="conv-analytics-num" title="${titleTip}">${size}</td>` +
+          `</tr>`;
+      }).join('');
+
+      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Conversations by local storage size">` +
+        `<thead><tr>` +
+        th('name', 'Conversation', false) +
+        th('msgCount', 'Messages', true) +
+        th('panes', 'Panes', true) +
+        th('size', 'Size', true) +
+        `</tr></thead>` +
+        `<tbody>${rowsHtml}</tbody>` +
+        `</table>`;
+    }
+
+    async function refreshConvAnalytics() {
+      const btn = document.getElementById('convAnalyticsRefresh');
+      if (btn) btn.classList.add('spinning');
+      try {
+        await renderConvAnalytics();
+      } finally {
+        if (btn) setTimeout(() => btn.classList.remove('spinning'), 350);
       }
     }
 

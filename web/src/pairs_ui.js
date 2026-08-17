@@ -5,6 +5,23 @@
       localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
     }
 
+    // A restart is the same colleague in a new pane, so the pair that named the dead one follows it
+    // across. Members are pinned by pane_id (memberMatches), which a restart always changes — so a
+    // pair went stale the moment its member was restarted, which is what took the switch button,
+    // the partner's name and its badge off the strip and left a "no longer running" line instead.
+    //
+    // Never over a pane that is already in a pair of its own: that is a pairing the user made, and
+    // a restart elsewhere is not a reason to rewrite it.
+    function repointPair(oldPaneId, next) {
+      if (!oldPaneId || !next || oldPaneId === next.pane_id) return false;
+      const pair = pairFor(pairs, oldPaneId);
+      if (!pair || pairFor(pairs, next.pane_id)) return false;
+      pair.members = pair.members.map(m => m.pane_id === oldPaneId
+        ? Object.assign({}, m, recentFingerprint(next)) : m);
+      savePairs();
+      return true;
+    }
+
     // --- Line width ---
     // herdr hands back scrollback already hard-wrapped at the pane's column count, so every long
     // line the browser wraps again is wrapped twice and no break can be attributed to the agent

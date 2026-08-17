@@ -621,12 +621,13 @@
     #timelineView {
       flex-direction: column;
       gap: 10px;
-      overflow: hidden;
+      overflow-y: auto;
     }
 
     #timelineList {
-      flex: 1 1 50%;
-      min-height: 0;
+      flex: 0 1 auto;
+      min-height: 80px;
+      max-height: 220px;
       overflow-y: auto;
     }
 
@@ -734,6 +735,166 @@
     .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
     .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
     #bandwidthPanes { margin-left: auto; }
+
+    /* Conversation storage analytics in Activity */
+    .conv-analytics {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .conv-analytics h2 {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      row-gap: 6px;
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    #convAnalyticsTitle {
+      flex: 1 1 auto;
+    }
+
+    .conv-analytics-refresh {
+      margin-left: auto;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 0.85rem;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, border-color 0.15s, transform 0.2s;
+    }
+
+    .conv-analytics-refresh:hover {
+      color: var(--text);
+      border-color: var(--green);
+    }
+
+    .conv-analytics-refresh.spinning {
+      animation: conv-spin 0.35s ease;
+    }
+
+    @keyframes conv-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(180deg); }
+    }
+
+    .conv-analytics-wrap {
+      max-height: 220px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface) 40%, var(--bg));
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .conv-analytics-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.75rem;
+    }
+
+    .conv-analytics-table th,
+    .conv-analytics-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      white-space: nowrap;
+    }
+
+    .conv-analytics-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 0;
+    }
+
+    .conv-analytics-th-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      width: 100%;
+      height: 100%;
+      padding: 6px 8px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-transform: inherit;
+      letter-spacing: inherit;
+      cursor: pointer;
+      text-align: inherit;
+    }
+
+    .conv-analytics-th-btn:hover {
+      color: var(--text);
+    }
+
+    .conv-analytics-table th .sort-arrow {
+      font-size: 0.58rem;
+      color: var(--green);
+    }
+
+    .conv-analytics-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .conv-analytics-table tbody tr:hover {
+      background: color-mix(in srgb, var(--text) 4%, transparent);
+    }
+
+    .conv-analytics-name-btn {
+      border: none;
+      background: transparent;
+      padding: 0;
+      color: var(--blue);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 500;
+      text-align: left;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .conv-analytics-name-btn:hover {
+      text-decoration: underline;
+    }
+
+    .conv-analytics-auto-badge {
+      display: inline-block;
+      font-size: 0.56rem;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 3px;
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+
+    .conv-analytics-num {
+      text-align: right;
+      font-family: monospace;
+      font-size: 0.7rem;
+      color: var(--text);
+    }
 
     /* Settings */
     .settings {
@@ -4547,6 +4708,11 @@
       </span><span class="bandwidth-total now" id="bandwidthTotal"></span>
       <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
       <div id="bandwidthRows"></div>
+    </section>
+    <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
+      <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage">⟳</button></h2>
+      <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
     </section>
   </div>
 

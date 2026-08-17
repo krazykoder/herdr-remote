@@ -70,7 +70,7 @@ echo "11. web app no hardcoded secrets"
 assert_eq "$?" "0" "no secrets in web app"
 
 echo "12. web app supports GitHub Pages project paths"
-grep -q "new URL('sw.js', document.baseURI)" "$WEB" && grep -q "self.registration.scope" "$DIR/web/sw.js"
+{ grep -q "new URL('sw.js', document.baseURI)" "$WEB" || grep -q "new URL('sw.js', document.baseURI)" "$DIR/web/src/push.js"; } && grep -q "self.registration.scope" "$DIR/web/sw.js"
 assert_eq "$?" "0" "service worker assets resolve from app scope"
 
 # --- macOS app ---
