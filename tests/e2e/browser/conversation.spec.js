@@ -3057,7 +3057,7 @@ test('the pane view keeps its sheet and is offered no dock', async ({page}) => {
   await expect(page.locator('#transferPreview')).not.toBeEmpty();
 });
 
-test('a conversation of one can be typed to, and has nothing to transfer to', async ({page}) => {
+test('a conversation of one can be typed to, and quoted back to itself', async ({page}) => {
   await open(page);
   await join(page);
   await read(page);
@@ -3066,15 +3066,14 @@ test('a conversation of one can be typed to, and has nothing to transfer to', as
   await expect(whoRow(page)).toHaveCount(1);
   await expect(litWho(page)).toHaveText(/Architect 1/);
   await pickBubble(page, 'Ready. Name the change.');
-  // Nobody to send it to, so no button that would. The row stays: it is still who the composer is
-  // addressing, and the pick is one tap from being undone. The one member is not marked as the
-  // source either — the composer below it still types into that pane, and a pill drawn dead beside
-  // a composer that works would be lying.
-  await expect(page.locator('#xferRow .xfer-send')).toHaveCount(0);
+  // The one member is where a pick can go, because the only other answer is nowhere. The row
+  // stays lit on it, and the composer below it types into the same pane.
   await expect(litWho(page)).toHaveText(/Architect 1/);
   await expect(whoRow(page)).toBeEnabled();
-  await compose(page, 'carry on then');
+  await sendPicked(page);
   expect((await sentText(page)).map(m => m.pane_id)).toEqual(['w1:p1']);
+  await compose(page, 'carry on then');
+  expect((await sentText(page)).map(m => m.pane_id)).toEqual(['w1:p1', 'w1:p1']);
 });
 
 test('a conversation whose members have all exited is offered no dock', async ({page}) => {
@@ -3143,7 +3142,7 @@ test('a chip tapped twice comes back out', async ({page}) => {
   expect(await sentBody(page)).not.toContain('Review, edit, fix');
 });
 
-test('the target is every other member, and the chosen one can be overridden', async ({page}) => {
+test('the target is every member, and the chosen one can be overridden', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -3151,12 +3150,11 @@ test('the target is every other member, and the chosen one can be overridden', a
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');           // scratch's
-  // Every member stays in the row — a pick narrows who may receive the message, never who is in
-  // the conversation — and the one that said it is marked rather than removed, because a message
-  // cannot be transferred back into the session that wrote it.
+  // Every member stays in the row and every one of them is choosable — a pick decides what is
+  // being sent, never who may have it. The author included: handing an agent its own words back
+  // is a move people make on purpose.
   await expect(whoRow(page)).toHaveCount(3);
-  await expect(whoRow(page).filter({hasText: 'scratch'})).toHaveClass(/from/);
-  await expect(whoRow(page).filter({hasText: 'scratch'})).toBeDisabled();
+  await expect(whoRow(page).filter({hasText: 'scratch'})).toBeEnabled();
   // The first member is lit; the rest are there, dimmed — which agents are in this conversation is
   // information, and hiding them would answer a different question.
   await expect(litWho(page)).toHaveText(/Architect 1/);
@@ -3165,6 +3163,23 @@ test('the target is every other member, and the chosen one can be overridden', a
   await sendPicked(page);
   const to = (await sentText(page)).map(m => m.pane_id);
   expect(new Set(to)).toEqual(new Set([third]));
+});
+
+test('a message can go back to the agent that wrote it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  const scratch = await page.evaluate(() => agents.find(a => a.label === 'scratch').pane_id);
+  await pickBubble(page, 'the other pane spoke first');           // scratch's
+  // Its own author, chosen deliberately: "you said this, now check it" is a transfer like any
+  // other, and the row is not the place to decide it is a mistake.
+  await whoRow(page).filter({hasText: 'scratch'}).click();
+  await expect(litWho(page)).toHaveText(/scratch/);
+  await sendPicked(page);
+  expect(new Set((await sentText(page)).map(m => m.pane_id))).toEqual(new Set([scratch]));
+  expect(await sentBody(page)).toContain('the other pane spoke first');
 });
 
 // The pair the dock defaults to: between the pane whose message gets picked and one of the other

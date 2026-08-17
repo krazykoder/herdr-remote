@@ -99,16 +99,10 @@
       return agents.find(a => convMemberKey(a) === keys.values().next().value) || null;
     }
 
-    // Who a message may be sent to. With a bubble picked that is everyone but the pane that said it
-    // — a message cannot be transferred back into its own session. The row still *draws* the whole
-    // membership (see dockRowHtml): a pick is a passing state, and a conversation that shed its
-    // members every time one was quoted would keep answering "who is in this" differently.
-    function dockTargets() {
-      const source = dockSource();
-      const all = dockMembers();
-      return source ? all.filter(a => a.pane_id !== source.pane_id) : all;
-    }
-
+    // Who a message may be sent to is the whole membership, the author of the picked bubble
+    // included. Handing an agent its own words back is a real move — "redo this", "you said this,
+    // now check it" — and the row is not the place to decide it is a mistake.
+    //
     // The pane this one is paired with, when it is in the conversation. A default, never a rule:
     // membership is still what makes an agent a target (4.2), and a conversation with no pair
     // recorded anywhere is served exactly as before. But when a message has been picked and nobody
@@ -121,21 +115,18 @@
       return partner && list.some(a => a.pane_id === partner.pane_id) ? partner.pane_id : '';
     }
 
-    // Kept honest against the row it is drawn from: a target that has exited, or that turns out to
-    // be the source of what is being transferred, falls back — to the source's partner if it is
-    // here, and to the first member if it is not — rather than silently sending somewhere else.
-    // A target the reader chose always wins, including one chosen before the pick was made.
+    // Kept honest against the row it is drawn from: a target that has exited falls back — to the
+    // source's partner if it is here, and to the first member if it is not — rather than silently
+    // sending somewhere else. A target the reader chose always wins, including one chosen before
+    // the pick was made.
     function dockTargetOf(list, source) {
       if (list.some(a => a.pane_id === dockTarget)) return dockTarget;
       return dockPairTarget(source, list) || ((list[0] || {}).pane_id || '');
     }
 
-    // Who the composer is talking to: the row's lit member. Falls back to the whole membership when
-    // a pick has excluded everyone, so that typing still has somewhere to go — the same list the row
-    // draws in that case.
+    // Who the composer is talking to: the row's lit member.
     function dockAddressed() {
-      const list = dockTargets();
-      return list.length ? dockTargetOf(list, dockSource()) : dockTargetOf(dockMembers());
+      return dockTargetOf(dockMembers(), dockSource());
     }
 
     function setDockTarget(paneId) {
@@ -308,11 +299,9 @@
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
       const all = dockMembers();
-      // Always the whole membership. A pick narrows who may *receive* the message, never who is in
-      // the conversation, and a row that dropped the others while a bubble was picked took the
-      // reader's other choices away over a state one tap undoes. With every candidate excluded — a
-      // bubble picked in a conversation of one — there is simply nothing left to send it to.
-      const html = all.length ? dockRowHtml(all, !dockTargets().length) : '';
+      // Always the whole membership. A pick decides what is being sent, never who is in the
+      // conversation or who may have it.
+      const html = all.length ? dockRowHtml(all) : '';
       row.hidden = !html;
       if (!html) { closeDockMenu(); row.dataset.sig = ''; }
       // Rebuilt only when what it says changed. This runs on every snapshot, and replacing the row
@@ -421,18 +410,16 @@
       input.addEventListener('keydown', () => requestAnimationFrame(keepConvCaret));
     }
 
-    function dockRowHtml(list, noSend) {
+    function dockRowHtml(list) {
       const target = dockAddressed();
-      const source = dockSource();
       // One lit, the rest dimmed rather than hidden: which agents are in this conversation is
       // information, and a row that showed only the chosen one would answer a different question.
       // Named the way the pane header names one: the live dot, the label, and the harness badge.
       // Which agent is about to receive another agent's output is the fact worth being sure of, and
       // "scratch" alone does not say whether that is a codex or a claude.
       //
-      // The member whose message is picked stays in the row, marked as the one it came from rather
-      // than removed: it is still in the conversation, it is still who you were reading, and a row
-      // that lost a pill on every pick would flicker its own membership.
+      // Every member is choosable, the author of the picked bubble included: sending an agent its
+      // own words back is a thing people do on purpose.
       // Addressed first. Only in the row that is drawn — dockMembers stays roster order, because
       // the fallback target is read off its first entry and a list that reordered itself around
       // the current choice could never fall back to anything else. Stable, so the rest keep the
@@ -440,16 +427,12 @@
       const who = list.slice()
         .sort((a, b) => (b.pane_id === target) - (a.pane_id === target))
         .map(a => {
-        // Not marked when it is the only member there is: a conversation of one still types into
-        // the pane it is reading, and a pill drawn dead beside a composer that works would be lying.
-        const from = !!source && a.pane_id === source.pane_id && !noSend;
         const name = escapeHtml(paneLabel(a));
-        return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}${from ? ' from' : ''}" ` +
+        return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}" ` +
           `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
-          (from ? 'disabled ' : `onclick="setDockTarget('${a.pane_id}')" `) +
+          `onclick="setDockTarget('${a.pane_id}')" ` +
           `aria-pressed="${a.pane_id === target}" ` +
-          `title="${from ? `${name} wrote the picked message` : `Talk to ${name}`}" ` +
-          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `title="Talk to ${name}" aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
       }).join('');
@@ -475,7 +458,7 @@
       // Send belongs to the bubbles. With nothing picked there is nothing for it to carry and the
       // composer's own send is what fires, so the row would be offering a second button for a
       // message it does not hold.
-      const send = n && !noSend
+      const send = n
         ? `<button class="xfer-send" onclick="convDockSend()" ` +
           `title="Send the picked message${n === 1 ? '' : 's'} to ` +
           `${escapeHtml(paneLabel(paneOf(target)) || target)}" ` +
@@ -526,20 +509,15 @@
 
     // The same members as a list, for a row that has scrolled past the edge of a phone and for
     // reading a name that the pill cut off. It chooses the same target the pills do — the lit one is
-    // ticked, and the member whose message is picked is named but not choosable, exactly as in the
-    // row.
+    // ticked, and everyone in the row is choosable here too.
     function openWhoMenu() {
       const box = document.getElementById('whoMenu');
       const target = dockAddressed();
-      const source = dockSource();
-      const noSend = !dockTargets().length;
       box.innerHTML = dockMembers().map(a => {
-        const from = !!source && a.pane_id === source.pane_id && !noSend;
         const on = a.pane_id === target;
         const name = escapeHtml(paneLabel(a));
         return `<button class="menu-item" role="menuitemradio" aria-checked="${on}" ` +
-          (from ? 'disabled ' : `onclick="pickDockTarget('${a.pane_id}')" `) +
-          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `onclick="pickDockTarget('${a.pane_id}')" aria-label="Talk to ${name}">` +
           `<span class="tick">${on ? '✓' : ''}</span>` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
@@ -695,9 +673,8 @@
     // Only the conversation window's thread, because it is the only one with a target to change —
     // the pane's own composer types into the pane on screen.
     function addressConvAuthor(key) {
-      const live = dockTargets().find(a => convMemberKey(a) === key);
-      // No target: the author has exited, is folded out of the thread, or is the source of what is
-      // picked — a message cannot be transferred back into its own session.
+      const live = dockMembers().find(a => convMemberKey(a) === key);
+      // No target: the author has exited or is folded out of the thread.
       if (!live) return;
       // The word the double-click selected is not a selection anybody asked for.
       const sel = window.getSelection && window.getSelection();
@@ -762,7 +739,7 @@
       // With bubbles picked there is one message being written, and the row's Send is a labelled
       // second view of this button rather than a different one. Sending only the typed half here
       // would quietly drop the quote the pick put on the message.
-      if (dockPicked.size && dockTargets().length) return convDockSend();
+      if (dockPicked.size && dockMembers().length) return convDockSend();
       const input = document.getElementById('convInput');
       const body = input.value.trim();
       if (!body) return;
@@ -808,8 +785,8 @@
       const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'))
         .map(el => el.dataset.text || '').filter(Boolean);
       if (!picked.length) return;
-      const targets = dockTargets();
-      if (!targets.length) { showToast('Nobody else in this conversation to send it to.'); return; }
+      const targets = dockMembers();
+      if (!targets.length) { showToast('Nobody in this conversation to send it to.'); return; }
       const target = dockTargetOf(targets, source);
       const live = agents.find(a => a.pane_id === target);
       if (!live) { showToast('That agent is no longer running.'); return; }
