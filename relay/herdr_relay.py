@@ -1570,8 +1570,18 @@ async def main():
     # only: a remote host's terminal is not one this operator is sitting at.
     await asyncio.to_thread(log_tab_geometry)
     stop = loop.create_future()
+
+    # Idempotent, because the shutdown of a foreground run is more than one signal: Ctrl-C reaches
+    # every process in the group as SIGINT, and start.sh's trap then sends its own SIGTERM to the
+    # relay it started. The second one used to land on a future that was already resolved, which
+    # asyncio reports as `InvalidStateError: invalid state` from a callback nobody can catch — a
+    # traceback on every clean exit, over a stop that had already been asked for.
+    def request_stop() -> None:
+        if not stop.done():
+            stop.set_result(None)
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set_result, None)
+        loop.add_signal_handler(sig, request_stop)
     await stop
     for server in servers:
         server.close()
@@ -1582,7 +1592,9 @@ async def main():
         try:
             zc.unregister_service(info)
         except Exception as e:
-            log.warning("mDNS unregister failed: %s", e)
+            # By type when there is no message: EventLoopBlocked carries none, so the line read
+            # "mDNS unregister failed: " and named nothing at all.
+            log.warning("mDNS unregister failed: %s", e or type(e).__name__)
         zc.close()
 
 
