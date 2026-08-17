@@ -200,13 +200,13 @@ class ConversationLog:
         # the whole window is history rather than one turn. Its order is all that can honestly be
         # claimed about it, which is what `backfill` means — the same answer the browser gives a
         # pane's first read. Anything after this is anchored against what this wrote.
-        backfilled = bool(fresh) and not self._has_record(pane_id)
+        backfilled = bool(fresh) and not self._has_record(pane)
         if not fresh:
             new = []
         elif backfilled:
             new = fresh
         else:
-            new = self._messages_after_record(pane_id, fresh)
+            new = self._messages_after_record(pane, fresh)
         common = dict(
             agent=agent or "", pane_id=pane_id,
             host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
@@ -219,7 +219,7 @@ class ConversationLog:
             # here and this is what was on screen" beats saying nothing — but only once, or every
             # poll of a quiet pane would write the same screen again.
             tail = "\n".join(rows[-12:])
-            if self._last_tail(pane_id) == tail:
+            if self._last_tail(pane) == tail:
                 return []
             return [self.record(kind="agent_blocked" if status_to == "blocked" else "agent_final",
                                 origin="agent", text="", tail=tail, at=at, **common)]
@@ -247,11 +247,12 @@ class ConversationLog:
                     origin="agent", text=text, span=span, at=when, **common))
         return out
 
-    def _has_record(self, pane_id):
+    def _has_record(self, pane):
         return self.conn.execute(
-            "SELECT 1 FROM turns WHERE pane_id = ? LIMIT 1", (pane_id,)).fetchone() is not None
+            "SELECT 1 FROM turns WHERE host = ? AND agent = ? AND cwd = ? LIMIT 1",
+            self._fingerprint(pane)).fetchone() is not None
 
-    def _messages_after_record(self, pane_id, fresh):
+    def _messages_after_record(self, pane, fresh):
         """What this window holds past the record's own end.
 
         The record is anchored by its newest messages *that were read off a pane* — a prompt the
@@ -263,7 +264,7 @@ class ConversationLog:
         and a run short by a message is a smaller wrong than a run that duplicates what is already
         recorded, because the record is permanent and the duplicate is in it forever.
         """
-        keys = self._anchor_keys(pane_id, ANCHOR_CONTEXT)
+        keys = self._anchor_keys(pane, ANCHOR_CONTEXT)
         if keys:
             for i in range(len(fresh) - 1, -1, -1):
                 if _aligns(fresh, i, keys):
@@ -272,23 +273,29 @@ class ConversationLog:
         # off this pane, or a message whose text changed. The last-block rule cannot see an input
         # made mid-turn, but it does see the turn — and a turn recorded without its interruptions
         # beats a turn not recorded.
-        said = self._trailing_user_keys(pane_id)
+        said = self._trailing_user_keys(pane)
         return [m for m in turn_messages(fresh) if not (m[0] == "user" and _key(m[1]) in said)]
 
-    def _anchor_keys(self, pane_id, limit):
+    @staticmethod
+    def _fingerprint(pane):
+        return (pane.get("host") or "local", pane.get("agent") or "", pane.get("cwd") or "")
+
+    def _anchor_keys(self, pane, limit):
         """The record's newest messages that were read off this pane, oldest first."""
         rows = self.conn.execute(
-            "SELECT kind, text FROM turns WHERE pane_id = ? AND at_src != 'sent' AND text != ''"
-            " ORDER BY at DESC, id DESC LIMIT ?", (pane_id, limit)).fetchall()
+            "SELECT kind, text FROM turns WHERE host = ? AND agent = ? AND cwd = ?"
+            " AND at_src != 'sent' AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
+            (*self._fingerprint(pane), limit)).fetchall()
         return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
 
-    def _trailing_user_keys(self, pane_id):
+    def _trailing_user_keys(self, pane):
         """The prompts the record already ends on: the trailing run of user rows, past any agent
         rows above them. Their echoes are in the window and are not new; anything else the user
         said is — an input made while the agent worked is exactly the one nothing else records."""
         rows = self.conn.execute(
-            "SELECT kind, text FROM turns WHERE pane_id = ? AND text != ''"
-            " ORDER BY at DESC, id DESC LIMIT ?", (pane_id, TRAILING_USER_MAX)).fetchall()
+            "SELECT kind, text FROM turns WHERE host = ? AND agent = ? AND cwd = ?"
+            " AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
+            (*self._fingerprint(pane), TRAILING_USER_MAX)).fetchall()
         out, seen_user = set(), False
         for r in rows:
             if _who(r["kind"]) == "user":
@@ -298,10 +305,10 @@ class ConversationLog:
                 break
         return out
 
-    def _last_tail(self, pane_id):
+    def _last_tail(self, pane):
         row = self.conn.execute(
-            "SELECT tail FROM turns WHERE pane_id = ? AND text = ''"
-            " ORDER BY at DESC, id DESC LIMIT 1", (pane_id,)).fetchone()
+            "SELECT tail FROM turns WHERE host = ? AND agent = ? AND cwd = ? AND text = ''"
+            " ORDER BY at DESC, id DESC LIMIT 1", self._fingerprint(pane)).fetchone()
         return row["tail"] if row else None
 
     def _prune(self):

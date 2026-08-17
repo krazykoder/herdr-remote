@@ -49,17 +49,11 @@ except ImportError:
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from logging.handlers import RotatingFileHandler
-import sys
 
-def _get_log_dir():
-    if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Logs/herdr-remote")
-    if os.path.isdir("/var/log") and os.access("/var/log", os.W_OK):
-        return "/var/log/herdr-remote"
-    return os.path.expanduser("~/.local/state/herdr-remote/log")
-
-LOG_DIR = os.environ.get("HERDR_LOG_DIR", _get_log_dir())
-os.makedirs(LOG_DIR, exist_ok=True)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+STATE_DIR = os.environ.get("HERDR_STATE_DIR") or os.path.join(PROJECT_ROOT, ".herdr-remote")
+LOG_DIR = STATE_DIR
+os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "relay.log")
 AUDIT_FILE = os.path.join(LOG_DIR, "audit.log")
 
@@ -988,12 +982,9 @@ async def _poll_once():
             # finishes and drops to idle has said its piece exactly as much as one that reports
             # done, and several harnesses end that way every time.
             #
-            # `was` being None is first sight: a pane already sitting in an ending state when the
-            # relay started finished a turn that is still on screen and readable, and refusing to
-            # look at it would throw away a recording plainly available. What stops that becoming
-            # a re-record on every restart is record_turn_end, which drops a turn whose message it
-            # already holds.
-            if conv_log is not None and status != was and ends_turn(status):
+            # First sight seeds the state; it is not a transition. Recording it would make a fresh
+            # database immediately fill with every old idle pane's scrollback after a relay restart.
+            if conv_log is not None and was is not None and status != was and ends_turn(status):
                 # Its own read. `content` above is the push preview, which is the wrong shape for a
                 # parser — see read_pane_for_record. Two reads of a pane that just ended a turn is
                 # the price of the record being right, and it is paid once per turn rather than

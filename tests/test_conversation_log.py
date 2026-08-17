@@ -207,6 +207,14 @@ class Capture(Log):
         self.assertTrue(first)
         self.assertEqual(self.log.record_turn_end(pane, content, "idle", "done"), [])
 
+    def test_a_restarted_pane_keeps_its_fingerprint_anchor(self):
+        # pane_id belongs to herdr and changes on restart. The record's identity is the stable
+        # (host, agent, cwd) fingerprint, otherwise the unchanged scrollback is backfilled again.
+        content = fixture("pane_claude_done.txt")
+        self.assertTrue(self.log.record_turn_end(PANE, content, "working", "idle"))
+        restarted = dict(PANE, pane_id="%99")
+        self.assertEqual(self.log.record_turn_end(restarted, content, "working", "idle"), [])
+
     def test_a_pane_with_no_detectable_message_keeps_its_tail(self):
         rowid = self.log.record_turn_end(
             dict(PANE, agent="nosuchharness"), "line one\nline two\n", "working", "idle")
