@@ -1538,7 +1538,7 @@ test('a pair switch off a pane read as rows leaves the partner reading rows', as
   expect(await page.evaluate(() => convViewOn(paneOf(activePane)))).toBe(false);
 });
 
-test('folding the composer away takes the typing target with it', async ({page}) => {
+test('folding the composer away leaves the pane named', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
     pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
@@ -1546,14 +1546,24 @@ test('folding the composer away takes the typing target with it', async ({page})
     renderPairStrip();
   });
   await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
-  // The strip names the pane the composer types into, so it is only true while there is one. The
-  // fold is the button that decides that, and it has to redraw the strip itself — the poll is
-  // three seconds away.
-  await page.locator('#quickActions .qa-fold').click();
-  await expect(page.locator('#pairStrip .pair-target')).toHaveCount(0);
-  await expect(page.locator('#pairStrip .pair-name')).toBeVisible();
+  // Which pane you are reading is the same answer folded or unfolded. It used to be read as the
+  // composer's typing target and disappear with the composer, which is what made the strip look
+  // like it named some panes and not others.
   await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+});
+
+test('an unpaired pane is named on the strip too, with no pair controls', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => { pairs = []; renderPairStrip(); });
+  await expect(page.locator('#pairStrip')).toBeVisible();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  await expect(page.locator('#pairStrip .pair-target .badge')).toHaveText('claude');
+  // Nothing to switch to and nothing to transfer, so neither control is offered.
+  await expect(page.locator('#pairStrip .switch')).toHaveCount(0);
+  await expect(page.locator('#pairStrip .transfer')).toHaveCount(0);
 });
 
 test('an auto conversation says how to make it permanent', async ({page}) => {
