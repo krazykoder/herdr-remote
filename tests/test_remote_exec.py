@@ -48,12 +48,15 @@ class RemoteCommandTests(unittest.TestCase):
                         "x && touch /tmp/pwned",
                         "x | sh",
                         "x\ntouch /tmp/pwned"):
-            with self.subTest(payload=payload):
-                remote = self.cmd("pane", "send-text", "w1:p1", payload)[-1]
-                # Split the way the remote shell splits it: the payload has to come back as one
-                # word, still equal to itself, with nothing following it to be run as a command.
-                self.assertEqual(shlex.split(remote),
-                                 [herdr_relay.HERDR, "pane", "send-text", "w1:p1", payload])
+            # Both forms of a send: `pane run` is the submitting one, and it is the more dangerous
+            # of the two to quote wrong — its argument is a command line by name.
+            for verb in ("send-text", "run"):
+                with self.subTest(payload=payload, verb=verb):
+                    remote = self.cmd("pane", verb, "w1:p1", payload)[-1]
+                    # Split the way the remote shell splits it: the payload has to come back as one
+                    # word, still equal to itself, with nothing following it to be run as a command.
+                    self.assertEqual(shlex.split(remote),
+                                     [herdr_relay.HERDR, "pane", verb, "w1:p1", payload])
 
     def test_a_label_with_spaces_survives_the_trip(self):
         # The same bug, without the malice: "Architect 1" used to arrive as two arguments and the

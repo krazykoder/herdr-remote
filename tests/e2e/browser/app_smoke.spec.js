@@ -298,13 +298,14 @@ test('the composer sends to the pane that is open', async ({page}) => {
   await page.locator(R('termInput')).fill('echo hi');
   await page.locator(R('termInput')).press('Control+Enter');
 
-  // Text and the Enter that submits it are two messages: the text goes as a bracketed paste so a
-  // multi-line prompt cannot be executed a line at a time.
+  // One message, carrying the Enter that submits it. Two — a paste and then a keypress — is what
+  // an agent still busy with the paste used to swallow, leaving the text unsent in its composer.
   await expect.poll(() => sent.filter(m => m.type === 'send_text').length).toBe(1);
   const text = sent.find(m => m.type === 'send_text');
   expect(text.pane_id).toBe('w1:p1');
   expect(text.text).toBe('echo hi');
-  expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(true);
+  expect(text.submit).toBe(true);
+  expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(false);
   // And the composer is cleared, which is the only sign the user gets that it left.
   await expect(page.locator(R('termInput'))).toHaveValue('');
 });

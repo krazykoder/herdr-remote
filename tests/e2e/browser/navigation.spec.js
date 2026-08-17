@@ -95,6 +95,25 @@ test('leaving by the header chevron rewinds the browser too', async ({page}) => 
   expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
 });
 
+// The walk keeps twenty entries; the browser's stack keeps every push. Past that cap the two
+// numbers stop agreeing, and an exit that rewound by the walk's own cursor landed in the middle of
+// the browser's stack — the header chevron then opened whatever was parked there instead of
+// leaving. Twenty-six destinations, which is enough to have dropped six.
+test('the header chevron still leaves after more visits than the walk keeps', async ({page}) => {
+  await openPane(page);
+  const strip = page.locator('#agentTabs .agent-tab');
+  for (let i = 0; i < 26; i++) await strip.nth(i % 2).click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  // The browser's stack really is deeper than the walk's cap, which is the whole premise.
+  expect(await page.evaluate(() => history.length)).toBeGreaterThan(21);
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+  // Standing on the document's own entry, which is what makes the next Back gesture leave the app
+  // rather than replay a destination the user has already left.
+  expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
+});
+
 test('desktop , and . walk history without stealing composer input', async ({page}) => {
   await openPane(page);
   // The same edge the footer ‹ has: with nothing behind the first destination, Back is the way

@@ -611,8 +611,10 @@
       el.style.display = text ? 'block' : 'none';
     }
 
+    // The app's own chip, the one the workspace and status filters are picked with — active in the
+    // same blue, so a choice made here looks like a choice made anywhere else.
     function badgeHtml(label, on, call, title) {
-      return `<button class="xfer-chip${on ? ' on' : ''}" onclick="${call}" aria-pressed="${on}"` +
+      return `<button class="chip${on ? ' active' : ''}" onclick="${call}" aria-pressed="${on}"` +
         (title ? ` title="${escapeHtml(title)}"` : '') + `>${escapeHtml(label)}</button>`;
     }
 
@@ -628,7 +630,7 @@
         badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`)).join('');
       // Kept on screen when the row is longer than the line, so the chosen Project is never the one
       // that scrolled off.
-      const on = document.querySelector('#newAgentProjects .xfer-chip.on');
+      const on = document.querySelector('#newAgentProjects .chip.active');
       if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest', inline: 'nearest'});
     }
 
@@ -883,7 +885,7 @@
         // The New agent dialog's own list, by the same rule — including a tap on the badge row it
         // covers, which is a choice being made rather than the list being dismissed.
         const projMenu = document.getElementById('newAgentProjMenu');
-        if (projMenu && !projMenu.hidden && !e.target.closest('#newAgentProjMenu, .badge-line'))
+        if (projMenu && !projMenu.hidden && !e.target.closest('#newAgentProjMenu, .chip-line'))
           projMenu.hidden = true;
       }, true);
       const thread = document.getElementById('convViewThread');

@@ -2614,7 +2614,7 @@ test('the repair can be turned off, and the setting is remembered', async ({page
 // The composer, the badge, and where a switch lands. All four live in the same place: what the app
 // does with a thread that is on screen, as opposed to a pane that is.
 
-test('a text past one message goes as several, and one Enter submits them all',
+test('a text past one message goes as several, and the last one submits them all',
   async ({page}) => {
     // The relay caps one `send_text` at 4000 and always has. Raising that cap would fix this for
     // nobody who has not upgraded the relay — the app is on GitHub Pages and the relay is on the
@@ -2632,11 +2632,10 @@ test('a text past one message goes as several, and one Enter submits them all',
     for (const p of parts) expect(p.text.length).toBeLessThanOrEqual(4000);
     // The agent's composer receives exactly what was typed, and nothing between the chunks submits.
     expect(parts.map(p => p.text).join('')).toBe(text);
-    const keys = sent.filter(m => m.type === 'send_keys');
-    expect(keys).toHaveLength(1);
-    expect(keys[0].keys).toEqual(['Enter']);
-    // And the Enter is behind every chunk, or it submits half a diff.
-    expect(sent.indexOf(keys[0])).toBe(sent.length - 1);
+    // The Enter rides on the last chunk and on nothing before it, or it submits half a diff.
+    expect(parts.filter(p => p.submit)).toHaveLength(1);
+    expect(parts[parts.length - 1].submit).toBe(true);
+    expect(sent.filter(m => m.type === 'send_keys')).toHaveLength(0);
   });
 
 test('the transcript keeps a long message whole', async ({page}) => {
@@ -2891,9 +2890,10 @@ test('the dock sends a picked message straight into another member', async ({pag
   expect(body).toContain('the other pane spoke first');
   // Named by the member it came from, so the receiving agent is told whose words these are.
   expect(body).toContain('feedback from scratch:');
-  // And submitted — that is the whole of what makes this different from the transfer sheet.
-  const sent = await page.evaluate(() => window.__sent);
-  expect(sent.filter(m => m.type === 'send_keys' && m.keys[0] === 'Enter')).toHaveLength(1);
+  // And submitted — that is the whole of what makes this different from the transfer sheet. The
+  // Enter rides on the last chunk rather than following it, so nothing can arrive between them.
+  expect(text[text.length - 1].submit).toBe(true);
+  expect(text.slice(0, -1).every(m => !m.submit)).toBe(true);
   await expect(page.locator('#toast')).toContainText('Sent 1 message to Architect 1');
   // Recorded against the receiving pane, and the pick is spent.
   expect(mine).toBeTruthy();
@@ -3603,9 +3603,9 @@ test('a new agent is started from the membership list, into this conversation', 
   await tapWire(page);
   await openNewAgentModal(page);
   // Both defaults are read off the agent being talked to: its harness, and the Project it runs in.
-  await expect(page.locator('#newAgentKinds .xfer-chip.on')).toHaveText('claude');
-  await expect(page.locator('#newAgentProjects .xfer-chip.on')).toHaveText('@herdr-remote');
-  await page.locator('#newAgentKinds .xfer-chip', {hasText: 'codex'}).click();
+  await expect(page.locator('#newAgentKinds .chip.active')).toHaveText('claude');
+  await expect(page.locator('#newAgentProjects .chip.active')).toHaveText('@herdr-remote');
+  await page.locator('#newAgentKinds .chip', {hasText: 'codex'}).click();
   await page.locator('#newAgentName').fill('Reviewer 9');
   await page.locator('#newAgentSubmit').click();
   await expect(page.locator('#newAgentModal')).toBeHidden();
@@ -3637,16 +3637,16 @@ test('the role badge is what the session is started as, and what opens it', asyn
   await tapWire(page);
   await openNewAgentModal(page);
   // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
-  await expect(page.locator('#newAgentRoles .xfer-chip'))
+  await expect(page.locator('#newAgentRoles .chip'))
     .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
-  await page.locator('#newAgentRoles .xfer-chip', {hasText: 'Arbitrator'}).click();
-  await expect(page.locator('#newAgentRoles .xfer-chip.on')).toHaveText('# Arbitrator');
+  await page.locator('#newAgentRoles .chip', {hasText: 'Arbitrator'}).click();
+  await expect(page.locator('#newAgentRoles .chip.active')).toHaveText('# Arbitrator');
   // A second Project, chosen from the list behind @+ rather than from the line.
   await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
-  await page.locator('.badge-line .xfer-chip.more').click();
+  await page.locator('.chip-line .chip.more').click();
   await page.locator('#newAgentProjMenu .menu-item', {hasText: '@charts'}).click();
   await expect(page.locator('#newAgentProjMenu')).toBeHidden();
-  await expect(page.locator('#newAgentProjects .xfer-chip.on')).toHaveText('@charts');
+  await expect(page.locator('#newAgentProjects .chip.active')).toHaveText('@charts');
   await page.locator('#newAgentSubmit').click();
 
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));

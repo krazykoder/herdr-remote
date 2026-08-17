@@ -10,7 +10,14 @@
     // entries. Each of our entries carries a serial rather than an index, because the list drops
     // its oldest entry at NAV_MAX and every index below it would shift under a state already
     // written into the browser's stack.
-    let navSerials = [], navSerial = 0, navDetached = false;
+    // `navDepth` is how many entries the browser's cursor stands above the one the document was
+    // loaded on. Not the same number as navIndex, and that is the whole reason it exists: the walk
+    // drops its oldest entry at NAV_MAX while the browser's stack keeps every push, so after twenty
+    // destinations navIndex sits at 19 and the list is thirty deep. Rewinding by navIndex + 1 then
+    // landed in the middle of the stack and the header chevron opened whatever was parked there.
+    // Carried in the state object, so a Back that jumps several entries at once still reports where
+    // it landed.
+    let navSerials = [], navSerial = 0, navDetached = false, navDepth = 0;
     function navBrowserHistory() {
       return typeof window === 'object' && window && window.history &&
         typeof window.history.pushState === 'function' ? window.history : null;
@@ -22,7 +29,10 @@
       // Always a push, never a replace: the document's own entry is the landing page, which is not
       // on the walk but is where the browser's Back has to be able to reach. Stamping our first
       // destination onto it would make Back off that destination leave the app instead.
-      api.pushState({herdrNav: navSerials[navIndex]}, '');
+      // A push truncates whatever was ahead of the cursor, so the new entry sits one above wherever
+      // the browser currently stands — which is what navDepth already holds.
+      navDepth += 1;
+      api.pushState({herdrNav: navSerials[navIndex], depth: navDepth}, '');
       navDetached = false;   // whatever we had drifted past, this entry is ours again
     }
 
@@ -39,10 +49,14 @@
       // phone's Back gesture out of the first pane opened would leave the screen exactly as it was.
       if (at == null) {
         navIndex = -1;
+        navDepth = 0;
         landNow();
         syncNavBtns();
         return;
       }
+      // Where the browser now stands, from the entry it landed on rather than from a count kept
+      // here — a Back gesture can cross several entries at once, and only the state knows how far.
+      if (e.state && typeof e.state.depth === 'number') navDepth = e.state.depth;
       const i = navSerials.indexOf(at);
       // A state older than NAV_MAX entries, or one another page wrote. We cannot show it, and we
       // must not keep computing deltas against a cursor the browser has already moved off — so the
@@ -153,8 +167,8 @@
     // lands directly instead.
     function navRewind() {
       const api = navBrowserHistory();
-      if (!api || navDetached || navIndex < 0) return false;
-      api.go(-(navIndex + 1));
+      if (!api || navDetached || navIndex < 0 || navDepth < 1) return false;
+      api.go(-navDepth);
       return true;
     }
 

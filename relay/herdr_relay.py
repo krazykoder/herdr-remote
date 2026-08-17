@@ -1293,13 +1293,22 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
-                audit("send_text", ip, device, pane_id, f"text={text!r}")
-                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
+                # `submit` asks for the Enter to go with the text rather than behind it. herdr's
+                # `pane run` sends both in one call, which is the only way they cannot be separated:
+                # a busy agent handed a paste and then, a moment later, an Enter would swallow the
+                # Enter and leave the message sitting unsent in its composer. Optional, because the
+                # other clients still send their own send_keys ["Enter"] and must keep working.
+                submit = bool(msg.get("submit"))
+                log.info("Text from %s (%s): pane=%s submit=%s text=%r",
+                         ip, device, pane_id, submit, text)
+                audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
+                await asyncio.to_thread(run_herdr, "pane", "run" if submit else "send-text",
+                                        pane_id, text, remote=remote)
                 # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
-                # right behind this — which is exactly what every composer does — lands late
-                # enough to submit. One choke point, rather than a delay in each client.
-                await asyncio.sleep(SEND_SETTLE)
+                # right behind this — which is what a client that submits for itself does — lands
+                # late enough to submit. One choke point, rather than a delay in each client.
+                if not submit:
+                    await asyncio.sleep(SEND_SETTLE)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,

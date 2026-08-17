@@ -51,8 +51,7 @@
       }
       disarmShortcut();
       if (window.cue) cue('success');
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: s.text }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      submitText(activePane, s.text);
       closePalette();
       burstPoll();
     }
