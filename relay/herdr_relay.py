@@ -811,8 +811,10 @@ def pane_agent_status(pane_id, remote=None):
     Straight from herdr rather than out of `agent_cache`, because the cache is only as fresh as the
     last poll and the caller is deciding, this instant, whether a keystroke landed.
 
-    An empty string is "herdr does not know": no such pane, or — the case that matters — a pane
-    whose agent has not finished starting and is not being reported as an agent yet.
+    Two spellings mean "herdr does not know", and the caller must treat them alike: `unknown`,
+    which is what a real `pane list` returns for a pane carrying no agent — including the case that
+    matters, an agent that has not finished starting — and an empty string, for a pane herdr did not
+    list at all or a call that failed. Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
     """
     data, err = _herdr_json("pane", "list", remote=remote)
     if err:
@@ -862,7 +864,8 @@ async def submit_paste(pane_id, text, remote=None):
                 break
             await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
             presses += 1
-        # Anything else is a pane herdr has no status for — a TUI still starting. Wait for it
+        # Anything else is a pane herdr has no status for — `unknown` from a real pane list, or an
+        # empty string from a pane it did not list — which is a TUI still starting. Wait for it
         # rather than pressing into a terminal that is not listening yet.
         await asyncio.sleep(SUBMIT_POLL)
     # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is

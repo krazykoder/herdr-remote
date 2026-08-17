@@ -80,10 +80,17 @@ class SubmitPaste(unittest.TestCase):
         self.assertEqual(len(self.enters()), 1)
 
     def test_a_starting_agent_is_waited_for_rather_than_pressed_into(self):
-        # herdr reports no status at all for a pane whose TUI has not finished starting. Pressing
-        # Enter at that is the original bug: the keystroke goes into a terminal with nothing
-        # listening, and no fixed delay ever covered a boot.
-        self.assertTrue(self.run_paste(["", "", "", "idle", "working"]))
+        # `unknown` is the literal a real `herdr pane list` returns for a pane carrying no agent,
+        # which is what a TUI that has not finished starting looks like. Pressing Enter at that is
+        # the original bug: the keystroke goes into a terminal with nothing listening, and no fixed
+        # delay ever covered a boot.
+        self.assertTrue(self.run_paste(["unknown", "unknown", "unknown", "idle", "working"]))
+        self.assertEqual(len(self.enters()), 1)
+
+    def test_a_pane_herdr_does_not_list_is_waited_for_too(self):
+        # The other spelling of "no status": pane_agent_status returns "" for a pane herdr did not
+        # list, or for a call that failed outright. Same handling — never press blind.
+        self.assertTrue(self.run_paste(["", "", "idle", "working"]))
         self.assertEqual(len(self.enters()), 1)
 
     def test_a_pane_that_swallowed_the_first_enter_is_pressed_again(self):
