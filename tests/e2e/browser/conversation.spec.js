@@ -1992,6 +1992,29 @@ test('a pane reading a thread can manage the conversation from it', async ({page
   await expect(page.locator('#convPaneRoster')).toBeHidden();
 });
 
+test('the pane roster names each member\'s harness, and marks nobody with a colour', async ({page}) => {
+  await open(page);
+  await join(page);
+  // Deliberately no read(): a pane filed under a conversation before it has said anything has no
+  // transcript record, so there is no spawn to take the harness off and the live pane is all there
+  // is to go on.
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: 'the other one', touched: Date.now(),
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'said by the other one', at: Date.now(), at_src: 'state'}]});
+    convViewId = 'c1';
+    convEdit(c => { c.members = c.members.concat({key: 'ghost', added: 2, label: 'the other one'}); });
+    toggleConvView();
+    toggleConvPaneRoster();
+  });
+  const rows = page.locator('#convPaneRoster .conv-roster-row');
+  await expect(rows, 'the joined pane wears the harness the relay reports for it')
+    .toContainText(['claude', 'codex']);
+  // A dot beside a name said only "member number two", which the name already says.
+  await expect(page.locator('#convPaneRoster .dot')).toHaveCount(0);
+  await expect(page.locator('#convThread .conv-members .dot')).toHaveCount(0);
+});
+
 test('the pane reading a thread is the one member it cannot hide', async ({page}) => {
   await open(page);
   await join(page);
@@ -2196,7 +2219,10 @@ test('the members strip names who is in it, and what each session was', async ({
   // Both panes are live in the fake herdr, so neither is tagged — and the spawn line is what a
   // conversation whose panes have exited still says about them.
   await expect(page.locator('#convThread .conv-member .tag')).toHaveCount(0);
-  await expect(members.nth(1).locator('.spawn')).toContainText('codex · reviewer · charts');
+  // The harness is a badge, the way every other list of panes wears it; the spawn line keeps what
+  // is left — the role and where it ran.
+  await expect(members.nth(1).locator('.badge')).toHaveText('codex');
+  await expect(members.nth(1).locator('.spawn')).toContainText('reviewer · charts');
 });
 
 test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was', async ({page}) => {

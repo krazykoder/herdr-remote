@@ -542,26 +542,24 @@
         `<span class="count">${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
-    // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
-    // per member, in member order. The user keeps --blue, which is why nothing here is near it.
-    function convTint(i) {
-      return `hsl(${PAIR_TINTS[i % PAIR_TINTS.length]} 60% 55%)`;
-    }
-
     // Who is in this conversation, and which of them are still running. Collapsed to one row until
     // tapped: a conversation whose panes have all exited is still readable, and this is where it
     // says what it was.
+    //
+    // Named the way every other list of panes names one — label then agent badge. The harness is a
+    // fact about the session, so it is the badge the rest of the UI uses and not a word in the
+    // spawn line.
     function convMembersHtml(conv, recs) {
-      const live = new Set(agents.map(x => convMemberKey(x)));
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
       return `<button class="conv-members" onclick="this.classList.toggle('open')"
-        aria-label="Who is in this conversation">` + (conv.members || []).map((m, i) => {
+        aria-label="Who is in this conversation">` + (conv.members || []).map(m => {
         const rec = recs.find(r => r.key === m.key);
         const spawn = (rec && rec.spawn) || {};
         const on = live.has(m.key);
-        const facts = [spawn.agent, spawn.role, spawn.project || spawn.cwd].filter(Boolean);
+        const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
-          `<span class="dot" style="background:${convTint(i)}"></span>` +
           `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
+          agentBadge(spawn.agent || (live.get(m.key) || {}).agent || '') +
           `${on ? '' : '<span class="tag">no longer live</span>'}` +
           `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
       }).join('') + '</button>';

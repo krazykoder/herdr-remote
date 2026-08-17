@@ -423,9 +423,12 @@
     // of the thread and stops its transcript being referenced, so it is worded as what it does and
     // asked twice.
     function convRosterHtml(conv, recs, hidden, reading) {
-      const live = new Set(agents.map(x => convMemberKey(x)));
+      // The live pane behind each member, not merely whether there is one: a conversation assembled
+      // out of panes this browser did not start has no spawn to read the harness off, and the pane
+      // itself is still saying what it runs.
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
       const off = hidden || new Set();
-      const rows = (conv.members || []).map((m, i) => {
+      const rows = (conv.members || []).map(m => {
         const rec = recs.find(r => r.key === m.key) || {};
         const on = live.has(m.key);
         const out = off.has(m.key);
@@ -439,9 +442,8 @@
             : `<button class="conv-eye" data-key="${escapeHtml(m.key)}" aria-pressed="${out ? 'true' : 'false'}"` +
               ` onclick="toggleConvHidden(this.dataset.key)"` +
               ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
-          `<span class="dot" style="background:${convTint(i)}"></span>` +
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
-          agentBadge((rec.spawn || {}).agent || '') +
+          agentBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '') +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
           // Every live member, not only whichever one the header's button would pick: the header
           // opens the first, and a conversation of four is exactly where that is the wrong one.
