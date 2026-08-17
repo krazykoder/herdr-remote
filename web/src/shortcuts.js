@@ -50,9 +50,8 @@
         return;
       }
       disarmShortcut();
+      if (!submitText(activePane, s.text)) return;
       if (window.cue) cue('success');
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: s.text }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
       closePalette();
       burstPoll();
     }
@@ -154,7 +153,10 @@
     // knowing which of its calls came first.
     function addOrderButton() {
       const header = document.querySelector('#agents .section-header');
-      if (header) header.insertAdjacentHTML('beforeend',
+      if (!header) return;
+      const filter = agentKindsHtml(agents);
+      if (filter) header.insertAdjacentHTML('beforeend', filter);
+      header.insertAdjacentHTML('beforeend',
         '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
     }
 
@@ -424,9 +426,12 @@
     // of the thread and stops its transcript being referenced, so it is worded as what it does and
     // asked twice.
     function convRosterHtml(conv, recs, hidden, reading) {
-      const live = new Set(agents.map(x => convMemberKey(x)));
+      // The live pane behind each member, not merely whether there is one: a conversation assembled
+      // out of panes this browser did not start has no spawn to read the harness off, and the pane
+      // itself is still saying what it runs.
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
       const off = hidden || new Set();
-      const rows = (conv.members || []).map((m, i) => {
+      const rows = (conv.members || []).map(m => {
         const rec = recs.find(r => r.key === m.key) || {};
         const on = live.has(m.key);
         const out = off.has(m.key);
@@ -440,9 +445,8 @@
             : `<button class="conv-eye" data-key="${escapeHtml(m.key)}" aria-pressed="${out ? 'true' : 'false'}"` +
               ` onclick="toggleConvHidden(this.dataset.key)"` +
               ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
-          `<span class="dot" style="background:${convTint(i)}"></span>` +
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
-          agentBadge((rec.spawn || {}).agent || '') +
+          agentBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '') +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
           // Every live member, not only whichever one the header's button would pick: the header
           // opens the first, and a conversation of four is exactly where that is the wrong one.
@@ -517,10 +521,13 @@
         && projects.some(p => p.id === spawn.project_id) && respawnRole(spawn));
     }
 
-    // Continuing is adding a member, and a respawn is a **new** one — a new pane means a new
-    // convMemberKey, which means a new transcript (D3). That is what stops a recycled pane id
-    // inheriting a dead session's words, and the joint view's time merge is what makes the two
-    // read as one thread across the seam.
+    // A restart replaces the member it was asked for rather than joining beside it: same name,
+    // same row, and the dead session's transcript copied under the new pane's key so the thread
+    // reads on across the seam. D3 said a respawn is always a new member — that rule was about a
+    // *recycled pane id* silently inheriting a dead session's words, which this is not: the reader
+    // picked the member and asked for it. Where the two do meet — a replacement landing on a key
+    // some other conversation still records under — convContinueTranscript refuses the copy and
+    // this falls back to D3's new member.
     // What the first tap says, because the second one starts a real session on a real host and a
     // drain cannot carry a sentence. The relay takes a new session's cwd from the Project and
     // never from the client, so the recorded cwd is *shown* rather than sent: if the Project has
@@ -551,13 +558,23 @@
       // session was in. New tab only where that workspace is live on that host right now.
       const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
         && (x.host || 'local') === (spawn.host || 'local'));
-      const msg = {
-        type: 'start_agent', name: spawn.agent, role: respawnRole(spawn),
-        project_id: spawn.project_id,
+      // The starter role it was begun as, from the record or — for a record that predates it — from
+      // the name it was given, which is derived from the same badge. A session started as an
+      // Architect is started again as one, opening prompt and all; one that matches no badge keeps
+      // the old behaviour of its bare wire role.
+      const starter = startRoleOf(spawn.starter) || startRoleFromLabel(spawn.label);
+      const msg = Object.assign({
+        type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
-      };
+      }, starter ? startRoleFields(starter, '') : {role: respawnRole(spawn)});
+      // This is continuation, not duplicate: keep the exact name the user recognises in the thread.
+      // Only where the relay will take it — a label over 32 characters is refused outright, and a
+      // restart that fails over the name is worse than one that comes up as "Architect 2".
+      const same = String(rec.label || spawn.label || '').trim();
+      if (same && same.length <= 32) msg.label = same;
       if (tab) msg.workspace_id = spawn.workspace_id;
-      startIntent = { conv: conv.id };
+      startIntent = { conv: conv.id, replace: key };
+      startPrompt = roleStarter(starter);
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
       ws.send(JSON.stringify(msg));
     }
@@ -795,19 +812,9 @@
       return conv ? conv.id : '';
     }
 
-    // A tab is a conversation, and where it opens depends on whether the pane on screen is in it.
-    // Switching the pane's own thread beats leaving the pane: the composer, the rows and the
-    // ruler are all still there, and the reader asked for a different grouping, not a different
-    // screen.
+    // Bottom tabs are destinations, not a pane-thread selector. From any screen they open the
+    // conversation itself, so a tab never changes the reader's current pane behind their back.
     function convTabPick(id) {
-      const a = document.body.classList.contains('conversation-open') || !activePane
-        ? null : paneOf(activePane);
-      const conv = loadConvIndex().find(c => c.id === id);
-      if (a && conv && (conv.members || []).some(m => m.key === convMemberKey(a))) {
-        convSetView(a, id);
-        renderConvBar();
-        return;
-      }
       openConversation(id);
     }
 
@@ -843,6 +850,19 @@
       // the second one in its tint.
       // A single-member thread is read straight off its one record and its entries carry no key —
       // there was never another member to tell them from. That member is keys[0].
+      // Same rule as the pane's own thread: one member on screen is one speaker, and a bubble that
+      // stops at 86% is leaving room for a column nothing is drawn in.
+      box.classList.toggle('conv-solo', shown.length <= 1);
+      // A pair reads as two columns here as well: one agent's words down the left, the other's
+      // indented to the right, which is the shape the pane's own thread has always drawn a pair in.
+      // The right side is the pane the reader has open when that is one of the two — the same rule
+      // the pane thread follows — and the second member otherwise, so the columns are stable for a
+      // reader who has no pane open at all.
+      const shownKeys = shown.map(m => m.key);
+      const openKey = activePane ? convMemberKey(paneOf(activePane)) : '';
+      const twoCol = shownKeys.length === 2 && !!(conv.pair_id ||
+        agents.some(x => shownKeys.includes(convMemberKey(x)) && pairFor(pairs, x.pane_id)));
+      const rightKey = shownKeys.includes(openKey) ? openKey : shownKeys[1];
       const visible = e => !hidden.has(e.key || keys[0]);
       const entries = hidden.size ? composed.entries.filter(visible) : composed.entries;
       const all = hidden.size ? composed.all.filter(visible) : composed.all;
@@ -876,7 +896,7 @@
         // Same fallback the visibility filter above uses: a single-member thread's entries carry no
         // key, and the dock reads a bubble's key to know who wrote it — an unkeyed bubble has no
         // source and so no target to exclude.
-        ? convEntriesHtml(entries, {key: keys[0]}, false, 'toggleConvDockPick')
+        ? convEntriesHtml(entries, {key: twoCol ? rightKey : keys[0]}, twoCol, 'toggleConvDockPick')
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional. Turn "final ' +
             'messages only" off in the pane menu to see it.</p>'

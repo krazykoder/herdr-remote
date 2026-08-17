@@ -95,6 +95,43 @@ test('leaving by the header chevron rewinds the browser too', async ({page}) => 
   expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
 });
 
+// The walk keeps twenty entries; the browser's stack keeps every push. Past that cap the two
+// numbers stop agreeing, and an exit that rewound by the walk's own cursor landed in the middle of
+// the browser's stack — the header chevron then opened whatever was parked there instead of
+// leaving. Twenty-six destinations, which is enough to have dropped six.
+test('the header chevron still leaves after more visits than the walk keeps', async ({page}) => {
+  await openPane(page);
+  const strip = page.locator('#agentTabs .agent-tab');
+  for (let i = 0; i < 26; i++) await strip.nth(i % 2).click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+  // The browser's stack really is deeper than the walk's cap, which is the whole premise.
+  expect(await page.evaluate(() => history.length)).toBeGreaterThan(21);
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+  // Standing on the document's own entry, which is what makes the next Back gesture leave the app
+  // rather than replay a destination the user has already left.
+  expect(await page.evaluate(() => history.state && history.state.herdrNav)).toBeFalsy();
+});
+
+// The chevron is an exit, and an exit cannot be conditional on the browser's cursor being where
+// the walk thinks it is. It used to only rewind and let the popstate that came back do the
+// landing — so a cursor that had drifted (a detached entry, a depth the browser clamped) left the
+// user exactly where they were. Home lands first; the rewind is housekeeping behind it.
+test('the header chevron leaves even when the browser cursor has drifted', async ({page}) => {
+  await openPane(page);
+  await page.locator('#navSettings').click();
+  await expect(page.locator('#settingsView')).toBeVisible();
+  await page.locator('#navSettings').click();          // back onto the pane, three entries deep
+  await expect(page.locator('#terminalView')).toBeVisible();
+  // Detached: the walk can no longer drive the browser, which is exactly the state an entry
+  // written by another page — or one older than the cap — puts it in.
+  await page.evaluate(() => { navDetached = true; });
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#agentListView')).toBeVisible();
+  await expect(page.locator('#statusBar #navBack')).toBeDisabled();
+});
+
 test('desktop , and . walk history without stealing composer input', async ({page}) => {
   await openPane(page);
   // The same edge the footer ‹ has: with nothing behind the first destination, Back is the way

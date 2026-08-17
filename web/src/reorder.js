@@ -257,17 +257,36 @@
       renderPairStrip();
     }
 
-    // The strip is absent, not disabled, when there is no pair — and the transfer control is
-    // absent whenever the pair is stale, so the UI can never offer an unverified target.
+    // Who you are reading, always; the pair controls only when there is a healthy pair to work.
+    // The transfer control is absent whenever the pair is stale, so the UI can never offer an
+    // unverified target.
     function renderPairStrip() {
       const strip = document.getElementById('pairStrip');
       const menu = document.getElementById('termMenuPair');
+      // Before the lookup: a pair whose panes have been restarted is found by this and by nothing
+      // else, and being asked "is this pane paired" is the moment to answer it honestly.
+      healPairs();
       const pair = activePane ? pairFor(pairs, activePane) : null;
+      const mineLive = activePane ? agents.find(a => a.pane_id === activePane) : null;
+      // Which pane you are in, by name and harness. Not a pair fact — the answer is the same
+      // whether this pane is paired, whether the pair is healthy, and whether the composer is
+      // unfolded, so it is shown on all of them. Pairing state is told by the controls beside it.
+      // The pair's own name moves to the title, where a reader who wants it can still find it.
+      const title = [pair && pair.name, bottomDockOpen() && mineLive && `typing to ${paneLabel(mineLive)}`]
+        .filter(Boolean).join(' — ');
+      const center = mineLive
+        ? `<span class="pair-target" title="${escapeHtml(title || paneLabel(mineLive))}">` +
+          `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
+          `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
+          `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${agentBadge(mineLive.agent)}</span>`
+        : pair ? `<span class="pair-name">${escapeHtml(pair.name)}</span>` : '';
       if (!pair) {
-        strip.style.display = 'none';
-        strip.innerHTML = '';
-        // No strip without a pair — but the menu still has to offer making one, or an unpaired
-        // pane has no route to pairing from inside the pane at all.
+        // Nothing to switch to and nothing to transfer, so the strip is the name alone — and
+        // nothing at all when there is no live pane to name. The menu still has to offer pairing,
+        // or an unpaired pane has no route to it from inside the pane.
+        strip.className = 'pair-strip' + (currentPairPlace() === 'bottom' ? ' at-bottom' : '');
+        strip.innerHTML = center;
+        strip.style.display = center ? 'flex' : 'none';
         menu.innerHTML = activePane
           ? `<button class="menu-item" role="menuitem" onclick="closeTermMenu(); openPairDialog(activePane)">Pair with…</button>`
           : '';
@@ -275,21 +294,12 @@
       }
       const health = pairHealth(pair, agents);
       const partner = partnerOf(pair, activePane);
-      const mine = memberOf(pair, activePane);
       const ok = health.state === 'healthy';
       // Read the partner's name from the live snapshot, not from the pair record: the record holds
       // the name captured at pin time, so renaming a pane would leave a stale name on this button.
       // Falls back to the pinned name, then the pane ID, so the button is never blank.
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
-      const mineLive = agents.find(a => a.pane_id === activePane);
-      const targetShown = ok && bottomDockOpen() && mineLive;
-      const center = targetShown
-        ? `<span class="pair-target" title="Typing to ${escapeHtml(paneLabel(mineLive))}">` +
-          `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
-          `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
-          `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${agentBadge(mineLive.agent)}</span>`
-        : `<span class="pair-name">${escapeHtml(pair.name)}</span>`;
       // Rebuilt wholesale, so the placement class has to be reapplied with it.
       strip.className = 'pair-strip' + (ok ? '' : ' stale') +
         (currentPairPlace() === 'bottom' ? ' at-bottom' : '');

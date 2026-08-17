@@ -99,16 +99,10 @@
       return agents.find(a => convMemberKey(a) === keys.values().next().value) || null;
     }
 
-    // Who a message may be sent to. With a bubble picked that is everyone but the pane that said it
-    // — a message cannot be transferred back into its own session. The row still *draws* the whole
-    // membership (see dockRowHtml): a pick is a passing state, and a conversation that shed its
-    // members every time one was quoted would keep answering "who is in this" differently.
-    function dockTargets() {
-      const source = dockSource();
-      const all = dockMembers();
-      return source ? all.filter(a => a.pane_id !== source.pane_id) : all;
-    }
-
+    // Who a message may be sent to is the whole membership, the author of the picked bubble
+    // included. Handing an agent its own words back is a real move — "redo this", "you said this,
+    // now check it" — and the row is not the place to decide it is a mistake.
+    //
     // The pane this one is paired with, when it is in the conversation. A default, never a rule:
     // membership is still what makes an agent a target (4.2), and a conversation with no pair
     // recorded anywhere is served exactly as before. But when a message has been picked and nobody
@@ -121,21 +115,18 @@
       return partner && list.some(a => a.pane_id === partner.pane_id) ? partner.pane_id : '';
     }
 
-    // Kept honest against the row it is drawn from: a target that has exited, or that turns out to
-    // be the source of what is being transferred, falls back — to the source's partner if it is
-    // here, and to the first member if it is not — rather than silently sending somewhere else.
-    // A target the reader chose always wins, including one chosen before the pick was made.
+    // Kept honest against the row it is drawn from: a target that has exited falls back — to the
+    // source's partner if it is here, and to the first member if it is not — rather than silently
+    // sending somewhere else. A target the reader chose always wins, including one chosen before
+    // the pick was made.
     function dockTargetOf(list, source) {
       if (list.some(a => a.pane_id === dockTarget)) return dockTarget;
       return dockPairTarget(source, list) || ((list[0] || {}).pane_id || '');
     }
 
-    // Who the composer is talking to: the row's lit member. Falls back to the whole membership when
-    // a pick has excluded everyone, so that typing still has somewhere to go — the same list the row
-    // draws in that case.
+    // Who the composer is talking to: the row's lit member.
     function dockAddressed() {
-      const list = dockTargets();
-      return list.length ? dockTargetOf(list, dockSource()) : dockTargetOf(dockMembers());
+      return dockTargetOf(dockMembers(), dockSource());
     }
 
     function setDockTarget(paneId) {
@@ -162,7 +153,48 @@
       dockPicks = [];
       renderConvDock();
       if (dockMenuOpen()) openDockMenu();
+      if (optMenuOpen()) openOptMenu();
       if (window.cue) cue('tick');
+    }
+
+    // The keyboard's own correction — Settings' switch, reached from the composer it is about. One
+    // setting and not two: it is already applied to both composers from one key, and a second copy
+    // living beside this box would disagree with the one in Settings the moment either was used.
+    function toggleDockAutocorrect() {
+      setAutocorrect(!autocorrectOn());
+      if (optMenuOpen()) openOptMenu();
+      if (window.cue) cue('tick');
+    }
+
+    // Everything about how the composer behaves, in one list. Both are switches rather than one
+    // being a button and the other a menu item: they are the same kind of thing — a standing
+    // preference about this box — and a row of lone toggles says nothing about what each one is.
+    function openOptMenu() {
+      const box = document.getElementById('optMenu');
+      const opts = [
+        ['Show inline prompt', dockFill(), 'toggleDockFill()',
+          'Write an instruction into the message box instead of attaching it at the send'],
+        ['Autocorrect', autocorrectOn(), 'toggleDockAutocorrect()',
+          "Let the keyboard correct what you type. Off by default — this box types filenames and flags"],
+      ];
+      box.innerHTML = opts.map(([label, on, call, why]) =>
+        `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
+        `onclick="${call}" title="${escapeHtml(why)}">` +
+        `<span class="tick">${on ? '✓' : ''}</span>${escapeHtml(label)}</button>`).join('') +
+        `<button class="menu-item" role="menuitem" onclick="closeDockMenu('optMenu')">Done</button>`;
+      closeDockMenu('chipMenu');
+      closeDockMenu('whoMenu');
+      box.hidden = false;
+      syncDockHeight();
+    }
+
+    function optMenuOpen() {
+      const box = document.getElementById('optMenu');
+      return !!box && !box.hidden;
+    }
+
+    function toggleOptMenu() {
+      if (optMenuOpen()) closeDockMenu('optMenu'); else openOptMenu();
     }
 
     // The instruction is appended as its own line. A prompt is a new instruction, not an edit to
@@ -267,11 +299,9 @@
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
       const all = dockMembers();
-      // Always the whole membership. A pick narrows who may *receive* the message, never who is in
-      // the conversation, and a row that dropped the others while a bubble was picked took the
-      // reader's other choices away over a state one tap undoes. With every candidate excluded — a
-      // bubble picked in a conversation of one — there is simply nothing left to send it to.
-      const html = all.length ? dockRowHtml(all, !dockTargets().length) : '';
+      // Always the whole membership. A pick decides what is being sent, never who is in the
+      // conversation or who may have it.
+      const html = all.length ? dockRowHtml(all) : '';
       row.hidden = !html;
       if (!html) { closeDockMenu(); row.dataset.sig = ''; }
       // Rebuilt only when what it says changed. This runs on every snapshot, and replacing the row
@@ -337,6 +367,31 @@
       input.parentElement.classList.toggle('on', document.activeElement === input);
     }
 
+    // The caret, kept on screen inside the field.
+    //
+    // Past its max height the field scrolls itself, and a browser scrolls a textarea to its own
+    // caret on input — but `autoGrow` re-measures by setting the height to `auto` first, and that
+    // reflow puts `scrollTop` back to the top on every keystroke. So writing past the fold left
+    // the caret below the visible band: the line being typed was off screen, and it came back only
+    // by scrolling down by hand to find it.
+    //
+    // Measured off the ghost, which already mirrors the text exactly and already marks the caret —
+    // there is nothing else in a textarea that says which pixel row the caret is on. Only from the
+    // events that move the caret, never from the field's own scroll: scrolling up to reread what
+    // you wrote must not be undone by the thing that follows the caret.
+    function keepConvCaret() {
+      const input = document.getElementById('convInput');
+      const ghost = document.getElementById('convGhost');
+      syncConvCursor();
+      if (!input || !ghost) return;
+      const cur = ghost.querySelector('.cur');
+      if (!cur) return;
+      const top = cur.offsetTop, bottom = top + cur.offsetHeight, view = input.clientHeight;
+      if (bottom > input.scrollTop + view) input.scrollTop = bottom - view;
+      else if (top < input.scrollTop) input.scrollTop = top;
+      ghost.scrollTop = input.scrollTop;
+    }
+
     // The caret moves for more reasons than a key going down: a held arrow repeats without ever
     // firing keyup, a drag selects while the mouse moves, and undo, autocorrect and dictation move
     // it with no key at all. So the block follows the *selection* rather than the events that might
@@ -347,26 +402,24 @@
     function watchConvCursor() {
       const input = document.getElementById('convInput');
       if (!input) return;
-      const sync = () => { if (document.activeElement === input) syncConvCursor(); };
+      const sync = () => { if (document.activeElement === input) keepConvCaret(); };
       document.addEventListener('selectionchange', sync);
       input.addEventListener('selectionchange', sync);
       // The fallback, for a browser that fires neither: a key that moves the caret is read after
       // the browser has moved it, not while it is still where it was.
-      input.addEventListener('keydown', () => requestAnimationFrame(syncConvCursor));
+      input.addEventListener('keydown', () => requestAnimationFrame(keepConvCaret));
     }
 
-    function dockRowHtml(list, noSend) {
+    function dockRowHtml(list) {
       const target = dockAddressed();
-      const source = dockSource();
       // One lit, the rest dimmed rather than hidden: which agents are in this conversation is
       // information, and a row that showed only the chosen one would answer a different question.
       // Named the way the pane header names one: the live dot, the label, and the harness badge.
       // Which agent is about to receive another agent's output is the fact worth being sure of, and
       // "scratch" alone does not say whether that is a codex or a claude.
       //
-      // The member whose message is picked stays in the row, marked as the one it came from rather
-      // than removed: it is still in the conversation, it is still who you were reading, and a row
-      // that lost a pill on every pick would flicker its own membership.
+      // Every member is choosable, the author of the picked bubble included: sending an agent its
+      // own words back is a thing people do on purpose.
       // Addressed first. Only in the row that is drawn — dockMembers stays roster order, because
       // the fallback target is read off its first entry and a list that reordered itself around
       // the current choice could never fall back to anything else. Stable, so the rest keep the
@@ -374,16 +427,12 @@
       const who = list.slice()
         .sort((a, b) => (b.pane_id === target) - (a.pane_id === target))
         .map(a => {
-        // Not marked when it is the only member there is: a conversation of one still types into
-        // the pane it is reading, and a pill drawn dead beside a composer that works would be lying.
-        const from = !!source && a.pane_id === source.pane_id && !noSend;
         const name = escapeHtml(paneLabel(a));
-        return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}${from ? ' from' : ''}" ` +
+        return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}" ` +
           `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
-          (from ? 'disabled ' : `onclick="setDockTarget('${a.pane_id}')" `) +
+          `onclick="setDockTarget('${a.pane_id}')" ` +
           `aria-pressed="${a.pane_id === target}" ` +
-          `title="${from ? `${name} wrote the picked message` : `Talk to ${name}`}" ` +
-          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `title="Talk to ${name}" aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
       }).join('');
@@ -400,17 +449,16 @@
           `@${escapeHtml(s.at)}${at >= 0 && dockPicks.length > 1 ? `<sub>${at + 1}</sub>` : ''}` +
           `</button>`;
       }).join('');
-      // Which of the two a chip does, said by the control that changes it. Pressed is "into the
-      // box", because that is the mode where the instruction is visible.
-      const fillBtn = `<button class="xfer-chip fill${fill ? ' on' : ''}" onclick="toggleDockFill()" ` +
-        `aria-pressed="${fill}" title="${fill ? 'Instructions are written into the message' :
-          'Instructions are added to the message when it is sent'}" ` +
-        `aria-label="Write instructions into the message box">⤵</button>`;
+      // What a chip does is one of the composer's settings, not a mode of its own, so it is behind
+      // the settings list with the rest of them rather than beside the chips as a lone toggle.
+      const fillBtn = `<button class="xfer-chip opts" onclick="toggleOptMenu()" ` +
+        `aria-expanded="${optMenuOpen()}" ` +
+        `title="How the composer behaves" aria-label="How the composer behaves">⚙</button>`;
       const n = dockPicked.size;
       // Send belongs to the bubbles. With nothing picked there is nothing for it to carry and the
       // composer's own send is what fires, so the row would be offering a second button for a
       // message it does not hold.
-      const send = n && !noSend
+      const send = n
         ? `<button class="xfer-send" onclick="convDockSend()" ` +
           `title="Send the picked message${n === 1 ? '' : 's'} to ` +
           `${escapeHtml(paneLabel(paneOf(target)) || target)}" ` +
@@ -454,33 +502,161 @@
         `<span class="tick">${!fill && dockPicks.includes(i) ? '✓' : ''}</span>` +
         `@${escapeHtml(s.at)} — ${escapeHtml(s.label)}</button>`).join('') +
         `<button class="menu-item" role="menuitem" onclick="closeDockMenu()">Done</button>`;
+      closeDockMenu('optMenu');
       box.hidden = false;
       syncDockHeight();
     }
 
     // The same members as a list, for a row that has scrolled past the edge of a phone and for
     // reading a name that the pill cut off. It chooses the same target the pills do — the lit one is
-    // ticked, and the member whose message is picked is named but not choosable, exactly as in the
-    // row.
+    // ticked, and everyone in the row is choosable here too.
     function openWhoMenu() {
       const box = document.getElementById('whoMenu');
       const target = dockAddressed();
-      const source = dockSource();
-      const noSend = !dockTargets().length;
       box.innerHTML = dockMembers().map(a => {
-        const from = !!source && a.pane_id === source.pane_id && !noSend;
         const on = a.pane_id === target;
         const name = escapeHtml(paneLabel(a));
         return `<button class="menu-item" role="menuitemradio" aria-checked="${on}" ` +
-          (from ? 'disabled ' : `onclick="pickDockTarget('${a.pane_id}')" `) +
-          `aria-label="${from ? `${name}, who wrote the picked message` : `Talk to ${name}`}">` +
+          `onclick="pickDockTarget('${a.pane_id}')" aria-label="Talk to ${name}">` +
           `<span class="tick">${on ? '✓' : ''}</span>` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
-      }).join('');
+      }).join('') +
+        // Last, under the membership: another agent in this conversation is one more of the same
+        // list, and the place that answers "who is in this" is the place to add to it.
+        (canStartFromConv()
+          ? `<button class="menu-item" role="menuitem" onclick="openNewAgent()">` +
+            `<span class="tick">+</span>New agent</button>`
+          : '');
       closeDockMenu('chipMenu');   // one list open at a time; two would cover the thread twice over
+      closeDockMenu('optMenu');
       box.hidden = false;
       syncDockHeight();
+    }
+
+    // --- New agent, from inside the conversation ---
+    //
+    // The membership list is where "who is in this conversation" is answered, so it is also where
+    // another one is added. The full Start session sheet asks where the session goes; from here that
+    // is already answered — beside what this conversation is running — and what is left is four
+    // choices, three of them made by tapping a badge: harness, role, name, Project.
+    let newAgentKind = '';
+    let newAgentRole = 0;
+    let newAgentProject = '';
+
+    // The relay must be willing to start, and there must be a Project to start into.
+    function canStartFromConv() {
+      return !!(startOptions && (startOptions.agents || []).length && projects.length);
+    }
+
+    function openNewAgent() {
+      closeDockMenu();
+      if (!canStartFromConv()) { showToast('This relay does not start sessions.'); return; }
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const from = paneOf(dockAddressed());
+      document.getElementById('newAgentConv').textContent = conv ? conv.name : '';
+      // The harness the conversation is already being had in, because a second opinion on the same
+      // work is what this is usually for. Falls back to the first the relay will start.
+      const kinds = startOptions.agents || [];
+      newAgentKind = from && kinds.includes(from.agent) ? from.agent : kinds[0];
+      newAgentRole = 0;
+      // Spawned where the conversation lives. Not a rule — the row is right there — but a Project
+      // chosen for you is one fewer question in a dialog that exists to be quick.
+      newAgentProject = from && projects.some(p => p.id === from.project_id)
+        ? from.project_id : (projects[0] || {}).id || '';
+      document.getElementById('newAgentName').value = '';
+      setNewAgentError('');
+      closeDockMenu('newAgentProjMenu');
+      renderNewAgent();
+      document.getElementById('newAgentModal').style.display = 'block';
+    }
+
+    function closeNewAgent() {
+      document.getElementById('newAgentModal').style.display = 'none';
+      closeDockMenu('newAgentProjMenu');
+    }
+
+    function setNewAgentError(text) {
+      const el = document.getElementById('newAgentError');
+      el.textContent = text || '';
+      el.style.display = text ? 'block' : 'none';
+    }
+
+    // Three rows of badges, in the order the decision is made. The Project row is one line that
+    // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
+    function renderNewAgent() {
+      document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
+        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
+      document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
+        badgeHtml(`# ${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
+          {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
+        .join('');
+      document.getElementById('newAgentProjects').innerHTML = projects.map(p =>
+        badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`,
+          {proj: true})).join('');
+      // Kept on screen when the row is longer than the line, so the chosen Project is never the one
+      // that scrolled off.
+      const on = document.querySelector('#newAgentProjects .badge.pick.on');
+      if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    }
+
+    function pickNewAgentKind(kind) {
+      newAgentKind = kind;
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function pickNewAgentRole(i) {
+      newAgentRole = i;
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function pickNewAgentProject(id) {
+      newAgentProject = id;
+      closeDockMenu('newAgentProjMenu');
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    // Every Project as a list, for the ones the line could not hold — the same @+ the instruction
+    // row uses, doing the same job.
+    function toggleNewAgentProjects() {
+      const box = document.getElementById('newAgentProjMenu');
+      if (!box.hidden) { box.hidden = true; return; }
+      box.innerHTML = projects.map(p =>
+        `<button class="menu-item" role="menuitemradio" aria-checked="${p.id === newAgentProject}" ` +
+        `onclick="pickNewAgentProject('${p.id}')">` +
+        `<span class="tick">${p.id === newAgentProject ? '✓' : ''}</span>` +
+        `@${escapeHtml(p.label)}</button>`).join('');
+      box.hidden = false;
+    }
+
+    function submitNewAgent() {
+      if (!ws) return;
+      const role = startRoles()[newAgentRole];
+      if (!newAgentProject || !newAgentKind || !role) { setNewAgentError('Pick a project first'); return; }
+      // Omitted, not empty: the relay derives "Role N" from an absent label and refuses a blank one.
+      // A badge the relay has no role for is named here instead, or the pane would come up called
+      // "Agent 1" when what was asked for was an Arbitrator. Same rule the Start sheet follows.
+      const typed = document.getElementById('newAgentName').value.trim();
+      const msg = Object.assign({
+        type: 'start_agent', name: newAgentKind,
+        project_id: newAgentProject, slot: slotFor(),
+      }, startRoleFields(role, typed));
+      // Where is not asked: beside what this Project is already running, which is what a new member
+      // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
+      // gets a workspace of its own.
+      const beside = agents.find(a => a.project_id === newAgentProject && a.workspace_id);
+      msg.placement = beside ? 'new_tab' : 'new_workspace';
+      if (beside) msg.workspace_id = beside.workspace_id;
+      // Joins this conversation when it comes up, and is opened with the role's prompt — the same
+      // pair a respawn sets, which is what makes the new pane open on the thread and speak into it.
+      startIntent = {conv: convViewId};
+      startPrompt = roleStarter(role);
+      showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
+      ws.send(JSON.stringify(msg));
+      closeNewAgent();
     }
 
     // Chosen from the list rather than the row, so the list has said what it was opened to say and
@@ -497,9 +673,8 @@
     // Only the conversation window's thread, because it is the only one with a target to change —
     // the pane's own composer types into the pane on screen.
     function addressConvAuthor(key) {
-      const live = dockTargets().find(a => convMemberKey(a) === key);
-      // No target: the author has exited, is folded out of the thread, or is the source of what is
-      // picked — a message cannot be transferred back into its own session.
+      const live = dockMembers().find(a => convMemberKey(a) === key);
+      // No target: the author has exited or is folded out of the thread.
       if (!live) return;
       // The word the double-click selected is not a selection anybody asked for.
       const sel = window.getSelection && window.getSelection();
@@ -544,7 +719,7 @@
     // Named for one list or, with nothing named, for both — the callers that are leaving the
     // conversation or have just sent something mean every list, not one of them.
     function closeDockMenu(id) {
-      const ids = id ? [id] : ['chipMenu', 'whoMenu'];
+      const ids = id ? [id] : ['chipMenu', 'whoMenu', 'optMenu'];
       for (const one of ids) {
         const box = document.getElementById(one);
         if (box && !box.hidden) { box.hidden = true; syncDockHeight(); }
@@ -564,7 +739,7 @@
       // With bubbles picked there is one message being written, and the row's Send is a labelled
       // second view of this button rather than a different one. Sending only the typed half here
       // would quietly drop the quote the pick put on the message.
-      if (dockPicked.size && dockTargets().length) return convDockSend();
+      if (dockPicked.size && dockMembers().length) return convDockSend();
       const input = document.getElementById('convInput');
       const body = input.value.trim();
       if (!body) return;
@@ -610,8 +785,8 @@
       const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'))
         .map(el => el.dataset.text || '').filter(Boolean);
       if (!picked.length) return;
-      const targets = dockTargets();
-      if (!targets.length) { showToast('Nobody else in this conversation to send it to.'); return; }
+      const targets = dockMembers();
+      if (!targets.length) { showToast('Nobody in this conversation to send it to.'); return; }
       const target = dockTargetOf(targets, source);
       const live = agents.find(a => a.pane_id === target);
       if (!live) { showToast('That agent is no longer running.'); return; }
@@ -670,6 +845,12 @@
         if (!e.target.closest) return;
         if (dockMenuOpen() && !e.target.closest('#chipMenu, .xfer-chip')) closeDockMenu('chipMenu');
         if (whoMenuOpen() && !e.target.closest('#whoMenu, .xfer-who-more')) closeDockMenu('whoMenu');
+        if (optMenuOpen() && !e.target.closest('#optMenu, .xfer-chip.opts')) closeDockMenu('optMenu');
+        // The New agent dialog's own list, by the same rule — including a tap on the badge row it
+        // covers, which is a choice being made rather than the list being dismissed.
+        const projMenu = document.getElementById('newAgentProjMenu');
+        if (projMenu && !projMenu.hidden && !e.target.closest('#newAgentProjMenu, .chip-line'))
+          projMenu.hidden = true;
       }, true);
       const thread = document.getElementById('convViewThread');
       if (thread) thread.addEventListener('dblclick', e => {

@@ -147,7 +147,6 @@
     function runCommand(cmd) {
       closePalette();
       if (!ws || !activePane) return;
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: cmd }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      submitText(activePane, cmd);
       setTimeout(refreshPane, 500);
     }

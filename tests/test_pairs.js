@@ -23,7 +23,8 @@ const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
                'partnerOf', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
-               'SHORTCUTS', 'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
+               'SHORTCUTS', 'START_ROLES', 'roleStarter', 'startRoleOf', 'startRoleFromLabel',
+               'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
                'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
                'enterAction', 'ctrlChord'];
 
@@ -33,7 +34,8 @@ const ctx = vm.createContext({});
 vm.runInContext(PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
-       navStep, navPush, SHORTCUTS, MAX_PAIRS, SEND_TEXT_MAX, chunkText,
+       navStep, navPush, SHORTCUTS, START_ROLES, roleStarter, startRoleOf, startRoleFromLabel,
+       MAX_PAIRS, SEND_TEXT_MAX, chunkText,
        parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
        enterAction, ctrlChord} = ctx.__out;
 
@@ -304,10 +306,8 @@ test('the conversation window\'s targets do not require a pair', () => {
   assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 1);
   assert.match(CONV_DOCK,
     /function dockPairTarget\(source, list\) \{[\s\S]*?list\.some\(a => a\.pane_id === partner\.pane_id\) \? partner\.pane_id : ''/);
-  for (const fn of ['dockMembers', 'dockTargets']) {
-    const body = CONV_DOCK.split(`function ${fn}(`)[1].split('\n    }')[0];
-    assert.ok(!/pairFor\(|dockPairTarget\(/.test(body), `${fn} must not consult a pair`);
-  }
+  const members = CONV_DOCK.split('function dockMembers(')[1].split('\n    }')[0];
+  assert.ok(!/pairFor\(|dockPairTarget\(/.test(members), 'dockMembers must not consult a pair');
   assert.match(CONV_DOCK, /function dockMembers\(\)[\s\S]*?\(conv\.members \|\| \[\]\)/);
   assert.match(TRANSFER, /function openTransfer\(\) \{\s*\n\s*const source = claimTransfer\(\);/);
   assert.match(TRANSFER, /function claimTransfer[\s\S]*?pairHealth\(pair, agents\)\.state !== 'healthy'/);
@@ -507,6 +507,67 @@ test('New tab with a live workspace in this project is offered', () => {
     [{pane_id: 'w1:p1', project_id: 'charts', workspace_id: 'w1', project: 'Charts'}], 'new_tab');
   assert.equal(els.startSubmit.disabled, false);
   assert.equal(els.startError.textContent, '');
+});
+
+// --- Starter roles ---
+// A role badge is two things at once: a role the relay knows, and a way of working it does not.
+// The relay names a pane after the role it is given, so a badge riding on `agent` has to carry
+// its own name or come up called "Agent 1" — and the name is what a respawn reads the badge back
+// off, which is what makes "start it again as the same thing" work at all.
+
+function runStartRoleFields(roles, role, typed) {
+  const start = START_DIALOG.indexOf('function startRoles');
+  // Ends at the comment above the next block, not at its `function` keyword: openPendingStart is
+  // declared `async`, and cutting between the two words left a bare `async` in the slice.
+  const end = START_DIALOG.indexOf('// A session the relay just started', start);
+  const c = vm.createContext({startOptions: {roles}, START_ROLES, escapeHtml});
+  vm.runInContext(START_DIALOG.slice(start, end) +
+    `\n;__out = {fields: startRoleFields(role, typed), offered: startRoles().map(r => r.at)};`,
+    Object.assign(c, {role, typed}));
+  return c.__out;
+}
+
+const RELAY_ROLES = ['architect', 'reviewer', 'agent'];
+
+test('a role the relay names panes for is sent bare, so the relay names the pane', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('architect'), '');
+  assert.deepEqual(fields, {role: 'architect'});
+});
+
+test('a way of working the relay has no role for carries its own name', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('arbitrator'), '');
+  assert.deepEqual(fields, {role: 'agent', label: 'Arbitrator'});
+});
+
+test('no role at all is still a start, on the neutral role', () => {
+  assert.deepEqual(runStartRoleFields(RELAY_ROLES, null, '').fields, {role: 'agent'});
+});
+
+test('a typed name wins over the one the badge would have given', () => {
+  const {fields} = runStartRoleFields(RELAY_ROLES, startRoleOf('arbitrator'), 'Judge');
+  assert.deepEqual(fields, {role: 'agent', label: 'Judge'});
+});
+
+test('only badges this relay will accept are offered', () => {
+  // An older relay knows architect and agent but not reviewer; the badge for it is absent rather
+  // than a refusal after the tap.
+  const {offered} = runStartRoleFields(['architect', 'agent'], null, '');
+  assert.deepEqual(offered, ['architect', 'arbitrator', 'orchestrator']);
+});
+
+test('the badge is read back off the name the pane was given', () => {
+  assert.equal((startRoleFromLabel('Architect 1') || {}).at, 'architect');
+  assert.equal((startRoleFromLabel('Arbitrator') || {}).at, 'arbitrator');
+  // Renamed since, so there is nothing left to read: a respawn falls back to the bare wire role
+  // rather than inventing a way of working the session never had.
+  assert.equal(startRoleFromLabel('nightly build'), null);
+  assert.equal(startRoleFromLabel(''), null);
+});
+
+test('a badge whose prompt is still to be written opens with nothing', () => {
+  assert.match(roleStarter(startRoleOf('architect')), /System_Prompt_2_Architect/);
+  assert.equal(roleStarter(startRoleOf('orchestrator')), '');
+  assert.equal(roleStarter(null), '');
 });
 
 // --- terminal shortcuts (T2) ---
@@ -711,4 +772,61 @@ test('Cmd, Alt, and Shift are left to the platform', () => {
 test('a letter outside the allowlist is typed, not sent', () => {
   assert.equal(ctrlChord(chord({key: 'a'}), at()), null);
   assert.equal(ctrlChord(chord({key: 'v'}), at()), null, 'paste survives');
+});
+
+// --- Pair repair ---
+// A pane_id is herdr's, not ours, and every way a pane can come back changes it: a restart, a
+// reopened workspace, an agent relaunched from the terminal. The pair pinned to the dead id is
+// then found by nothing, so the strip vanishes from both panes with nothing said about why —
+// which is what "some panes show it and others do not" looks like from the outside.
+
+const PAIRS_UI = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_ui.js'), 'utf8');
+
+function runHealPairs(pairsIn, agentsIn) {
+  const store = {};
+  const c = vm.createContext({
+    pairs: pairsIn, agents: agentsIn,
+    localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
+  });
+  vm.runInContext(PAIRS_PURE + '\n' + PAIRS_UI + '\n;__moved = healPairs();', c);
+  return {moved: c.__moved, pairs: c.pairs, saved: store['herdr_pairs']};
+}
+
+test('a member whose pane came back under a new id is re-pointed at it, and saved', () => {
+  const dead = member({pane_id: 'w1:p1'});
+  const alive = member({pane_id: 'w1:p2', agent: 'codex'});
+  const out = runHealPairs([pair(dead, alive)], [
+    agent({pane_id: 'w1:p9'}), agent({pane_id: 'w1:p2', agent: 'codex'})]);
+  assert.equal(out.moved, true);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p9');
+  assert.match(out.saved, /w1:p9/);
+});
+
+test('two candidates for one seat are left alone rather than guessed between', () => {
+  // Two claude panes in one directory are two colleagues; picking either would put one agent's
+  // work in the other's terminal.
+  const out = runHealPairs([pair(member(), member({pane_id: 'w1:p2', agent: 'codex'}))],
+    [agent({pane_id: 'w1:p8'}), agent({pane_id: 'w1:p9'}),
+     agent({pane_id: 'w1:p2', agent: 'codex'})]);
+  assert.equal(out.moved, false);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p1');
+  assert.equal(out.saved, undefined, 'nothing moved, so nothing is written');
+});
+
+test('a live pane already claimed by its own pair is not taken from it', () => {
+  const mine = pair(member({pane_id: 'w1:p1'}), member({pane_id: 'w1:p2', agent: 'codex'}));
+  const other = pair(member({pane_id: 'w1:dead'}), member({pane_id: 'w1:p3', agent: 'pi'}));
+  const out = runHealPairs([mine, other],
+    [agent({pane_id: 'w1:p1'}), agent({pane_id: 'w1:p2', agent: 'codex'}),
+     agent({pane_id: 'w1:p3', agent: 'pi'})]);
+  assert.equal(out.moved, false);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p1');
+});
+
+test('a host or cwd that does not match is not the same seat', () => {
+  for (const differs of [{host: 'box'}, {cwd: '/elsewhere'}, {agent: 'codex'}]) {
+    const out = runHealPairs([pair(member(), member({pane_id: 'w1:p2', agent: 'pi'}))],
+      [agent({pane_id: 'w1:p9', ...differs}), agent({pane_id: 'w1:p2', agent: 'pi'})]);
+    assert.equal(out.moved, false, `${JSON.stringify(differs)} must not be adopted`);
+  }
 });

@@ -11,6 +11,9 @@ TUNNEL_PID=""
 
 cleanup() {
     STATUS=$?
+    # Once. Ctrl-C fires INT, whose handler exits, which fires EXIT — so this ran twice, printing
+    # the shutdown twice and sending the relay a second SIGTERM it had already acted on.
+    trap - INT TERM EXIT
     echo ""
     echo "Shutting down..."
     [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null && wait "$TUNNEL_PID" 2>/dev/null

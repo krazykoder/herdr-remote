@@ -141,6 +141,7 @@
         }).join('');
       }
       renderBandwidth();
+      renderConvAnalytics();
     }
 
     function formatBandwidth(bytes) {
@@ -196,7 +197,14 @@
       // that lands, which with the poll is three times a minute. An innerHTML rebuild there would
       // send a reader who had scrolled back to an earlier bucket to the left edge again, three
       // times a minute. Same rule the dock's chip row follows.
-      const panes = panesOn ? agents.filter(a => a.agent) : [];
+      // By name, because a reader looking for one pane's row scans for its name and the snapshot's
+      // own order is whatever herdr listed. Shared stays under them all: it is what the named rows
+      // did not account for, which only reads as that when it comes last.
+      const panes = panesOn
+        ? agents.filter(a => a.agent)
+          .sort((x, y) => String(paneLabel(x)).localeCompare(String(paneLabel(y)),
+            undefined, {sensitivity: 'base', numeric: true}))
+        : [];
       // What the pane rows cannot account for: snapshots and pushes name no pane, and a pane that
       // has exited keeps its bytes but loses its row. Without this the split silently fails to add
       // up to the total above it, which reads as one of the two numbers being wrong.
@@ -216,7 +224,10 @@
         // One grid for the header and all three rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
-        rows.style.gridTemplateColumns = `minmax(110px, 1fr) repeat(${buckets.length}, minmax(46px, 1fr))`;
+        // The name column takes exactly what the longest name and its badge need — a pane called
+        // "Architect 1 [claude]" is not worth abbreviating, and the buckets are the half that can
+        // afford to scroll under it.
+        rows.style.gridTemplateColumns = `max-content repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -283,6 +294,127 @@
       }
     }
 
+    // --- Conversation storage analytics ---
+    let convAnalyticsSort = { col: 'size', dir: 'desc' };
+    let convAnalyticsData = [];
+
+    async function fetchConvAnalytics() {
+      const convs = typeof loadConvIndex === 'function' ? loadConvIndex() : [];
+      if (!convs.length) return [];
+      const recordsMap = new Map();
+      if (typeof openConvDB === 'function') {
+        const db = await openConvDB();
+        if (db) {
+          try {
+            const read = db.transaction(CONV_DB_STORE, 'readonly').objectStore(CONV_DB_STORE);
+            const all = await idbReq(read.getAll());
+            for (const r of all) if (r && r.key) recordsMap.set(r.key, r);
+          } catch (e) { /* use fallbacks */ }
+        }
+      }
+      if (typeof convFallbackAll === 'function') {
+        const fallback = convFallbackAll();
+        for (const [k, r] of Object.entries(fallback)) {
+          if (!recordsMap.has(k) && r) recordsMap.set(k, r);
+        }
+      }
+      if (typeof convHeld !== 'undefined' && convHeld instanceof Map) {
+        for (const [k, r] of convHeld.entries()) {
+          if (r) recordsMap.set(k, r);
+        }
+      }
+      return typeof calcConvAnalytics === 'function' ? calcConvAnalytics(convs, recordsMap) : [];
+    }
+
+    async function renderConvAnalytics() {
+      const section = document.getElementById('convAnalytics');
+      const tableWrap = document.getElementById('convAnalyticsWrap');
+      if (!section || !tableWrap) return;
+
+      const view = document.getElementById('timelineView');
+      if (view && view.style.display === 'none') return;
+
+      convAnalyticsData = await fetchConvAnalytics();
+      drawConvAnalyticsTable();
+    }
+
+    function sortConvAnalytics(col) {
+      if (convAnalyticsSort.col === col) {
+        convAnalyticsSort.dir = convAnalyticsSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        convAnalyticsSort.col = col;
+        convAnalyticsSort.dir = (col === 'name' ? 'asc' : 'desc');
+      }
+      drawConvAnalyticsTable();
+    }
+
+    function drawConvAnalyticsTable() {
+      const tableWrap = document.getElementById('convAnalyticsWrap');
+      const totalEl = document.getElementById('convAnalyticsTotal');
+      if (!tableWrap) return;
+
+      const totalBytes = convAnalyticsData.reduce((acc, c) => acc + (c.totalBytes || 0), 0);
+      if (totalEl) {
+        const n = convAnalyticsData.length;
+        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
+          formatConvSize(totalBytes);
+        totalEl.title = `${totalBytes.toLocaleString()} bytes on this device`;
+      }
+
+      if (!convAnalyticsData.length) {
+        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">No conversations stored yet</div>';
+        return;
+      }
+
+      const sorted = typeof sortConvAnalyticsRows === 'function'
+        ? sortConvAnalyticsRows(convAnalyticsData, convAnalyticsSort.col, convAnalyticsSort.dir)
+        : convAnalyticsData.slice();
+
+      const arrow = col => convAnalyticsSort.col === col ? `<span class="sort-arrow">${convAnalyticsSort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
+      const ariaSort = col => convAnalyticsSort.col === col ? (convAnalyticsSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+
+      const th = (col, label, alignRight) =>
+        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')" style="${alignRight ? 'text-align:right;' : ''}">` +
+        `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
+
+      const rowsHtml = sorted.map(c => {
+        // Rounded the way the rest of the app rounds bytes: a conversation of four messages is
+        // kilobytes, and "0.00 MB" beside it read as a row that had failed to measure itself.
+        const size = formatConvSize(c.totalBytes);
+        const titleTip = `${escapeHtml(c.name)} · ${c.totalBytes.toLocaleString()} bytes`;
+        // The id rides in a data attribute rather than inside the handler's quotes: a name or an
+        // id with an apostrophe in it would otherwise end the string and break the row.
+        return `<tr>` +
+          `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
+          `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
+          `${escapeHtml(c.name)}</button>${c.auto ? ' <span class="conv-analytics-auto-badge">auto</span>' : ''}</td>` +
+          `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
+          `<td class="conv-analytics-num">${c.panes.toLocaleString()}</td>` +
+          `<td class="conv-analytics-num" title="${titleTip}">${size}</td>` +
+          `</tr>`;
+      }).join('');
+
+      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Conversations by local storage size">` +
+        `<thead><tr>` +
+        th('name', 'Conversation', false) +
+        th('msgCount', 'Messages', true) +
+        th('panes', 'Panes', true) +
+        th('size', 'Size', true) +
+        `</tr></thead>` +
+        `<tbody>${rowsHtml}</tbody>` +
+        `</table>`;
+    }
+
+    async function refreshConvAnalytics() {
+      const btn = document.getElementById('convAnalyticsRefresh');
+      if (btn) btn.classList.add('spinning');
+      try {
+        await renderConvAnalytics();
+      } finally {
+        if (btn) setTimeout(() => btn.classList.remove('spinning'), 350);
+      }
+    }
+
     // What lands in this box is almost never a bare URL. start.sh fences the address as a code
     // block so it is copyable on a phone, chat clients add their own backticks and newlines, and
     // the line above it in the terminal is "Tunnel:  wss://…". The link start.sh prints for the
@@ -307,6 +439,17 @@
       // cloudflared's own banner — so the scheme people copy is often the wrong one of the pair.
       s = s.replace(/^https:\/\//i, 'wss://').replace(/^http:\/\//i, 'ws://');
       return s.replace(/\/+$/, '');
+    }
+
+    // Empties the box and leaves the caret in it, ready for the next tunnel's address. Nothing is
+    // saved and nothing disconnects: what is stored is still what Connect last stored, so a cleared
+    // box that is never submitted costs the reader nothing.
+    function clearRelayUrl() {
+      const input = document.getElementById('relayUrl');
+      if (!input) return;
+      input.value = '';
+      input.focus();
+      if (window.cue) cue('tick');
     }
 
     function saveAndConnect() {
@@ -655,6 +798,7 @@
 
     // One insertion point for the independently rendered landing-page sections.
     function renderBody() {
+      syncAgentKind();
       renderBodyMain();
       // Once, here, rather than at each of the three places that write #agents: every one of them
       // is reached through renderBodyMain, and a fourth added later would otherwise be a list that
@@ -684,7 +828,7 @@
         renderAgentList(agents);
         return;
       }
-      let html = hoistHtml(agents) + layoutHtml(agents);
+      let html = hoistHtml(ofKind(agents)) + layoutHtml(agents);
       if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }
@@ -692,7 +836,7 @@
     // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
-      let html = hoistHtml(agents);
+      let html = hoistHtml(ofKind(agents));
       html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
@@ -705,8 +849,9 @@
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
-        const rest = agents.filter(a => !hoisted(a));
+        const rest = ofKind(agents).filter(a => !hoisted(a));
         if (rest.length) html += section('Agents', rest);
+        else if (agentKind) html += section('Agents', [], `No ${agentKind} sessions`);
       } else {
         if (startOptions) {
           // + New terminal only when the relay says both of open_terminal's gates are open —
@@ -720,7 +865,8 @@
         // Terminals below it kept a heading. It gets a separator of its own, saying why it is
         // empty in the header rather than under it.
         const mine = agents.filter(a => a.project_id === activeProject);
-        html += mine.length ? layoutHtml(mine) : section('Agents', [], 'No sessions');
+        html += ofKind(mine).length ? layoutHtml(mine)
+          : section('Agents', [], agentKind ? `No ${agentKind} sessions` : 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
     }
@@ -751,6 +897,41 @@
     ${start}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
+    }
+
+    // Which harness the landing page is showing, or '' for all of them. A view, not a setting:
+    // it is answered by what is running right now, so it is not kept across a reload — a filter
+    // that survives a restart is a page that looks empty for a reason nobody remembers.
+    let agentKind = '';
+
+    // The last pane of a kind exiting takes the filter with it, rather than leaving the page
+    // filtered to a harness that is no longer here. Read before anything draws: the badges are
+    // hung on the list *after* it is built, so clearing it there would leave one frame of cards
+    // filtered to a kind that is already gone.
+    function syncAgentKind() {
+      if (agentKind && !agents.some(a => a.agent === agentKind)) agentKind = '';
+    }
+
+    // The harnesses in this list, as the badges they wear everywhere else. Only when there is more
+    // than one: a machine running nothing but claude has no choice to offer, and a lone badge that
+    // filters to what is already on screen is a control that does nothing.
+    function agentKindsHtml(list) {
+      const kinds = [...new Set(list.map(a => a.agent).filter(Boolean))].sort();
+      if (kinds.length < 2) return '';
+      return `<span class="agent-kind-filter">` +
+        kinds.map(k => badgeHtml(k, k === agentKind, `pickAgentKind('${k}')`,
+          {agent: k, title: `Show only the ${k} sessions`})).join('') + `</span>`;
+    }
+
+    function ofKind(list) {
+      return agentKind ? list.filter(a => a.agent === agentKind) : list;
+    }
+
+    // Tapping the lit badge takes the filter off, the same as every other badge in this app.
+    function pickAgentKind(k) {
+      agentKind = agentKind === k ? '' : k;
+      renderBody();
+      if (window.cue) cue('tick');
     }
 
     // Blocked only. A finished pane is not lifted out of its section — it keeps its blue badge
@@ -799,7 +980,9 @@
       }
       // Agent list (filtered). Only what the hoist took is dropped here, so a done pane appears
       // exactly once — under Done, where it belongs — instead of being lifted into Needs you.
-      let filtered = list.filter(a => !hoisted(a));
+      // The harness filter narrows the cards and never the Spaces and Tabs above them: those are
+      // navigation, and a strip that shed a tab because of a filter would be a second filter.
+      let filtered = ofKind(list).filter(a => !hoisted(a));
       if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
       if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
       const working = filtered.filter(a => a.status === 'working');
@@ -808,23 +991,30 @@
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);
       if (idle.length) html += section('Idle', idle);
+      // A filter that matches nothing still needs its heading: the badges are hung on the first
+      // one, so a page with no headings is a page filtered to nothing with no way back.
+      if (agentKind && !ofKind(list).length) html += section('Agents', [], `No ${agentKind} sessions`);
       return html;
     }
 
     function renderAgentList(list) {
+      const shown = ofKind(list);
       // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
       // sections below get everything else. Blocked still keeps a section for the acked ones —
       // a pane you have seen is blocked is not news, but it is still stuck.
-      const rest = list.filter(a => !hoisted(a));
+      const rest = shown.filter(a => !hoisted(a));
       const blocked = rest.filter(a => a.status === 'blocked');
       const working = rest.filter(a => a.status === 'working');
       const done = rest.filter(a => a.status === 'done');
       const idle = rest.filter(a => a.status === 'idle' || a.status === 'unknown');
-      let html = hoistHtml(list);
+      let html = hoistHtml(shown);
       if (blocked.length) html += section('Blocked', blocked);
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);
       if (idle.length) html += section('Idle', idle);
+      // A filter that matches nothing says so under its own strip, rather than dropping the page
+      // to a bare line with no way back to the rest of the sessions.
+      if (!shown.length && list.length) html += section('Agents', [], `No ${agentKind} sessions`);
       if (!list.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }

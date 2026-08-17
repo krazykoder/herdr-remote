@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+const PAIRS_PURE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_pure.js'), 'utf8');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'start_dialog.js'), 'utf8');
 
 const PANE = {
@@ -57,8 +58,10 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     projects: [{id: 'proj', label: 'charts'}],
     fillSelect: () => 1,
     renderStartTarget() {},
+    agentColor: () => 'var(--blue)',
   };
   const ctx = vm.createContext(g);
+  vm.runInContext(PAIRS_PURE, ctx);
   vm.runInContext(SRC, ctx);
   return {el, sent, calls, g, run: src => vm.runInContext(src, ctx)};
 }

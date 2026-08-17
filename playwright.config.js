@@ -11,9 +11,14 @@ module.exports = defineConfig({
   testDir: './tests/e2e/browser',
   // The relay is one process holding one fake herdr's state, so workers cannot share one. They do
   // not: tests/e2e/browser/fixtures.js starts a relay per worker on its own port and points
-  // `baseURL` at it, which is what makes running them all at once safe. Half the cores, because
-  // each worker is a browser and a Python relay polling the fake on a timer.
-  workers: '50%',
+  // `baseURL` at it, which is what makes running them all at once safe.
+  //
+  // A quarter of the cores, not half. A worker is a browser, a Python relay polling on a timer, and
+  // the fake herdr it shells out to on every poll — three processes each, and past a handful of
+  // them the relays start missing HTTP requests under load (ERR_EMPTY_RESPONSE) and tests fail on
+  // timing rather than on behaviour. Measured on the conversation suite: 5 workers took 2.0m with
+  // one or two flakes every run, 2 workers took 1.8m clean. Oversubscribing bought nothing.
+  workers: '25%',
   fullyParallel: true,
   reporter: process.env.CI ? 'list' : [['list']],
   use: {

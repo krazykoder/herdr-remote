@@ -28,8 +28,25 @@
     // composer with the same glyph, so it sits at the foot of every live pane and the closing
     // message is the block above it. pi's composer is a box the extension cannot reach, so pi's
     // last `›` is the newest request and the reply to it is *below*.
+    // `tool` names a block that ran something by its *header* rather than by the result glyph
+    // under it. The glyph is the rule and stays the rule; this is for the case where it is not on
+    // screen. Claude collapses a tool result it has scrolled past — the `⎿ Added 7 lines` line
+    // simply is not in the read — and what is left is `⏺ Update(web/index.html)` with a raw diff
+    // hanging off it, which by shape alone is a block the agent spoke. It was already possible
+    // before the recorder kept every message; it is merely much easier to hit now.
+    //
+    // Deliberately a shape and not a word: every word of the name capitalized, `(` immediately
+    // after it with no space, and an argument starting straight away. No list of tool names to
+    // keep current, and nothing that reads the arguments.
+    //
+    // Both halves are load-bearing, and a looser first cut proved it by eating three real closing
+    // messages — "Merged into main (1f9690b), clean auto-merge" is a sentence whose parenthetical
+    // is the only thing it shares with `Update(web/index.html)`. The space in front of the bracket
+    // is what a sentence has and a call does not; the capitals are what `Web Search(` needs and
+    // "Merged into main" fails on.
+    const CLAUDE_TOOL = /^[A-Z][A-Za-z0-9_-]*(?: [A-Z][A-Za-z0-9_-]*){0,3}\(\S/;
     const GUTTERS = {
-      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'] },
+      claude: { speaker: '⏺', result: ['⎿'], user: ['❯', '>'], tool: CLAUDE_TOOL },
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
       pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
       // OpenCode puts the user's messages, every tool block and the composer itself behind one
@@ -119,6 +136,9 @@
     // a rule, the prompt. Blank lines stay inside it: Codex closes with three paragraphs, and
     // ending on the first blank would take only the last one.
     function blockSpan(rows, g, start) {
+      // The header says it ran something, whether or not its result is still on screen.
+      if (g.tool && g.tool.test(((rows[start] || '').slice(g.indent || 0).replace(/^\S\s*/, ''))))
+        return null;
       let end = start;
       for (let j = start + 1; j < rows.length; j++) {
         const line = (rows[j] || '').trimStart();
@@ -270,6 +290,29 @@
       // newest reply sits below the last request, where the others sit above the next one. Counted
       // rather than read off `out`, because the first request has nothing above it to summarize.
       if (g.composer === false && prompts) at(rows.length);
+      return out;
+    }
+
+    // Every message in the window, in order — each block that said something rather than ran
+    // something. `turnSummaries` above answers a different question and keeps its own: stepping
+    // wants one stop per turn, because between two prompts an agent says a dozen things and only
+    // the last of them answers the question.
+    //
+    // The record wants all of them. A turn is minutes of work and the agent narrates it — what it
+    // is about to do, what a test said, what it found on the way — and a transcript holding only
+    // the closing line of each turn is a transcript of the conclusions with the reasoning cut out.
+    // Tool blocks are still not messages: `blockSpan` returns null for a block with a result glyph
+    // under it, which is the same rule the summary uses.
+    function messageBlocks(rows, agent) {
+      const g = profileFor(agent), out = [];
+      if (!g || !rows) return out;
+      for (let i = 0; i < rows.length; i++) {
+        if (!startsBlock(rows, g, i)) continue;
+        const at = blockSpan(rows, g, i);
+        // Past the end of the block, not past its first line: a block's own body must not be
+        // scanned for starts, or an indented harness opens a second block inside the first.
+        if (at) { out.push(at); i = at[1]; }
+      }
       return out;
     }
 

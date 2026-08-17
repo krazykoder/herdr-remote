@@ -5,6 +5,56 @@
       localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
     }
 
+    // A restart is the same colleague in a new pane, so the pair that named the dead one follows it
+    // across. Members are pinned by pane_id (memberMatches), which a restart always changes — so a
+    // pair went stale the moment its member was restarted, which is what took the switch button,
+    // the partner's name and its badge off the strip and left a "no longer running" line instead.
+    //
+    // The same repair, for every way a pane can come back that this browser did not ask for: herdr
+    // restarted, the workspace was reopened, the agent was launched again from the terminal. A
+    // pane_id is herdr's and not ours, and a pair pinned to one that no longer exists simply stops
+    // being found — the strip vanishes from both panes with nothing said about why, which is what
+    // "some panes show it and others do not" looks like from the outside.
+    //
+    // A dead member is re-pointed at the pane that is unmistakably the same seat: same host, same
+    // harness, same cwd, and exactly one such pane not already spoken for. Ambiguity is left alone
+    // — two claude panes in one directory are two colleagues, and guessing between them would put
+    // one agent's work in the other's terminal.
+    function healPairs() {
+      const claimed = new Set();
+      for (const p of pairs) for (const m of p.members) {
+        const live = agents.find(a => memberMatches(m, a));
+        if (live) claimed.add(live.pane_id);
+      }
+      let moved = false;
+      for (const pair of pairs) {
+        pair.members = pair.members.map(m => {
+          if (agents.some(a => memberMatches(m, a))) return m;
+          const same = agents.filter(a => !claimed.has(a.pane_id) &&
+            (a.host || 'local') === (m.host || 'local') &&
+            a.agent === m.agent && (a.cwd || '') === (m.cwd || ''));
+          if (same.length !== 1) return m;
+          claimed.add(same[0].pane_id);
+          moved = true;
+          return Object.assign({}, m, recentFingerprint(same[0]));
+        });
+      }
+      if (moved) savePairs();
+      return moved;
+    }
+
+    // Never over a pane that is already in a pair of its own: that is a pairing the user made, and
+    // a restart elsewhere is not a reason to rewrite it.
+    function repointPair(oldPaneId, next) {
+      if (!oldPaneId || !next || oldPaneId === next.pane_id) return false;
+      const pair = pairFor(pairs, oldPaneId);
+      if (!pair || pairFor(pairs, next.pane_id)) return false;
+      pair.members = pair.members.map(m => m.pane_id === oldPaneId
+        ? Object.assign({}, m, recentFingerprint(next)) : m);
+      savePairs();
+      return true;
+    }
+
     // --- Line width ---
     // herdr hands back scrollback already hard-wrapped at the pane's column count, so every long
     // line the browser wraps again is wrapped twice and no break can be attributed to the agent

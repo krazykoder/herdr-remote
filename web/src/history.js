@@ -10,7 +10,18 @@
     // entries. Each of our entries carries a serial rather than an index, because the list drops
     // its oldest entry at NAV_MAX and every index below it would shift under a state already
     // written into the browser's stack.
-    let navSerials = [], navSerial = 0, navDetached = false;
+    // `navDepth` is how many entries the browser's cursor stands above the one the document was
+    // loaded on. Not the same number as navIndex, and that is the whole reason it exists: the walk
+    // drops its oldest entry at NAV_MAX while the browser's stack keeps every push, so after twenty
+    // destinations navIndex sits at 19 and the list is thirty deep. Rewinding by navIndex + 1 then
+    // landed in the middle of the stack and the header chevron opened whatever was parked there.
+    // Carried in the state object, so a Back that jumps several entries at once still reports where
+    // it landed.
+    let navSerials = [], navSerial = 0, navDetached = false, navDepth = 0;
+    // Set while a rewind to the landing page is in flight. The screen is already home by then, so
+    // whatever entry the browser actually arrives on must not open itself — a depth that has
+    // drifted would otherwise put a pane back up one tick after the user left it.
+    let navLanding = false;
     function navBrowserHistory() {
       return typeof window === 'object' && window && window.history &&
         typeof window.history.pushState === 'function' ? window.history : null;
@@ -22,7 +33,10 @@
       // Always a push, never a replace: the document's own entry is the landing page, which is not
       // on the walk but is where the browser's Back has to be able to reach. Stamping our first
       // destination onto it would make Back off that destination leave the app instead.
-      api.pushState({herdrNav: navSerials[navIndex]}, '');
+      // A push truncates whatever was ahead of the cursor, so the new entry sits one above wherever
+      // the browser currently stands — which is what navDepth already holds.
+      navDepth += 1;
+      api.pushState({herdrNav: navSerials[navIndex], depth: navDepth}, '');
       navDetached = false;   // whatever we had drifted past, this entry is ours again
     }
 
@@ -33,16 +47,32 @@
     // Guarded because these modules are also run as slices in a vm context, which has no window.
     if (typeof addEventListener === 'function') addEventListener('popstate', e => {
       const at = e.state && e.state.herdrNav;
+      // The tail of a rewind we asked for. Wherever it landed, the walk stands before its first
+      // entry — the screen is the landing page — and nothing is opened.
+      if (navLanding) {
+        navLanding = false;
+        navIndex = -1;
+        navDepth = e.state && typeof e.state.depth === 'number' ? e.state.depth : 0;
+        // Still detached if it landed on somebody else's entry: navDetached is about whether our
+        // deltas can be trusted, and this says nothing either way about that.
+        landNow();
+        syncNavBtns();
+        return;
+      }
       // No state at all is the entry the document was loaded on, which is the landing page. It is
       // not a stop on the walk — nothing is behind the first destination — so the cursor sits
       // before entry 0, from where Forward is a step of one and Back is nothing. Without this the
       // phone's Back gesture out of the first pane opened would leave the screen exactly as it was.
       if (at == null) {
         navIndex = -1;
+        navDepth = 0;
         landNow();
         syncNavBtns();
         return;
       }
+      // Where the browser now stands, from the entry it landed on rather than from a count kept
+      // here — a Back gesture can cross several entries at once, and only the state knows how far.
+      if (e.state && typeof e.state.depth === 'number') navDepth = e.state.depth;
       const i = navSerials.indexOf(at);
       // A state older than NAV_MAX entries, or one another page wrote. We cannot show it, and we
       // must not keep computing deltas against a cursor the browser has already moved off — so the
@@ -153,8 +183,15 @@
     // lands directly instead.
     function navRewind() {
       const api = navBrowserHistory();
-      if (!api || navDetached || navIndex < 0) return false;
-      api.go(-(navIndex + 1));
+      if (!api || navDetached || navIndex < 0 || navDepth < 1) {
+        // Nothing to rewind, so the cursor is where it is and the walk simply steps off its list:
+        // the caller has already put the landing page up.
+        navIndex = -1;
+        syncNavBtns();
+        return false;
+      }
+      navLanding = true;
+      api.go(-navDepth);
       return true;
     }
 

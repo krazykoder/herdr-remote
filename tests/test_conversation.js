@@ -41,6 +41,7 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEnt
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
+               'calcConvAnalytics', 'sortConvAnalyticsRows', 'formatConvSize',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -51,6 +52,7 @@ const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessa
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
+       calcConvAnalytics, sortConvAnalyticsRows, formatConvSize,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -84,6 +86,42 @@ test('a window is the user and the agent in the order they spoke', () => {
   assert.deepStrictEqual(whos(ms), ['user', 'agent', 'user', 'agent']);
   assert.deepStrictEqual(texts(ms),
     ['first question', 'First answer.', 'second question', 'Second answer.']);
+});
+
+test('everything the agent said in a turn is a message, not only what it closed on', () => {
+  // A turn is minutes of work and the agent narrates it. Recording one line per turn kept the
+  // conclusions and threw away the reasoning, and on a real pane that is most of what was said.
+  const rows = ['❯ build it', '', '⏺ Starting on it.', '', '⏺ Bash(npm test)', '  ⎿  ok', '',
+    '⏺ Tests pass.', '', '⏺ All done.', '', '❯'];
+  const ms = paneMessages(rows, 'claude');
+  assert.deepStrictEqual(texts(ms),
+    ['build it', 'Starting on it.', 'Tests pass.', 'All done.']);
+  // Still not the tool call: a block with a result glyph under it ran something rather than said
+  // something, which is the same rule the summary uses.
+  assert.ok(!ms.some(m => m.text.includes('npm test')), 'a tool call became a message');
+});
+
+test('a tool call whose result scrolled off is still a tool call', () => {
+  // Claude drops the `⎿` line of a result it has scrolled past, and what is left is a header with
+  // a raw diff hanging off it. The glyph is still the rule; the header is the answer for when the
+  // glyph is not on screen. Both blocks below are the same call — one read before the collapse and
+  // one after — and neither is something the agent said.
+  const rows = ['❯ retint it', '', '⏺ Update(web/index.html)', '  ⎿  Added 2 lines', '',
+    '⏺ Update(web/index.html)', "      2264 -      return 'var(--green)';",
+    "      2264 +      return 'var(--dot-green)';", '', '⏺ Done, four call sites.', '', '❯'];
+  assert.deepStrictEqual(texts(paneMessages(rows, 'claude')),
+    ['retint it', 'Done, four call sites.']);
+});
+
+test('a sentence with a bracket in it is not a tool call', () => {
+  // The cost of getting the header rule wrong, and it is paid on closing messages — the one
+  // message per turn that matters most. A looser first cut ate all three of these off a real pane.
+  const said = ['Merged into main (1f9690b), clean auto-merge.', 'Genuine fill (no text on it).',
+    'Confirmed genuine fill (background on .dot).'];
+  for (const text of said) {
+    assert.deepStrictEqual(texts(paneMessages(['❯ go', '', '⏺ ' + text, '', '❯'], 'claude')),
+      ['go', text]);
+  }
 });
 
 test('the empty composer at the foot is not a message', () => {
@@ -215,6 +253,20 @@ test('a prompt already committed at the send is not read back off the pane', () 
   const stored = [{who: 'user', text: 'second question', at: NOW - 10, at_src: 'sent'}];
   const out = turn(stored, TWO_TURNS, NOW, NOW - 1);
   assert.deepStrictEqual(texts(out), ['Second answer.'], 'the prompt is already in the transcript');
+});
+
+test('a steer made while the agent worked is recorded, even beside this app\'s own send', () => {
+  // The pane's first turn, and the only thing in the record is the prompt this app sent — so
+  // there is no agent entry to anchor the window against. That case used to fall to the last-block
+  // rule, which sees the closing message and the prompts glued directly above it and nothing else:
+  // an input typed at the keyboard or sent from a second browser mid-turn was never recorded at
+  // all, and nothing else was ever going to record it.
+  const stored = [{who: 'user', text: 'do X', at: NOW - 5000, at_src: 'sent'}];
+  const rows = ['❯ do X', '', '⏺ Starting on X.', '', '❯ also do Y', '', '⏺ Both done.', '', '❯'];
+  const out = turn(stored, rows, NOW, NOW - 1);
+  assert.deepStrictEqual(texts(out), ['Starting on X.', 'also do Y', 'Both done.']);
+  // The echo of what this app sent is not a second copy of it.
+  assert.ok(!texts(out).includes('do X'), 'the sent prompt was read back on top of itself');
 });
 
 test('a first read keeps a sent prompt in place and appends its completed reply', () => {
@@ -767,3 +819,88 @@ test('a member with nothing recorded yet contributes nothing and breaks nothing'
   assert.deepStrictEqual(texts(mergeEntries(recs)), ['b1']);
   assert.deepStrictEqual(texts(mergeEntries([])), []);
 });
+
+test('calcConvAnalytics accurately aggregates message count, panes, and total size', () => {
+  const convs = [
+    {
+      id: 'c1',
+      name: 'Alpha Plan',
+      auto: false,
+      members: [
+        { key: 'm1', pane_id: 'w1:p1', agent: 'claude' },
+        { key: 'm2', pane_id: 'w1:p2', agent: 'codex' },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Beta Review',
+      auto: true,
+      members: [
+        { key: 'm3', pane_id: 'w1:p3', agent: 'pi' },
+      ],
+    },
+  ];
+
+  const recordsMap = new Map([
+    ['m1', { key: 'm1', entries: [{ who: 'user', text: 'hi' }, { who: 'agent', text: 'hello' }] }],
+    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'working on it' }] }],
+    ['m3', { key: 'm3', entries: [] }],
+  ]);
+
+  const stats = calcConvAnalytics(convs, recordsMap);
+  assert.strictEqual(stats.length, 2);
+
+  // c1: 2 members/panes, 2 + 1 = 3 messages, totalBytes > 0
+  assert.strictEqual(stats[0].id, 'c1');
+  assert.strictEqual(stats[0].name, 'Alpha Plan');
+  assert.strictEqual(stats[0].auto, false);
+  assert.strictEqual(stats[0].panes, 2);
+  assert.strictEqual(stats[0].msgCount, 3);
+  assert.ok(stats[0].totalBytes > 0);
+  assert.ok(stats[0].sizeMb > 0);
+
+  // c2: 1 member, 0 messages
+  assert.strictEqual(stats[1].id, 'c2');
+  assert.strictEqual(stats[1].name, 'Beta Review');
+  assert.strictEqual(stats[1].auto, true);
+  assert.strictEqual(stats[1].panes, 1);
+  assert.strictEqual(stats[1].msgCount, 0);
+  assert.ok(stats[1].totalBytes > 0);
+});
+
+test('sortConvAnalyticsRows sorts rows by column and direction', () => {
+  const rows = [
+    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, totalBytes: 5000 },
+    { id: '2', name: 'Beta', msgCount: 50, panes: 3, totalBytes: 20000 },
+    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, totalBytes: 1000 },
+  ];
+
+  // Sort by size (totalBytes) descending
+  const bySizeDesc = sortConvAnalyticsRows(rows, 'size', 'desc');
+  assert.deepStrictEqual(bySizeDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by size ascending
+  const bySizeAsc = sortConvAnalyticsRows(rows, 'size', 'asc');
+  assert.deepStrictEqual(bySizeAsc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
+
+  // Sort by name ascending
+  const byNameAsc = sortConvAnalyticsRows(rows, 'name', 'asc');
+  assert.deepStrictEqual(byNameAsc.map(r => r.name), ['Alpha', 'Beta', 'Zeta']);
+
+  // Sort by msgCount descending
+  const byMsgDesc = sortConvAnalyticsRows(rows, 'msgCount', 'desc');
+  assert.deepStrictEqual(byMsgDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by panes descending
+  const byPanesDesc = sortConvAnalyticsRows(rows, 'panes', 'desc');
+  assert.deepStrictEqual(byPanesDesc.map(r => r.name), ['Beta', 'Alpha', 'Zeta']);
+});
+
+test('formatConvSize formats bytes to MB, KB, and B correctly', () => {
+  assert.strictEqual(formatConvSize(0), '0 MB');
+  assert.strictEqual(formatConvSize(512), '512 B');
+  assert.strictEqual(formatConvSize(2048), '2.0 KB');
+  assert.strictEqual(formatConvSize(1024 * 1024), '1.00 MB');
+  assert.strictEqual(formatConvSize(1024 * 1024 * 3.5), '3.50 MB');
+});
+

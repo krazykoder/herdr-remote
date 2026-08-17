@@ -32,6 +32,21 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+test('agent filters live on the existing card separator', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => agents.length)).toBeGreaterThan(0);
+  const kinds = await page.evaluate(() => [...new Set(agents.map(a => a.agent).filter(Boolean))]);
+  expect(kinds.length).toBeGreaterThan(1);
+  const filter = page.locator('#agents .section-header .agent-kind-filter');
+  await expect(filter).toBeVisible();
+  await expect(filter.locator('.badge.pick')).toHaveCount(kinds.length);
+  const kind = kinds[0];
+  await filter.locator('.badge.pick', {hasText: kind}).click();
+  await expect.poll(async () => {
+    const shown = await page.locator('#agents .agent .meta .badge').allTextContents();
+    return shown.length && shown.every(text => text === kind);
+  }).toBe(true);
+});
+
 test('Activity tracks local WebSocket payload bytes in a newest-first interval stack', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
   // Off means no collection and no empty telemetry panel claiming an hour it did not observe.
@@ -298,13 +313,14 @@ test('the composer sends to the pane that is open', async ({page}) => {
   await page.locator(R('termInput')).fill('echo hi');
   await page.locator(R('termInput')).press('Control+Enter');
 
-  // Text and the Enter that submits it are two messages: the text goes as a bracketed paste so a
-  // multi-line prompt cannot be executed a line at a time.
+  // One message, carrying the Enter that submits it. Two — a paste and then a keypress — is what
+  // an agent still busy with the paste used to swallow, leaving the text unsent in its composer.
   await expect.poll(() => sent.filter(m => m.type === 'send_text').length).toBe(1);
   const text = sent.find(m => m.type === 'send_text');
   expect(text.pane_id).toBe('w1:p1');
   expect(text.text).toBe('echo hi');
-  expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(true);
+  expect(text.submit).toBe(true);
+  expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(false);
   // And the composer is cleared, which is the only sign the user gets that it left.
   await expect(page.locator(R('termInput'))).toHaveValue('');
 });
@@ -375,6 +391,18 @@ test('an armed button is painted armed, not just labelled armed', async ({page})
   };
   expect(await page.evaluate(painted, ['clsBtn', 'armClear']))
     .toEqual({fill: true, drain: 'arm-drain'});
+});
+
+test('CLS submits its line with Enter rather than after it', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: 'scratch'}).click();
+  const sent = await page.evaluate(() => {
+    const out = [];
+    ws.send = data => out.push(JSON.parse(data));
+    armClear(); armClear();
+    return out;
+  });
+  expect(sent).toContainEqual({type: 'send_text', pane_id: 'w8:p1', text: '/clear', submit: true});
+  expect(sent.filter(m => m.type === 'send_keys')).toHaveLength(0);
 });
 
 test('the bubble Esc is painted armed too, on the longer window it gets', async ({page}) => {

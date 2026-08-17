@@ -621,12 +621,13 @@
     #timelineView {
       flex-direction: column;
       gap: 10px;
-      overflow: hidden;
+      overflow-y: auto;
     }
 
     #timelineList {
-      flex: 1 1 50%;
-      min-height: 0;
+      flex: 0 1 auto;
+      min-height: 80px;
+      max-height: 220px;
       overflow-y: auto;
     }
 
@@ -640,6 +641,7 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
+      row-gap: 6px;
       margin: 0 0 8px;
       font-size: 0.75rem;
       color: var(--muted);
@@ -710,13 +712,12 @@
       background: color-mix(in srgb, var(--green) 8%, var(--bg));
     }
 
+    /* Named in full. The column is sized to the longest of them (see renderBandwidth), so the
+       buckets scroll under this rather than the name being cut to fit beside them. */
     .pane-bandwidth-name {
       position: sticky;
       left: 0;
       z-index: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
       text-align: left;
       color: var(--text);
@@ -726,10 +727,174 @@
     .pane-bandwidth-name .dot { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; }
     .pane-bandwidth-ping { color: var(--muted); font-size: 0.56rem; }
 
-    .bandwidth-metrics { display: inline-flex; gap: 3px; margin-left: 6px; }
+    /* The title owns the first line, and everything that is a control drops to the second. Sharing
+       one line put four chips and a running total behind a heading that already wraps on a phone. */
+    #bandwidthTitle { flex: 1 1 100%; }
+
+    .bandwidth-metrics { display: inline-flex; gap: 3px; }
     .bandwidth-metric { padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: transparent; font: 0.6rem monospace; }
     .bandwidth-metric[aria-pressed="true"] { color: var(--text); border-color: var(--green); background: color-mix(in srgb, var(--green) 8%, var(--bg)); }
     #bandwidthPanes { margin-left: auto; }
+
+    /* Conversation storage analytics in Activity */
+    .conv-analytics {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+
+    .conv-analytics h2 {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      row-gap: 6px;
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    #convAnalyticsTitle {
+      flex: 1 1 auto;
+    }
+
+    .conv-analytics-refresh {
+      margin-left: auto;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 0.85rem;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, border-color 0.15s, transform 0.2s;
+    }
+
+    .conv-analytics-refresh:hover {
+      color: var(--text);
+      border-color: var(--green);
+    }
+
+    .conv-analytics-refresh.spinning {
+      animation: conv-spin 0.35s ease;
+    }
+
+    @keyframes conv-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(180deg); }
+    }
+
+    .conv-analytics-wrap {
+      max-height: 220px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface) 40%, var(--bg));
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .conv-analytics-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.75rem;
+    }
+
+    .conv-analytics-table th,
+    .conv-analytics-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      white-space: nowrap;
+    }
+
+    .conv-analytics-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 0;
+    }
+
+    .conv-analytics-th-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      width: 100%;
+      height: 100%;
+      padding: 6px 8px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-transform: inherit;
+      letter-spacing: inherit;
+      cursor: pointer;
+      text-align: inherit;
+    }
+
+    .conv-analytics-th-btn:hover {
+      color: var(--text);
+    }
+
+    .conv-analytics-table th .sort-arrow {
+      font-size: 0.58rem;
+      color: var(--green);
+    }
+
+    .conv-analytics-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .conv-analytics-table tbody tr:hover {
+      background: color-mix(in srgb, var(--text) 4%, transparent);
+    }
+
+    .conv-analytics-name-btn {
+      border: none;
+      background: transparent;
+      padding: 0;
+      color: var(--blue);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 500;
+      text-align: left;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .conv-analytics-name-btn:hover {
+      text-decoration: underline;
+    }
+
+    .conv-analytics-auto-badge {
+      display: inline-block;
+      font-size: 0.56rem;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 3px;
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+
+    .conv-analytics-num {
+      text-align: right;
+      font-family: monospace;
+      font-size: 0.7rem;
+      color: var(--text);
+    }
 
     /* Settings */
     .settings {
@@ -766,6 +931,41 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
+    }
+
+    /* A text field with its own ✕. The button sits over the field's right edge, and the field
+       gives up the width so the caret never runs under it. */
+    .field-clearable {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .field-clearable input {
+      padding-right: 32px;
+    }
+
+    .field-clear {
+      position: absolute;
+      right: 4px;
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .field-clear:hover {
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
     }
 
     .setting-group .toggle-option {
@@ -1149,6 +1349,31 @@
       white-space: nowrap;
     }
 
+    /* A badge that is also a choice: the agent, the role and the Project are picked in the shape
+       they are read in everywhere else — the pane header's [name @project agent] — rather than in
+       a second vocabulary of pills that means the same things. Bigger than the header's badge only
+       by what a finger needs; the picked one lights in its own colour, set inline by badgeHtml. */
+    .badge.pick {
+      padding: 5px 10px;
+      font-size: 0.7rem;
+      line-height: 1.5;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    /* display:inline-block would otherwise outrank the attribute and leave an empty outline. */
+    .badge[hidden] {
+      display: none;
+    }
+
+    .badge.pick:hover {
+      border-color: color-mix(in srgb, var(--text) 32%, transparent);
+    }
+
+    .badge.pick.on {
+      font-weight: 700;
+    }
+
     .workspace-card {
       border-color: color-mix(in srgb, var(--text) 10%, transparent);
     }
@@ -1159,6 +1384,19 @@
       border-radius: 4px;
       background: color-mix(in srgb, var(--text) 8%, transparent);
       font-size: 0.65rem;
+    }
+
+    /* Filter belongs on the existing agent heading, not in a second strip above the cards. */
+    .section-header .agent-kind-filter {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .section-header .agent-kind-filter .badge.pick {
+      padding: 1px 5px;
+      font-size: 0.6rem;
+      line-height: 1.4;
     }
 
     .chip-strip {
@@ -1292,7 +1530,12 @@
     }
 
     .start-field select,
+    .start-field textarea,
     .start-field input {
+      /* Read at the size the rest of the app reads at. The label above is small caps because it is
+         a label; what the user typed is content, and inheriting the label's 0.65rem made every
+         field in every sheet render its own value smaller than anything around it. */
+      font-size: 0.85rem;
       padding: 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -1305,6 +1548,68 @@
 
     .start-field select:disabled {
       opacity: 0.5;
+    }
+
+    /* Beside a field's label, saying what the field expects rather than what it is. */
+    .field-note {
+      opacity: 0.7;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    /* A row of pickable badges inside a field: wraps rather than scrolls, because every choice in
+       these rows is worth seeing at once, and sits flush with the fields above and below it. */
+    .badge-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+    }
+
+    .start-field textarea {
+      font-family: monospace;
+      resize: vertical;
+    }
+
+    /* The New agent dialog: a column of badge rows, tighter than a sheet of form fields because
+       nothing in it is typed except the name. */
+    .new-agent-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px 14px 12px;
+    }
+
+    .new-agent-body .start-field input {
+      padding: 8px 10px;
+    }
+
+    /* The Project row is the one that does not wrap: there is usually one Project in play, and the
+       rest are behind the @+ beside it rather than three lines down. */
+    .badge-strip.one-line {
+      flex: 1;
+      min-width: 0;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .badge-strip.one-line::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* A scrolling strip and the button that lists what scrolled off, side by side. */
+    .chip-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .chip-line .badge.more {
+      flex: 0 0 auto;
     }
 
     #startSubmit:disabled {
@@ -2421,13 +2726,6 @@
       min-width: 0;
     }
 
-    .conv-member .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      flex: none;
-    }
-
     .conv-member.gone {
       opacity: 0.6;
     }
@@ -2483,13 +2781,6 @@
 
     .conv-roster-row.gone {
       opacity: 0.65;
-    }
-
-    .conv-roster-row .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      flex: none;
     }
 
     /* The name gives up the width, and Remove keeps its place at the end of every row. */
@@ -2735,6 +3026,15 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+    }
+
+    /* One speaker in the thread — "show this pane only", or a conversation with a single member.
+       The 86% exists to leave the other side of a two-column thread visible; with no other side
+       it is a strip of empty surface down the right of every bubble, and a diff or a plan is the
+       thing paying for it. */
+    .conv-thread.conv-solo .conv-msg,
+    .conv-thread.conv-solo .conv-slot {
+      width: 100%;
     }
 
     .conv-msg.user {
@@ -3365,7 +3665,8 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
       font-weight: 600;
-      opacity: 0.55;
+      opacity: 0.8;
+      cursor: pointer;
     }
 
     /* Lit in the agent's own colour, the same one the bubble's border takes and the same one that
@@ -3375,14 +3676,6 @@
       border-color: var(--who-accent, var(--text));
       color: var(--text);
       opacity: 1;
-    }
-
-    /* The member whose message is picked. Still named, still in the row, but not somewhere this
-       message can go — a transfer back into the session that wrote it is not a transfer. */
-    .xfer-row .xfer-who.from {
-      opacity: 0.35;
-      border-style: dashed;
-      cursor: default;
     }
 
     /* Measured in the pill's own ems, so the pill scales as one piece — the same rule the thread's
@@ -4208,9 +4501,16 @@
            else here — its sanitiser only drops newlines, and backticks and prose came through it
            untouched. Cleaned on the way out of the box as well as on Connect, so the tidy-up is
            visible before anything is stored. -->
-      <input id="relayUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
-        autocomplete="off" onchange="this.value = cleanRelayUrl(this.value)"
-        placeholder="wss://your-tunnel.trycloudflare.com" />
+      <!-- The ✕ is in the field rather than beside it: replacing one tunnel URL with the next is
+           what this box is for, and selecting 60 characters of wss:// on a phone to type over them
+           is the part that was hard. -->
+      <div class="field-clearable">
+        <input id="relayUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
+          autocomplete="off" onchange="this.value = cleanRelayUrl(this.value)"
+          placeholder="wss://your-tunnel.trycloudflare.com" />
+        <button type="button" class="field-clear" onclick="clearRelayUrl()"
+          title="Clear the relay URL" aria-label="Clear the relay URL">✕</button>
+      </div>
       <label for="relayToken" style="margin-top:8px">Token (optional)</label>
       <input id="relayToken" type="password" placeholder="shared secret" />
       <button onclick="saveAndConnect()">Connect</button>
@@ -4409,6 +4709,11 @@
       <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
       <div id="bandwidthRows"></div>
     </section>
+    <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
+      <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage">⟳</button></h2>
+      <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
+    </section>
   </div>
 
   <!-- A conversation read as itself. Its own view and not the pane's thread panel, because the
@@ -4468,6 +4773,8 @@
     <div class="conv-dock" id="convDock">
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
+      <!-- How the composer behaves: standing switches, not a mode of the moment. -->
+      <div class="chip-menu" id="optMenu" role="menu" hidden></div>
       <!-- One bubble: who it goes to, what is added to it, and the message itself. Three stacked
            panels would read as three controls that happen to be near each other; this is one thing
            being addressed and written. Its border carries the chosen agent's colour. -->
@@ -4482,7 +4789,7 @@
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-              oninput="autoGrow(this); syncConvCursor(); stickConvLatest()" onkeydown="convInputKey(event)"
+              oninput="autoGrow(this); keepConvCaret(); stickConvLatest()" onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
               onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
               onscroll="syncConvCursor()"></textarea>
@@ -4884,8 +5191,11 @@
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1"><span id="startTitle">Start session</span> · <span
-            id="startProject"></span></span>
+        <!-- The Project is a fact about what is being started, so it is the same @badge it is on a
+             pane header and in the row below — not a title joined to another title by a dot. -->
+        <span style="font-size:0.8rem;font-weight:600;flex:1;display:flex;align-items:center;gap:6px;min-width:0">
+          <span id="startTitle">Start session</span>
+          <span id="startProject" class="badge proj"></span></span>
         <button onclick="closeStart()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
@@ -4893,8 +5203,15 @@
         <!-- Hidden whole for a terminal: there is no agent to choose and no role for it to play.
              Everything below this — where it goes, what it is called — is the same question. -->
         <div id="startAgentRows" style="display:flex;flex-direction:column;gap:12px">
-          <label class="start-field">Role<select id="startRole"></select></label>
-          <label class="start-field">Agent<select id="startAgent"></select></label>
+          <!-- Badges rather than a select, and the same four the conversation's New agent dialog
+               offers: a role is how a session is started here, so it is picked the same way in
+               both places. Leaving the row empty is a start with no role — allowed, not advised. -->
+          <div class="start-field">Role <span class="field-note">optional · recommended</span>
+            <div id="startRoles" class="badge-strip"></div>
+          </div>
+          <div class="start-field">Agent
+            <div id="startAgents" class="badge-strip"></div>
+          </div>
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
         <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"
@@ -4974,6 +5291,51 @@
         <button id="convSubmit" onclick="saveNewConv()"
           style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
           conversation</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New agent, from inside a conversation. Deliberately not the Start session sheet: that one
+       asks where the session goes and what role it plays, and this one is the quick path — a name,
+       a harness, the Project it is spawned beside, and the first thing to say to it. Centred rather
+       than raised from the bottom, because it is opened from a menu in the middle of the screen and
+       a sheet sliding up under the composer would land under the keyboard. -->
+  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:120;">
+    <div onclick="closeNewAgent()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="New agent"
+      style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">New agent · <span id="newAgentConv"></span></span>
+        <button onclick="closeNewAgent()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <!-- Top down in the order the decision is actually made: what it is, what it does, what it
+           is called, and where it runs. Three of the four are badges — a start is picked, not
+           filled in, and a column of selects would be four taps and a scroll for the same answer. -->
+      <div class="new-agent-body">
+        <div class="start-field">Agent
+          <div id="newAgentKinds" class="badge-strip"></div>
+        </div>
+        <!-- What it is started as. The badge carries both halves: the role the relay names the pane
+             for, and the @ prompt that opens the session — see START_ROLES. -->
+        <div class="start-field">Role
+          <div id="newAgentRoles" class="badge-strip"></div>
+        </div>
+        <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
+            autocomplete="off" placeholder="Auto — Role N" /></label>
+        <!-- One line, because there is usually one Project in play and the rest are a tap away. -->
+        <div class="start-field">Project
+          <div class="chip-line">
+            <div id="newAgentProjects" class="badge-strip one-line"></div>
+            <button class="badge pick proj more" onclick="toggleNewAgentProjects()"
+              aria-label="Every project, as a list">@+</button>
+          </div>
+          <div class="chip-menu" id="newAgentProjMenu" role="menu" hidden></div>
+        </div>
+        <p id="newAgentError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="newAgentSubmit" onclick="submitNewAgent()"
+          style="padding:11px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Add
+          agent</button>
       </div>
     </div>
   </div>

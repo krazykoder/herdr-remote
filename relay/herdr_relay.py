@@ -1293,13 +1293,22 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
-                audit("send_text", ip, device, pane_id, f"text={text!r}")
-                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
+                # `submit` asks for the Enter to go with the text rather than behind it. herdr's
+                # `pane run` sends both in one call, which is the only way they cannot be separated:
+                # a busy agent handed a paste and then, a moment later, an Enter would swallow the
+                # Enter and leave the message sitting unsent in its composer. Optional, because the
+                # other clients still send their own send_keys ["Enter"] and must keep working.
+                submit = bool(msg.get("submit"))
+                log.info("Text from %s (%s): pane=%s submit=%s text=%r",
+                         ip, device, pane_id, submit, text)
+                audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
+                await asyncio.to_thread(run_herdr, "pane", "run" if submit else "send-text",
+                                        pane_id, text, remote=remote)
                 # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
-                # right behind this — which is exactly what every composer does — lands late
-                # enough to submit. One choke point, rather than a delay in each client.
-                await asyncio.sleep(SEND_SETTLE)
+                # right behind this — which is what a client that submits for itself does — lands
+                # late enough to submit. One choke point, rather than a delay in each client.
+                if not submit:
+                    await asyncio.sleep(SEND_SETTLE)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
@@ -1561,8 +1570,18 @@ async def main():
     # only: a remote host's terminal is not one this operator is sitting at.
     await asyncio.to_thread(log_tab_geometry)
     stop = loop.create_future()
+
+    # Idempotent, because the shutdown of a foreground run is more than one signal: Ctrl-C reaches
+    # every process in the group as SIGINT, and start.sh's trap then sends its own SIGTERM to the
+    # relay it started. The second one used to land on a future that was already resolved, which
+    # asyncio reports as `InvalidStateError: invalid state` from a callback nobody can catch — a
+    # traceback on every clean exit, over a stop that had already been asked for.
+    def request_stop() -> None:
+        if not stop.done():
+            stop.set_result(None)
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set_result, None)
+        loop.add_signal_handler(sig, request_stop)
     await stop
     for server in servers:
         server.close()
@@ -1573,7 +1592,9 @@ async def main():
         try:
             zc.unregister_service(info)
         except Exception as e:
-            log.warning("mDNS unregister failed: %s", e)
+            # By type when there is no message: EventLoopBlocked carries none, so the line read
+            # "mDNS unregister failed: " and named nothing at all.
+            log.warning("mDNS unregister failed: %s", e or type(e).__name__)
         zc.close()
 
 

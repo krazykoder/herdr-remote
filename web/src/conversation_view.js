@@ -1,8 +1,14 @@
     // --- Conversation view ---
-    // The same pane read as a thread. Which view a pane was last read in is remembered per pane:
-    // a pane being watched as a terminal and one being followed as a thread are two different
-    // jobs, and a global switch would keep answering the wrong one.
+    // The same pane read as a thread. Rows or thread is one switch for the whole app: a reader who
+    // is following threads means it for the next pane too, and remembering it per pane meant every
+    // pane opened in whatever mode it happened to be left in a week ago — including the pane a
+    // conversation's own 🖥 button opens, which arrived as a thread on top of the thread it was
+    // opened from.
+    //
+    // *Which* conversation a pane is showing stays per pane. That is a fact about the pane, not a
+    // preference about how to read.
     const CONV_VIEW_KEY = 'herdr_conv_view';
+    const CONV_MODE_KEY = 'herdr_conv_mode';
 
     // Set by a pane switch, consumed by the next render that completes. `stick` below is measured
     // against the box as it stands, and on a switch that box still holds the thread you left — so
@@ -18,9 +24,22 @@
       } catch (e) { return {}; }
     }
 
+    // Off until it has been turned on, except for a browser that was already reading threads before
+    // the switch became one: a pane filed under the old per-pane key stands in for the answer that
+    // was never stored.
+    function convMode() {
+      const v = localStorage.getItem(CONV_MODE_KEY);
+      return v === null ? Object.keys(convViews()).length > 0 : v === 'on';
+    }
+
+    function setConvMode(on) {
+      try { localStorage.setItem(CONV_MODE_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
+    // A pane with nothing recorded has no thread to be in, whatever the switch says.
     function convViewOn(a) {
-      const key = convMemberKey(a);
-      return !!(key && convViews()[key]);
+      return convMode() && !!convsForPane(a).length;
     }
 
     // Which of a pane's conversations its thread is showing. The stored value is the conversation's
@@ -71,11 +90,18 @@
       convSetView(to, conv.id);
     }
 
+    // The switch itself, thrown for every pane at once. Which conversation this one lands on is
+    // still its own: turning the thread on here names the record the fallback would have picked, so
+    // the pane keeps it when the reader comes back to it under a different one.
     function toggleConvView() {
       const a = activePane ? paneOf(activePane) : null;
       if (!a) return;
-      const on = convViewOn(a), conv = on ? null : convViewConv(a);
-      convSetView(a, on ? '' : ((conv && conv.id) || 1));
+      const on = convViewOn(a);
+      setConvMode(!on);
+      if (!on) {
+        const conv = convViewConv(a);
+        if (conv) convSetView(a, conv.id);
+      }
       renderConvBar();
       if (window.cue) cue('page');
     }
@@ -370,6 +396,8 @@
       const all = hidden.size ? composed.all.filter(shows) : composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
       const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
+      // Nobody else is speaking here, so the bubbles take the width back off the empty column.
+      box.classList.toggle('conv-solo', !joint);
       // While the panel is open it is this conversation the actions act on. convViewId is "the
       // conversation being managed" and not "the one the standalone view is showing" — the two
       // views are never on screen at once, so one variable answers for both.
@@ -540,26 +568,24 @@
         `<span class="count">${n} message${n === 1 ? '' : 's'}</span></div>`;
     }
 
-    // Colour carries "who", so it reuses what the tab strip already assigns: one PAIR_TINTS hue
-    // per member, in member order. The user keeps --blue, which is why nothing here is near it.
-    function convTint(i) {
-      return `hsl(${PAIR_TINTS[i % PAIR_TINTS.length]} 60% 55%)`;
-    }
-
     // Who is in this conversation, and which of them are still running. Collapsed to one row until
     // tapped: a conversation whose panes have all exited is still readable, and this is where it
     // says what it was.
+    //
+    // Named the way every other list of panes names one — label then agent badge. The harness is a
+    // fact about the session, so it is the badge the rest of the UI uses and not a word in the
+    // spawn line.
     function convMembersHtml(conv, recs) {
-      const live = new Set(agents.map(x => convMemberKey(x)));
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
       return `<button class="conv-members" onclick="this.classList.toggle('open')"
-        aria-label="Who is in this conversation">` + (conv.members || []).map((m, i) => {
+        aria-label="Who is in this conversation">` + (conv.members || []).map(m => {
         const rec = recs.find(r => r.key === m.key);
         const spawn = (rec && rec.spawn) || {};
         const on = live.has(m.key);
-        const facts = [spawn.agent, spawn.role, spawn.project || spawn.cwd].filter(Boolean);
+        const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
-          `<span class="dot" style="background:${convTint(i)}"></span>` +
           `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
+          agentBadge(spawn.agent || (live.get(m.key) || {}).agent || '') +
           `${on ? '' : '<span class="tag">no longer live</span>'}` +
           `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
       }).join('') + '</button>';

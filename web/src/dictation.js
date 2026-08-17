@@ -84,8 +84,7 @@
     function quickSend(text) {
       if (!ws || !activePane) return;
       if (window.cue) cue('success');
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: text }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      submitText(activePane, text);
       document.getElementById('quickDock').style.display = 'none';
       setTimeout(refreshPane, 500);
     }

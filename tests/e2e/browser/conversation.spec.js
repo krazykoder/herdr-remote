@@ -611,6 +611,7 @@ const endMember = page => page.evaluate(async () => {
   const old = items[0].members[0];
   const rec = (await convGet([old.key]))[0];
   rec.key = 'dead:pane';
+  rec.entries = [{who: 'agent', text: 'history before restart', at: Date.now(), at_src: 'read'}];
   rec.spawn = {agent: 'claude', role: 'architect', label: 'Architect 1', project_id: 'p1',
     project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local', workspace_id: 'w404'};
   await convPut(rec);
@@ -619,7 +620,7 @@ const endMember = page => page.evaluate(async () => {
   await renderConvStandalone(false);
 });
 
-test('an ended session can be started again, and the new pane joins as a new member', async ({page}) => {
+test('an ended session restarts under its name and continues its member thread', async ({page}) => {
   await openCard(page);
   await endMember(page);
   await tapWire(page);
@@ -639,6 +640,7 @@ test('an ended session can be started again, and the new pane joins as a new mem
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
   expect(sent.name).toBe('claude');
   expect(sent.role).toBe('architect');
+  expect(sent.label).toBe('Architect 1');
   expect(sent.project_id).toBe('p1');
   // The relay takes a new session's cwd from the Project and never from the client. The recorded
   // cwd is a record of where it ran, and sending it would make it an instruction.
@@ -647,19 +649,78 @@ test('an ended session can be started again, and the new pane joins as a new mem
   expect(sent.placement).toBe('new_workspace');
   expect(sent.workspace_id).toBeUndefined();
 
-  // The reply lands, the pane shows up on the next snapshot, and it joins as a NEW member: a new
-  // pane means a new key, which means a new transcript, so no recycled id inherits dead words.
-  await page.evaluate(() => {
+  // The reply lands and replaces this conversation's dead member. The physical key is new, but its
+  // local record starts with the history the reader deliberately chose to continue.
+  await page.evaluate(async () => {
     handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
-    openPendingStart();
+    await openPendingStart();
   });
-  const members = await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key));
-  expect(members.length).toBe(2);
-  expect(members[0]).toBe('dead:pane');
-  expect(members[1]).not.toBe('dead:pane');
+  const state = await page.evaluate(async () => {
+    const member = loadConvIndex()[0].members[0];
+    return {members: loadConvIndex()[0].members.length, label: member.label,
+      key: member.key, entries: (await convGet([member.key]))[0].entries.map(e => e.text)};
+  });
+  expect(state.members).toBe(1);
+  expect(state.key).not.toBe('dead:pane');
+  expect(state.label).toBe('Architect 1');
+  expect(state.entries).toContain('history before restart');
+  // The continuation boundary consumes the first completed turn whole: it must append the new
+  // pane's interim narration after the copied record, never try to align this fresh terminal to
+  // the dead one's output.
+  const continued = await page.evaluate(async () => {
+    const pane = activePane;
+    noteStatus(pane, 'working');
+    await new Promise(resolve => setTimeout(resolve, 2));
+    noteStatus(pane, 'idle');
+    paneOf(pane).status = 'idle';
+    await recordPane(pane, ['❯ continue', '', '⏺ First step.', '', '⏺ Finished.', '', '❯']);
+    return (await convGet([convMemberKey(paneOf(pane))]))[0].entries.map(e => e.text);
+  });
+  expect(continued).toEqual(expect.arrayContaining(['history before restart', 'First step.', 'Finished.']));
   // And it opens on the thread — continuing a conversation is asking to say the next thing in it.
   await expect(page.locator('#convThread')).toBeVisible();
 });
+
+// herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
+// can come up on a key another ended session already recorded under. Continuing by copying over it
+// would delete a transcript some other conversation still names, which is the one thing a restart
+// must not do: it falls back to joining as a new member instead.
+test('a restart that would land on another conversation\'s record leaves it alone',
+  async ({page}) => {
+    await openCard(page);
+    await endMember(page);
+    await tapWire(page);
+    // The key the replacement will have already holds a recording — this browser has read that
+    // pane — and a second conversation names it, so it is not an orphan waiting to be evicted.
+    await page.evaluate(() => {
+      const items = loadConvIndex();
+      items.push({id: 'c-other', name: 'somebody else\'s thread', created: Date.now(),
+        members: [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Someone else'}]});
+      saveConvIndex(items);
+    });
+    const again = page.locator('#convView .conv-again');
+    await again.click();
+    await again.click();
+    await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
+      .toHaveLength(1);
+    await page.evaluate(async () => {
+      handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+      await openPendingStart();
+    });
+    const state = await page.evaluate(async () => {
+      const key = convMemberKey(paneOf('w1:p1'));
+      const conv = loadConvIndex().find(c => c.id !== 'c-other');
+      return {members: conv.members.map(m => m.key),
+        theirs: ((await convGet([key]))[0] || {}).entries.map(e => e.text)};
+    });
+    // Joined as a new member beside the dead one, the way a restart did before it could continue.
+    expect(state.members).toHaveLength(2);
+    expect(state.members[0]).toBe('dead:pane');
+    // And the other conversation's record is still its own: what that pane actually said, with
+    // none of the dead session's history copied over the top of it.
+    expect(state.theirs.some(t => t.includes('Ready. Name the change.'))).toBe(true);
+    expect(state.theirs).not.toContain('history before restart');
+  });
 
 test('an ended session with no Project the relay knows is offered no button', async ({page}) => {
   await openCard(page);
@@ -1333,6 +1394,34 @@ test('a paired thread fills the pane, keeps agent colors, and keeps prompts besi
   await expect(msgs.nth(2)).toHaveCSS('color', 'rgb(158, 206, 106)');
 });
 
+// The 86% is a two-column layout leaving the other column visible. With one speaker there is no
+// other column, only a strip of empty surface down the right of every bubble — and a plan or a
+// diff is what pays for it.
+test('a thread with one speaker gives the bubble the whole width', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const width = () => page.evaluate(() => {
+    const box = document.getElementById('convThread');
+    const msg = box.querySelector('.conv-msg');
+    const pad = getComputedStyle(box);
+    return {solo: box.classList.contains('conv-solo'),
+      bubble: Math.round(msg.getBoundingClientRect().width),
+      // The room a bubble has, which is the thread minus its own gutters.
+      thread: Math.round(box.clientWidth
+        - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight))};
+  });
+  const both = await width();
+  expect(both.solo).toBe(false);
+  expect(both.bubble).toBeLessThan(both.thread);
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConvJoint').click();          // show this pane alone
+  await expect(page.locator('#convThread.conv-solo')).toBeVisible();
+  const alone = await width();
+  expect(alone.bubble).toBe(alone.thread);
+});
+
 test('the transfer sheet names the pane it will write into', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
@@ -1394,6 +1483,28 @@ test('a pair switch keeps the thread when both panes are in it', async ({page}) 
   expect(await page.evaluate(() => convViews()[convMemberKey(paneOf(activePane))])).toBe('c1');
 });
 
+test('rows or thread follows the reader across paired panes', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    setConvMode(true);
+    convSetView(paneOf(activePane), 'c1');
+    renderConvBar();
+  });
+  await page.locator('#pairStrip .switch').click();
+  await expect(page.locator('#convThread')).toBeVisible();
+  // Turning rows back on is global: the next paired pane is read the same way, while its chosen
+  // conversation remains recorded for a future return to threads.
+  await page.evaluate(() => { toggleConvView(); });
+  await expect(page.locator('#convThread')).toBeHidden();
+  await page.locator('#pairStrip .switch').click();
+  await expect(page.locator('#convThread')).toBeHidden();
+  expect(await page.evaluate(() => convMode())).toBe(false);
+});
+
 test('a pair switch carries nothing to a partner that is not in the conversation',
   async ({page}) => {
     await open(page);
@@ -1427,7 +1538,7 @@ test('a pair switch off a pane read as rows leaves the partner reading rows', as
   expect(await page.evaluate(() => convViewOn(paneOf(activePane)))).toBe(false);
 });
 
-test('folding the composer away takes the typing target with it', async ({page}) => {
+test('folding the composer away leaves the pane named', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
     pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
@@ -1435,14 +1546,24 @@ test('folding the composer away takes the typing target with it', async ({page})
     renderPairStrip();
   });
   await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
-  // The strip names the pane the composer types into, so it is only true while there is one. The
-  // fold is the button that decides that, and it has to redraw the strip itself — the poll is
-  // three seconds away.
-  await page.locator('#quickActions .qa-fold').click();
-  await expect(page.locator('#pairStrip .pair-target')).toHaveCount(0);
-  await expect(page.locator('#pairStrip .pair-name')).toBeVisible();
+  // Which pane you are reading is the same answer folded or unfolded. It used to be read as the
+  // composer's typing target and disappear with the composer, which is what made the strip look
+  // like it named some panes and not others.
   await page.locator('#quickActions .qa-fold').click();
   await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  await page.locator('#quickActions .qa-fold').click();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+});
+
+test('an unpaired pane is named on the strip too, with no pair controls', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => { pairs = []; renderPairStrip(); });
+  await expect(page.locator('#pairStrip')).toBeVisible();
+  await expect(page.locator('#pairStrip .pair-target')).toContainText('Architect 1');
+  await expect(page.locator('#pairStrip .pair-target .badge')).toHaveText('claude');
+  // Nothing to switch to and nothing to transfer, so neither control is offered.
+  await expect(page.locator('#pairStrip .switch')).toHaveCount(0);
+  await expect(page.locator('#pairStrip .transfer')).toHaveCount(0);
 });
 
 test('an auto conversation says how to make it permanent', async ({page}) => {
@@ -1903,6 +2024,29 @@ test('a pane reading a thread can manage the conversation from it', async ({page
   await expect(page.locator('#convPaneRoster')).toBeHidden();
 });
 
+test('the pane roster names each member\'s harness, and marks nobody with a colour', async ({page}) => {
+  await open(page);
+  await join(page);
+  // Deliberately no read(): a pane filed under a conversation before it has said anything has no
+  // transcript record, so there is no spawn to take the harness off and the live pane is all there
+  // is to go on.
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: 'the other one', touched: Date.now(),
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'said by the other one', at: Date.now(), at_src: 'state'}]});
+    convViewId = 'c1';
+    convEdit(c => { c.members = c.members.concat({key: 'ghost', added: 2, label: 'the other one'}); });
+    toggleConvView();
+    toggleConvPaneRoster();
+  });
+  const rows = page.locator('#convPaneRoster .conv-roster-row');
+  await expect(rows, 'the joined pane wears the harness the relay reports for it')
+    .toContainText(['claude', 'codex']);
+  // A dot beside a name said only "member number two", which the name already says.
+  await expect(page.locator('#convPaneRoster .dot')).toHaveCount(0);
+  await expect(page.locator('#convThread .conv-members .dot')).toHaveCount(0);
+});
+
 test('the pane reading a thread is the one member it cannot hide', async ({page}) => {
   await open(page);
   await join(page);
@@ -1961,6 +2105,22 @@ const twoConvs = page => page.evaluate(() => {
     {id: 'c2', name: 'the release', created: 2, members: [{key, added: 2, label: 'Architect 1'}]},
   ]);
   return key;
+});
+
+test('a bottom conversation tab always opens that conversation', async ({page}) => {
+  await open(page);
+  await twoConvs(page);
+  await read(page);
+  await page.evaluate(() => {
+    setConvMode(true);
+    convSetView(paneOf(activePane), 'c1');
+    setTabScope('convs');
+    renderAgentTabs();
+  });
+  await page.locator('#convStrip .conv-tab', {hasText: 'the release'}).click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewTitle')).toHaveText('the release');
+  await expect(page.locator('#terminalView')).toBeHidden();
 });
 
 test('a pane in two conversations picks which one its thread shows', async ({page}) => {
@@ -2107,7 +2267,10 @@ test('the members strip names who is in it, and what each session was', async ({
   // Both panes are live in the fake herdr, so neither is tagged — and the spawn line is what a
   // conversation whose panes have exited still says about them.
   await expect(page.locator('#convThread .conv-member .tag')).toHaveCount(0);
-  await expect(members.nth(1).locator('.spawn')).toContainText('codex · reviewer · charts');
+  // The harness is a badge, the way every other list of panes wears it; the spawn line keeps what
+  // is left — the role and where it ran.
+  await expect(members.nth(1).locator('.badge')).toHaveText('codex');
+  await expect(members.nth(1).locator('.spawn')).toContainText('reviewer · charts');
 });
 
 test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was', async ({page}) => {
@@ -2614,7 +2777,7 @@ test('the repair can be turned off, and the setting is remembered', async ({page
 // The composer, the badge, and where a switch lands. All four live in the same place: what the app
 // does with a thread that is on screen, as opposed to a pane that is.
 
-test('a text past one message goes as several, and one Enter submits them all',
+test('a text past one message goes as several, and the last one submits them all',
   async ({page}) => {
     // The relay caps one `send_text` at 4000 and always has. Raising that cap would fix this for
     // nobody who has not upgraded the relay — the app is on GitHub Pages and the relay is on the
@@ -2632,11 +2795,10 @@ test('a text past one message goes as several, and one Enter submits them all',
     for (const p of parts) expect(p.text.length).toBeLessThanOrEqual(4000);
     // The agent's composer receives exactly what was typed, and nothing between the chunks submits.
     expect(parts.map(p => p.text).join('')).toBe(text);
-    const keys = sent.filter(m => m.type === 'send_keys');
-    expect(keys).toHaveLength(1);
-    expect(keys[0].keys).toEqual(['Enter']);
-    // And the Enter is behind every chunk, or it submits half a diff.
-    expect(sent.indexOf(keys[0])).toBe(sent.length - 1);
+    // The Enter rides on the last chunk and on nothing before it, or it submits half a diff.
+    expect(parts.filter(p => p.submit)).toHaveLength(1);
+    expect(parts[parts.length - 1].submit).toBe(true);
+    expect(sent.filter(m => m.type === 'send_keys')).toHaveLength(0);
   });
 
 test('the transcript keeps a long message whole', async ({page}) => {
@@ -2782,6 +2944,28 @@ const openWindow = async page => {
   await expect(page.locator('#convView')).toBeVisible();
 };
 
+// A pair is two columns wherever it is read: one agent down the left, the other indented to the
+// right. The window drew every bubble on the left, so a pair that reads as a conversation in the
+// pane read as one long monologue here.
+test('a pair reads as two columns in the conversation window too', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const sides = await page.evaluate(() => Array.from(
+    document.querySelectorAll('#convViewThread .conv-msg')).map(m => ({
+      text: m.textContent, right: m.classList.contains('conv-right'),
+      align: getComputedStyle(m).alignSelf})));
+  const right = sides.filter(s => s.right);
+  expect(right.length).toBeGreaterThan(0);
+  expect(sides.length).toBeGreaterThan(right.length);
+  // One agent's words, all of them, on the same side.
+  expect(right.every(s => s.text.includes('other pane') || s.text.includes('and again'))).toBe(true);
+  expect(right[0].align).toBe('flex-end');
+  // Two columns means both sides are drawn, so the bubbles keep the width that leaves room for it.
+  await expect(page.locator('#convViewThread.conv-solo')).toHaveCount(0);
+});
+
 test('a half-written message waits in the conversation it was being written to', async ({page}) => {
   await open(page);
   await join(page);
@@ -2850,8 +3034,12 @@ const pickBubble = async (page, text) => {
 // Instructions attached to the send rather than written into the box. The default is the other
 // way round — the instruction on screen where it can be read — so the tests about lit chips say so.
 const attachMode = async page => {
-  await page.locator('#xferRow .xfer-chip.fill').click();
-  await expect(page.locator('#xferRow .xfer-chip.fill')).toHaveAttribute('aria-pressed', 'false');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const item = page.locator('#optMenu .menu-item', {hasText: 'Show inline prompt'});
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  await expect(page.locator('#optMenu')).toBeHidden();
 };
 
 const whoRow = page => page.locator('#xferRow .xfer-who');
@@ -2887,9 +3075,10 @@ test('the dock sends a picked message straight into another member', async ({pag
   expect(body).toContain('the other pane spoke first');
   // Named by the member it came from, so the receiving agent is told whose words these are.
   expect(body).toContain('feedback from scratch:');
-  // And submitted — that is the whole of what makes this different from the transfer sheet.
-  const sent = await page.evaluate(() => window.__sent);
-  expect(sent.filter(m => m.type === 'send_keys' && m.keys[0] === 'Enter')).toHaveLength(1);
+  // And submitted — that is the whole of what makes this different from the transfer sheet. The
+  // Enter rides on the last chunk rather than following it, so nothing can arrive between them.
+  expect(text[text.length - 1].submit).toBe(true);
+  expect(text.slice(0, -1).every(m => !m.submit)).toBe(true);
   await expect(page.locator('#toast')).toContainText('Sent 1 message to Architect 1');
   // Recorded against the receiving pane, and the pick is spent.
   expect(mine).toBeTruthy();
@@ -2916,7 +3105,7 @@ test('the pane view keeps its sheet and is offered no dock', async ({page}) => {
   await expect(page.locator('#transferPreview')).not.toBeEmpty();
 });
 
-test('a conversation of one can be typed to, and has nothing to transfer to', async ({page}) => {
+test('a conversation of one can be typed to, and quoted back to itself', async ({page}) => {
   await open(page);
   await join(page);
   await read(page);
@@ -2925,15 +3114,14 @@ test('a conversation of one can be typed to, and has nothing to transfer to', as
   await expect(whoRow(page)).toHaveCount(1);
   await expect(litWho(page)).toHaveText(/Architect 1/);
   await pickBubble(page, 'Ready. Name the change.');
-  // Nobody to send it to, so no button that would. The row stays: it is still who the composer is
-  // addressing, and the pick is one tap from being undone. The one member is not marked as the
-  // source either — the composer below it still types into that pane, and a pill drawn dead beside
-  // a composer that works would be lying.
-  await expect(page.locator('#xferRow .xfer-send')).toHaveCount(0);
+  // The one member is where a pick can go, because the only other answer is nowhere. The row
+  // stays lit on it, and the composer below it types into the same pane.
   await expect(litWho(page)).toHaveText(/Architect 1/);
   await expect(whoRow(page)).toBeEnabled();
-  await compose(page, 'carry on then');
+  await sendPicked(page);
   expect((await sentText(page)).map(m => m.pane_id)).toEqual(['w1:p1']);
+  await compose(page, 'carry on then');
+  expect((await sentText(page)).map(m => m.pane_id)).toEqual(['w1:p1', 'w1:p1']);
 });
 
 test('a conversation whose members have all exited is offered no dock', async ({page}) => {
@@ -3002,7 +3190,7 @@ test('a chip tapped twice comes back out', async ({page}) => {
   expect(await sentBody(page)).not.toContain('Review, edit, fix');
 });
 
-test('the target is every other member, and the chosen one can be overridden', async ({page}) => {
+test('the target is every member, and the chosen one can be overridden', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -3010,12 +3198,11 @@ test('the target is every other member, and the chosen one can be overridden', a
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');           // scratch's
-  // Every member stays in the row — a pick narrows who may receive the message, never who is in
-  // the conversation — and the one that said it is marked rather than removed, because a message
-  // cannot be transferred back into the session that wrote it.
+  // Every member stays in the row and every one of them is choosable — a pick decides what is
+  // being sent, never who may have it. The author included: handing an agent its own words back
+  // is a move people make on purpose.
   await expect(whoRow(page)).toHaveCount(3);
-  await expect(whoRow(page).filter({hasText: 'scratch'})).toHaveClass(/from/);
-  await expect(whoRow(page).filter({hasText: 'scratch'})).toBeDisabled();
+  await expect(whoRow(page).filter({hasText: 'scratch'})).toBeEnabled();
   // The first member is lit; the rest are there, dimmed — which agents are in this conversation is
   // information, and hiding them would answer a different question.
   await expect(litWho(page)).toHaveText(/Architect 1/);
@@ -3024,6 +3211,23 @@ test('the target is every other member, and the chosen one can be overridden', a
   await sendPicked(page);
   const to = (await sentText(page)).map(m => m.pane_id);
   expect(new Set(to)).toEqual(new Set([third]));
+});
+
+test('a message can go back to the agent that wrote it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  const scratch = await page.evaluate(() => agents.find(a => a.label === 'scratch').pane_id);
+  await pickBubble(page, 'the other pane spoke first');           // scratch's
+  // Its own author, chosen deliberately: "you said this, now check it" is a transfer like any
+  // other, and the row is not the place to decide it is a mistake.
+  await whoRow(page).filter({hasText: 'scratch'}).click();
+  await expect(litWho(page)).toHaveText(/scratch/);
+  await sendPicked(page);
+  expect(new Set((await sentText(page)).map(m => m.pane_id))).toEqual(new Set([scratch]));
+  expect(await sentBody(page)).toContain('the other pane spoke first');
 });
 
 // The pair the dock defaults to: between the pane whose message gets picked and one of the other
@@ -3529,6 +3733,189 @@ test('the composer draws its own block cursor, and it is always there', async ({
   await expect(page.locator('#convInput')).toHaveCSS('caret-color', 'rgba(0, 0, 0, 0)');
 });
 
+// Past the field's max height it scrolls itself, and `autoGrow` measures by setting the height to
+// `auto` first — a reflow that puts `scrollTop` back to the top. Without a scroll of its own every
+// keystroke past the fold left the caret below the visible band, revealed only by scrolling by hand.
+test('typing past the fold keeps the caret on screen', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await input.click();
+  // Typed rather than filled: the bug is in what happens per keystroke.
+  for (let i = 0; i < 40; i++) await input.press(`Digit${i % 10}`), await input.press('Enter');
+  // The field is scrolling — otherwise this proves nothing.
+  expect(await input.evaluate(el => el.scrollHeight - el.clientHeight)).toBeGreaterThan(4);
+  const seen = await page.evaluate(() => {
+    const el = document.getElementById('convInput');
+    const cur = document.querySelector('#convGhost .cur');
+    return cur.offsetTop >= el.scrollTop &&
+      cur.offsetTop + cur.offsetHeight <= el.scrollTop + el.clientHeight + 1;
+  });
+  expect(seen).toBe(true);
+});
+
+// Off by default and on by asking: this box types filenames, flags and branch names into a
+// terminal, and a phone keyboard rewrites every one of them.
+test('autocorrect is a switch on the composer, and it is off to begin with', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await expect(input).toHaveAttribute('autocorrect', 'off');
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const item = page.locator('#optMenu .menu-item', {hasText: 'Autocorrect'});
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await expect(input).toHaveAttribute('autocorrect', 'on');
+  await expect(input).toHaveAttribute('autocapitalize', 'sentences');
+  // A standing preference, not a mode of the moment: it survives the page.
+  await page.reload();
+  await expect(page.locator('#convInput')).toHaveAttribute('autocorrect', 'on');
+});
+
+// The harness relay runs without Projects, so what a start needs is seeded — the same two globals
+// the respawn tests seed. The addressed pane is given a Project and a workspace, because "beside
+// what this conversation is already running" is the placement the dialog answers for itself.
+const startable = page => page.evaluate(() => {
+  projects = [{id: 'p1', label: 'herdr-remote', host: 'local'},
+    {id: 'p2', label: 'charts', host: 'local'}];
+  startOptions = {type: 'start_options', agents: ['claude', 'codex'],
+    roles: ['architect', 'reviewer', 'agent']};
+  for (const a of agents) { a.project_id = 'p1'; a.workspace_id = 'w1'; }
+});
+
+const openNewAgentModal = async page => {
+  await page.locator('.xfer-who-more.list').click();
+  await page.locator('#whoMenu .menu-item', {hasText: 'New agent'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+};
+
+test('a new agent is started from the membership list, into this conversation', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await startable(page);
+  await tapWire(page);
+  await openNewAgentModal(page);
+  // Both defaults are read off the agent being talked to: its harness, and the Project it runs in.
+  await expect(page.locator('#newAgentKinds .badge.pick.on')).toHaveText('claude');
+  await expect(page.locator('#newAgentProjects .badge.pick.on')).toHaveText('@herdr-remote');
+  await page.locator('#newAgentKinds .badge.pick', {hasText: 'codex'}).click();
+  await page.locator('#newAgentName').fill('Reviewer 9');
+  await page.locator('#newAgentSubmit').click();
+  await expect(page.locator('#newAgentModal')).toBeHidden();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.name).toBe('codex');
+  expect(sent.project_id).toBe('p1');
+  expect(sent.label).toBe('Reviewer 9');
+  expect(sent.role).toBe('architect');   // the first badge, which is the one lit
+  // Where is never asked: beside what the Project is already running.
+  expect(sent.placement).toBe('new_tab');
+  expect(sent.workspace_id).toBe('w1');
+
+  // It joins as a new member when the poll catches up, and is opened with the role's own prompt.
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
+  expect(await sentBody(page)).toContain('System_Prompt_2_Architect.md');
+});
+
+test('the role badge is what the session is started as, and what opens it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await startable(page);
+  await tapWire(page);
+  await openNewAgentModal(page);
+  // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
+  await expect(page.locator('#newAgentRoles .badge.pick'))
+    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
+  await page.locator('#newAgentRoles .badge.pick', {hasText: 'Arbitrator'}).click();
+  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('# Arbitrator');
+  // A second Project, chosen from the list behind @+ rather than from the line.
+  await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
+  await page.locator('.chip-line .badge.more').click();
+  await page.locator('#newAgentProjMenu .menu-item', {hasText: '@charts'}).click();
+  await expect(page.locator('#newAgentProjMenu')).toBeHidden();
+  await expect(page.locator('#newAgentProjects .badge.pick.on')).toHaveText('@charts');
+  await page.locator('#newAgentSubmit').click();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  // The relay knows three roles and Arbitrator is not one of them, so it rides on `agent` and
+  // carries its name as the label — otherwise the pane would come up called "Agent 1".
+  expect(sent.role).toBe('agent');
+  expect(sent.label).toBe('Arbitrator');
+  expect(sent.project_id).toBe('p2');
+  // Nothing live in that Project, so there is nothing to be beside.
+  expect(sent.placement).toBe('new_workspace');
+  // Its prompt is still to be written, so the session is started and told nothing.
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await sentBody(page)).toBe('');
+});
+
+// The same four badges in the sheet a session is normally started from, doing the same two jobs:
+// what goes on the wire, and what the session is told first. Optional there as well — a start with
+// the row left empty is a start, on the neutral role and with nothing said to it.
+test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
+  await open(page);
+  await startable(page);
+  await tapWire(page);
+  await page.evaluate(() => openStartDialog('p1'));
+  await expect(page.locator('#startSheet')).toBeVisible();
+  await expect(page.locator('#startRoles .badge.pick'))
+    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
+  // Nothing lit until something is picked: the field recommends, it does not answer for the user.
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
+  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
+  // The harness is picked in the same badges, and painted the way the pane header paints it: the
+  // kind's own colour, so a badge in a dialog and a badge on a header mean the same thing.
+  await expect(page.locator('#startAgents .badge.pick.on')).toHaveText('claude');
+  expect(await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--agent-claude)';
+    document.body.appendChild(probe);
+    const lit = getComputedStyle(document.querySelector('#startAgents .badge.pick.on')).color;
+    const want = getComputedStyle(probe).color;
+    probe.remove();
+    return lit === want;
+  })).toBe(true);
+  await page.locator('#startSubmit').click();
+
+  const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(sent.name).toBe('claude');
+  expect(sent.role).toBe('architect');
+  expect(sent.label).toBeUndefined();      // the relay names it after the role it was given
+  await page.evaluate(() => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    openPendingStart();
+  });
+  expect(await sentBody(page)).toContain('System_Prompt_2_Architect.md');
+
+  // Reopens on what it last started as — spawning is repetitive, like the harness and the
+  // placement beside it — and the same tap takes it off again.
+  await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('# Architect');
+  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
+  await page.evaluate(() => { window.__sent.length = 0; });
+  await page.locator('#startSubmit').click();
+  const bare = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
+  expect(bare.role).toBe('agent');
+  expect(bare.label).toBeUndefined();
+});
+
 test('a double tap on a bubble addresses the agent that wrote it', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3548,7 +3935,7 @@ test('a double tap on a bubble addresses the agent that wrote it', async ({page}
   expect((await sentText(page)).map(m => m.pane_id)).toEqual([third]);
 });
 
-test('a double tap on the picked message\'s own bubble changes nothing', async ({page}) => {
+test('a double tap on the picked message\'s own bubble addresses its author', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -3558,10 +3945,11 @@ test('a double tap on the picked message\'s own bubble changes nothing', async (
   await page.evaluate(() => setDockMru(false));
   await whoRow(page).filter({hasText: 'amp'}).click();
   await pickBubble(page, 'the other pane spoke first');           // scratch's
-  // scratch cannot receive what scratch said, so the gesture has nothing to do — and must not
-  // quietly move the target somewhere else on the way to doing nothing.
+  // Handing an agent its own words back is a real thing to want — "look at this again" — so the
+  // author is a target like any other, and the gesture that says "talk to whoever wrote this"
+  // means the same thing when the writer is also the pick.
   await page.locator('#convViewThread .conv-msg', {hasText: 'the other pane spoke first'}).dblclick();
-  await expect(litWho(page)).toHaveText(/amp/);
+  await expect(litWho(page)).toHaveText(/scratch/);
 });
 
 test('the pane\'s own thread is not addressed by a double tap', async ({page}) => {
@@ -3613,13 +4001,19 @@ test('the composer\'s own send carries the picked message too', async ({page}) =
   await tapWire(page);
   await openWindow(page);
   await pickBubble(page, 'the other pane spoke first');
-  await page.locator('#convInput').fill('and this is why');
+  // Default prompt mode writes into the composer. The following note makes this the exact
+  // transfer + @ prompt + typed text path, which must still use one atomic final submit.
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+  await page.locator('#convInput').pressSequentially('\nand this is why');
   // Two sends in one bubble that did different things would be a way to lose the quote by tapping
   // the nearer button. There is one message being written, so both send it.
   await page.locator('#convSendBtn').click();
   const body = await sentBody(page);
   expect(body).toContain('the other pane spoke first');
   expect(body.endsWith('and this is why')).toBe(true);
+  const sent = await sentText(page);
+  expect(sent[sent.length - 1].submit).toBe(true);
+  expect(sent.slice(0, -1).every(m => !m.submit)).toBe(true);
 });
 
 test('a chip writes its instruction into the box, and the toggle changes that',
@@ -3651,7 +4045,7 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     });
     await expect(page.locator('#termInput')).toHaveValue(/^keep this sentence\nReview, edit, fix/);
     // Nothing is lit, because the instruction is not waiting anywhere — it is in the box.
-    await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(1);  // the toggle
+    await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
     await page.locator('#convInput').fill('just this');
     await compose(page, 'just this');
     expect(await sentBody(page)).toBe('just this');

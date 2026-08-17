@@ -44,9 +44,15 @@
     // The agent list is an exit, not a history entry. Header back buttons always land here — and
     // the browser is rewound to the entry the document was loaded on, so its own Back gesture does
     // not still think it is standing on the pane that was just left.
+    // The agent list is an exit, not a history entry, and not a step either: it lands *now* and
+    // then rewinds the browser behind it. It used to do only the rewind and leave the landing to
+    // the popstate that came back — so whenever the two cursors disagreed (the walk drops its
+    // oldest entry at NAV_MAX while the browser's stack keeps every push, and a detached or
+    // clamped `go` never arrives at all) the chevron opened whatever was parked at that depth
+    // instead of leaving. Home is not a destination the walk can be wrong about.
     function showLanding() {
-      if (navRewind()) return;   // asynchronous; popstate calls landNow below
       landNow();
+      navRewind();
     }
 
     function landNow() {

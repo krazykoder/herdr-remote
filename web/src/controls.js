@@ -91,16 +91,16 @@
     // here — the $ form is codex's way of reaching a *prompt or skill*, and its built-in commands
     // are slash commands like everyone else's.
     function sendLine(text) {
-      ws.send(JSON.stringify({ type: 'send_text', pane_id: activePane, text: text }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: ['Enter'] }));
+      if (!submitText(activePane, text)) return false;
       burstPoll();
+      return true;
     }
 
     function armClear() {
       armFire('clsBtn', () => {
         closeFireMenu();
         const line = isShell(activePane) ? 'clear' : '/clear';
-        sendLine(line);
+        if (!sendLine(line)) return;
         // The screen the pane repaints after a clear is the live frame; the backlog behind it is
         // history the user did not ask to keep looking at. Undone by Load more or reopening it.
         paneSource = 'visible';
@@ -112,7 +112,7 @@
       armFire('quitBtn', () => {
         closeFireMenu();
         const line = isShell(activePane) ? 'exit' : '/quit';
-        sendLine(line);
+        if (!sendLine(line)) return;
         showToast(`Sent ${line}`);
       });
     }
@@ -123,24 +123,47 @@
       paneLines = Math.min(paneLines + historyStep(), paneHistoryMax());
       refreshPane();
     }
+    // Text into a pane, ending in the Enter that submits it. Every send in this app goes through
+    // here, because "it never posted" is the failure they all had.
+    //
+    // The Enter rides on the last chunk instead of following it as its own message. It used to be a
+    // separate `send_keys`, timed by a sleep in the relay — and an agent that was still busy with
+    // what it had just been handed swallowed it: the text sat in the agent's composer, unsent,
+    // looking exactly like a message that was never written. Worst on a session that had only just
+    // started, which is the case the New agent dialog hits every time. `submit` makes the relay use
+    // herdr's own one-call form, so nothing can arrive between the text and the Enter.
+    //
+    // A socket that is not open is a refusal, not a send: this returns false so the caller keeps the
+    // message in the box rather than clearing it over a message the relay never saw.
+    function submitText(paneId, text) {
+      if (!text || !paneId || !ws || ws.readyState !== 1) return false;
+      // One message per chunk. Nothing before the last one submits, so they land in the agent's
+      // composer as one text; the relay handles a connection's messages in order.
+      const parts = chunkText(text);
+      if (!parts.length) return false;
+      try {
+        parts.forEach((part, i) => ws.send(JSON.stringify(
+          { type: 'send_text', pane_id: paneId, text: part, submit: i === parts.length - 1 })));
+      } catch (e) {
+        // A socket that closed between the guard above and the write. Nothing was submitted.
+        showToast('Not connected — that was not sent.');
+        return false;
+      }
+      return true;
+    }
+
     // One text into one pane, from whichever composer had it. The pane's own composer is one
     // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
     // open — which is why this takes the pane rather than reading `activePane`.
     function sendTextTo(paneId, text) {
-      if (!text || !ws || !paneId) return false;
-      // Before the send, while the composer still holds what is being sent: a transcript that
-      // cannot tell a transfer from typing claims the user said what another agent said. The whole
-      // text, not a chunk of it — what was sent is one message, however many the wire took.
+      if (!submitText(paneId, text)) return false;
+      // Recorded once the wire has taken it: a transcript that cannot tell a transfer from typing
+      // claims the user said what another agent said, and one that records a send the socket
+      // dropped claims they said it at all. The whole text, not a chunk of it — what was sent is
+      // one message, however many the wire took.
       noteSent(text, paneId);
       lastSentText[paneId] = text;
       syncResend();
-      // One message per chunk, then the single Enter that submits all of them. Nothing between the
-      // chunks submits, so they land in the agent's composer as one text; the relay handles a
-      // connection's messages in order and already sleeps SEND_SETTLE after each `send_text`, which
-      // is what makes the Enter behind them late enough to count.
-      for (const part of chunkText(text))
-        ws.send(JSON.stringify({ type: 'send_text', pane_id: paneId, text: part }));
-      ws.send(JSON.stringify({ type: 'send_keys', pane_id: paneId, keys: ['Enter'] }));
       return true;
     }
 
