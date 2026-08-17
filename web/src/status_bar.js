@@ -319,6 +319,17 @@
       return s.replace(/\/+$/, '');
     }
 
+    // Empties the box and leaves the caret in it, ready for the next tunnel's address. Nothing is
+    // saved and nothing disconnects: what is stored is still what Connect last stored, so a cleared
+    // box that is never submitted costs the reader nothing.
+    function clearRelayUrl() {
+      const input = document.getElementById('relayUrl');
+      if (!input) return;
+      input.value = '';
+      input.focus();
+      if (window.cue) cue('tick');
+    }
+
     function saveAndConnect() {
       const box = document.getElementById('relayUrl');
       const url = cleanRelayUrl(box.value);

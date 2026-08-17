@@ -772,6 +772,41 @@
       color: var(--text);
     }
 
+    /* A text field with its own ✕. The button sits over the field's right edge, and the field
+       gives up the width so the caret never runs under it. */
+    .field-clearable {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .field-clearable input {
+      padding-right: 32px;
+    }
+
+    .field-clear {
+      position: absolute;
+      right: 4px;
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .field-clear:hover {
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+    }
+
     .setting-group .toggle-option {
       display: flex;
       align-items: center;
@@ -4305,9 +4340,16 @@
            else here — its sanitiser only drops newlines, and backticks and prose came through it
            untouched. Cleaned on the way out of the box as well as on Connect, so the tidy-up is
            visible before anything is stored. -->
-      <input id="relayUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
-        autocomplete="off" onchange="this.value = cleanRelayUrl(this.value)"
-        placeholder="wss://your-tunnel.trycloudflare.com" />
+      <!-- The ✕ is in the field rather than beside it: replacing one tunnel URL with the next is
+           what this box is for, and selecting 60 characters of wss:// on a phone to type over them
+           is the part that was hard. -->
+      <div class="field-clearable">
+        <input id="relayUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
+          autocomplete="off" onchange="this.value = cleanRelayUrl(this.value)"
+          placeholder="wss://your-tunnel.trycloudflare.com" />
+        <button type="button" class="field-clear" onclick="clearRelayUrl()"
+          title="Clear the relay URL" aria-label="Clear the relay URL">✕</button>
+      </div>
       <label for="relayToken" style="margin-top:8px">Token (optional)</label>
       <input id="relayToken" type="password" placeholder="shared secret" />
       <button onclick="saveAndConnect()">Connect</button>
