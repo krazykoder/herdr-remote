@@ -8,7 +8,8 @@ import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, s
 
 from agent_state import complete_agent_update_message
 from conversation_log import ConversationLog
-from conv_query import QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire
+from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
+                        fingerprints_from as conv_fingerprints)
 from pane_summary import ends_turn, summary_body
 from projects import (
     ProjectConfigError,
@@ -1304,6 +1305,7 @@ async def handle_client(ws, listener="lan"):
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
                         since=msg.get("since"), until=msg.get("until"),
+                        fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))

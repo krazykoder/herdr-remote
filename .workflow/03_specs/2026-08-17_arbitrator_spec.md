@@ -422,7 +422,23 @@ misleading.
 {"type": "conv_log", "pane": "%12", "last": 50, "grep": "footer"}
 ```
 
-Accepts any of `session`, `member`, `pane`, `agent`, `cwd`, `last`, `grep`, `since`, `kind`.
+Accepts any of `session`, `member`, `pane`, `agent`, `cwd`, `last`, `grep`, `since`, `kind`, and
+`fingerprints` — a list of `[host, agent, cwd]` triples, AND-ed against the rest as one OR group.
+
+`fingerprints` is how the app asks for a **whole conversation roster in one query**, and it is the
+selector the FE's live thread is built on: a member is pinned by fingerprint and not by a pane id,
+which herdr changes on every restart (§5). Shape-checked and bounded at 16 triples by
+`conv_query.fingerprints_from` — the *values* in a query are always parameterised, and that bound
+is what keeps the *shape* of the `WHERE` clause off the wire too. An empty or malformed list is
+`None`, meaning no fingerprint filter, rather than an empty `OR` group that would not parse.
+
+**The app reads it as a second source for the same view.** `web/src/conv_live.js` turns the answer
+into the entries the conversation thread already renders, and a toggle beside the hanging ⟳
+decides which record is behind the bubbles: this browser's transcript, folded out of pane reads and
+therefore only as complete as its connection was, or the relay's record, which is written for every
+pane whether anyone was watching or not. Nothing on that path writes — the toggle changes what is
+drawn, never what is stored — which is what makes it safe to flip while reading, and what makes it
+the cheapest way to see the ground truth an arbitrator would be deciding on.
 
 **Server → client**, answered to the asking client only and never broadcast, because it is the
 message that carries agent prose:
@@ -811,7 +827,7 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 
 | Type | Payload | Gate |
 |---|---|---|
-| `conv_log` | `session`, optional `member`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
+| `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
 | `arb_start` | `conversation`, `members[]` (2), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
 | `arb_resume` | `session` | Arbiter |

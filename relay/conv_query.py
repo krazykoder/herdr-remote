@@ -35,6 +35,30 @@ COLUMNS = (
 )
 
 
+# How many members one question may name. A conversation's roster is what asks, and the app stops
+# calling several panes one thread well before this — the bound is here so the size of the WHERE
+# clause stays this module's decision rather than the caller's.
+FINGERPRINTS_MAX = 16
+
+
+def fingerprints_from(raw):
+    """The (host, agent, cwd) triples a client asked for, or None for "no fingerprint filter".
+
+    A member is pinned by fingerprint and not by a pane id — herdr changes those on every restart —
+    so this is how a client asks the record for "these members" in one query. Shape-checked and
+    bounded here, because what it feeds is a WHERE clause built from the list's own length: the
+    values are always parameterised, and this is what keeps the *shape* off the wire too.
+    """
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for fp in raw[:FINGERPRINTS_MAX]:
+        if (isinstance(fp, (list, tuple)) and len(fp) == 3
+                and all(x is None or isinstance(x, str) for x in fp)):
+            out.append((fp[0] or "local", fp[1] or "", fp[2] or ""))
+    return out or None
+
+
 def db_path():
     """Where the record lives, matching the relay's own resolution order."""
     explicit = os.environ.get("HERDR_ARBITER_DB")

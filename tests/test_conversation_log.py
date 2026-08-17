@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
-from conv_query import open_ro, query
+from conv_query import FINGERPRINTS_MAX, fingerprints_from, open_ro, query
 from conversation_log import TAIL_MAX, TEXT_MAX, ConversationLog
 from pane_summary import TURN_END_STATES, ends_turn
 
@@ -219,6 +219,32 @@ class ReadOnly(Log):
     def test_a_missing_record_is_a_different_answer_from_an_empty_one(self):
         with self.assertRaises(FileNotFoundError):
             open_ro(str(Path(self.dir.name) / "not-there.sqlite3"))
+
+
+class Fingerprints(unittest.TestCase):
+    """What a client is allowed to ask for by fingerprint. The values in a query are always
+    parameterised; this is what keeps the *shape* of the WHERE clause off the wire as well."""
+
+    def test_a_local_pane_has_no_host_and_the_record_calls_that_local(self):
+        # The browser's member key carries '' for a local pane and the column defaults to 'local'.
+        # Folded here rather than at either end, or a local roster matches nothing.
+        self.assertEqual(fingerprints_from([["", "claude", "/tmp/a"]]),
+                         [("local", "claude", "/tmp/a")])
+
+    def test_a_malformed_triple_is_dropped_rather_than_trusted(self):
+        got = fingerprints_from(
+            [["local", "claude", "/a"], "nope", [1, 2, 3], ["h", "a"], ["h", "a", "c", "d"]])
+        self.assertEqual(got, [("local", "claude", "/a")])
+
+    def test_nothing_to_filter_by_is_none_and_not_an_empty_clause(self):
+        # None means "no fingerprint filter". An empty list reaching the query builder would put an
+        # empty OR group in the WHERE clause, which is a syntax error rather than a wide answer.
+        for raw in (None, "claude", [], ["x"], [[1, 2, 3]]):
+            self.assertIsNone(fingerprints_from(raw))
+
+    def test_the_roster_a_client_may_name_is_bounded(self):
+        self.assertEqual(len(fingerprints_from([["h", "a", "c"]] * (FINGERPRINTS_MAX + 20))),
+                         FINGERPRINTS_MAX)
 
 
 if __name__ == "__main__":
