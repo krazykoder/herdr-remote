@@ -1483,6 +1483,28 @@ test('a pair switch keeps the thread when both panes are in it', async ({page}) 
   expect(await page.evaluate(() => convViews()[convMemberKey(paneOf(activePane))])).toBe('c1');
 });
 
+test('rows or thread follows the reader across paired panes', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await page.evaluate(() => {
+    pairs = [{id: 'p1', members: [recentFingerprint(paneOf(activePane)),
+      recentFingerprint(agents.find(a => a.label === 'scratch'))]}];
+    setConvMode(true);
+    convSetView(paneOf(activePane), 'c1');
+    renderConvBar();
+  });
+  await page.locator('#pairStrip .switch').click();
+  await expect(page.locator('#convThread')).toBeVisible();
+  // Turning rows back on is global: the next paired pane is read the same way, while its chosen
+  // conversation remains recorded for a future return to threads.
+  await page.evaluate(() => { toggleConvView(); });
+  await expect(page.locator('#convThread')).toBeHidden();
+  await page.locator('#pairStrip .switch').click();
+  await expect(page.locator('#convThread')).toBeHidden();
+  expect(await page.evaluate(() => convMode())).toBe(false);
+});
+
 test('a pair switch carries nothing to a partner that is not in the conversation',
   async ({page}) => {
     await open(page);
@@ -2073,6 +2095,22 @@ const twoConvs = page => page.evaluate(() => {
     {id: 'c2', name: 'the release', created: 2, members: [{key, added: 2, label: 'Architect 1'}]},
   ]);
   return key;
+});
+
+test('a bottom conversation tab always opens that conversation', async ({page}) => {
+  await open(page);
+  await twoConvs(page);
+  await read(page);
+  await page.evaluate(() => {
+    setConvMode(true);
+    convSetView(paneOf(activePane), 'c1');
+    setTabScope('convs');
+    renderAgentTabs();
+  });
+  await page.locator('#convStrip .conv-tab', {hasText: 'the release'}).click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewTitle')).toHaveText('the release');
+  await expect(page.locator('#terminalView')).toBeHidden();
 });
 
 test('a pane in two conversations picks which one its thread shows', async ({page}) => {

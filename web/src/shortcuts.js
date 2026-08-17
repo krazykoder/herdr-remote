@@ -153,7 +153,10 @@
     // knowing which of its calls came first.
     function addOrderButton() {
       const header = document.querySelector('#agents .section-header');
-      if (header) header.insertAdjacentHTML('beforeend',
+      if (!header) return;
+      const filter = agentKindsHtml(agents);
+      if (filter) header.insertAdjacentHTML('beforeend', filter);
+      header.insertAdjacentHTML('beforeend',
         '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
     }
 
@@ -809,19 +812,9 @@
       return conv ? conv.id : '';
     }
 
-    // A tab is a conversation, and where it opens depends on whether the pane on screen is in it.
-    // Switching the pane's own thread beats leaving the pane: the composer, the rows and the
-    // ruler are all still there, and the reader asked for a different grouping, not a different
-    // screen.
+    // Bottom tabs are destinations, not a pane-thread selector. From any screen they open the
+    // conversation itself, so a tab never changes the reader's current pane behind their back.
     function convTabPick(id) {
-      const a = document.body.classList.contains('conversation-open') || !activePane
-        ? null : paneOf(activePane);
-      const conv = loadConvIndex().find(c => c.id === id);
-      if (a && conv && (conv.members || []).some(m => m.key === convMemberKey(a))) {
-        convSetView(a, id);
-        renderConvBar();
-        return;
-      }
       openConversation(id);
     }
 

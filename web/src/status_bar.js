@@ -665,6 +665,7 @@
 
     // One insertion point for the independently rendered landing-page sections.
     function renderBody() {
+      syncAgentKind();
       renderBodyMain();
       // Once, here, rather than at each of the three places that write #agents: every one of them
       // is reached through renderBodyMain, and a fourth added later would otherwise be a list that
@@ -694,7 +695,7 @@
         renderAgentList(agents);
         return;
       }
-      let html = agentKindsHtml(agents) + hoistHtml(ofKind(agents)) + layoutHtml(agents);
+      let html = hoistHtml(ofKind(agents)) + layoutHtml(agents);
       if (!agents.length) html = '<div class="empty">Waiting for agents…</div>';
       document.getElementById('agents').innerHTML = html;
     }
@@ -702,7 +703,7 @@
     // Outer Project layer. Native workspaces and tabs stay beneath it, unchanged.
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
-      let html = agentKindsHtml(agents) + hoistHtml(ofKind(agents));
+      let html = hoistHtml(ofKind(agents));
       html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of projects) {
@@ -717,6 +718,7 @@
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
         const rest = ofKind(agents).filter(a => !hoisted(a));
         if (rest.length) html += section('Agents', rest);
+        else if (agentKind) html += section('Agents', [], `No ${agentKind} sessions`);
       } else {
         if (startOptions) {
           // + New terminal only when the relay says both of open_terminal's gates are open —
@@ -769,18 +771,23 @@
     // that survives a restart is a page that looks empty for a reason nobody remembers.
     let agentKind = '';
 
+    // The last pane of a kind exiting takes the filter with it, rather than leaving the page
+    // filtered to a harness that is no longer here. Read before anything draws: the badges are
+    // hung on the list *after* it is built, so clearing it there would leave one frame of cards
+    // filtered to a kind that is already gone.
+    function syncAgentKind() {
+      if (agentKind && !agents.some(a => a.agent === agentKind)) agentKind = '';
+    }
+
     // The harnesses in this list, as the badges they wear everywhere else. Only when there is more
     // than one: a machine running nothing but claude has no choice to offer, and a lone badge that
     // filters to what is already on screen is a control that does nothing.
     function agentKindsHtml(list) {
       const kinds = [...new Set(list.map(a => a.agent).filter(Boolean))].sort();
-      // The last pane of a kind exiting takes its filter with it, rather than leaving the page
-      // filtered to a harness that is no longer here.
-      if (agentKind && !kinds.includes(agentKind)) agentKind = '';
       if (kinds.length < 2) return '';
-      return `<div class="chip-strip"><span class="chip-label">Agents</span>` +
+      return `<span class="agent-kind-filter">` +
         kinds.map(k => badgeHtml(k, k === agentKind, `pickAgentKind('${k}')`,
-          {agent: k, title: `Show only the ${k} sessions`})).join('') + `</div>`;
+          {agent: k, title: `Show only the ${k} sessions`})).join('') + `</span>`;
     }
 
     function ofKind(list) {
@@ -851,11 +858,13 @@
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);
       if (idle.length) html += section('Idle', idle);
+      // A filter that matches nothing still needs its heading: the badges are hung on the first
+      // one, so a page with no headings is a page filtered to nothing with no way back.
+      if (agentKind && !ofKind(list).length) html += section('Agents', [], `No ${agentKind} sessions`);
       return html;
     }
 
     function renderAgentList(list) {
-      const strip = agentKindsHtml(list);
       const shown = ofKind(list);
       // Same rule as layoutHtml: the hoist owns the blocked panes you have not looked at, and the
       // sections below get everything else. Blocked still keeps a section for the acked ones —
@@ -865,7 +874,7 @@
       const working = rest.filter(a => a.status === 'working');
       const done = rest.filter(a => a.status === 'done');
       const idle = rest.filter(a => a.status === 'idle' || a.status === 'unknown');
-      let html = strip + hoistHtml(shown);
+      let html = hoistHtml(shown);
       if (blocked.length) html += section('Blocked', blocked);
       if (working.length) html += section('Working', working);
       if (done.length) html += section('Done', done);

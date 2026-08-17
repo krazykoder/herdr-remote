@@ -32,6 +32,21 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+test('agent filters live on the existing card separator', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => agents.length)).toBeGreaterThan(0);
+  const kinds = await page.evaluate(() => [...new Set(agents.map(a => a.agent).filter(Boolean))]);
+  expect(kinds.length).toBeGreaterThan(1);
+  const filter = page.locator('#agents .section-header .agent-kind-filter');
+  await expect(filter).toBeVisible();
+  await expect(filter.locator('.badge.pick')).toHaveCount(kinds.length);
+  const kind = kinds[0];
+  await filter.locator('.badge.pick', {hasText: kind}).click();
+  await expect.poll(async () => {
+    const shown = await page.locator('#agents .agent .meta .badge').allTextContents();
+    return shown.length && shown.every(text => text === kind);
+  }).toBe(true);
+});
+
 test('Activity tracks local WebSocket payload bytes in a newest-first interval stack', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
   // Off means no collection and no empty telemetry panel claiming an hour it did not observe.
