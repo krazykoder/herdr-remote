@@ -773,3 +773,60 @@ test('a letter outside the allowlist is typed, not sent', () => {
   assert.equal(ctrlChord(chord({key: 'a'}), at()), null);
   assert.equal(ctrlChord(chord({key: 'v'}), at()), null, 'paste survives');
 });
+
+// --- Pair repair ---
+// A pane_id is herdr's, not ours, and every way a pane can come back changes it: a restart, a
+// reopened workspace, an agent relaunched from the terminal. The pair pinned to the dead id is
+// then found by nothing, so the strip vanishes from both panes with nothing said about why —
+// which is what "some panes show it and others do not" looks like from the outside.
+
+const PAIRS_UI = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'pairs_ui.js'), 'utf8');
+
+function runHealPairs(pairsIn, agentsIn) {
+  const store = {};
+  const c = vm.createContext({
+    pairs: pairsIn, agents: agentsIn,
+    localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
+  });
+  vm.runInContext(PAIRS_PURE + '\n' + PAIRS_UI + '\n;__moved = healPairs();', c);
+  return {moved: c.__moved, pairs: c.pairs, saved: store['herdr_pairs']};
+}
+
+test('a member whose pane came back under a new id is re-pointed at it, and saved', () => {
+  const dead = member({pane_id: 'w1:p1'});
+  const alive = member({pane_id: 'w1:p2', agent: 'codex'});
+  const out = runHealPairs([pair(dead, alive)], [
+    agent({pane_id: 'w1:p9'}), agent({pane_id: 'w1:p2', agent: 'codex'})]);
+  assert.equal(out.moved, true);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p9');
+  assert.match(out.saved, /w1:p9/);
+});
+
+test('two candidates for one seat are left alone rather than guessed between', () => {
+  // Two claude panes in one directory are two colleagues; picking either would put one agent's
+  // work in the other's terminal.
+  const out = runHealPairs([pair(member(), member({pane_id: 'w1:p2', agent: 'codex'}))],
+    [agent({pane_id: 'w1:p8'}), agent({pane_id: 'w1:p9'}),
+     agent({pane_id: 'w1:p2', agent: 'codex'})]);
+  assert.equal(out.moved, false);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p1');
+  assert.equal(out.saved, undefined, 'nothing moved, so nothing is written');
+});
+
+test('a live pane already claimed by its own pair is not taken from it', () => {
+  const mine = pair(member({pane_id: 'w1:p1'}), member({pane_id: 'w1:p2', agent: 'codex'}));
+  const other = pair(member({pane_id: 'w1:dead'}), member({pane_id: 'w1:p3', agent: 'pi'}));
+  const out = runHealPairs([mine, other],
+    [agent({pane_id: 'w1:p1'}), agent({pane_id: 'w1:p2', agent: 'codex'}),
+     agent({pane_id: 'w1:p3', agent: 'pi'})]);
+  assert.equal(out.moved, false);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p1');
+});
+
+test('a host or cwd that does not match is not the same seat', () => {
+  for (const differs of [{host: 'box'}, {cwd: '/elsewhere'}, {agent: 'codex'}]) {
+    const out = runHealPairs([pair(member(), member({pane_id: 'w1:p2', agent: 'pi'}))],
+      [agent({pane_id: 'w1:p9', ...differs}), agent({pane_id: 'w1:p2', agent: 'pi'})]);
+    assert.equal(out.moved, false, `${JSON.stringify(differs)} must not be adopted`);
+  }
+});

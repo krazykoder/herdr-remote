@@ -262,6 +262,9 @@
     function renderPairStrip() {
       const strip = document.getElementById('pairStrip');
       const menu = document.getElementById('termMenuPair');
+      // Before the lookup: a pair whose panes have been restarted is found by this and by nothing
+      // else, and being asked "is this pane paired" is the moment to answer it honestly.
+      healPairs();
       const pair = activePane ? pairFor(pairs, activePane) : null;
       if (!pair) {
         strip.style.display = 'none';
@@ -275,7 +278,6 @@
       }
       const health = pairHealth(pair, agents);
       const partner = partnerOf(pair, activePane);
-      const mine = memberOf(pair, activePane);
       const ok = health.state === 'healthy';
       // Read the partner's name from the live snapshot, not from the pair record: the record holds
       // the name captured at pin time, so renaming a pane would leave a stale name on this button.
@@ -283,9 +285,14 @@
       const live = agents.find(a => a.pane_id === partner.pane_id);
       const partnerName = (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
       const mineLive = agents.find(a => a.pane_id === activePane);
-      const targetShown = ok && bottomDockOpen() && mineLive;
-      const center = targetShown
-        ? `<span class="pair-target" title="Typing to ${escapeHtml(paneLabel(mineLive))}">` +
+      // Which pane you are in, by name and harness, whenever there is a live pane to name. It used
+      // to appear only with the composer unfolded, on the reading that it named the typing target —
+      // but it is the same answer either way, and hiding it behind a fold is why the strip looked
+      // like it named some panes and not others. The pair's own name moves to the title, where a
+      // reader who wants it can still find it.
+      const center = mineLive
+        ? `<span class="pair-target" title="${escapeHtml(pair.name)}` +
+          `${bottomDockOpen() ? ` — typing to ${escapeHtml(paneLabel(mineLive))}` : ''}">` +
           `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
           `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
           `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${agentBadge(mineLive.agent)}</span>`
