@@ -145,18 +145,35 @@
       if (window.cue) cue('page');
     }
 
-    // Joint by default, and global rather than per pane: it is a preference about how threads are
-    // read, not a fact about one pane. Off means this pane's own transcript alone, which is always
-    // available — the joint thread is only ever a render, and the records are never merged on disk.
-    const CONV_JOINT_KEY = 'herdr_conv_joint';
+    // How much of a conversation a pane's own thread draws: this pane alone, the pair it is half
+    // of, or every member of the record. Global rather than per pane — it is a preference about how
+    // threads are read, not a fact about one pane — and three named choices rather than one switch,
+    // because "not alone" was two different threads depending on whether a pair happened to exist
+    // and the reader had no way to ask for the other one.
+    //
+    // `alone` is always available: the joint thread is only ever a render, and the records are
+    // never merged on disk.
+    const CONV_SCOPE_KEY = 'herdr_conv_scope', CONV_JOINT_KEY = 'herdr_conv_joint';
+    const CONV_SCOPES = ['alone', 'pair', 'all'];
 
-    function convJointOn() {
-      try { return localStorage.getItem(CONV_JOINT_KEY) !== 'off'; }
-      catch (e) { return true; }
+    function convScope() {
+      try {
+        const s = localStorage.getItem(CONV_SCOPE_KEY);
+        if (CONV_SCOPES.indexOf(s) >= 0) return s;
+        // The switch this replaced, read once so nobody's preference is reset by an upgrade. Its
+        // "on" was the pair where there was one and the roster where there was not, which is what
+        // `pair` still is.
+        return localStorage.getItem(CONV_JOINT_KEY) === 'off' ? 'alone' : 'pair';
+      } catch (e) { return 'pair'; }
     }
 
-    function toggleConvJoint() {
-      try { localStorage.setItem(CONV_JOINT_KEY, convJointOn() ? 'off' : 'on'); }
+    // Anything but this pane on its own. Kept because that is the question most callers are asking
+    // — whether the thread on screen holds more than one member's words.
+    function convJointOn() { return convScope() !== 'alone'; }
+
+    function setConvScope(scope) {
+      if (CONV_SCOPES.indexOf(scope) < 0) return;
+      try { localStorage.setItem(CONV_SCOPE_KEY, scope); }
       catch (e) { /* private mode: this session only */ }
       renderTermMenuState();
       renderConvView();
@@ -285,12 +302,24 @@
     //
     // With no pair — or a stale one, or a partner that has recorded nothing — the roster is the
     // answer and every member is drawn. That is what a conversation of several panes says it is.
+    //
+    // And a reader who asked for the whole conversation gets it, pair or no pair: narrowing to the
+    // pair is the default because it is right most of the time, not because the third member is
+    // never worth reading.
     function pairedConvMembers(a, conv) {
+      return (convScope() === 'all' ? null : convPairMembers(a, conv)) || conv.members || [];
+    }
+
+    // The pair's two members, or null where there is no pair to narrow to. Separate from the
+    // choice of whether to narrow, because the menu has to know a pair exists while the reader is
+    // reading the whole conversation — otherwise the way back to the pair disappears the moment it
+    // is left.
+    function convPairMembers(a, conv) {
       const members = conv.members || [];
       const pair = pairFor(pairs, a.pane_id);
-      if (!pair || pairHealth(pair, agents).state !== 'healthy') return members;
+      if (!pair || pairHealth(pair, agents).state !== 'healthy') return null;
       const partner = agents.find(x => memberMatches(partnerOf(pair, a.pane_id), x));
-      if (!partner || !convsForPane(partner).length) return members;
+      if (!partner || !convsForPane(partner).length) return null;
       const key = convMemberKey(partner);
       // Roster order, not pair order: it is what the two columns are assigned from, so narrowing
       // the roster must not also swap which side each pane is drawn on.

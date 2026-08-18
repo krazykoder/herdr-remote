@@ -404,12 +404,13 @@
       conv.hidden = !(a && profileFor(a.agent));
       document.getElementById('menuConvAuto').textContent = convAutoOn()
         ? 'Stop recording new sessions' : 'Record every session';
-      const joint = document.getElementById('menuConvJoint');
+      const scopes = CONV_SCOPES.map(s =>
+        document.getElementById('menuConvScope' + s[0].toUpperCase() + s.slice(1)));
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
       const recover = document.getElementById('menuConvRecover');
       const final = document.getElementById('menuConvFinal');
-      joint.hidden = true;
+      for (const el of scopes) el.hidden = true;
       convFont.hidden = true;
       dedupe.hidden = true;
       recover.hidden = true;
@@ -424,14 +425,30 @@
         const shown = convViewConv(a);
         conv.textContent = shown ? `In "${shown.name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
-        // A conversation of one has no joint thread to show, so the preference is not offered.
-        const withMe = shown ? pairedConvMembers(a, shown) : [];
-        joint.hidden = withMe.length < 2;
-        // Named for what the switch will actually draw. The joint thread is the pair where there is
-        // a healthy one and the whole roster where there is not — see `pairedConvMembers` — and a
-        // menu promising "paired" over a five-member record is the same off-by-one bug in words.
-        joint.textContent = convJointOn() ? 'Show this pane alone'
-          : (withMe.length === 2 ? 'Show paired conversation' : 'Show the whole conversation');
+        // A conversation of one has no joint thread to show, so the choice is not offered. Counted
+        // over the roster and not over what is currently drawn: narrowing to a pair must not hide
+        // the way back out to the members it narrowed away.
+        const roster = shown ? (shown.members || []) : [];
+        // Only where narrowing to a pair would draw something the whole conversation does not.
+        // With no live pair it is the third choice under a second name, which is a menu telling
+        // the reader there are two answers when there is one.
+        // One entry per thread that is actually different. A pair the size of the roster is the
+        // whole conversation under a second name, and a roster of one is this pane under a second
+        // name — a menu offering either is telling the reader there are two answers where there is
+        // one. `alone` is offered only when there is something to be alone from.
+        const pairOnly = shown ? convPairMembers(a, shown) : null;
+        const can = {
+          all: roster.length > 1,
+          pair: !!pairOnly && pairOnly.length !== roster.length,
+        };
+        can.alone = can.all || can.pair;
+        const at = convScope();
+        for (const el of scopes) {
+          const s = el.id.replace('menuConvScope', '').toLowerCase();
+          el.hidden = !can[s];
+          el.setAttribute('aria-checked', String(s === at));
+          el.querySelector('.tick').textContent = s === at ? '✓' : '';
+        }
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());
         // Same condition as the text size: both are about reading a thread, and neither means
