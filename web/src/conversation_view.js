@@ -274,8 +274,17 @@
       if (changed) saveConvIndex(items);
     }
 
-    // A pair can predate conversations, leaving each pane with its own recorded thread. Read
-    // those two records together without changing either conversation's membership on disk.
+    // Who the joint thread is for. A pair is two panes on one job, and while there is a healthy one
+    // that is the whole answer: the thread is the two of them and nobody else, whatever else the
+    // conversation's roster holds. Reading a pair against a five-member record buried the partner's
+    // replies in three strangers' output, which is the opposite of what pairing them was for.
+    //
+    // A pair can also predate conversations, leaving each pane with its own recorded thread. The
+    // partner is carried in even when it is not a member here, which is how those two records are
+    // read together without either conversation's membership changing on disk.
+    //
+    // With no pair — or a stale one, or a partner that has recorded nothing — the roster is the
+    // answer and every member is drawn. That is what a conversation of several panes says it is.
     function pairedConvMembers(a, conv) {
       const members = conv.members || [];
       const pair = pairFor(pairs, a.pane_id);
@@ -283,7 +292,10 @@
       const partner = agents.find(x => memberMatches(partnerOf(pair, a.pane_id), x));
       if (!partner || !convsForPane(partner).length) return members;
       const key = convMemberKey(partner);
-      return members.some(m => m.key === key) ? members : members.concat({key, label: paneLabel(partner)});
+      // Roster order, not pair order: it is what the two columns are assigned from, so narrowing
+      // the roster must not also swap which side each pane is drawn on.
+      const both = members.filter(m => m.key === convMemberKey(a) || m.key === key);
+      return both.some(m => m.key === key) ? both : both.concat({key, label: paneLabel(partner)});
     }
 
     // A member is recording or it has ended, and that is derived rather than stored: a live pane
@@ -449,21 +461,51 @@
           const live = agents.find(x => convMemberKey(x) === r.key);
           return (live && (live.status === 'working' || live.agent_status === 'working')) ? live : null;
         }).filter(Boolean);
-        workingEl.innerHTML = convWorkingBadgesHtml(workingList);
+        workingEl.innerHTML = convWorkingBadgesHtml(workingList, 'convThread');
+        // The badges float over the thread, so the thread has to begin below them: a bubble born
+        // under a chip is a pick button nobody can press. One class, and the padding is the CSS's.
+        box.classList.toggle('has-working', !!workingEl.innerHTML);
       }
       box.scrollTop = stick ? box.scrollHeight : at;
     }
 
-    function convWorkingBadgesHtml(workingList) {
+    function convWorkingBadgesHtml(workingList, boxId) {
       if (!workingList || !workingList.length) return '';
       return workingList.map(a => {
         const name = paneLabel(a) || a.pane_id || 'Agent';
         const badge = a.agent ? agentBadge(a.agent) : '';
-        return `<div class="conv-working-chip">` +
+        const key = convMemberKey(a);
+        // A button, because it does something: the badge says who is working and pressing it goes
+        // to the last thing they said, which is the message the one being written continues.
+        return `<button type="button" class="conv-working-chip" data-key="${escapeHtml(key)}" ` +
+          `data-box="${escapeHtml(boxId || 'convThread')}" ` +
+          `onclick="convGoToLastFrom(this.dataset.key, this.dataset.box)" ` +
+          `title="Go to ${escapeHtml(name)}'s last message" ` +
+          `aria-label="Go to ${escapeHtml(name)}'s last message">` +
           `<span class="conv-working-dot" aria-hidden="true"></span> ` +
           `<span>Working … <strong>${escapeHtml(name)}</strong></span>${badge}` +
-          `</div>`;
+          `</button>`;
       }).join('');
+    }
+
+    // Where that agent last spoke. The bubbles carry the member key they were drawn for, so this is
+    // the same lookup in the pane's thread and in the conversation window's — only the scroller
+    // differs, and the badge names its own. Nothing happens when the member has said nothing yet,
+    // which is the ordinary state of a pane whose first turn is still running.
+    function convGoToLastFrom(key, boxId) {
+      const box = document.getElementById(boxId);
+      if (!box || !key) return;
+      const mine = [...box.querySelectorAll('.conv-msg')].filter(m => m.dataset.key === key);
+      const last = mine[mine.length - 1];
+      if (!last) return;
+      // Centred rather than at an edge: the message this continues is the one being read, and a
+      // bubble pinned to the top of the box hides whatever it was answering.
+      last.scrollIntoView({block: 'center', behavior: 'smooth'});
+      // A moment of colour, so the eye lands on the right bubble in a thread of similar ones. The
+      // class removes itself — see `conv-msg.found` — leaving no state to clean up on the next draw.
+      last.classList.remove('found');
+      void last.offsetWidth;   // restart the animation when the same bubble is asked for twice
+      last.classList.add('found');
     }
 
     // The draft slot at the foot of a pane's thread: one bubble held open for as long as the pane

@@ -2236,16 +2236,28 @@
        text still passes beneath the row — that is what floating means — but nothing is born under
        it. 44px is the row (28) plus the 6px it hangs at, plus a bubble's own breathing room. */
     .conv-thread {
+      /* Named rather than written into the padding, because the conversation window sets its own
+         bottom inset and would otherwise have to repeat the top one — and then disagree with it
+         the first time either moved. */
+      --thread-top: 44px;
       flex: 1;
       min-width: 0;
       width: 100%;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 44px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      padding: var(--thread-top) 12px calc(10px + env(safe-area-inset-bottom, 0px));
       display: flex;
       flex-direction: column;
       gap: 8px;
       -webkit-overflow-scrolling: touch;
+    }
+
+    /* A second lane, for the working badges hanging under the button row. They are pressable — the
+       badge goes to what that agent last said — so a bubble may not be born beneath one: the pick
+       button in a bubble's own top corner is exactly what a chip would swallow. 26px is the chip
+       (22) plus the gap the row keeps everywhere else. */
+    .conv-thread.has-working {
+      --thread-top: 70px;
     }
 
     /* display:flex outranks the user agent's [hidden] rule, the same guard .block-nav carries. */
@@ -2277,7 +2289,9 @@
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
-      padding: 44px 12px 16px;
+      /* The class's own top inset, so the badge lane opens here too; only the bottom differs, this
+         view having a dock under it rather than a safe-area edge. */
+      padding: var(--thread-top) 12px 16px;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -2305,6 +2319,11 @@
       display: flex;
       flex-direction: column;
       background: var(--bg);
+      /* The thread scrolls to the dock's edge and stops there. Standing still, it needs to say
+         which of the two is in front — the fade that used to do that went when the dock stopped
+         floating, and a flat panel butted against text reads as the text simply running out.
+         The shadow is cast upward, over the thread, because that is what the dock is above. */
+      box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.18), 0 -8px 20px rgba(0, 0, 0, 0.26);
     }
 
     .conv-dock[hidden] {
@@ -3403,23 +3422,84 @@
       --hang-right: 22px;
     }
 
-    /* Floating working badges in the top-left corner of the conversation view */
+    /* Who is working, hung directly under the refresh and record buttons rather than in the far
+       corner. Same right edge as that row, so the two read as one stack about the same thread
+       instead of two floating things at opposite ends of it. 40px is that row's own extent —
+       6px of inset plus a 28px button — plus the 6px gap the pair keep everywhere else. */
     .hang-working {
       position: absolute;
-      top: 6px;
-      left: 12px;
+      top: calc(6px + 28px + 6px);
+      right: var(--hang-right, 36px);
       z-index: 5;
       display: flex;
       flex-wrap: wrap;
+      /* Wrapped rows stack against the same edge as the buttons above them. */
+      justify-content: flex-end;
       align-items: center;
       gap: 6px;
+      /* Bounded so a long pane name cannot run the chips across the whole view. Past this they
+         wrap, which is what the flex-wrap above is for. */
+      max-width: min(60%, 320px);
       pointer-events: none;
     }
 
     .conv-view-top .hang-working {
       top: 100%;
+      margin-top: calc(6px + 28px + 6px);
+    }
+
+    /* Centred between the two floating corners and level with the right-hand one, because it is
+       about the whole thread rather than about either corner's controls. Same 28px height as a
+       hang button, so the three read as one line across the top of the view. */
+    .hang-solo {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 28px;
+      padding: 0 4px 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px rgba(0, 0, 0, 0.3);
+      font-size: 0.75rem;
+      color: var(--text);
+      /* Bounded so a long pane name cannot reach either corner's buttons. */
+      max-width: min(48%, 260px);
+    }
+
+    .conv-view-top .hang-solo {
+      top: 100%;
       margin-top: 6px;
     }
+
+    .hang-solo[hidden] { display: none; }
+
+    .solo-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .solo-x {
+      flex: none;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 999px;
+      background: none;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .solo-x:hover { color: var(--text); }
 
     .conv-working-chip {
       display: inline-flex;
@@ -3428,13 +3508,40 @@
       padding: 3px 8px;
       border-radius: 12px;
       border: 1px solid color-mix(in srgb, var(--green) 40%, var(--border));
-      background: var(--surface);
+      /* Lifted off the surface it floats over rather than level with it: this hangs over live pane
+         text, and a chip the same value as the panel behind it reads as part of that text. The
+         mix is toward --bg, which is darker than --surface in the dark themes and lighter in the
+         light ones — so it separates in the same direction on all eleven rather than picking one. */
+      background: color-mix(in srgb, var(--surface) 82%, var(--bg));
       color: var(--text);
       font-size: 0.72rem;
       font-weight: 500;
       line-height: 1.2;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      /* Two shadows: a tight one for the edge and a wide soft one for the height. One blur cannot
+         do both — it either smears the outline or leaves the chip sitting flat on the text. */
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px rgba(0, 0, 0, 0.3);
       pointer-events: auto;
+      /* It is a button now — it goes to what that agent last said — so it has to stop looking like
+         a `<button>` and start looking like the chip it already was. */
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .conv-working-chip:hover {
+      border-color: var(--green);
+    }
+
+    /* Where a badge just took the reader. Colour for a moment and then nothing: the class is left
+       on the bubble, and the animation not repeating is what ends it — no timer to cancel when the
+       thread redraws underneath it. */
+    .conv-msg.found {
+      animation: conv-found 1.2s ease-out 1;
+    }
+
+    @keyframes conv-found {
+      0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 55%, transparent); }
+      100% { box-shadow: 0 0 0 3px transparent; }
     }
 
     .conv-working-dot {
@@ -4863,6 +4970,10 @@
          sticky — so riding it is what keeps the pair over the thread at every scroll position
          without measuring anything. -->
     <div class="hang-working" id="convViewWorking" aria-live="polite"></div>
+    <!-- What is missing from the thread, said between the two floating corners it hangs level
+         with: solo hides most of a conversation on purpose, and the reader has to be able to see
+         that it did and get back out in one tap. Hidden whenever the whole roster is on screen. -->
+    <div class="hang-solo" id="convViewSolo" role="status" hidden></div>
     <div class="hang-float">
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"

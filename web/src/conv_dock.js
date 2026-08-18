@@ -129,7 +129,19 @@
       return dockTargetOf(dockMembers(), dockSource());
     }
 
+    // The row reorders around whoever is addressed, so the chip under the pointer for the second
+    // half of a double-click is no longer the one the first half hit. Which is a defect on its own
+    // — a reader tapping twice to be sure lands on a stranger — and it is what the solo gesture is
+    // read against: the pane the gesture is about is the one the *first* click named, recorded
+    // here, and a second click inside the double window extends that gesture rather than starting
+    // a new one.
+    let dockLastPick = {pane: '', at: 0};
+    const DOCK_DOUBLE_MS = 500;
+
     function setDockTarget(paneId) {
+      const now = Date.now();
+      if (now - dockLastPick.at > DOCK_DOUBLE_MS) dockLastPick = {pane: paneId, at: now};
+      else dockLastPick.at = now;
       dockTarget = paneId;
       renderConvDock();
       if (window.cue) cue('tick');
@@ -166,6 +178,15 @@
       if (window.cue) cue('tick');
     }
 
+    // The list's copy of the row's double-click. `toggleConvSolo` redraws the thread, the roster
+    // and this row; the list is the one thing that redraw does not reach, so it is reopened here
+    // for the same reason every other switch in it is.
+    function toggleDockSolo() {
+      toggleConvSolo();
+      if (optMenuOpen()) openOptMenu();
+      if (window.cue) cue('tick');
+    }
+
     // Everything about how the composer behaves, in one list. Both are switches rather than one
     // being a button and the other a menu item: they are the same kind of thing — a standing
     // preference about this box — and a row of lone toggles says nothing about what each one is.
@@ -177,6 +198,13 @@
         ['Autocorrect', autocorrectOn(), 'toggleDockAutocorrect()',
           "Let the keyboard correct what you type. Off by default — this box types filenames and flags"],
       ];
+      // Only where there is more than one member to be alone among. Same switch the chips' own
+      // double-click throws, listed here because it is a standing preference about this thread and
+      // a gesture nobody has been told about is not a feature.
+      if (convSoloKey(convViewId) || dockMembers().length > 1) {
+        opts.push(['Solo mode', !!convSoloKey(convViewId), 'toggleDockSolo()',
+          'Read only the agent this box is talking to, and hide the rest of the conversation']);
+      }
       box.innerHTML = opts.map(([label, on, call, why]) =>
         `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
         `onclick="${call}" title="${escapeHtml(why)}">` +
@@ -432,7 +460,8 @@
           `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
           `onclick="setDockTarget('${a.pane_id}')" ` +
           `aria-pressed="${a.pane_id === target}" ` +
-          `title="Talk to ${name}" aria-label="Talk to ${name}">` +
+          `title="Talk to ${name}. Double-click to read only ${name}" ` +
+          `aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
       }).join('');
@@ -469,7 +498,12 @@
       // what scrolled away, so neither can scroll away itself. The same shape on both lines: the
       // things you choose from on the left, the way to see all of them on the right.
       const to = escapeHtml(paneLabel(paneOf(target)) || target);
-      return `<div class="xfer-act"><div class="xfer-who-row">${who}</div>` +
+      // Double rather than single, and for the same reason a bubble's is: a single tap here already
+      // means "talk to this one", and reading only this one is a second thing to want from the same
+      // chip. On the row and not on each chip: the row is redrawn between the two clicks, so the
+      // element the browser hands the second one is not the chip the gesture began on.
+      return `<div class="xfer-act"><div class="xfer-who-row" ondblclick="soloDockTarget(event)">` +
+        `${who}</div>` +
         // The same icon a pane wears in its header and on its card, so what the list holds is said
         // by the button that opens it rather than by a caret that could open anything.
         `<button class="xfer-who-more list" onclick="toggleWhoMenu()" ` +
@@ -657,6 +691,28 @@
       showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
       closeNewAgent();
+    }
+
+    // Read only this one. A second double-click is the way back out — the row cannot offer another,
+    // because in solo it holds one chip.
+    //
+    // The pane comes from the first click of the gesture and not from the event's target: by the
+    // time this fires the row has reordered twice under the pointer. Restoring the target undoes
+    // what the stray second click addressed.
+    function soloDockTarget(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const paneId = dockLastPick.pane;
+      const live = agents.find(a => a.pane_id === paneId);
+      if (!live) return;
+      dockTarget = paneId;
+      // The word the double-click selected is not a selection anybody asked for.
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      const key = convMemberKey(live);
+      const on = convSoloKey(convViewId) === key;
+      convSetSolo(convViewId, on ? '' : key);
+      showToast(on ? 'Showing every member' : `Reading only ${paneLabel(live) || live.pane_id}`);
+      if (window.cue) cue('tick');
     }
 
     // Chosen from the list rather than the row, so the list has said what it was opened to say and

@@ -361,6 +361,44 @@
       renderConvManage();
     }
 
+    // Reading one member of a conversation and nothing else. Not a mode with storage of its own:
+    // it is the hide list with everyone but one in it, which is what it would have had to write
+    // anyway — and it means the roster panel, the composer's target row and the thread all already
+    // agree about it, because all three read the hide list. A conversation of one has no solo to
+    // be in, so it never reports one.
+    function convSoloKey(id) {
+      const conv = loadConvIndex().find(c => c.id === id);
+      const members = (conv && conv.members) || [];
+      if (members.length < 2) return '';
+      const hidden = convHidden(id);
+      const shown = members.filter(m => !hidden.has(m.key));
+      return shown.length === 1 ? shown[0].key : '';
+    }
+
+    function convSetSolo(id, key) {
+      const conv = loadConvIndex().find(c => c.id === id);
+      const members = (conv && conv.members) || [];
+      const rest = members.filter(m => m.key !== key).map(m => m.key);
+      const all = convHiddenAll();
+      // Off is the empty list and not a shorter one: leaving whatever was hidden before solo began
+      // would make the X put the reader somewhere they never chose.
+      if (key && rest.length) all[id] = rest; else delete all[id];
+      try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
+      catch (e) { /* private mode: this session only */ }
+      convStandaloneHtml = '';
+      renderConvManage();
+    }
+
+    // The composer's switch and the banner's X are the same one: on, it solos whoever the composer
+    // is addressing, because that is the member the reader has already named.
+    function toggleConvSolo() {
+      if (convSoloKey(convViewId)) { convSetSolo(convViewId, ''); return; }
+      const live = agents.find(a => a.pane_id === dockAddressed());
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const key = live ? convMemberKey(live) : ((((conv || {}).members || [])[0] || {}).key || '');
+      convSetSolo(convViewId, key);
+    }
+
     // Whichever of the two views is on screen. Same roster, same actions; only the frame differs,
     // and each of these returns immediately when its own view is not up.
     function renderConvManage() {
@@ -924,9 +962,31 @@
           const liveAgent = agents.find(x => convMemberKey(x) === m.key);
           return (liveAgent && (liveAgent.status === 'working' || liveAgent.agent_status === 'working')) ? liveAgent : null;
         }).filter(Boolean);
-        workingEl.innerHTML = typeof convWorkingBadgesHtml === 'function' ? convWorkingBadgesHtml(workingList) : '';
+        workingEl.innerHTML = typeof convWorkingBadgesHtml === 'function'
+          ? convWorkingBadgesHtml(workingList, 'convViewThread') : '';
+        // Same reservation the pane's thread makes: the chips hang over the top of the box, and a
+        // bubble drawn under one cannot be picked.
+        box.classList.toggle('has-working', !!workingEl.innerHTML);
       }
+      renderConvSoloBanner(conv, members);
       if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // Solo is a thread that is deliberately missing most of itself, so it says so where the reader
+    // is looking — over the thread, between the two floating corners — and carries the way out.
+    // Hidden the rest of the time: a banner that is always there is chrome, not an answer.
+    function renderConvSoloBanner(conv, members) {
+      const bar = document.getElementById('convViewSolo');
+      if (!bar) return;
+      const key = convSoloKey(conv.id);
+      bar.hidden = !key;
+      if (!key) { bar.innerHTML = ''; return; }
+      const m = (members || []).find(x => x.key === key) || {};
+      const live = agents.find(a => convMemberKey(a) === key);
+      const name = (live && paneLabel(live)) || m.label || 'one member';
+      bar.innerHTML = `<span class="solo-name">Solo · ${escapeHtml(name)}</span>` +
+        `<button class="solo-x" onclick="convSetSolo('${escapeHtml(conv.id)}', '')" ` +
+        `title="Show every member again" aria-label="Leave solo mode">✕</button>`;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every

@@ -158,6 +158,67 @@ test('the landing page lists recorded conversations and their live members', asy
   await expect(card).toContainText('Last activity');
 });
 
+test('the landing list puts the conversation last spoken in on top', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+  await read(page);
+
+  // Two conversations, one member each, and the only thing between them is when that member last
+  // said something. The card order is the whole assertion: `seen` is what convNoteCounts stamps on
+  // every recorded read, and it is what the landing list is sorted on.
+  const order = () => page.evaluate(() =>
+    [...document.querySelectorAll('#conversations .conversation-card .name')].map(n => n.textContent));
+  const stamp = (id, seen) => page.evaluate(([id, seen]) => {
+    const items = loadConvIndex();
+    for (const c of items) if (c.id === id) for (const m of c.members) m.seen = seen;
+    saveConvIndex(items);
+    renderConversations();
+  }, [id, seen]);
+
+  await page.evaluate(k => {
+    const now = Date.now();
+    saveConvIndex([
+      {id: 'older', name: 'the older one', created: now,
+        members: [{key: k, added: now, label: 'Architect 1', messages: 2, seen: now - 60000}]},
+      {id: 'newer', name: 'the newer one', created: now,
+        members: [{key: k, added: now, label: 'Architect 1', messages: 2, seen: now}]},
+    ]);
+    renderConversations();
+  }, key);
+  expect(await order()).toEqual(['the newer one', 'the older one']);
+
+  // And it re-sorts when the older one speaks — a list that only sorts once is a list frozen at
+  // whatever order it was first drawn in.
+  await stamp('older', Date.now() + 60000);
+  expect(await order()).toEqual(['the older one', 'the newer one']);
+});
+
+test('a recorded read restamps the conversation, and the landing list moves it up', async ({page}) => {
+  await open(page);
+  const key = await join(page);
+
+  // The other half of the sort: the stamp itself. Two conversations sharing the open pane's member
+  // — one of them also holds a member that is not this pane and never records, which is the one
+  // that has to stay put while the pane's own conversation climbs over it.
+  await page.evaluate(k => {
+    const now = Date.now();
+    saveConvIndex([
+      {id: 'mine', name: 'mine', created: now,
+        members: [{key: k, added: now, label: 'Architect 1', messages: 0, seen: now - 600000}]},
+      {id: 'theirs', name: 'theirs', created: now,
+        members: [{key: 'other|9|claude|/tmp', added: now, label: 'Someone else',
+          messages: 3, seen: now - 1000}]},
+    ]);
+    renderConversations();
+  }, key);
+  await expect(page.locator('#conversations .conversation-card .name').first()).toHaveText('theirs');
+
+  await read(page);
+  // Back on the landing page, because convNoteCounts declines to redraw it while a pane is open.
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#conversations .conversation-card .name').first()).toHaveText('mine');
+});
+
 test('a card opens the conversation itself, not a pane', async ({page}) => {
   await open(page);
   await join(page);
@@ -1280,7 +1341,15 @@ test('a pane in a pair and a wider conversation opens on the wider one', async (
   // with a pair opened on its pair — and every other member of the work was absent, with nothing
   // on screen saying a wider thread existed.
   expect(await page.evaluate(() => convViewConv(paneOf(activePane)).id)).toBe('wide');
-  await expect(page.locator('#convThread')).toContainText('said by the third');
+  // The record it opens on is the wide one, and the joint thread over it is still the pair: a pair
+  // is two panes on one job, and that is what the switch is named for. The third member is not in
+  // the pane's thread — the header names the conversation it belongs to, and the conversation
+  // window is where the whole roster is read. See `pairedConvMembers`.
+  await expect(page.locator('#convThread')).not.toContainText('said by the third');
+  await expect(page.locator('#convThread .conv-member')).toHaveCount(2);
+  // And nothing was taken away from the record itself — the third is still in it.
+  expect(await page.evaluate(
+    () => loadConvIndex().find(c => c.id === 'wide').members.length)).toBe(3);
 });
 
 test('a pane in two conversations opens on the one that was active last', async ({page}) => {
@@ -1408,6 +1477,58 @@ test('Show paired conversation joins separately recorded pair threads', async ({
   await page.locator('#termMenuBtn').click();
   await page.locator('#menuConvJoint').click();
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(3);
+});
+
+// A pair is two panes on one job. Reading it against the whole roster of a wider conversation
+// buried the partner's replies in strangers' output, which is the opposite of what pairing is for.
+const joinPairInsideAWiderConv = page => page.evaluate(async () => {
+  const mine = paneOf(activePane), other = agents.find(a => a.label === 'scratch');
+  const mineKey = convMemberKey(mine), otherKey = convMemberKey(other);
+  pairs = [{id: 'p1', members: [recentFingerprint(mine), recentFingerprint(other)]}];
+  await convPut({key: otherKey, label: 'scratch', first: 1, touched: 2, spawn: {agent: 'codex'},
+    entries: [{who: 'agent', text: 'said by my partner', seen: 1, label: 'scratch'}]});
+  await convPut({key: 'm3', label: 'third', first: 1, touched: 2, spawn: {agent: 'codex'},
+    entries: [{who: 'agent', text: 'said by a stranger', seen: 2, label: 'third'}]});
+  saveConvIndex([{id: 'c1', name: 'three of us', created: Date.now(), members: [
+    {key: mineKey, added: 1, label: 'Architect 1'},
+    {key: otherKey, added: 1, label: 'scratch'},
+    {key: 'm3', added: 1, label: 'third'}]}]);
+});
+
+test('a joint thread is the pair when there is one, not everybody in the conversation', async ({page}) => {
+  await open(page);
+  await joinPairInsideAWiderConv(page);
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const thread = page.locator('#convThread');
+  await expect(thread).toContainText('said by my partner');
+  await expect(thread).not.toContainText('said by a stranger');
+  // Two columns, and the strip names the two who are in them.
+  await expect(page.locator('#convThread .conv-member')).toHaveCount(2);
+  // And the menu says what the switch will draw, rather than promising a pair over a roster.
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show this pane alone');
+  await page.locator('#menuConvJoint').click();
+  await expect(thread).not.toContainText('said by my partner');
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show paired conversation');
+});
+
+test('with no pair to narrow it, the joint thread is still every member', async ({page}) => {
+  await open(page);
+  await joinPairInsideAWiderConv(page);
+  // The pair goes stale and the thread widens back to the record — the fallback, not a special case.
+  await page.evaluate(() => { pairs = []; renderConvView(); });
+  await read(page);
+  await page.locator('#quickActions .qa-conv').click();
+  const thread = page.locator('#convThread');
+  await expect(thread).toContainText('said by my partner');
+  await expect(thread).toContainText('said by a stranger');
+  await expect(page.locator('#convThread .conv-member')).toHaveCount(3);
+  await page.locator('#termMenuBtn').click();
+  await page.locator('#menuConvJoint').click();
+  await page.locator('#termMenuBtn').click();
+  await expect(page.locator('#menuConvJoint')).toHaveText('Show the whole conversation');
 });
 
 test('a paired thread fills the pane, keeps agent colors, and keeps prompts beside their agent', async ({page}) => {
@@ -4296,4 +4417,83 @@ test.describe('on a touch screen', () => {
     await tapTwice(50);
     expect(await page.evaluate(() => dockAddressed())).toBe(scratchId);
   });
+});
+
+// --- Solo mode ---------------------------------------------------------------------------------
+//
+// Reading one member of a conversation and nothing else. It is the hide list with everyone but one
+// in it, which is why these tests check three places at once: the thread, the composer's target
+// row, and the banner that says the thread is deliberately incomplete. A solo that hid bubbles but
+// left the other agents choosable in the composer would be a thread and a composer disagreeing
+// about who is in the room.
+
+const soloBanner = page => page.locator('#convViewSolo');
+
+test('a double-click on a target chip reads that agent alone', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await expect(whoRow(page)).toHaveCount(2);
+  await expect(soloBanner(page)).toBeHidden();
+
+  await whoRow(page).filter({hasText: 'scratch'}).dblclick();
+
+  // The thread: only that member's bubbles.
+  const keys = () => page.evaluate(() =>
+    [...new Set([...document.querySelectorAll('#convViewThread .conv-msg')].map(m => m.dataset.key))]);
+  const scratchKey = await page.evaluate(() =>
+    convMemberKey(agents.find(a => a.label === 'scratch')));
+  expect(await keys()).toEqual([scratchKey]);
+
+  // The composer: one chip, because the rest are not in the room to be talked to.
+  await expect(whoRow(page)).toHaveCount(1);
+  await expect(whoRow(page)).toHaveText(/scratch/);
+
+  // And the banner, naming who is being read and carrying the way out.
+  await expect(soloBanner(page)).toBeVisible();
+  await expect(soloBanner(page)).toContainText('Solo');
+  await expect(soloBanner(page)).toContainText('scratch');
+});
+
+test("the banner's X puts the whole conversation back", async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await whoRow(page).filter({hasText: 'scratch'}).dblclick();
+  await expect(whoRow(page)).toHaveCount(1);
+
+  await soloBanner(page).locator('.solo-x').click();
+  await expect(soloBanner(page)).toBeHidden();
+  await expect(whoRow(page)).toHaveCount(2);
+});
+
+test('solo is a switch in the composer settings, and it names the addressed agent', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+
+  const addressed = await page.evaluate(() => paneLabel(agents.find(a => a.pane_id === dockAddressed())));
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const item = page.locator('#optMenu .menu-item', {hasText: 'Solo mode'});
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+
+  await expect(soloBanner(page)).toContainText(addressed);
+  await expect(whoRow(page)).toHaveCount(1);
+  // The list stays open on the switch it was opened for, and now reads back what it did.
+  await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'}))
+    .toHaveAttribute('aria-checked', 'true');
+});
+
+test('a conversation of one is never offered a solo to be in', async ({page}) => {
+  await open(page);
+  await join(page);
+  await read(page);
+  await openWindow(page);
+  await expect(soloBanner(page)).toBeHidden();
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'})).toHaveCount(0);
 });

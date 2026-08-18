@@ -425,9 +425,13 @@
         conv.textContent = shown ? `In "${shown.name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
         // A conversation of one has no joint thread to show, so the preference is not offered.
-        joint.hidden = !(shown && pairedConvMembers(a, shown).length > 1);
-        joint.textContent = convJointOn()
-          ? 'Show this pane alone' : 'Show paired conversation';
+        const withMe = shown ? pairedConvMembers(a, shown) : [];
+        joint.hidden = withMe.length < 2;
+        // Named for what the switch will actually draw. The joint thread is the pair where there is
+        // a healthy one and the whole roster where there is not — see `pairedConvMembers` — and a
+        // menu promising "paired" over a five-member record is the same off-by-one bug in words.
+        joint.textContent = convJointOn() ? 'Show this pane alone'
+          : (withMe.length === 2 ? 'Show paired conversation' : 'Show the whole conversation');
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());
         // Same condition as the text size: both are about reading a thread, and neither means
