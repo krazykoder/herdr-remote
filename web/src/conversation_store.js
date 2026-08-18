@@ -873,10 +873,15 @@
     }
 
     function saveConvIndex(items) {
+      const kept = convFit(items);
       try {
-        localStorage.setItem(CONV_INDEX_KEY,
-          JSON.stringify({ version: 1, items: convFit(items) }));
+        localStorage.setItem(CONV_INDEX_KEY, JSON.stringify({ version: 1, items: kept }));
       } catch (e) { /* private mode: this session only */ }
+      // A half-written message and the agent it was addressed to belong to a conversation, so they
+      // go when it does. Here rather than in deleteConversation: the cap evicts conversations too,
+      // and every writer of the index comes through this function. Guarded because the dock's
+      // script may not have loaded yet — at boot there is nothing held to forget.
+      if (typeof forgetConvComposers === 'function') forgetConvComposers(kept);
     }
 
     // --- Conversation membership ---

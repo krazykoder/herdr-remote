@@ -279,9 +279,13 @@
     // A render that only appended leaves the picks where they are; anything else moved them, and a
     // pick on the wrong message is worse than none. Same rule the pane's thread follows.
     function syncDockPicks(count) {
+      const dropped = count < dockPickedOf && dockPicked.size;
       if (count < dockPickedOf) dockPicked.clear();
       dockPickedOf = count;
       drawDockPicks();
+      // The strip lists the picks by name, so picks dropped under it have to take their lines with
+      // them. Only then: this runs on every thread render, and the dock is redrawn from there too.
+      if (dropped) renderConvDock();
     }
 
     function clearDockPicks() {
@@ -319,6 +323,15 @@
       else convComposerDrafts.delete(convViewId);
     }
 
+    // Called by saveConvIndex with the conversations that survived the write. Anything else held
+    // here is addressed to a conversation that no longer exists, and a recycled id would otherwise
+    // hand a stranger's draft to whoever creates the next one.
+    function forgetConvComposers(kept) {
+      const live = new Set((kept || []).map(c => c.id));
+      for (const id of convComposerDrafts.keys()) if (!live.has(id)) convComposerDrafts.delete(id);
+      for (const id of convComposerTargets.keys()) if (!live.has(id)) convComposerTargets.delete(id);
+    }
+
     function restoreConvDraft() {
       const input = document.getElementById('convInput');
       const text = convViewId ? convComposerDrafts.get(convViewId) : '';
@@ -330,10 +343,50 @@
       dockTarget = (convViewId && convComposerTargets.get(convViewId)) || '';
     }
 
+    // What the send is carrying, above the box that carries it. A lit chip and a highlighted bubble
+    // each say a thing is armed; neither says what the agent will actually receive, and the payload
+    // is assembled out of three places — an instruction from the chips, the picked bubbles in
+    // thread order, and whatever is typed. So the parts are listed where the message is written:
+    // the instruction as the words it expands to rather than as its @name, and one row per picked
+    // message with the start of what it says.
+    //
+    // Only in attach mode. Filling writes the instruction into the box already, and a strip
+    // repeating what is on screen an inch below is the app telling the reader something twice.
+    function dockLoadHtml() {
+      const lead = dockFill() ? '' : dockInstruction(dockAddressed());
+      const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'));
+      if (!lead && !picked.length) return '';
+      const at = lead
+        ? `<div class="xfer-load-line at" title="${escapeHtml(lead)}">` +
+          `<span class="xfer-load-tag">@</span>` +
+          `<span class="xfer-load-text">${escapeHtml(lead.replace(/\s*\n\s*/g, ' · '))}</span></div>`
+        : '';
+      // Numbered in thread order, which is the order they are quoted in — the same reason the send
+      // reads them off the DOM rather than off the pick set.
+      const rows = picked.map((el, n) => {
+        const text = (el.dataset.text || '').replace(/\s+/g, ' ').trim();
+        return `<div class="xfer-load-line" title="${escapeHtml(text)}">` +
+          `<span class="xfer-load-tag">#${n + 1}</span>` +
+          `<span class="xfer-load-text">${escapeHtml(text)}</span>` +
+          // Taking one back out from here rather than only from the bubble: the strip is where the
+          // reader is looking when they notice they picked the wrong one, and the bubble it names
+          // may have scrolled out of the thread by then.
+          `<button class="xfer-load-drop" onclick="toggleConvDockPick(${Number(el.dataset.i)})" ` +
+          `title="Leave this message out" aria-label="Leave message ${n + 1} out">×</button></div>`;
+      }).join('');
+      return at + rows;
+    }
+
     function renderConvDock() {
       const dock = document.getElementById('convDock');
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
+      const load = document.getElementById('xferLoad');
+      if (load) {
+        const html = dockLoadHtml();
+        if (load.dataset.sig !== html) { load.innerHTML = html; load.dataset.sig = html; }
+        load.hidden = !html;
+      }
       const all = dockMembers();
       // Always the whole membership. A pick decides what is being sent, never who is in the
       // conversation or who may have it.

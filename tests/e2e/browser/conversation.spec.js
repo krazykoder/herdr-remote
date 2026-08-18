@@ -4615,3 +4615,57 @@ test('switching between conversations preserves each conversation’s selected a
   await expect(page.locator('#convInput')).toHaveValue('draft for conv 2');
 });
 
+
+// A lit chip and a highlighted bubble each say something is armed; neither says what the agent is
+// about to receive. The strip above the box is the payload itself, in the order it will be written.
+test('the composer lists what the send is carrying', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await attachMode(page);
+  const load = page.locator('#xferLoad .xfer-load-line');
+  // Nothing armed, nothing to say.
+  await expect(page.locator('#xferLoad')).toBeHidden();
+  await pickBubble(page, 'the other pane spoke first');
+  await pickBubble(page, 'and again, last');
+  await page.locator('#xferRow .xfer-chip').first().click();      // @review
+  await expect(load).toHaveCount(3);
+  // The instruction as the words it expands to, not as its @name — the @name is what the chip
+  // already says, and what the agent gets is the sentence.
+  await expect(load.first()).toContainText('Review, edit, fix');
+  // Numbered in thread order, which is the order they are quoted in.
+  await expect(load.nth(1)).toContainText('#1');
+  await expect(load.nth(1)).toContainText('the other pane spoke first');
+  await expect(load.nth(2)).toContainText('and again, last');
+  // And a message can be taken back out from here: this is where the reader is looking when they
+  // notice the wrong one is on, and the bubble may have scrolled away by then.
+  await load.nth(1).locator('.xfer-load-drop').click();
+  await expect(load).toHaveCount(2);
+  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
+  await expect(load.nth(1)).toContainText('and again, last');
+  // Renumbered against what is left, so #1 is still the first thing the agent will read.
+  await expect(load.nth(1)).toContainText('#1');
+});
+
+// The draft and the addressed agent are held per conversation for the life of the page. A
+// conversation that is gone cannot be returned to, and an id the cap recycles would otherwise hand
+// its next owner a stranger's half-written message.
+test('a deleted conversation takes its draft and its addressed agent with it', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await page.evaluate(() => setDockMru(false));
+  await whoRow(page).filter({hasText: 'scratch'}).click();
+  await page.locator('#convInput').fill('half a thought');
+  // Switching away is what files them, the same as the draft test above.
+  await page.evaluate(() => {
+    saveConvIndex(loadConvIndex().concat({id: 'c2', name: 'somewhere else', created: Date.now(),
+      members: loadConvIndex()[0].members}));
+    openConversation('c2');
+  });
+  expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([1, 1]);
+  await page.evaluate(() => { convViewId = 'c1'; deleteConversation(); });
+  expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([0, 0]);
+});
