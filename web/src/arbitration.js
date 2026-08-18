@@ -11,7 +11,13 @@
 
     let arbOn = false;          // this relay sent arb_sessions on this connection
     let arbSession = null;      // the one session that may be running, or null
-    let arbFormOpen = false;    // the start form, which is a tap away rather than always on screen
+    // The start form, which is a tap away rather than always on screen. Null when closed; open, it
+    // is the *frozen* candidate list the form was opened on. Frozen because the list is derived
+    // from live pane status, and a candidate going `working` two seconds after the form opened
+    // would otherwise change this element's html and rebuild the textarea a scope is being typed
+    // into. A stale option is answered by the relay, which re-checks every participant anyway; a
+    // sentence taken out from under someone is not answered by anything.
+    let arbFormPanes = null;
     let arbHtmlLast = '';
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
@@ -19,7 +25,7 @@
     function arbReset() {
       arbOn = false;
       arbSession = null;
-      arbFormOpen = false;
+      arbFormPanes = null;
       arbHtmlLast = '';
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
@@ -38,7 +44,7 @@
       if (!s) return;
       arbOn = true;
       arbSession = s.state === 'ended' ? null : s;
-      if (s.state !== 'ended') arbFormOpen = false;
+      if (s.state !== 'ended') arbFormPanes = null;
       arbRender();
     }
 
@@ -53,7 +59,8 @@
     // it is not a participant in the conversation, it is the thing deciding what happens in it.
     function arbCandidates(conv) {
       const taken = new Set((conv.members || []).map(m => m.key));
-      return agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)));
+      return agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)) &&
+        x.status !== 'working' && x.status !== 'blocked');
     }
 
     function arbStateLabel(s) {
@@ -82,7 +89,7 @@
     // The strip, or the way to start one, or nothing. Pure so the shape of every state can be
     // asserted without a browser — which matters more here than usual, because the states that go
     // wrong are the ones a person is least likely to be sitting in front of.
-    function arbStripHtml(session, conv, on, formOpen) {
+    function arbStripHtml(session, conv, on, formPanes) {
       if (!on || !conv) return '';
       if (session && session.conversation === conv.id) {
         const s = session, paused = s.state === 'paused';
@@ -102,7 +109,7 @@
       if (session) return '';   // running, but over some other conversation
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
       if (live.length !== 2 || !free.length) return '';
-      if (!formOpen) {
+      if (!formPanes || !formPanes.length) {
         return '<div class="arb-strip idle"><button class="arb-btn" onclick="arbToggleForm()">' +
           '⚖ Arbitrate</button></div>';
       }
@@ -111,7 +118,7 @@
         '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop."></textarea></label>' +
         '<label>Arbitrator<select id="arbWho">' +
-        free.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
+        formPanes.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
           `</option>`).join('') + '</select></label>' +
         '<div class="arb-form-actions">' +
         '<button class="arb-btn" onclick="arbToggleForm()">Cancel</button>' +
@@ -119,7 +126,8 @@
     }
 
     function arbToggleForm() {
-      arbFormOpen = !arbFormOpen;
+      const conv = loadConvIndex().find(c => c.id === convCurrentId());
+      arbFormPanes = arbFormPanes ? null : (conv ? arbCandidates(conv) : null);
       arbRender();
     }
 
@@ -130,7 +138,7 @@
       if (!el) return;
       const conv = typeof convCurrentId === 'function'
         ? loadConvIndex().find(c => c.id === convCurrentId()) : null;
-      const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormOpen);
+      const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes);
       if (html !== arbHtmlLast) { arbHtmlLast = html; el.innerHTML = html; }
     }
 
@@ -148,7 +156,18 @@
       const scope = ((document.getElementById('arbScope') || {}).value || '').trim();
       const who = (document.getElementById('arbWho') || {}).value || '';
       if (!scope) { showToast('Say what this session is for.'); return; }
-      if (live.length !== 2 || !free.some(x => x.pane_id === who)) return;
+      if (live.length !== 2) return;
+      // The frozen list is what was on screen; this is the live one. A pane that started working
+      // while the scope was being written is said out loud rather than swallowed, and the form is
+      // redrawn on what is free now — with the scope kept, because that is the part worth keeping.
+      if (!free.some(x => x.pane_id === who)) {
+        arbFormPanes = free;
+        arbRender();
+        const box = document.getElementById('arbScope');
+        if (box) box.value = scope;
+        showToast('That pane is busy now — pick another arbitrator.');
+        return;
+      }
       arbSend({
         type: 'arb_start', conversation: conv.id, scope: scope,
         members: live.map(a => ({ pane_id: a.pane_id })),

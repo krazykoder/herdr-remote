@@ -143,6 +143,48 @@ test('an arbitrator that is not a live candidate is refused', () => {
   assert.deepEqual(sent, []);
 });
 
+test('a working or blocked pane is not offered as the arbitrator', () => {
+  for (const status of ['working', 'blocked']) {
+    const live = [PANE_A, PANE_B, {...PANE_C, status}];
+    const {g, els, sent} = ctx({live});
+    els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
+    els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+    g.arbStart();
+    assert.deepEqual(sent, [], status);
+  }
+});
+
+test('an open form is not rebuilt when a candidate changes status under it', () => {
+  // The candidate list is derived from live pane status, so it moves whenever any pane does.
+  // Rebuilding this element would take a half-written scope away with it — which is the whole
+  // reason the form freezes the list it was opened on.
+  const live = [PANE_A, PANE_B, {...PANE_C}, {...PANE_C, pane_id: 'w1:p4', label: 'Spare'}];
+  const {g, els} = ctx({live});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbToggleForm();
+  const drawn = els.arbStrip.innerHTML;
+  assert.ok(drawn.includes('arbScope'), drawn);
+
+  live[3].status = 'working';
+  g.arbRender();
+  assert.equal(els.arbStrip.innerHTML, drawn);
+});
+
+test('an arbitrator that went busy while the scope was written is said out loud', () => {
+  const live = [PANE_A, PANE_B, {...PANE_C}];
+  const {g, els, sent, toasts} = ctx({live});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbToggleForm();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  live[2].status = 'working';
+  g.arbStart();
+  assert.deepEqual(sent, []);
+  assert.equal(toasts.length, 1);
+  assert.equal(g.document.getElementById('arbScope').value, 'Review the footer.',
+               'the scope is kept');
+});
+
 test('pause, resume and cancel name the session the relay assigned', () => {
   const {g, sent} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});

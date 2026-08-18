@@ -9,17 +9,20 @@
 //   npx playwright test tests/e2e/browser/arbitration.spec.js
 const {test, expect} = require('./fixtures');
 
-// Serial, because one test here really does start a session on the shared worker relay. It fails
-// at once — the fake herdr's arbitrator pane is `working`, so the starter prompt is never
-// confirmed — but between the INSERT and the end there is a window in which every other client on
-// that relay is correctly told a session is running, which is a strip the tests below are not
-// expecting. Ordering them is cheaper than teaching each one to tolerate it.
+// Serial, because one test here really does start a session on the shared worker relay. It ends
+// on its own — the fake herdr reports a fixed board, so the pane never leaves `idle` and the
+// starter prompt is never confirmed — but between the INSERT and the end there is a window in
+// which every other client on that relay is correctly told a session is running, which is a strip
+// the tests below are not expecting. Ordering them is cheaper than teaching each to tolerate it.
 test.describe.configure({mode: 'serial'});
 
 // Two live panes for the conversation and a third outside it for the arbitrator, which is the one
-// shape v1 runs. All three are agents the fake herdr reports on this host.
-const MEMBERS = ['Architect 1', 'amp'];
-const ARBITER = 'scratch';
+// shape v1 runs. All three are agents the fake herdr reports on this host. The arbitrator is the
+// idle one on purpose: a working pane is not offered as one, because the starter prompt is the
+// only thing that tells it what it is and a busy composer is where that goes missing. A working
+// *member* is ordinary — nothing is written to it until a decision names it.
+const MEMBERS = ['Architect 1', 'scratch'];
+const ARBITER = 'amp';
 
 // A conversation over two live panes, opened. Conversations are the browser's own — the relay
 // knows nothing about them until arb_start names one.
@@ -53,8 +56,8 @@ const session = (over = {}) => Object.assign({
   id: 's-20260817-1103', state: 'active', pause_reason: null, conversation: 'c1',
   scope: 'Get the footer reviewed.',
   members: [{id: 'member-1', label: 'Architect 1', pane_id: 'w1:p1', status: 'idle'},
-            {id: 'member-2', label: 'amp', pane_id: 'w1:p2', status: 'working'}],
-  arbitrator: {pane_id: 'w8:p1', status: 'idle'},
+            {id: 'member-2', label: 'scratch', pane_id: 'w8:p1', status: 'working'}],
+  arbitrator: {pane_id: 'w1:p2', status: 'idle'},
   budget: {steps_left: 7, consecutive_left: 3, minutes_left: 44},
   last_decision: null,
 }, over);
@@ -80,11 +83,12 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   expect(msgs[0].type).toBe('arb_start');
   expect(msgs[0].conversation).toBe('c1');
   expect(msgs[0].scope).toBe('Get the footer reviewed, then stop.');
-  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1'}, {pane_id: 'w1:p2'}]);
-  expect(msgs[0].arbitrator).toEqual({pane_id: 'w8:p1'});
+  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1'}, {pane_id: 'w8:p1'}]);
+  expect(msgs[0].arbitrator).toEqual({pane_id: 'w1:p2'});
 
-  // Waited for, not merely allowed to happen: this relay's fake arbitrator pane is `working`, so
-  // the starter prompt is never confirmed and the relay ends the session it had already inserted.
+  // Waited for, not merely allowed to happen: the fake herdr's board never moves, so the pane the
+  // starter prompt went to stays `idle` and the send is never confirmed — and the relay ends the
+  // session it had already inserted.
   // Leaving before that lands would hand the next test a relay reporting a session in flight.
   await expect(page.locator('#toast')).toContainText('send_unconfirmed');
 });
@@ -106,7 +110,7 @@ test('a running session shows what it is doing and how to stop it', async ({page
     ambiguity: 'low', at: Date.now()}}));
   const strip = page.locator('#arbStrip .arb-strip');
   await expect(strip).toContainText('Arbitrating');
-  await expect(strip).toContainText('review · amp · Ready for an independent check.');
+  await expect(strip).toContainText('review · scratch · Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
 
   await captureSends(page);

@@ -448,6 +448,11 @@ class Arbitration:
         # client-provided fingerprint lets a stale or forged payload enrol one pane as another.
         members = [{**live_by_id[p["pane_id"]], "role": p.get("role") or ""} for p in members]
         arbitrator = live_by_id[arbitrator["pane_id"]]
+        # N7 in the one place it is not about a member: the starter prompt is the only thing that
+        # tells the arbitrator what it is, and a pane mid-turn is where that goes missing. Checked
+        # here as well as in the browser, because a direct client is not obliged to have a form.
+        if (arbitrator.get("agent_status") or arbitrator.get("status")) in BUSY:
+            raise ArbiterError("arbitrator_busy", arbitrator["pane_id"])
         scope = (scope or "").strip()
         if not scope or len(scope) > MAX_SCOPE:
             raise ArbiterError("bad_scope")

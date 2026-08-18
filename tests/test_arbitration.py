@@ -223,6 +223,13 @@ class Start(Harness):
             self.start(members=[self.live[0], far])
         self.assertEqual("remote_participant", caught.exception.code)
 
+    def test_a_working_arbitrator_is_refused_before_its_starter_prompt_is_sent(self):
+        self.live[2]["agent_status"] = "working"
+        with self.assertRaises(ArbiterError) as caught:
+            self.start()
+        self.assertEqual("arbitrator_busy", caught.exception.code)
+        self.assertEqual([], self.sent)
+
     def test_a_remote_pane_whose_id_collides_with_a_live_local_one_is_refused(self):
         # The reason the *claimed* host is still checked after everything else stopped being
         # trusted. Pane ids are per-host counters, so `box`'s p1 and this machine's p1 are two
