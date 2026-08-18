@@ -163,7 +163,7 @@ PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 # decision about the user's data and not one to make for them. On, it is written once per turn end
 # and read back by `conv_log` — and later by an arbitrator deciding what happens next.
 CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(
-    LOG_DIR, "arbitration.sqlite3")
+    PROJECT_ROOT, ".herdr-remote", "arbitration.sqlite3")
 conv_log = None
 if os.environ.get("HERDR_CONV_LOG", "") == "1":
     try:
@@ -1457,7 +1457,7 @@ async def handle_client(ws, listener="lan"):
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
                         since=msg.get("since"), until=msg.get("until"),
-                        since_id=msg.get("since_id") if msg.get("since_id") is not None else msg.get("since_seq"),
+                        since_id=msg.get("since_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
