@@ -3547,22 +3547,20 @@ test('an instruction is spent by the send, the agent chosen is not', async ({pag
   expect(new Set(to)).toEqual(new Set(['w8:p1']));
 });
 
-test('leaving the conversation takes the chosen agent with it, and keeps the draft', async ({page}) => {
+test('leaving the conversation preserves the chosen agent and keeps the draft', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   await joinThird(page);
   await openWindow(page);
-  // With the recency sort off, so what is being tested is the target being forgotten rather than
-  // the row's order — with it on the agent last written to is deliberately still the first pill.
+  // With the recency sort off, so what is being tested is remembering the chosen target per conversation
   await page.evaluate(() => setDockMru(false));
   await whoRow(page).filter({hasText: 'amp'}).click();
   await page.locator('#convInput').fill('half a thought');
-  // Who you were talking to is a passing state and does not survive leaving; the half-written
-  // message does, because it belongs to this conversation and finishing it later is the point.
+  // Both who you were talking to and the half-written message survive leaving and switching
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conversation-card').click();
-  await expect(litWho(page)).toHaveText(/Architect 1/);
+  await expect(litWho(page)).toHaveText(/amp/);
   await expect(page.locator('#convInput')).toHaveValue('half a thought');
 });
 
@@ -4568,3 +4566,49 @@ test('a second one is numbered rather than named the same thing twice', async ({
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
 });
+
+test('switching between conversations preserves each conversation’s selected agent and draft in the composer', async ({page}) => {
+  await open(page);
+  await page.evaluate(async () => {
+    const a1 = paneOf('w1:p1');
+    const a2 = agents.find(x => x.label === 'scratch');
+    const a3 = agents.find(x => x.label === 'amp') || a2;
+    const k1 = convMemberKey(a1), k2 = convMemberKey(a2), k3 = convMemberKey(a3);
+    saveConvIndex([
+      {
+        id: 'c1', name: 'Conversation One', created: Date.now() - 2000,
+        members: [{key: k1, added: 1, label: 'Architect 1'}, {key: k2, added: 2, label: 'scratch'}],
+      },
+      {
+        id: 'c2', name: 'Conversation Two', created: Date.now() - 1000,
+        members: [{key: k1, added: 1, label: 'Architect 1'}, {key: k2, added: 2, label: 'scratch'}],
+      },
+    ]);
+  });
+
+  // Open Conversation One, address scratch, write draft
+  await page.evaluate(() => {
+    setDockMru(false);
+    openConversation('c1');
+  });
+  await whoRow(page).filter({hasText: 'scratch'}).click();
+  await page.locator('#convInput').fill('draft for conv 1');
+  await expect(litWho(page)).toHaveText(/scratch/);
+
+  // Switch to Conversation Two, address Architect 1, write draft
+  await page.evaluate(() => openConversation('c2'));
+  await whoRow(page).filter({hasText: 'Architect 1'}).click();
+  await page.locator('#convInput').fill('draft for conv 2');
+  await expect(litWho(page)).toHaveText(/Architect 1/);
+
+  // Switch back to Conversation One -> scratch and draft 1 restored
+  await page.evaluate(() => openConversation('c1'));
+  await expect(litWho(page)).toHaveText(/scratch/);
+  await expect(page.locator('#convInput')).toHaveValue('draft for conv 1');
+
+  // Switch back to Conversation Two -> Architect 1 and draft 2 restored
+  await page.evaluate(() => openConversation('c2'));
+  await expect(litWho(page)).toHaveText(/Architect 1/);
+  await expect(page.locator('#convInput')).toHaveValue('draft for conv 2');
+});
+

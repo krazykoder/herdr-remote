@@ -143,6 +143,10 @@
       if (now - dockLastPick.at > DOCK_DOUBLE_MS) dockLastPick = {pane: paneId, at: now};
       else dockLastPick.at = now;
       dockTarget = paneId;
+      if (convViewId) {
+        if (paneId) convComposerTargets.set(convViewId, paneId);
+        else convComposerTargets.delete(convViewId);
+      }
       renderConvDock();
       if (window.cue) cue('tick');
     }
@@ -296,30 +300,33 @@
       if (input) { input.value = ''; autoGrow(input); syncConvCursor(); }
     }
 
-    // Half-written messages, one per conversation, for as long as the page is open. Switching tabs
-    // to read what somebody else said is part of writing a reply, and losing the reply to it made
-    // the strip something to avoid mid-sentence. Deliberately in memory and not in storage: a
-    // draft is a thing in flight, and a reload is a session ending — see D4's tiering for the same
-    // line drawn between what is asserted and what is passing.
+    // Half-written messages and selected targets, one per conversation, for as long as the page is
+    // open. Switching tabs to read what somebody else said is part of writing a reply, and losing
+    // the reply or the chosen agent made the strip something to avoid mid-sentence. Deliberately
+    // in memory and not in storage: a draft is a thing in flight, and a reload is a session ending.
     const convComposerDrafts = new Map();
+    const convComposerTargets = new Map();
 
-    // Called before convViewId moves, so what is in the box is filed under the conversation it was
-    // written to. An empty box drops the entry rather than storing '': "nothing written" and
-    // "nothing kept" are the same state, and a stale empty draft would survive a Send.
+    // Called before convViewId moves, so what is in the box and who is addressed is filed under the
+    // conversation it was written to.
     function stashConvDraft() {
       const input = document.getElementById('convInput');
-      if (!input || !convViewId) return;
-      if (input.value.trim()) convComposerDrafts.set(convViewId, input.value);
+      if (!convViewId) return;
+      if (input && input.value.trim()) convComposerDrafts.set(convViewId, input.value);
       else convComposerDrafts.delete(convViewId);
+      if (dockTarget) convComposerTargets.set(convViewId, dockTarget);
+      else convComposerTargets.delete(convViewId);
     }
 
     function restoreConvDraft() {
       const input = document.getElementById('convInput');
       const text = convViewId ? convComposerDrafts.get(convViewId) : '';
-      if (!input || !text) return;
-      input.value = text;
-      autoGrow(input);
-      syncConvCursor();
+      if (input && text) {
+        input.value = text;
+        autoGrow(input);
+        syncConvCursor();
+      }
+      dockTarget = (convViewId && convComposerTargets.get(convViewId)) || '';
     }
 
     function renderConvDock() {
