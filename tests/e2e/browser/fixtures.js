@@ -46,60 +46,72 @@ async function waitForRelay(url, proc, logFile) {
   throw new Error(`relay at ${url} never came up`);
 }
 
+// One relay, on a port and a log directory of the caller's choosing. Exported because a spec that
+// needs a *differently configured* relay — one with a feature off, which is the only way to test
+// that off means off — needs this whole arrangement and not a copy of it that drifts.
+async function startRelay({port, logs, name = 'relay.out', env = {}}) {
+  fs.mkdirSync(logs, {recursive: true});
+  const logFile = path.join(logs, name);
+  const out = fs.openSync(logFile, 'w');
+  const relayEnv = {
+    ...cleanEnv(),
+    PATH: `${path.join(ROOT, 'tests', 'e2e', 'bin')}:${process.env.PATH}`,  // fake ssh
+    HERDR_BIN: path.join(ROOT, 'tests', 'e2e', 'bin', 'herdr'),             // fake herdr
+    FAKE_LOG: path.join(logs, 'fake_herdr.log'),
+    HERDR_RELAY_PORT: String(port),
+    // Loopback and nothing else. No HERDR_EXTERNAL_PORT, so there is no second listener for
+    // a tunnel to terminate on, and nothing here ever launches one — that is start.sh's job
+    // and the suite does not run it. A loopback bind also takes mDNS out, so a test run
+    // advertises nothing on the network.
+    HERDR_LAN_BIND: '127.0.0.1',
+    HERDR_LAN_OPEN: '1',       // no token: the browser connects straight to its own origin
+    HERDR_STATE_DIR: logs,
+    HERDR_ENABLE_TERMINAL: '1',
+    HERDR_ENABLE_WRITE_EXT: '1',
+    // The durable record, so the thread's "read the relay's record" toggle has something to
+    // read. It lands in this worker's own HERDR_STATE_DIR, which is a temp directory torn
+    // down with the worker — no developer's real record is opened or written by a test run.
+    HERDR_CONV_LOG: '1',
+    // Per worker, and stated rather than defaulted: unset, this lands on the repo's own
+    // .herdr-remote/arbitration.sqlite3 — the developer's real record, shared by every
+    // worker at once. Two relays writing one session table is also a suite that can see
+    // another worker's session on the strip.
+    HERDR_ARBITER_DB: path.join(logs, 'arbitration.sqlite3'),
+    // Arbitration, whose companions are the two above. On for the whole suite because the
+    // feature gate is a message arriving at all — a relay with it off sends nothing, and a
+    // suite that never sees it could not tell the gate from a broken render.
+    HERDR_ENABLE_ARBITER: '1',
+    // No HERDR_REMOTES: one host keeps the fake's deliberate cross-host pane-ID collisions
+    // out of the way, and the Projects fixture is not loaded because its entries name it.
+    ...env,
+  };
+  // `undefined` means *unset*, not empty. A gate reads '0' and '' as off either way; what is
+  // worth testing is a relay that was never told the feature exists.
+  for (const [key, value] of Object.entries(relayEnv)) {
+    if (value === undefined) delete relayEnv[key];
+  }
+  const proc = spawn(path.join(ROOT, '.venv313', 'bin', 'python'),
+    [path.join(ROOT, 'relay', 'herdr_relay.py')], {stdio: ['ignore', out, out], env: relayEnv});
+  const url = `http://127.0.0.1:${port}`;
+  await waitForRelay(`${url}/`, proc, logFile);
+  return {url, stop: () => { proc.kill('SIGTERM'); fs.closeSync(out); }};
+}
+
 const test = base.test.extend({
   relayURL: [async ({}, use, workerInfo) => {
     // Two ports apart: the relay opens a UDP listener at port+1 for plugin push.
-    const port = PORT0 + workerInfo.parallelIndex * 2;
-    const logs = path.join(ROOT, 'tests', 'e2e', 'logs', `w${workerInfo.parallelIndex}`);
-    fs.mkdirSync(logs, {recursive: true});
-    const logFile = path.join(logs, 'relay.out');
-    const out = fs.openSync(logFile, 'w');
-    const proc = spawn(path.join(ROOT, '.venv313', 'bin', 'python'),
-      [path.join(ROOT, 'relay', 'herdr_relay.py')], {
-        stdio: ['ignore', out, out],
-        env: {
-          ...cleanEnv(),
-          PATH: `${path.join(ROOT, 'tests', 'e2e', 'bin')}:${process.env.PATH}`,  // fake ssh
-          HERDR_BIN: path.join(ROOT, 'tests', 'e2e', 'bin', 'herdr'),             // fake herdr
-          FAKE_LOG: path.join(logs, 'fake_herdr.log'),
-          HERDR_RELAY_PORT: String(port),
-          // Loopback and nothing else. No HERDR_EXTERNAL_PORT, so there is no second listener for
-          // a tunnel to terminate on, and nothing here ever launches one — that is start.sh's job
-          // and the suite does not run it. A loopback bind also takes mDNS out, so a test run
-          // advertises nothing on the network.
-          HERDR_LAN_BIND: '127.0.0.1',
-          HERDR_LAN_OPEN: '1',       // no token: the browser connects straight to its own origin
-          HERDR_STATE_DIR: logs,
-          HERDR_ENABLE_TERMINAL: '1',
-          HERDR_ENABLE_WRITE_EXT: '1',
-          // The durable record, so the thread's "read the relay's record" toggle has something to
-          // read. It lands in this worker's own HERDR_STATE_DIR, which is a temp directory torn
-          // down with the worker — no developer's real record is opened or written by a test run.
-          HERDR_CONV_LOG: '1',
-          // Per worker, and stated rather than defaulted: unset, this lands on the repo's own
-          // .herdr-remote/arbitration.sqlite3 — the developer's real record, shared by every
-          // worker at once. Two relays writing one session table is also a suite that can see
-          // another worker's session on the strip.
-          HERDR_ARBITER_DB: path.join(logs, 'arbitration.sqlite3'),
-          // Arbitration, whose companions are the two above. On for the whole suite because the
-          // feature gate is a message arriving at all — a relay with it off sends nothing, and a
-          // suite that never sees it could not tell the gate from a broken render.
-          HERDR_ENABLE_ARBITER: '1',
-          // No HERDR_REMOTES: one host keeps the fake's deliberate cross-host pane-ID collisions
-          // out of the way, and the Projects fixture is not loaded because its entries name it.
-        },
-      });
-    const url = `http://127.0.0.1:${port}`;
+    const relay = await startRelay({
+      port: PORT0 + workerInfo.parallelIndex * 2,
+      logs: path.join(ROOT, 'tests', 'e2e', 'logs', `w${workerInfo.parallelIndex}`),
+    });
     try {
-      await waitForRelay(`${url}/`, proc, logFile);
-      await use(url);
+      await use(relay.url);
     } finally {
-      proc.kill('SIGTERM');
-      fs.closeSync(out);
+      relay.stop();
     }
   }, {scope: 'worker'}],
 
   baseURL: async ({relayURL}, use) => { await use(relayURL); },
 });
 
-module.exports = {test, expect: base.expect};
+module.exports = {test, expect: base.expect, startRelay, PORT0, ROOT};

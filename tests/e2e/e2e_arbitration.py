@@ -406,6 +406,64 @@ async def loop_run():
             check("T13 no step is spent on a rejection", row["steps_used"] == 1, dict(row))
             check("T13 and the session is still awaiting its answer",
                   row["state"] == "awaiting", dict(row))
+
+            # Left ended rather than abandoned: the next run starts its own session, and one
+            # session at a time is the rule this whole feature is built on.
+            await ws.send(json.dumps({"type": "arb_cancel", "session": session_id}))
+            m = await wait_msg(ws, "arb_session", lambda m: m["session"]["state"] == "ended")
+            check("T13 cancel from a client ends the session", m is not None, m)
+    finally:
+        stop_relay(proc)
+
+
+async def reconnect_run():
+    """A paused session is not a gone session.
+
+    `running()` excludes paused sessions because nothing fires for them, and the connection
+    snapshot used to be built from it — so a phone that locked mid-session came back to an
+    ⚖ Arbitrate button and no way to resume what was already there. What is asserted here is the
+    reconnect itself: a second socket, told about a session it never saw start.
+    """
+    write_panes([dict(MEMBER_1), dict(MEMBER_2), dict(ARBITER)])
+    proc = start_relay()
+    try:
+        async with connect(f"ws://127.0.0.1:{PORT}") as ws:
+            await drain_to_agents(ws)
+            await ws.send(json.dumps({
+                "type": "arb_start", "conversation": "c-reconnect", "scope": SCOPE,
+                "members": [participant(MEMBER_1), participant(MEMBER_2)],
+                "arbitrator": participant(ARBITER)}))
+            m = await wait_msg(ws, "arb_session")
+            session_id = (m or {}).get("session", {}).get("id")
+            await ws.send(json.dumps({"type": "arb_pause", "session": session_id}))
+            m = await wait_msg(ws, "arb_session", lambda m: m["session"]["state"] == "paused")
+            check("T16 a client can pause its own session", m is not None, m)
+
+        # The reconnect. A different socket, which has been told nothing.
+        async with connect(f"ws://127.0.0.1:{PORT}") as ws2:
+            seen = await drain_to_agents(ws2)
+            gate = next((m for m in seen if m["type"] == "arb_sessions"), None) \
+                or await wait_msg(ws2, "arb_sessions", timeout=5)
+            sessions = (gate or {}).get("sessions") or []
+            check("T16 the snapshot carries the paused session",
+                  len(sessions) == 1 and sessions[0]["id"] == session_id
+                  and sessions[0]["state"] == "paused", gate)
+            check("T16 with the reason it stopped, which is what the strip says",
+                  sessions and sessions[0].get("pause_reason") == "user", sessions)
+
+            await ws2.send(json.dumps({"type": "arb_resume", "session": session_id}))
+            m = await wait_msg(ws2, "arb_session", lambda m: m["session"]["state"] == "active")
+            check("T16 and it resumes from the connection that found it", m is not None, m)
+            await ws2.send(json.dumps({"type": "arb_cancel", "session": session_id}))
+            await wait_msg(ws2, "arb_session", lambda m: m["session"]["state"] == "ended")
+
+        # And an ended session is gone: the next reconnect is offered a start, not a corpse.
+        async with connect(f"ws://127.0.0.1:{PORT}") as ws3:
+            seen = await drain_to_agents(ws3)
+            gate = next((m for m in seen if m["type"] == "arb_sessions"), None) \
+                or await wait_msg(ws3, "arb_sessions", timeout=5)
+            check("T16 an ended session is not offered back",
+                  gate is not None and gate["sessions"] == [], gate)
     finally:
         stop_relay(proc)
 
@@ -436,6 +494,7 @@ async def main():
         boot_gate_run()
         await gate_off_run()
         await loop_run()
+        await reconnect_run()
     except Exception:
         import traceback
         traceback.print_exc()
