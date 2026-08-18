@@ -384,6 +384,32 @@
       margin-left: auto;
     }
 
+    /* Sits where the tab strip would be — the landing page hides that, so this costs the header
+       nothing it was using. flex:0, not the strip's flex:1: five icons are a fixed width, and
+       taking the slack would push the title away from the dot for no gain. */
+    .sect-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+      margin-left: 4px;
+    }
+
+    .sect-tabs[hidden] {
+      display: none;
+    }
+
+    /* Narrower than the nav buttons: five of these sit next to two of those, and the full height
+       keeps the hit area honest while the width gives the title back its room. */
+    .header .sect-tab {
+      min-width: 30px;
+    }
+
+    .header .sect-tab[aria-pressed="true"] {
+      color: var(--blue);
+      background: var(--border);
+    }
+
     .agent-tabs::-webkit-scrollbar {
       display: none;
     }
@@ -4692,6 +4718,9 @@
     <div class="agent-tabs" id="agentTabs"></div>
     <!-- Replaces pane tabs while a standalone conversation is open. -->
     <div class="conv-strip" id="convStrip"></div>
+    <!-- One icon per landing section, in the space the tab strip leaves empty there. Filled by
+         renderSectionTabs, and on screen only on the landing page. -->
+    <div class="sect-tabs" id="sectionTabs" role="group" aria-label="Show one section" hidden></div>
     <div class="nav-group">
       <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

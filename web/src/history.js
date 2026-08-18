@@ -210,6 +210,9 @@
         btn.setAttribute('aria-label', btn.disabled ? (step < 0 ? 'Back' : 'Forward') : label);
       });
       syncBackLabel();
+      // The section shortcuts belong to the landing page, and this is the one call every view
+      // change already makes.
+      renderSectionTabs();
     }
 
     // The pane header always exits to the list; only the status-bar arrows walk history.

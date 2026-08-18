@@ -35,7 +35,7 @@ function sectionNode(id, html) {
 }
 
 // The landing-section nodes and checkboxes, as the block reaches for them.
-function sectionsCtx({stored, content = {}} = {}) {
+function sectionsCtx({stored, content = {}, landing = true} = {}) {
   const store = stored === undefined ? {} : {herdr_sections: stored};
   const el = id => sectionNode(id, content[id]);
   const nodes = {agents: el('agents'), terminals: el('terminals'), pairs: el('pairs'), recents: el('recents'), conversations: el('conversations')};
@@ -46,17 +46,28 @@ function sectionsCtx({stored, content = {}} = {}) {
     sectionRecents: {checked: false, disabled: false},
     sectionConversations: {checked: false, disabled: false},
   };
+  // The header strip and the landing view it belongs to. The strip writes markup and its own
+  // hidden flag; the view is only read, for whether the landing page is the thing on screen.
+  const tabs = {id: 'sectionTabs', innerHTML: '', hidden: false};
+  const view = {id: 'agentListView', style: {display: landing ? '' : 'none'}};
   const ctx = vm.createContext({
     console,
     localStorage: {
       getItem: k => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
     },
-    document: {getElementById: id => nodes[id] || boxes[id] || null},
+    document: {
+      getElementById: id => nodes[id] || boxes[id]
+        || (id === 'sectionTabs' ? tabs : id === 'agentListView' ? view : null),
+    },
   });
   vm.runInContext(SRC, ctx);
-  return {store, nodes, boxes, run: src => vm.runInContext(src, ctx)};
+  return {store, nodes, boxes, tabs, view, run: src => vm.runInContext(src, ctx)};
 }
+
+// Which sections the header strip offers, and which one it is holding down.
+const offered = tabs => [...tabs.innerHTML.matchAll(/toggleSectionFilter\('(\w+)'\)/g)].map(m => m[1]);
+const pressed = tabs => [...tabs.innerHTML.matchAll(/aria-pressed="true" onclick="toggleSectionFilter\('(\w+)'\)/g)].map(m => m[1]);
 
 // What is on screen, in the order it is painted. Reads the same two style properties the browser
 // does, so a section switched on but left empty is absent here exactly as it is on the page.
@@ -160,6 +171,78 @@ test('the gap moves when the order does', () => {
   run("toggleSection('agents', false)");
   assert.equal(nodes.agents.classList.contains('section-first'), false, 'switched off entirely');
   assert.equal(nodes.terminals.classList.contains('section-first'), true, 'and it moved up');
+});
+
+// --- The header's section shortcuts ---
+// A filter is a way of reading the landing page, not a setting: it narrows what is drawn without
+// touching the order Settings owns, and it is gone on the next load.
+
+test('a shortcut narrows the page to its own section', () => {
+  const {run, nodes, tabs} = sectionsCtx();
+  run('applySections()');
+  assert.deepEqual(offered(tabs), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  run("toggleSectionFilter('conversations')");
+  assert.deepEqual(painted(nodes), ['conversations']);
+  assert.deepEqual(pressed(tabs), ['conversations'], 'and the button says which one');
+  assert.equal(nodes.conversations.classList.contains('section-first'), true, 'it is the top of the page now');
+});
+
+test('the same shortcut again is the way back', () => {
+  const {run, nodes} = sectionsCtx();
+  run("toggleSectionFilter('pairs')");
+  run("toggleSectionFilter('pairs')");
+  assert.deepEqual(painted(nodes), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  assert.equal(nodes.agents.classList.contains('section-first'), true, 'and the top gap went back with it');
+});
+
+test('one shortcut replaces another rather than stacking', () => {
+  const {run, nodes} = sectionsCtx();
+  run("toggleSectionFilter('recents')");
+  run("toggleSectionFilter('agents')");
+  assert.deepEqual(painted(nodes), ['agents']);
+});
+
+test('a shortcut shows a section Settings has switched off', () => {
+  // This is the whole point of the row: reaching a list without first going to Settings to put it
+  // back, and without the visit changing what the page looks like afterwards.
+  const {run, nodes, store} = sectionsCtx({stored: JSON.stringify(['agents'])});
+  run("toggleSectionFilter('conversations')");
+  assert.deepEqual(painted(nodes), ['conversations']);
+  assert.deepEqual(run('sectionOrder'), ['agents'], 'the order is untouched');
+  assert.equal(store.herdr_sections, JSON.stringify(['agents']), 'and nothing was stored');
+  run("toggleSectionFilter('conversations')");
+  assert.deepEqual(painted(nodes), ['agents']);
+});
+
+test('a section with nothing in it is not offered', () => {
+  const {run, tabs} = sectionsCtx({content: {terminals: '', pairs: ''}});
+  run('applySections()');
+  assert.deepEqual(offered(tabs), ['agents', 'recents', 'conversations']);
+});
+
+test('a filter whose section empties out lets the page back', () => {
+  // The last pair closes while the page is filtered to Pairs. Holding it would leave a blank
+  // screen with nothing on it to press.
+  const {run, nodes, tabs} = sectionsCtx();
+  run("toggleSectionFilter('pairs')");
+  nodes.pairs.innerHTML = '';
+  run('applySections()');
+  assert.deepEqual(painted(nodes), ['agents', 'terminals', 'recents', 'conversations']);
+  assert.deepEqual(pressed(tabs), []);
+});
+
+test('one section is nothing to choose between, so no row is drawn', () => {
+  const {run, tabs} = sectionsCtx({content: {terminals: '', pairs: '', recents: '', conversations: ''}});
+  run('applySections()');
+  assert.equal(tabs.innerHTML, '');
+  assert.equal(tabs.hidden, true);
+});
+
+test('the row is the landing page’s own, and leaves with it', () => {
+  const {run, tabs} = sectionsCtx({landing: false});
+  run('applySections()');
+  assert.equal(tabs.innerHTML, '', 'a pane or a panel is on screen, not the sections');
+  assert.equal(tabs.hidden, true);
 });
 
 test('a stored value that is not a list is ignored', () => {
