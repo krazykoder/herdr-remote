@@ -20,6 +20,10 @@
     let arbFormPanes = null;
     let arbFormConv = '';
     let arbHtmlLast = '';
+    // The detail sheet: what the arbitrator was given, what it decided, and what was typed as a
+    // result. Fetched and never pushed — it carries prose, which the relay answers only to the
+    // client that asked (§15.2) — so it exists only while a sheet is open on one session.
+    let arbDetail = null, arbDetailFor = '';
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
@@ -29,6 +33,7 @@
       arbFormPanes = null;
       arbFormConv = '';
       arbHtmlLast = '';
+      closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
     }
@@ -97,7 +102,10 @@
         const s = session, paused = s.state === 'paused';
         return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
           `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
-          `<span class="arb-last">${escapeHtml(arbLastLine(s))}</span>` +
+          // The line is the control: what a person wants after reading "review · Reviewer 1 · …"
+          // is the rest of it, and a separate button for that would be chrome beside the answer.
+          `<button class="arb-last" onclick="arbOpenDetail()"` +
+          ` aria-label="What this session decided">${escapeHtml(arbLastLine(s))}</button>` +
           `<span class="arb-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
           (paused
             ? '<button class="arb-btn" onclick="arbCommand(\'arb_resume\')">Resume</button>'
@@ -188,6 +196,86 @@
       // Nothing is drawn optimistically. The session exists when the relay says it does, and a
       // strip that appears before the starter prompt landed would be reporting a session that a
       // failed send is about to end.
+    }
+
+    // --- the detail sheet ---------------------------------------------------------------
+    //
+    // One decision per block, newest first: what triggered it, what the arbitrator was shown, what
+    // it decided and why, and the text that was typed at a member because of it. A send nobody
+    // typed is only accountable if all four can be read back together.
+
+    function arbDecTitle(d, session) {
+      const to = ((session || {}).members || []).find(m => m.id === d.to);
+      const who = d.gate === 'call_human' ? 'you' : (to ? to.label || d.to : d.to || '—');
+      return d.valid ? `#${d.sequence} · ${d.gate || '?'} · ${who}`
+                     : `#${d.sequence} · refused · ${(d.reject_code || 'invalid').replace(/_/g, ' ')}`;
+    }
+
+    // `details` rather than a toggle of this app's own: the prompt and the sent text are long, and
+    // a native disclosure is the one thing here that already works with a screen reader and a
+    // find-in-page.
+    function arbDecText(summary, text) {
+      if (!text) return '';
+      return `<details class="arb-dec-text"><summary>${escapeHtml(summary)}</summary>` +
+        `<pre>${escapeHtml(text)}</pre></details>`;
+    }
+
+    function arbDetailHtml(decisions, session) {
+      if (decisions === null) return '<p class="arb-dec-empty">Reading the session…</p>';
+      if (!decisions.length) {
+        return '<p class="arb-dec-empty">Nothing decided yet. The first decision is written when ' +
+          'a member ends a turn and the arbitrator answers.</p>';
+      }
+      return decisions.slice().reverse().map(d => {
+        const when = d.at ? new Date(d.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+        return `<div class="arb-dec${d.valid ? '' : ' bad'}">` +
+          `<p class="arb-dec-head"><span>${escapeHtml(arbDecTitle(d, session))}</span>` +
+          `<span class="arb-dec-at">${escapeHtml(when)}</span></p>` +
+          (d.why ? `<p class="arb-dec-why">${escapeHtml(d.why)}</p>` : '') +
+          (d.ambiguity || d.complexity
+            ? `<p class="arb-dec-meta">ambiguity ${escapeHtml(d.ambiguity || '—')} · ` +
+              `complexity ${escapeHtml(d.complexity || '—')}</p>` : '') +
+          arbDecText(d.prompt ? `What it was shown · ${d.prompt.trigger || 'prompt'}` : '',
+                     d.prompt ? d.prompt.body : '') +
+          arbDecText('What it wrote', d.instruction) +
+          // Said, not left blank. A decision with no send is either a refusal or a delivery the
+          // relay could not prove, and the second is the one a person has to go and look at.
+          (d.send
+            ? arbDecText(`What was typed · ${d.send.pane_id}`, d.send.text)
+            : (d.valid ? '<p class="arb-dec-meta">Nothing recorded as delivered — the pane never ' +
+                         'confirmed it.</p>' : '')) +
+          '</div>';
+      }).join('');
+    }
+
+    function arbRenderDetail() {
+      const el = document.getElementById('arbDetailBody');
+      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSession);
+    }
+
+    function arbOpenDetail() {
+      if (!arbSession) return;
+      arbDetail = null;                 // never the previous session's, not even for a frame
+      arbDetailFor = arbSession.id;
+      const el = document.getElementById('arbSheet');
+      if (el) el.style.display = 'block';
+      arbRenderDetail();
+      arbSend({type: 'arb_detail', session: arbSession.id});
+    }
+
+    function closeArbDetail() {
+      arbDetail = null;
+      arbDetailFor = '';
+      const el = document.getElementById('arbSheet');
+      if (el) el.style.display = 'none';
+    }
+
+    // Ignored unless it answers the sheet that is open. A late answer to a session that has since
+    // ended is prose about something else entirely.
+    function arbReceiveDetail(msg) {
+      if (!arbDetailFor || (msg.session || '') !== arbDetailFor) return;
+      arbDetail = Array.isArray(msg.decisions) ? msg.decisions : [];
+      arbRenderDetail();
     }
 
     function arbCommand(type) {

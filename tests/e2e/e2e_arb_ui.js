@@ -117,6 +117,18 @@ async function main() {
     const herdr = fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8');
     check('the instruction was typed at the member it named', herdr.includes('pane send-text a1:p2'), herdr.split('\n').slice(-4).join(' | '));
 
+    // The sheet, over the wire: the relay answers `arb_detail` to this client alone, and what it
+    // answers with is the only place the prompt the arbitrator was shown can be read back.
+    await page.click('#arbStrip .arb-last');
+    await page.waitForFunction(
+      () => /#1 · review/.test(document.querySelector('#arbDetailBody').textContent),
+      null, {timeout: 20000});
+    const sheet = await page.textContent('#arbDetailBody');
+    check('the sheet says what was decided and why', /Ready for review\./.test(sheet), sheet.slice(0, 200));
+    check('what the arbitrator wrote', /Check the footer change on mobile\./.test(sheet), sheet.slice(0, 300));
+    check('and where it was typed', /w?a1:p2/.test(sheet), sheet.slice(0, 300));
+    await page.click('#arbSheet button[aria-label="Close"]');
+
     // And the other half of what a person reads back: the prompt itself, in the thread. It is on
     // the user's side because it is a prompt, so the badge is the only thing telling a reader that
     // nobody typed it (N8). Only the relay's record knows that, so the toggle goes on first.

@@ -566,6 +566,11 @@
       else if (msg.type === 'arb_session') {
         arbReceiveSession(msg);
       }
+      // Answered to this client alone, because it carries prose — so it arrives only where a sheet
+      // asked for it.
+      else if (msg.type === 'arb_detail') {
+        arbReceiveDetail(msg);
+      }
       else if (msg.type === 'command_result' &&
                (msg.command === 'start_agent' || msg.command === 'open_terminal')) {
         document.getElementById('startSubmit').disabled = false;

@@ -1649,6 +1649,26 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({
                         "type": "error", "message": "arbitration is off"}))
                     continue
+                if msg_type == "arb_detail":
+                    # Answered to the asking client and never broadcast: this is the one
+                    # arbitration message that carries prose — an arbitrator's prompt, its
+                    # instruction and the text that was typed at a member — and prose goes only
+                    # where it was asked for, exactly as `conv_log` does.
+                    try:
+                        decisions = await asyncio.to_thread(
+                            arbitration.detail, msg.get("session") or "")
+                    except ArbiterError as e:
+                        await ws.send(json.dumps({
+                            "type": "error", "code": e.code, "message": str(e)}))
+                        continue
+                    except (KeyError, sqlite3.Error, OSError) as e:
+                        await ws.send(json.dumps({"type": "error",
+                                                  "message": f"{msg_type}: {e}"}))
+                        continue
+                    await ws.send(json.dumps({
+                        "type": "arb_detail", "session": msg.get("session") or "",
+                        "decisions": decisions}))
+                    continue
                 try:
                     if msg_type == "arb_start":
                         # The relay assigns the id; a client never names one, because every path

@@ -521,6 +521,66 @@ class InvalidRecords(Harness):
         self.assertEqual("sent", self.arb.collect(s["id"], handle["prompt_id"])["outcome"])
 
 
+class Detail(Harness):
+    """§15.3's sheet — the record, the prompt that produced it, and the send it caused.
+
+    The three things a person checks an automated send against, which is the whole job: a
+    keystroke nobody typed is only accountable if what caused it can be read back.
+    """
+
+    def test_a_decision_carries_the_prompt_it_answered_and_the_send_it_caused(self):
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        d, = self.arb.detail(s["id"])
+        self.assertEqual((1, "review", "member-2", True), (d["sequence"], d["gate"], d["to"],
+                                                           d["valid"]))
+        self.assertIn("Take a look.", d["instruction"])
+        self.assertEqual("turn_end — member-1", d["prompt"]["trigger"])
+        self.assertIn("member-1", d["prompt"]["body"])
+        self.assertEqual("p2", d["send"]["pane_id"])
+        self.assertIn("Take a look.", d["send"]["text"])
+
+    def test_a_rejected_decision_is_in_the_sheet_with_no_send(self):
+        # The one a person most wants to read. Left out, a re-prompt looks like nothing happened.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"], gate="deploy")
+        self.arb.collect(s["id"], handle["prompt_id"])
+        d, = self.arb.detail(s["id"])
+        self.assertFalse(d["valid"])
+        self.assertEqual("unknown_gate", d["reject_code"])
+        self.assertIsNone(d["send"])
+
+    def test_an_unconfirmed_send_has_no_send_row_to_show(self):
+        # §13.2: `sends` is what the relay stands behind. The sheet says the same thing — the
+        # decision is there, the delivery is not claimed, and the session paused saying why.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: False
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        d, = self.arb.detail(s["id"])
+        self.assertTrue(d["valid"])
+        self.assertIsNone(d["send"])
+
+    def test_oldest_first_and_bounded(self):
+        s = self.start()
+        for _ in range(2):
+            handle = self.step(s["id"])
+            self.write(s["id"], handle["sequence"])
+            self.arb.collect(s["id"], handle["prompt_id"])
+        out = self.arb.detail(s["id"])
+        self.assertEqual([1, 2], [d["sequence"] for d in out])
+        self.assertEqual([2], [d["sequence"] for d in self.arb.detail(s["id"], last=1)])
+
+    def test_a_session_that_does_not_exist_is_a_refusal_and_not_an_empty_sheet(self):
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.detail("s-nope")
+        self.assertEqual("no_session", caught.exception.code)
+
+
 class NeverFromProse(Harness):
     """T5 — N1 at the executor. Approving language in the transcript moves nothing."""
 

@@ -2747,6 +2747,87 @@
       resize: vertical;
     }
 
+    /* The last-decision line is the way into the sheet, so it is a button that looks like the
+       text it replaced — a second control beside the sentence would be chrome beside the answer. */
+    .arb-strip button.arb-last {
+      font: inherit;
+      text-align: left;
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    /* One decision per block: what it decided, why, and the three texts behind it. */
+    .arb-dec {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .arb-dec.bad .arb-dec-head span:first-child {
+      color: var(--orange);
+    }
+
+    .arb-dec-head {
+      margin: 0;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      color: var(--text);
+      font-weight: 600;
+      font-size: 0.75rem;
+    }
+
+    .arb-dec-at {
+      margin-left: auto;
+      color: var(--muted);
+      font-weight: 400;
+      font-size: 0.68rem;
+    }
+
+    .arb-dec-why {
+      margin: 0;
+      color: var(--text);
+    }
+
+    .arb-dec-meta {
+      margin: 0;
+      font-size: 0.68rem;
+    }
+
+    .arb-dec-text summary {
+      cursor: pointer;
+      font-size: 0.68rem;
+    }
+
+    /* Agent text, so it keeps its own line breaks and scrolls rather than stretching the sheet. */
+    .arb-dec-text pre {
+      margin: 4px 0 0;
+      max-height: 40dvh;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.68rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+    }
+
+    .arb-dec-empty {
+      margin: 0;
+      padding: 16px;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
     .arb-form-actions {
       display: flex;
       justify-content: flex-end;
@@ -5436,6 +5517,22 @@
           style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Start
           conversation</button>
       </div>
+    </div>
+  </div>
+
+  <!-- What an arbitration session decided, and what it typed because of it. Read-only and fetched
+       on open: it carries prose, so the relay answers it to the client that asked and never
+       broadcasts it. -->
+  <div id="arbSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeArbDetail()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">What was decided</span>
+        <button onclick="closeArbDetail()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="arbDetailBody"></div>
     </div>
   </div>
 

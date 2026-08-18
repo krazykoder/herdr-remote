@@ -35,7 +35,7 @@ const SESSION = {
 
 function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) {
   const els = {};
-  const el = id => els[id] || (els[id] = {id, value: '', innerHTML: '', textContent: ''});
+  const el = id => els[id] || (els[id] = {id, value: '', innerHTML: '', textContent: '', style: {}});
   const sent = [], toasts = [];
   const g = {
     document: {getElementById: el},
@@ -251,4 +251,89 @@ test('a prompt the arbitrator delivered is not drawn as one the reader typed', (
   assert.equal(arbitrated.who, 'user', 'a prompt is a prompt, whoever wrote it');
   assert.equal(arbitrated.via, 'arbitrator');
   assert.equal(typed.via, undefined, 'and a person’s own prompt carries no badge');
+});
+
+// --- the detail sheet ---------------------------------------------------------------------
+//
+// The record, the prompt that produced it and the send it caused (§15.3). A keystroke nobody typed
+// is only accountable if all three can be read back together, so what this asserts is mostly that
+// none of them is quietly dropped.
+
+const DECISION = {
+  sequence: 1, at: 1755423862000, valid: true, reject_code: null, gate: 'review', to: 'member-2',
+  why: 'Ready for an independent check.', instruction: 'Check the footer on mobile.',
+  ambiguity: 'low', complexity: 'low',
+  prompt: {trigger: 'turn_end — member-1', at: 1755423861000, body: 'member-1 said: done.'},
+  send: {pane_id: 'w1:p2', to: 'member-2', at: 1755423863000, text: 'Please review…'},
+};
+
+test('a sheet with no answer yet says so, and an empty session says something else', () => {
+  const {g} = ctx();
+  assert.match(g.arbDetailHtml(null, SESSION), /Reading the session/);
+  assert.match(g.arbDetailHtml([], SESSION), /Nothing decided yet/);
+});
+
+test('a decision shows what it decided, what it was shown, and what was typed', () => {
+  const {g} = ctx();
+  const html = g.arbDetailHtml([DECISION], SESSION);
+  assert.match(html, /#1 · review · Reviewer 1/);
+  assert.match(html, /Ready for an independent check\./);
+  assert.match(html, /ambiguity low · complexity low/);
+  assert.match(html, /member-1 said: done\./, 'the prompt it answered');
+  assert.match(html, /Check the footer on mobile\./, 'what it wrote');
+  assert.match(html, /Please review…/, 'and what was actually typed');
+  assert.match(html, /w1:p2/, 'at which pane');
+});
+
+test('a refused decision says which rule refused it and shows no send', () => {
+  const {g} = ctx();
+  const html = g.arbDetailHtml([{...DECISION, valid: false, reject_code: 'unknown_gate',
+                                 send: null}], SESSION);
+  assert.match(html, /#1 · refused · unknown gate/);
+  assert.ok(!html.includes('Please review…'), html);
+  assert.ok(!/Nothing recorded as delivered/.test(html), 'a refusal delivered nothing by design');
+});
+
+test('a valid decision with no send says the delivery was never confirmed', () => {
+  // The one a person has to go and look at: the text probably landed, and the relay will not say
+  // that it did.
+  const {g} = ctx();
+  assert.match(g.arbDetailHtml([{...DECISION, send: null}], SESSION),
+               /Nothing recorded as delivered/);
+});
+
+test('the newest decision is at the top', () => {
+  const {g} = ctx();
+  const html = g.arbDetailHtml([DECISION, {...DECISION, sequence: 2, why: 'Second.'}], SESSION);
+  assert.ok(html.indexOf('#2') < html.indexOf('#1'), html);
+});
+
+test('opening the sheet asks the relay for the session it is open on', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  g.arbOpenDetail();
+  assert.deepEqual(sent, [{type: 'arb_detail', session: 's-20260817-1103'}]);
+  assert.equal(els.arbSheet.style.display, 'block');
+  assert.match(els.arbDetailBody.innerHTML, /Reading the session/);
+
+  g.arbReceiveDetail({type: 'arb_detail', session: 's-20260817-1103', decisions: [DECISION]});
+  assert.match(els.arbDetailBody.innerHTML, /#1 · review/);
+});
+
+test('an answer about another session is not drawn into this sheet', () => {
+  const {g, els} = ctx();
+  g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  g.arbOpenDetail();
+  g.arbReceiveDetail({type: 'arb_detail', session: 's-other', decisions: [DECISION]});
+  assert.match(els.arbDetailBody.innerHTML, /Reading the session/);
+});
+
+test('a reconnect closes the sheet rather than leaving another relay’s prose on screen', () => {
+  const {g, els} = ctx();
+  g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  g.arbOpenDetail();
+  g.arbReset();
+  assert.equal(els.arbSheet.style.display, 'none');
+  g.arbReceiveDetail({type: 'arb_detail', session: 's-20260817-1103', decisions: [DECISION]});
+  assert.match(els.arbDetailBody.innerHTML, /Reading the session/, 'and nothing lands in it after');
 });

@@ -50,6 +50,11 @@ DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 3, "max_wall_clock_ms": 45 
 BUDGET_MAX = {"max_steps": 50, "max_consecutive": 20, "max_wall_clock_ms": 8 * 60 * 60 * 1000}
 
 MAX_SCOPE = 4_000
+# What one `arb_detail` answers with. A session is bounded by its own budget, so the cap is a
+# ceiling on a payload rather than a policy — and the text fields are the prompt an arbitrator was
+# given and the instruction it produced, both of which are whole agent turns.
+DETAIL_DECISIONS = 20
+DETAIL_TEXT = 8_000
 MEMBERS_REQUIRED = 2      # v1, until a two-member loop has been watched running for real (§14.1)
 RUNNING = ("active", "awaiting")
 # A pane acting on something is never written to (N7). Matches SUBMIT_TOOK in herdr_relay.py, and
@@ -372,6 +377,47 @@ class Arbitration:
     def members(self, session_id):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM members WHERE session_id = ? ORDER BY member_id", (session_id,))]
+
+    def detail(self, session_id, last=DETAIL_DECISIONS):
+        """Every decision this session made, with the prompt it answered and the send it caused.
+
+        §15.3's detail sheet. The three things a person checks an automated send against, and the
+        only arbitration message carrying prose — which is why the relay answers it to the client
+        that asked and never broadcasts it. Rejections are included: a decision that was refused is
+        the one somebody most wants to read, and leaving it out would make a re-prompt look like
+        nothing happened.
+
+        Text is capped per field rather than dropped. A truncated prompt still says what was asked;
+        an absent one leaves a sheet that cannot answer the question it exists for.
+        """
+        self.session(session_id)        # raises no_session, which is the client's answer
+        rows = self.conn.execute(
+            "SELECT * FROM decisions WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, max(1, min(int(last or DETAIL_DECISIONS), DETAIL_DECISIONS)))).fetchall()
+        prompts = {r["id"]: dict(r) for r in self.conn.execute(
+            "SELECT * FROM prompts WHERE session_id = ?", (session_id,))}
+        sends = {r["decision_id"]: dict(r) for r in self.conn.execute(
+            "SELECT * FROM sends WHERE session_id = ?", (session_id,))}
+        out = []
+        for r in reversed(rows):
+            prompt = prompts.get(r["prompt_id"])
+            send = sends.get(r["id"])
+            out.append({
+                "sequence": r["sequence"], "at": r["at"], "valid": bool(r["valid"]),
+                "reject_code": r["reject_code"], "gate": r["gate"], "to": r["to_member"],
+                "why": r["why"], "instruction": (r["instruction"] or "")[:DETAIL_TEXT],
+                "ambiguity": r["ambiguity"], "complexity": r["complexity"],
+                "prompt": None if prompt is None else {
+                    "trigger": prompt["trigger"], "at": prompt["sent_at"],
+                    "body": prompt["body"][:DETAIL_TEXT]},
+                # Present only where the relay stands behind the delivery. An unconfirmed send has
+                # no row here on purpose (§13.2), and a sheet that invented one would be saying the
+                # opposite of what the session paused for.
+                "send": None if send is None else {
+                    "pane_id": send["pane_id"], "to": send["to_member"], "at": send["at"],
+                    "text": send["text"][:DETAIL_TEXT]},
+            })
+        return out
 
     def roster(self, session_id):
         """The roster as `validate` and `trigger_prompt` want it: resolution and status per member.
