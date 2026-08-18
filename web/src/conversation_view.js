@@ -359,6 +359,8 @@
       if (!on) {
         box.innerHTML = '';
         convViewHtml = '';   // emptied here, so the diff below must not skip redrawing the same thread
+        const workingEl = document.getElementById('paneWorking');
+        if (workingEl) workingEl.innerHTML = '';
         // The pane switched to reads as rows, so nothing will consume this. Left armed it would
         // yank the next thread to its end under a reader who had scrolled up in it.
         convStickNext = false;
@@ -452,7 +454,27 @@
       convPickedOf = entries.length;
       syncConvBadge();
       drawConvSel();
+      const workingEl = document.getElementById('paneWorking');
+      if (workingEl) {
+        const workingList = (recs || []).map(r => {
+          const live = agents.find(x => convMemberKey(x) === r.key);
+          return (live && (live.status === 'working' || live.agent_status === 'working')) ? live : null;
+        }).filter(Boolean);
+        workingEl.innerHTML = convWorkingBadgesHtml(workingList);
+      }
       box.scrollTop = stick ? box.scrollHeight : at;
+    }
+
+    function convWorkingBadgesHtml(workingList) {
+      if (!workingList || !workingList.length) return '';
+      return workingList.map(a => {
+        const name = paneLabel(a) || a.pane_id || 'Agent';
+        const badge = a.agent ? agentBadge(a.agent) : '';
+        return `<div class="conv-working-chip">` +
+          `<span class="conv-working-dot" aria-hidden="true"></span> ` +
+          `<span>Working … <strong>${escapeHtml(name)}</strong></span>${badge}` +
+          `</div>`;
+      }).join('');
     }
 
     // The draft slot at the foot of a pane's thread: one bubble held open for as long as the pane

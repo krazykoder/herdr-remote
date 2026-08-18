@@ -915,6 +915,14 @@
       syncDockPicks(entries.length);
       renderConvDock();
       renderConvStrip();
+      const workingEl = document.getElementById('convViewWorking');
+      if (workingEl) {
+        const workingList = (members || []).map(m => {
+          const liveAgent = agents.find(x => convMemberKey(x) === m.key);
+          return (liveAgent && (liveAgent.status === 'working' || liveAgent.agent_status === 'working')) ? liveAgent : null;
+        }).filter(Boolean);
+        workingEl.innerHTML = typeof convWorkingBadgesHtml === 'function' ? convWorkingBadgesHtml(workingList) : '';
+      }
       if (stick) view.scrollTop = view.scrollHeight;
     }
 

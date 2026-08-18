@@ -4107,3 +4107,30 @@ test('Resend is per pane, not one clipboard for all of them', async ({page}) => 
   await page.evaluate(() => openTerminal(agents.find(a => a.label === 'scratch').pane_id));
   await expect(page.locator('#resendBtn')).toBeHidden();
 });
+
+test('floating working badges appear in the top-left for working conversation members', async ({page}) => {
+  await open(page);
+  // Pane mode thread
+  await page.evaluate(() => {
+    const a = paneOf(activePane);
+    a.agent_status = 'working';
+    a.status = 'working';
+    saveConvIndex([{
+      id: 'c1', name: 'working conversation', created: Date.now(),
+      members: [{key: convMemberKey(a), added: Date.now(), label: 'Architect 1'}],
+    }]);
+    setConvMode(true);
+    renderConvView();
+  });
+  await expect(page.locator('#paneWorking .conv-working-chip')).toBeVisible();
+  await expect(page.locator('#paneWorking')).toContainText('Working … Architect 1');
+  await expect(page.locator('#paneWorking .badge')).toContainText('claude');
+
+  // Standalone conversation window
+  await page.evaluate(() => {
+    openConversation('c1');
+  });
+  await expect(page.locator('#convViewWorking .conv-working-chip')).toBeVisible();
+  await expect(page.locator('#convViewWorking')).toContainText('Working … Architect 1');
+});
+
