@@ -3364,10 +3364,10 @@ test('chips add up, in the order they were tapped', async ({page}) => {
   // Anchored at both ends — @test and @test-min are two chips, and a prefix match is both.
   const at = name => page.locator(`#xferRow .xfer-chip:text-matches("^@${name}[0-9]*$")`);
   await at('test').click();
-  await at('review').click();
+  await at('review-fix').click();
   // Numbered by the order they were chosen, because that order is what gets written.
   await expect(at('test')).toHaveText('@test1');
-  await expect(at('review')).toHaveText('@review2');
+  await expect(at('review-fix')).toHaveText('@review-fix2');
   await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (1) ›');
   await sendPicked(page);
   const body = await sentBody(page);
@@ -3384,7 +3384,7 @@ test('a filled instruction rides above the quote', async ({page}) => {
   await pickBubble(page, 'the other pane spoke first');
   // Filled in rather than attached, the instruction is ordinary text in the box — but it is still
   // the instruction, so it goes out where the attached form puts it: above what it is about.
-  await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review-fix")`).click();
   await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
   await sendPicked(page);
   const body = await sentBody(page);
@@ -3422,6 +3422,16 @@ test('a chip tapped twice comes back out', async ({page}) => {
   await expect(review).toHaveAttribute('aria-pressed', 'false');
   await sendPicked(page);
   expect(await sentBody(page)).not.toContain('Review, edit, fix');
+});
+
+test('@review-only writes the read-only review instruction', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.locator('#xferRow .xfer-chip:text-matches("^@review-only")').click();
+  await expect(page.locator('#convInput')).toHaveValue('Review only. Dont edit/ change code; then propose next steps.');
 });
 
 test('the target is every member, and the chosen one can be overridden', async ({page}) => {
@@ -4237,7 +4247,7 @@ test('the composer\'s own send carries the picked message too', async ({page}) =
   await pickBubble(page, 'the other pane spoke first');
   // Default prompt mode writes into the composer. The following note makes this the exact
   // transfer + @ prompt + typed text path, which must still use one atomic final submit.
-  await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review-fix")`).click();
   await page.locator('#convInput').pressSequentially('\nand this is why');
   // Two sends in one bubble that did different things would be a way to lose the quote by tapping
   // the nearer button. There is one message being written, so both send it.
@@ -4259,7 +4269,7 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     await tapWire(page);
     await openWindow(page);
     // The default: what the agent will receive is on screen, editable, before anything is sent.
-    await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@review-fix")`).click();
     await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
     // With something written, a prompt lands at the caret — where the writer is working — and
     // always as its own line, never spliced into the sentence holding it.
@@ -4286,7 +4296,7 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     expect(await sentBody(page)).toBe('just this');
     // Turned off, a chip goes back to riding the send instead.
     await attachMode(page);
-    await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+    await page.locator(`#xferRow .xfer-chip:text-matches("^@review-fix")`).click();
     await expect(page.locator('#convInput')).toHaveValue('');
     await compose(page, 'and now this');
     expect(await sentBody(page)).toContain('Review, edit, fix; then propose next steps.\n\nand now this');

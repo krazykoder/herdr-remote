@@ -48,7 +48,8 @@
     // everywhere else. Two fields rather than one derived from the other: a label is prose and can
     // be renamed without silently renaming the control the user has learned to tap.
     const SHORTCUTS = [
-      { at: 'review', label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
+      { at: 'review-fix', label: 'Review, edit & fix', text: 'Review, edit, fix; then propose next steps.' },
+      { at: 'review-only', label: 'Review only', text: 'Review only. Dont edit/ change code; then propose next steps.' },
       { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
       { at: 'test', label: 'Test',
         text: 'Write /update tests this needs, run them, and report what actually failed.' },
