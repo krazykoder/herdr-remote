@@ -676,16 +676,16 @@
       if (!key) return;
       let parsed = null;
       try { parsed = JSON.parse(key); } catch (e) {}
-      const targetPane = Array.isArray(parsed) && parsed[1] ? parsed[1] : null;
+      // The key first. Failing that, the same key with the local host spelled the one way — a live
+      // row is keyed under whichever spelling its record carried (see `convLiveKey`), and the two
+      // must land on the same member. The host is part of that comparison and never dropped from
+      // it: pane ids are unique per host and collide across them, so matching on a bare pane id
+      // would address a stranger on another machine.
       const live = dockMembers().find(a => {
         if (convMemberKey(a) === key) return true;
-        if (targetPane && a.pane_id === targetPane) return true;
-        if (Array.isArray(parsed)) {
-          const aHost = (a.host === 'local' || !a.host) ? 'local' : a.host;
-          const kHost = (parsed[0] === 'local' || !parsed[0]) ? 'local' : parsed[0];
-          return aHost === kHost && a.pane_id === parsed[1];
-        }
-        return false;
+        if (!Array.isArray(parsed)) return false;
+        const norm = h => (!h || h === 'local') ? 'local' : h;
+        return norm(a.host) === norm(parsed[0]) && a.pane_id === parsed[1];
       });
       // No target: the author has exited or is folded out of the thread.
       if (!live) return;
