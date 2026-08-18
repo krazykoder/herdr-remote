@@ -24,11 +24,14 @@ tested without a pane, a relay or a subprocess: `send(pane_id, text)` delivers a
 """
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import time
 
 from arbitrator import MAX_INSTRUCTION, validate
+
+log = logging.getLogger("herdr-relay")
 
 # The CRFN default. A gate is a name and a host-owned template; `{instruction}` is the only
 # substitution, and the arbitrator supplies prose, never a template. Shipping a different set is a
@@ -337,6 +340,22 @@ class Arbitration:
     def close(self):
         self.conn.close()
 
+    def _send(self, pane_id, text):
+        """Deliver, and say whether it was *proven* delivered. False is never guessed into a yes.
+
+        `is not False` rather than a truth test: a sender that returns nothing is one that does not
+        report, and treating its None as a failure would pause every session running against it.
+        Only an explicit False — which is what submit_paste says when the pane never confirmed —
+        counts as unproven.
+        """
+        try:
+            return self.send(pane_id, text) is not False
+        except Exception as e:
+            # Logged rather than swallowed: this pauses a session, and "send_unconfirmed" with no
+            # cause anywhere is the kind of stop a person cannot act on.
+            log.warning("arbitration: delivery to %s raised: %s", pane_id, e)
+            return False
+
     # --- reading ---
 
     def session(self, session_id):
@@ -436,7 +455,14 @@ class Arbitration:
                  p["pane_id"], at))
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
-        self.send(arbitrator["pane_id"], starter_prompt(scope, gates, self._query_path()))
+        if not self._send(arbitrator["pane_id"], starter_prompt(scope, gates, self._query_path())):
+            # Ended, not paused, and raised like every other start precondition. The starter prompt
+            # is the only thing that tells the arbitrator what it is and where to write; a session
+            # resumed without it has an agent that will never produce a decision file, so it would
+            # re-prompt once and pause again on `invalid_record` — a dead end wearing a Resume
+            # button. Failing the start leaves nothing behind and the person simply starts again.
+            self.end(session_id, "send_unconfirmed")
+            raise ArbiterError("send_unconfirmed", arbitrator["pane_id"])
         return self.session(session_id)
 
     def pause(self, session_id, reason):
@@ -603,7 +629,9 @@ class Arbitration:
         self.conn.commit()
         with open(path.replace("-decision.json", "-prompt.txt"), "w") as fh:
             fh.write(body)          # so a decision can be read against exactly what was seen
-        self.send(arb, body)
+        if not self._send(arb, body):
+            self.pause(session_id, "send_unconfirmed")
+            return None
         return {"sequence": sequence, "prompt_id": cur.lastrowid, "path": path}
 
     def read_dropbox(self, session_id, sequence):
@@ -665,7 +693,9 @@ class Arbitration:
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
             (s["id"], s["sequence"], "reprompt", body, self.clock()))
         self.conn.commit()
-        self.send(arb, body)
+        if not self._send(arb, body):
+            self.pause(s["id"], "send_unconfirmed")
+            return None
         return cur.lastrowid
 
     def collect(self, session_id, prompt_id):
@@ -732,7 +762,19 @@ class Arbitration:
             # otherwise re-prompt forever, spending no step and tripping no budget.
             return self._reject(s, decision_id, "target_not_live")
         text = render(json.loads(s["gates_json"]), doc["gate"], doc["instruction"])
-        self.send(fresh["pane_id"], text)
+        if not self._send(fresh["pane_id"], text):
+            # Unconfirmed is not "not delivered". submit_paste says False when it could not *prove*
+            # the pane took it, and its commonest False — a pane already working — is one where the
+            # text very probably landed and queued. So the thread gets the row (N8: an automated
+            # send is visible, and an unproven one is the one a person most needs to go and look
+            # at), while `sends` does not: that table is the relay's record of deliveries it stands
+            # behind, and a row there would make a maybe into a yes. No step is spent for the same
+            # reason — a budget counts things that certainly happened.
+            self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id,
+                              pane_id=fresh["pane_id"], agent=member.get("agent") or "")
+            self.pause(s["id"], "send_unconfirmed")
+            return {"outcome": "paused", "reason": "send_unconfirmed", "decision_id": decision_id,
+                    "to": doc["to"], "pane_id": fresh["pane_id"], "text": text}
         now = self.clock()
         self.conn.execute(
             "INSERT INTO sends (session_id, decision_id, to_member, pane_id, text, at) "

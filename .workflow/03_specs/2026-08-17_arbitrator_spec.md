@@ -543,6 +543,7 @@ All must hold, checked in this order, each with its own error:
 | `member_ambiguous` | A member's fingerprint matches more than one | Disambiguate by hand, then Resume |
 | `arbitrator_gone` | The arbitrator pane vanished | Re-point, then Resume |
 | `invalid_record` | Two consecutive invalid decisions | Resume; the sequence is retried |
+| `send_unconfirmed` | A delivery `submit_paste` could not prove landed (§13.2 step 3) | Read the pane, then Resume |
 | `call_human` | The arbitrator chose the `call_human` gate | Resume, or Cancel to end the session |
 | `restart` | The relay restarted while the session was running (§9.4) | Resume, after reading the last send |
 
@@ -759,13 +760,20 @@ On a valid decision that is not `call_human`:
 
 1. Re-resolve `to` (§5.2). Changed since validation → treat as `target_not_live` and re-prompt.
 2. Render the gate's template around `instruction` (§14.2).
-3. `run_herdr("pane", "run", pane_id, text)` — the `submit` path, so the text and its Enter arrive in
-   one herdr call. A busy agent handed a paste and then, moments later, an Enter swallows the Enter
-   and leaves the message unsent; this is the existing `send_text` lesson at
-   `relay/herdr_relay.py:1301`.
+3. `submit_paste(pane_id, text, …)` — delivers the bracketed paste and confirms against the
+   destination pane's `agent_status` rather than bare `pane run`, preventing Enter from being
+   swallowed while the destination TUI renders the payload (see 6d34544).
 4. In one transaction: insert `sends`, insert a `turns` row with `kind='arbitrated'`,
    `origin='arbitrator'`, `at_src='sent'` and `decision_id`, increment `steps_used` and
    `consecutive`.
+
+   An **unconfirmed** delivery splits that four ways rather than skipping it. `submit_paste`
+   returning `False` means *not proven*, not *not delivered* — its commonest `False` is a pane
+   already `working`, where the text almost certainly landed and queued. So the `turns` row is
+   written (N8: an automated send is visible in the thread, and an unproven one is the one a person
+   most needs to go and look at), `sends` is **not** (that table is the deliveries the relay stands
+   behind, and a row there turns a maybe into a yes), no budget moves (a budget counts what
+   certainly happened), and the session pauses with `send_unconfirmed`.
 5. `audit("arbitrated_send", …)` through the relay's existing JSONL audit log.
 6. Broadcast `arb_session` (§15.2).
 7. Session returns to `active`.

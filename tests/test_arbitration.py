@@ -215,6 +215,24 @@ class Start(Harness):
             self.start(members=[self.live[0], far])
         self.assertEqual("remote_participant", caught.exception.code)
 
+    def test_a_starter_prompt_that_cannot_be_confirmed_fails_the_start(self):
+        # Ended and raised, not paused. The starter prompt is the only thing telling the arbitrator
+        # what it is and where to write, and it is never re-sent — so a session resumed without it
+        # has an agent that will never produce a decision file. It would re-prompt once and pause
+        # on `invalid_record`: a dead end wearing a Resume button.
+        self.arb.send = lambda *_: False
+        with self.assertRaises(ArbiterError) as caught:
+            self.start()
+        self.assertEqual("send_unconfirmed", caught.exception.code)
+        self.assertIsNone(self.arb.running(), "a failed start leaves nothing running")
+
+    def test_a_failed_start_does_not_block_the_next_one(self):
+        self.arb.send = lambda *_: False
+        with self.assertRaises(ArbiterError):
+            self.start()
+        self.arb.send = lambda pid, text: self.sent.append((pid, text))
+        self.assertEqual("active", self.start()["state"])
+
     def test_an_empty_scope_is_refused(self):
         with self.assertRaises(ArbiterError) as caught:
             self.start(scope="   ")
@@ -333,6 +351,50 @@ class TheLoop(Harness):
         self.assertEqual("reprompt", out["outcome"])
         self.assertEqual(before + 1, len(self.sent))
         self.assertEqual("pA", self.sent[-1][0])
+
+    def test_an_unconfirmed_delivery_pauses_without_spending_or_recording_a_send(self):
+        # submit_paste says False when it could not *prove* the pane took the text. `sends` is the
+        # relay's record of deliveries it stands behind, so a row there would turn a maybe into a
+        # yes; a budget counts what certainly happened, so no step goes either.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: False
+        self.write(s["id"], handle["sequence"])
+        out = self.arb.collect(s["id"], handle["prompt_id"])
+        self.assertEqual("paused", out["outcome"])
+        self.assertEqual("send_unconfirmed", out["reason"])
+        self.assertEqual(0, self.arb.session(s["id"])["steps_used"])
+        self.assertEqual(0, self.arb.conn.execute("SELECT COUNT(*) FROM sends").fetchone()[0])
+
+    def test_an_unconfirmed_delivery_still_says_what_was_sent(self):
+        # Unconfirmed is not "not delivered" — submit_paste's commonest False is a pane already
+        # working, where the text very probably landed and queued. The person now has to go and
+        # look, and the outcome has to tell them where and at what.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: False
+        self.write(s["id"], handle["sequence"])
+        out = self.arb.collect(s["id"], handle["prompt_id"])
+        self.assertEqual("p2", out["pane_id"])
+        self.assertEqual("member-2", out["to"])
+        self.assertIn("Take a look.", out["text"])
+
+    def test_a_sender_that_reports_nothing_is_not_treated_as_a_failure(self):
+        # `is not False`, not a truth test. A sender returning None does not report; reading that
+        # as "unproven" would pause every session running against one.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: None
+        self.write(s["id"], handle["sequence"])
+        self.assertEqual("sent", self.arb.collect(s["id"], handle["prompt_id"])["outcome"])
+
+    def test_a_sender_that_raises_pauses_rather_than_escaping(self):
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: (_ for _ in ()).throw(RuntimeError("herdr gone"))
+        self.write(s["id"], handle["sequence"])
+        self.assertEqual("send_unconfirmed",
+                         self.arb.collect(s["id"], handle["prompt_id"])["reason"])
 
 
 class InvalidRecords(Harness):
@@ -500,6 +562,19 @@ class InTheThread(Harness):
         row = self.turns()[-1]
         self.assertEqual("decision", row["kind"])
         self.assertIn("schema change", row["text"])
+
+    def test_an_unconfirmed_send_is_in_the_thread_too(self):
+        # N8, at its most load-bearing. The text may well have landed, the session has stopped, and
+        # the thread is where the person looks to find out what went out before going to the pane.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.arb.send = lambda *_: False
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        row = self.turns()[-1]
+        self.assertEqual("arbitrated", row["kind"])
+        self.assertEqual("p2", row["pane_id"])
+        self.assertIn("Take a look.", row["text"])
 
     def test_a_rejected_decision_puts_nothing_in_the_thread(self):
         s = self.start()
