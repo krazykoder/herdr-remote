@@ -2253,23 +2253,34 @@
       display: none;
     }
 
-    /* The standalone view scrolls as a whole — .view already does — so the thread is content here
-       rather than its own scroller, and the header stays put by sticking rather than by a second
-       flex column. */
+    /* The standalone conversation view. #convView is fixed and flexed, with the thread scrolling
+       independently so the composer dock remains static at the bottom without rubber-banding. */
     #convView {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      height: 100%;
     }
 
-    /* Grows to fill the view so the dock below it is at the bottom of the screen and not halfway
-       up it: a conversation of three messages is the ordinary case, and a composer that floats in
-       the middle of an empty view reads as an unfinished layout. */
+    .conv-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+    }
+
     #convViewThread {
-      flex: 1 0 auto;
-      overflow: visible;
-      /* Room to scroll past the floating dock — measured, because the dock grows with the address
-         row, the instruction list and a composer that has been typed into. See syncDockHeight. */
-      padding-bottom: calc(var(--dock-h, 96px) + 8px);
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      padding: 44px 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     /* Full width, unlike the pane's thread. There the 86% leaves room for the other half of a pair
@@ -2280,25 +2291,20 @@
     }
 
     .conv-view-top {
-      position: sticky;
-      top: 0;
+      flex-shrink: 0;
+      position: relative;
       z-index: 2;
     }
 
-    /* The dock floats: sticky pins it to the bottom of the view, and the negative margin takes back
-       the space it would otherwise occupy, so the conversation scrolls behind it rather than
-       stopping above it. #convViewThread's padding is what lets the last bubble clear it. */
+    /* The dock sits statically at the bottom of the conversation view, never rubber-banding or
+       moving with the scrolling bubbles. */
     .conv-dock {
-      position: sticky;
-      bottom: 0;
+      flex-shrink: 0;
+      position: relative;
       z-index: 3;
       display: flex;
       flex-direction: column;
-      margin-top: calc(-1 * var(--dock-h, 96px));
-      /* Not a hard edge: the thread fades into the dock instead of sliding under a line, which is
-         what makes it read as depth rather than as two panels meeting. */
-      background: linear-gradient(to top, var(--bg) 68%, transparent);
-      pointer-events: none;   /* the fade is not a wall; the controls in it take their own taps */
+      background: var(--bg);
     }
 
     .conv-dock[hidden] {
@@ -4827,16 +4833,13 @@
         </svg></button>
     </div>
     </div>
-    <div class="conv-thread" id="convViewThread"></div>
-    <!-- The jump to the end, at the end. This view is its own scroller, so a zero-height sticky
-         layer is what holds a button still over content that scrolls under it — an absolute one
-         inside a scroll box scrolls away with the text. -->
-    <div class="hang-layer hang-bottom">
-      <button class="hang-btn hang-last" id="convLast" onclick="hangToLastConv()"
+    <div class="conv-wrap" id="convWrap">
+      <div class="conv-thread" id="convViewThread"></div>
+      <button class="hang-btn hang-last hang-corner" id="convLast" onclick="hangToLastConv()"
         aria-label="Jump to the newest message">↓ Last</button>
     </div>
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
-         modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
+         modifies. Sits statically at the bottom of the conversation view. -->
     <div class="conv-dock" id="convDock">
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>

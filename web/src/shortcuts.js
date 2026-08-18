@@ -824,7 +824,7 @@
       const view = document.getElementById('convView');
       if (!view || view.style.display === 'none') return;
       const box = document.getElementById('convViewThread');
-      const stick = bottom || view.scrollTop + view.clientHeight >= view.scrollHeight - 24;
+      const stick = bottom || box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
@@ -923,7 +923,7 @@
         }).filter(Boolean);
         workingEl.innerHTML = typeof convWorkingBadgesHtml === 'function' ? convWorkingBadgesHtml(workingList) : '';
       }
-      if (stick) view.scrollTop = view.scrollHeight;
+      if (stick) box.scrollTop = box.scrollHeight;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every

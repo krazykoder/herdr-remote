@@ -24,10 +24,9 @@
       return box && !box.hidden ? box : document.getElementById('termContent');
     }
 
-    // The conversation window scrolls as a whole — see `.view` — so the scroller is the view, not
-    // the thread inside it.
+    // The conversation window thread box is the scroller inside .conv-wrap.
     function hangConvBox() {
-      return document.getElementById('convView');
+      return document.getElementById('convViewThread') || document.getElementById('convView');
     }
 
     function hangSync() {
@@ -117,7 +116,7 @@
     // Scroll says where the reader is; a resize of the content says the thread grew under them,
     // which changes the same answer without a scroll event ever firing.
     {
-      const boxes = ['termContent', 'convThread', 'convView']
+      const boxes = ['termContent', 'convThread', 'convViewThread', 'convView']
         .map(id => document.getElementById(id)).filter(Boolean);
       for (const el of boxes) el.addEventListener('scroll', hangSync, { passive: true });
       if (typeof ResizeObserver === 'function') {
