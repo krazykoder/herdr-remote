@@ -1,0 +1,139 @@
+// One arbitration session, start to end, driven from the page.
+//
+// tests/e2e/e2e_arbitration.py proves the loop against a websocket client, and the Playwright
+// suite proves the strip against sessions it writes itself. Neither watches a person start a
+// session and watch it decide: the browser suite's fake herdr reports a fixed board, so a turn
+// there can never end. This one holds both halves at once — a real relay, a real browser, and a
+// pane list that moves — which is the only arrangement where the strip is drawn from a decision
+// that actually happened.
+//
+// Not part of the Playwright suite: it owns its own relay and rewrites its own board, and it costs
+// ~30 seconds. Run it deliberately, after touching the strip or the loop under it:
+//
+//   node tests/e2e/e2e_arb_ui.js
+const {chromium} = require('playwright');
+const {spawn} = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const REPO = path.join(__dirname, '..', '..');
+const PORT = Number(process.env.HERDR_E2E_UI_PORT || 8399);
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'arb-live-'));
+const STATE = path.join(TMP, 'panes.json');
+const DB = path.join(TMP, 'arb', 'arbitration.sqlite3');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const PANES = [
+  {pane_id: 'a1:p1', agent: 'claude', label: 'Architect 1', agent_status: 'idle', cwd: '/work/one', workspace_id: 'a1', tab_id: 'a1:t1'},
+  {pane_id: 'a1:p2', agent: 'codex', label: 'Reviewer 1', agent_status: 'idle', cwd: '/work/two', workspace_id: 'a1', tab_id: 'a1:t2'},
+  {pane_id: 'a1:p3', agent: 'claude', label: 'Arbitrator', agent_status: 'idle', cwd: '/work/arb', workspace_id: 'a1', tab_id: 'a1:t3'},
+];
+const write = p => fs.writeFileSync(STATE, JSON.stringify(p));
+const setStatus = (id, s) => {
+  const p = JSON.parse(fs.readFileSync(STATE, 'utf8'));
+  p.find(x => x.pane_id === id).agent_status = s;
+  write(p);
+};
+const endTurn = async id => { setStatus(id, 'working'); await sleep(2.6e3); setStatus(id, 'done'); };
+
+let fails = 0;
+const check = (name, ok, detail) => { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : `  ${detail}`)); if (!ok) fails++; };
+
+async function main() {
+  fs.mkdirSync(path.join(TMP, 'logs'), {recursive: true});
+  write(PANES);
+  const env = {...process.env};
+  for (const k of Object.keys(env)) if (k.startsWith('HERDR_') || k.startsWith('FAKE_')) delete env[k];
+  Object.assign(env, {
+    PATH: `${REPO}/tests/e2e/bin:${process.env.PATH}`,
+    HERDR_BIN: `${REPO}/tests/e2e/bin/herdr`,
+    FAKE_LOG: path.join(TMP, 'fake_herdr.log'),
+    FAKE_PANES: STATE,
+    HERDR_RELAY_PORT: String(PORT),
+    HERDR_LAN_BIND: '127.0.0.1',
+    HERDR_LAN_OPEN: '1',
+    HERDR_STATE_DIR: path.join(TMP, 'logs'),
+    HERDR_ARBITER_DB: DB,
+    HERDR_CONV_LOG: '1',
+    HERDR_ENABLE_WRITE_EXT: '1',
+    HERDR_ENABLE_ARBITER: '1',
+  });
+  const out = fs.openSync(path.join(TMP, 'relay.out'), 'w');
+  const relay = spawn(`${REPO}/.venv313/bin/python`, [`${REPO}/relay/herdr_relay.py`], {stdio: ['ignore', out, out], env});
+  for (let i = 0; i < 100; i++) {
+    try { const r = await fetch(`http://127.0.0.1:${PORT}/`); if (r.ok) break; } catch (e) {}
+    await sleep(200);
+  }
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  page.on('console', m => { if (m.type() === 'error') console.log('  console:', m.text()); });
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/`);
+    await page.waitForSelector('#agents .agent');
+    await page.evaluate(() => {
+      const keys = ['Architect 1', 'Reviewer 1'].map(n => convMemberKey(agents.find(a => a.label === n)));
+      saveConvIndex([{id: 'c1', name: 'footer', created: Date.now(),
+        members: keys.map((k, i) => ({key: k, added: Date.now(), label: ['Architect 1', 'Reviewer 1'][i]}))}]);
+      openConversation('c1');
+    });
+
+    await page.click('#arbStrip button');
+    await page.fill('#arbScope', 'Get the footer change reviewed, then stop.');
+    await page.selectOption('#arbWho', {label: 'Arbitrator'});
+    await page.click('#arbStrip .arb-btn.go');
+
+    await page.waitForSelector('#arbStrip .arb-strip', {timeout: 30000});
+    const running = await page.textContent('#arbStrip .arb-strip');
+    check('the strip appears when the relay says the session exists', /Arbitrating|Deciding/.test(running), running);
+
+    const id = await page.evaluate(() => arbSession && arbSession.id);
+    check('and it is the relay that named it', /^s-/.test(id || ''), id);
+
+    // The starter prompt's Enter left the arbitrator working. A person's arbitrator reads it and
+    // goes quiet; this is that, and until it happens there is nothing free to decide with.
+    await sleep(2.6e3);
+    setStatus('a1:p3', 'done');
+
+    // A member finishes a turn. That transition is the whole trigger.
+    await endTurn('a1:p1');
+    await page.waitForFunction(() => /Deciding/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 30000});
+    check('a member ending a turn puts the strip in Deciding', true);
+
+    // The arbitrator's whole side of the protocol: one file, then its own turn ends.
+    fs.writeFileSync(path.join(TMP, 'arb', 'arbitration', id, '0001-decision.json'), JSON.stringify({
+      session_id: id, sequence: 1, gate: 'review', to: 'member-2',
+      instruction: 'Check the footer change on mobile.', why: 'Ready for review.',
+      ambiguity: 'low', decision_complexity: 'low'}));
+    await sleep(2.6e3);
+    setStatus('a1:p3', 'done');
+
+    await page.waitForFunction(() => /review ·/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 30000});
+    const decided = await page.textContent('#arbStrip .arb-strip');
+    check('the decision reaches the strip by gate, target and why', /review · Reviewer 1 · Ready for review\./.test(decided), decided);
+    check('and the budget it spent', /steps · \d+ min/.test(decided), decided);
+
+    const herdr = fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8');
+    check('the instruction was typed at the member it named', herdr.includes('pane send-text a1:p2'), herdr.split('\n').slice(-4).join(' | '));
+
+    await page.getByRole('button', {name: 'Pause'}).click();
+    await page.waitForFunction(() => /Paused/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 15000});
+    check('Pause stops it, from the page', true);
+
+    const end = page.locator('#arbStrip').getByRole('button', {name: /End/});
+    await end.click(); await end.click();
+    await page.waitForFunction(() => /Arbitrate/.test(document.querySelector('#arbStrip').textContent), null, {timeout: 15000});
+    check('and ending takes the strip with it', true);
+  } catch (e) {
+    check('the run finished', false, String(e));
+    console.log(fs.readFileSync(path.join(TMP, 'relay.out'), 'utf8').split('\n').slice(-25).join('\n'));
+  } finally {
+    await browser.close();
+    relay.kill('SIGKILL');
+  }
+  console.log(fails ? `\n${fails} FAILED — ${TMP}` : '\nALL PASS');
+  fs.rmSync(TMP, {recursive: true, force: true});
+  process.exit(fails ? 1 : 0);
+}
+main();

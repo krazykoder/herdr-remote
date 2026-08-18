@@ -70,6 +70,10 @@ node --test tests/*.js
 # what a vm slice cannot see: the page booting at all, state clearing between panes, layout.
 npm ci && npx playwright install chromium        # first run only
 npx playwright test
+
+# One arbitration session start to end, driven from a real browser against a relay whose pane
+# list moves. The only place the strip is drawn from a decision that actually happened. ~30s.
+node tests/e2e/e2e_arb_ui.js
 ```
 
 The app still **ships** as one file with no runtime dependencies, but it is no longer **written**
