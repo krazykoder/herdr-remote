@@ -86,7 +86,7 @@
         // pane alone would narrow a joint thread for one frame. The tidy below is a repair of the
         // local transcript and runs either way — the toggle changes what is drawn, not what is
         // stored.
-        if (convLiveOn()) { convLiveAt = 0; renderConvView(); }
+        if (convLiveOn()) { convLiveInvalidate(); renderConvView(); }
         const removed = await convTidyQuiet([convMemberKey(a)]);
         if (removed) showToast(`Removed ${removed} duplicate message${removed > 1 ? 's' : ''}`);
       } finally {
@@ -103,7 +103,7 @@
       if (!conv) return;
       if (btn) btn.classList.add('busy');
       try {
-        if (convLiveOn()) convLiveAt = 0;   // ask the relay again, on the way through
+        if (convLiveOn()) convLiveInvalidate();   // ask the relay again, on the way through
         const removed = await convTidyQuiet((conv.members || []).map(m => m.key));
         convStandaloneHtml = '';        // the thread is being redrawn from the record, not diffed
         await renderConvStandalone(true);

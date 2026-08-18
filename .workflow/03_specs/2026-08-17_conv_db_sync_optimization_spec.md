@@ -39,15 +39,41 @@ Optimize backend database queries and frontend synchronization for live conversa
 ## 3. Frontend Architecture (`conv_live.js`)
 
 1. **`convLiveCache` Map**:
-   - Keys: Normalized fingerprint strings `JSON.stringify([host, agent, cwd])`.
-   - Values: `{ turns: Turn[], maxSeq: number, maxAt: number, lastFetch: number }`.
+   - Keys: Normalized fingerprint strings `JSON.stringify([host, agent, cwd])`, with the local host
+     folded to one spelling (`convNormHost`) so a bucket is never filled under `local` and read
+     under `''`.
+   - Values: `{ turns: Turn[], syncedTo: number, answered: boolean, lastFetch: number }`.
+   - `syncedTo` is **the id this fingerprint has been answered through**, not the id of its newest
+     turn. A roster query covers every member jointly, so a member that produced nothing is proven
+     empty up to the highest id the answer carried. Storing the newest-turn id instead leaves any
+     pane with no turns permanently cold, which re-asks for the full window every cadence and
+     defeats the optimization for the ordinary case of a new member.
 2. **Delta Query Logic (`convLiveFetch`)**:
-   - If all member fingerprints in the active conversation are warm in `convLiveCache` (`maxSeq > 0`), sends `since_id = Math.min(...maxSeqs)`.
-   - Skips network requests if all members were fetched within `CONV_LIVE_EVERY` (5s) unless `force` is true.
+   - `since_id = min(syncedTo)` over the roster — the **floor**, because the buckets were last
+     answered by different queries and the only id every member is current through is the lowest.
+     A member with no bucket sends the query whole.
+   - Skips the query if every member was fetched within `CONV_LIVE_EVERY` (5s) unless `force`.
+   - `force` (a turn ending, or ⟳) asks for the window rather than the difference: it is the only
+     path that repairs a row edited or pruned behind this client's back.
 3. **Cache Reconciliation (`convLiveReceive`)**:
-   - Appends incoming turns into respective fingerprint buckets, deduplicating by `seq`/`id`.
-   - Maintains sorted order by `(at, seq)`.
+   - Appends incoming turns into their fingerprint's bucket, deduplicating by `seq`.
+   - Raises `syncedTo` and sets `answered` for **every fingerprint the request named** — which is
+     why the response echoes `fingerprints`: without it an empty answer cannot be told from a
+     question never asked.
+   - Sorts by `(at, seq)` and trims to `CONV_LIVE_ROWS`, only for buckets this answer touched. The
+     trim holds across deltas the same ceiling a single query carries; without it a session left
+     open grows a bucket without bound.
 4. **Conversation Assembly (`convLiveEntries`)**:
-   - Retrieves turns from `convLiveCache` for the active conversation's member keys.
+   - Retrieves turns from `convLiveCache` for the active conversation's member keys, deduplicating
+     across members that fold to one fingerprint.
    - Assigns `member` index and resolves local/bare member keys.
    - Sorts and formats into renderable message entry objects.
+
+### Invalidation
+`convLiveInvalidate(keys?)` drops the cadence, never the rows. It is what the three "ask again now"
+call sites use — a turn ending (`conversation_store.js`), the pane's ⟳ and the window's ⟳
+(`hang_controls.js`) — and the live toggle. Passing no keys invalidates every bucket.
+
+### Non-goals
+The `HERDR_ARBITER_DB` default location is out of scope and unchanged
+(`.herdr-remote/arbitration.sqlite3`).
