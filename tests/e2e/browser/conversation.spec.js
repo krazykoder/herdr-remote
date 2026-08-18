@@ -624,10 +624,10 @@ test('landing keeps auto conversations optional and bounded', async ({page}) => 
     renderConversations();
   });
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
-  await expect(page.locator('#conversations .section-action')).toHaveText('Show auto (12)');
-  await page.locator('#conversations .section-action').click();
+  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Show auto (12)');
+  await page.locator('#conversations .conv-auto-toggle').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(11);
-  await expect(page.locator('#conversations .section-action')).toHaveText('Hide auto (12)');
+  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Hide auto (12)');
 });
 
 test('landing lists the named ones first, newest activity at the top of each tier',
@@ -2123,7 +2123,7 @@ test('the strip hides the auto conversations exactly when the landing list does'
   await page.locator('#conversations .conversation-card').click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
   await page.locator('#convView .back').click();
-  await page.locator('#conversations .section-action').click();
+  await page.locator('#conversations .conv-auto-toggle').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
   await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(2);
@@ -4531,4 +4531,40 @@ test('a conversation of one is never offered a solo to be in', async ({page}) =>
   await expect(soloBanner(page)).toBeHidden();
   await page.locator('#xferRow .xfer-chip.opts').click();
   await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'})).toHaveCount(0);
+});
+
+// --- Starting one from the landing page ---
+// Every other way into a conversation begins at a pane: open it, name a conversation, and the
+// pane is the first member. This is the other direction — an empty one first, members after —
+// which is what "put these three together" needs and what the pane-first flow cannot express.
+
+test('the Conversations header starts an empty one and opens it on its picker', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  // The header is drawn with nothing under it, or the first conversation could never be made here.
+  await expect(page.locator('#conversations .section-header')).toBeVisible();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(0);
+
+  await page.locator('#conversations .conv-new').click();
+  await expect(page.locator('#convViewTitle')).toHaveText('New conversation');
+  await expect(page.locator('#convViewWho')).toHaveText(/0 panes/);
+  // Landed on the one thing there is to do: the roster open, with the picker already down.
+  await expect(page.locator('#convViewRoster')).toBeVisible();
+  await expect(page.locator('.conv-roster-add')).toBeVisible();
+
+  await page.locator('.conv-roster-add .conv-chip').first().click();
+  await expect(page.locator('#convViewWho')).toHaveText(/1 pane\b/);
+  await page.locator('#convView .back').click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
+});
+
+test('a second one is numbered rather than named the same thing twice', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await page.locator('#conversations .conv-new').click();
+  await page.locator('#convView .back').click();
+  await page.locator('#conversations .conv-new').click();
+  await expect(page.locator('#convViewTitle')).toHaveText('New conversation 2');
+  await page.locator('#convView .back').click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
 });

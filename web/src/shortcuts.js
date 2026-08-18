@@ -243,10 +243,17 @@
       });
       const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
       const autoControl = autos.length
-        ? `<button class="section-action" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
+        ? `<button class="section-action conv-auto-toggle" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
           `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
           `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
-      el.innerHTML = list.all.length ? `<div class="section-header">Conversations${autoControl}</div>` + shown.map(r =>
+      // The + is drawn whether or not there is anything under it, which is the one place this
+      // section differs from the others: an entry point that only appears once you already have a
+      // conversation cannot be how the first one is made.
+      const newControl = `<button class="section-action conv-new" onclick="newConversation()"` +
+        ` title="Start an empty conversation and add panes to it"` +
+        ` aria-label="Start a new conversation">+ New</button>`;
+      el.innerHTML = `<div class="section-header">Conversations${autoControl}${newControl}</div>` +
+        (list.all.length ? shown.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
@@ -268,8 +275,42 @@
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
         `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
         `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`
-      ).join('') : '';
+        ).join('')
+        : '<p class="pair-empty">No conversations yet. Start one here, or record a pane into one '
+          + 'from its own menu.</p>');
       applySections();
+    }
+
+    // An empty conversation, opened on its roster with the picker already down: the thing the
+    // reader came to do is add the first pane, and a view of nothing with a panel closed over the
+    // one control that matters is a dead end. Named rather than asked for — a name is a rename
+    // away, and a dialog between the tap and the picker is the dialog this button exists to skip.
+    async function newConversation() {
+      const items = loadConvIndex();
+      if (items.length >= CONV_CONV_MAX) {
+        showToast(`Already at ${CONV_CONV_MAX} conversations — leave one first.`);
+        return;
+      }
+      const conv = {
+        // Not crypto.randomUUID(), for the reason newPairId() gives: no secure context on a LAN.
+        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        name: newConvName(items), created: Date.now(), members: [],
+      };
+      saveConvIndex([conv].concat(items));
+      renderConversations();
+      openConversation(conv.id);
+      convRosterOpen = true;
+      await convToggleAdd();   // which renders the roster, and again once the records are read
+    }
+
+    // "New conversation", then the first number that is free. Numbered and not stamped: two of
+    // these are told apart by which was made first, and a date is a worse answer to that than a 2.
+    function newConvName(items) {
+      const taken = new Set(items.map(c => c.name));
+      const base = 'New conversation';
+      if (!taken.has(base)) return base;
+      for (let n = 2; n < 100; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
+      return base;
     }
 
     // The conversation the standalone view is showing, or null. Held rather than passed, because

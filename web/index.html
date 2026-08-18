@@ -3654,7 +3654,12 @@
        looks away and comes back has to be able to tell which record is on screen without tapping
        anything. Drawn rather than lettered for the reason convGlyph gives: an emoji is whatever
        the platform's font decided, and a colour is a request that font can refuse. */
-    .hang-live svg {
+    /* Drawn, not lettered. `⟳` is U+27F3 and every platform answers it with a different font:
+       macOS gives a chunky arrow at 13px, iOS a hairline one about half the size, which is why the
+       same button read as tiny on a phone and fine on a desktop. Same reasoning as convGlyph. */
+    .hang-live svg,
+    .hang-tidy svg,
+    .conv-analytics-refresh svg {
       display: block;
     }
 
@@ -4975,7 +4980,7 @@
     </section>
     <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
       <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
-      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage">⟳</button></h2>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
       <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
     </section>
   </div>
@@ -5026,7 +5031,11 @@
     <div class="hang-float">
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
-        aria-label="Refresh and tidy">⟳</button>
+        aria-label="Refresh and tidy">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+        </svg></button>
       <button class="hang-btn hang-live" id="convLive" onclick="toggleConvLive()"
         aria-pressed="false" aria-label="Read the relay’s record">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
@@ -5292,7 +5301,11 @@
       <div class="hang-float">
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
-          aria-label="Refresh and tidy">⟳</button>
+          aria-label="Refresh and tidy">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+          </svg></button>
         <!-- Which record the thread is reading: this browser's transcript, or the one the relay
              writes for every pane whether anyone is watching or not. Beside the refresh because it
              is the same question about the same text — "show me this properly" and "show me what
