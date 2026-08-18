@@ -4760,17 +4760,17 @@ test('a picked message is written into the box as a token', async ({page}) => {
   await openWindow(page);
   const input = page.locator('#convInput');
   await pickBubble(page, 'the other pane spoke first');
-  await expect(input).toHaveValue('[#1 the other pane spoke first]');
+  await expect(input).toHaveValue('[#1 scratch: the other pane spoke first]');
   await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (1) ›');
   // Written at the caret, which is where the reader left it — so a second pick lands on its own
   // line under the note typed after the first.
   await input.pressSequentially(' - this bit');
   await pickBubble(page, 'and again, last');
-  await expect(input).toHaveValue('[#1 the other pane spoke first] - this bit\n[#2 and again, last]');
+  await expect(input).toHaveValue('[#1 scratch: the other pane spoke first] - this bit\n[#2 scratch: and again, last]');
   // Tapping the bubble again takes its token back out of the text, wherever it sits.
   await page.locator('#convViewThread .conv-msg', {hasText: 'the other pane spoke first'})
     .locator('.conv-pick').click();
-  await expect(input).toHaveValue('- this bit\n[#2 and again, last]');
+  await expect(input).toHaveValue('- this bit\n[#2 scratch: and again, last]');
   await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
   // And deleting the token by hand is the same act — the box is what says what is picked.
   await page.evaluate(() => {
@@ -4807,6 +4807,24 @@ test('an attached instruction is listed above the box', async ({page}) => {
   await expect(page.locator('#xferLoad')).toBeHidden();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
+
+// Leaving the window is not sending what was in it. Switching to another conversation always filed
+// the draft; every other way out — the chevron, the landing page, opening Settings — dropped it.
+test('a half-written message survives leaving the conversation window and coming back',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await openWindow(page);
+    await pickBubble(page, 'the other pane spoke first');
+    await page.locator('#convInput').pressSequentially(' - come back to this');
+    const draft = await page.locator('#convInput').inputValue();
+    await page.locator('#convView .conv-view-head .back').click();
+    await expect(page.locator('#convView')).toBeHidden();
+    await page.locator('#conversations .conversation-card').click();
+    await expect(page.locator('#convInput')).toHaveValue(draft);
+    await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
+  });
 
 // The draft, the addressed agent and the quotes the draft's tokens stand for are held per
 // conversation for the life of the page. A conversation that is gone cannot be returned to, and an
@@ -4874,10 +4892,10 @@ test('backspace takes a whole token, and the instruction at the start of the box
   // Typed text is text: the caret is not against a token, so backspace is a backspace.
   await input.pressSequentially(' mine');
   await input.press('Backspace');
-  await expect(input).toHaveValue('[#1 the other pane spoke first] min');
+  await expect(input).toHaveValue('[#1 scratch: the other pane spoke first] min');
   // Against the closing bracket it takes the token, and the pick goes with it.
   for (const _ of 'min ') await input.press('Backspace');
-  await expect(input).toHaveValue('[#1 the other pane spoke first]');
+  await expect(input).toHaveValue('[#1 scratch: the other pane spoke first]');
   await input.press('Backspace');
   await expect(input).toHaveValue('');
   await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(0);

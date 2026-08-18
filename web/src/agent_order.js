@@ -8,7 +8,19 @@
     // its class, so an empty string would hide it; the conversation view is a flex column.
     const PANELS = { settingsView: 'block', timelineView: 'flex', convView: 'flex' };
 
+    // A half-written message belongs to the conversation it was being written to, and leaving the
+    // window is not sending it. openConversation files its own on the way to another conversation;
+    // this is every other exit — the chevron, the landing page, opening Settings — which used to
+    // drop the text and its quoted messages on the floor. Guarded on the window actually being up,
+    // because convViewId is also "the conversation being managed" for a pane's own thread, and the
+    // box on screen then belongs to the pane rather than to that id.
+    function stashOpenConvDraft() {
+      const view = document.getElementById('convView');
+      if (view && view.style.display !== 'none') stashConvDraft();
+    }
+
     function hidePanels() {
+      stashOpenConvDraft();
       for (const id in PANELS) document.getElementById(id).style.display = 'none';
     }
 
@@ -30,6 +42,9 @@
       // The conversation window pushes its own entry, naming the conversation rather than the
       // panel — openConversation has done it by the time this runs.
       if (id !== 'convView') notePanelNav(id);
+      // Same rule on the way into another panel: openConversation has already filed and restored
+      // this window's own draft by the time it opens the panel, so filing it again is a no-op.
+      if (id !== 'convView') stashOpenConvDraft();
       document.body.classList.toggle('conversation-open', id === 'convView');
       document.getElementById('agentListView').style.display = 'none';
       for (const p in PANELS) document.getElementById(p).style.display = p === id ? PANELS[p] : 'none';

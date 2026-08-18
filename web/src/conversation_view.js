@@ -825,8 +825,12 @@
           `<button class="conv-pick" onclick="${pick === true || !pick ? 'toggleConvPick' : pick}(${i})" ` +
           `aria-pressed="false" aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
+        // Who said it, for the composer's token to name: two bubbles of the same length from two
+        // members read alike once they are cut to `[#1 …]`, and a quote is worth nothing if the
+        // reader cannot tell whose it is without scrolling back to it.
         return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
-          ` data-i="${i}" data-text="${text}" style="--conv-agent:${color}">${tick}${head}${text}</div>`;
+          ` data-i="${i}" data-text="${text}" data-who="${name}"` +
+          ` style="--conv-agent:${color}">${tick}${head}${text}</div>`;
       }).join('');
     }
 

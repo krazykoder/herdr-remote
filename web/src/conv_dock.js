@@ -312,11 +312,14 @@
       return true;
     }
 
-    // What a token says on the face of it: enough of the message to know which one it is, on one
-    // line, with the brackets it lives inside taken out of the text so it cannot be split in two.
-    function dockTokenText(seq, text) {
-      const flat = String(text).replace(/\s+/g, ' ').replace(/[\[\]]/g, '').trim();
-      return `[#${seq} ${flat.length > 40 ? flat.slice(0, 40) + '…' : flat}]`;
+    // What a token says on the face of it: who said it, then enough of the message to know which
+    // one it is, on one line, with the brackets it lives inside taken out of the text so it cannot
+    // be split in two. The name is what tells two quotes of the same length apart — the number only
+    // tells the app.
+    function dockTokenText(seq, text, who) {
+      const flat = s => String(s).replace(/\s+/g, ' ').replace(/[\[\]]/g, '').trim();
+      const said = flat(text), from = flat(who || '');
+      return `[#${seq} ${from ? from + ': ' : ''}${said.length > 40 ? said.slice(0, 40) + '…' : said}]`;
     }
 
     // Written in at the caret, on its own line, with the caret left after it — the sketch is
@@ -341,7 +344,8 @@
         dockTokens.set(seq, {text, key: el.dataset.key || ''});
         const at = input.selectionStart == null ? input.value.length : input.selectionStart;
         const before = input.value.slice(0, at), after = input.value.slice(at);
-        const token = (before && !before.endsWith('\n') ? '\n' : '') + dockTokenText(seq, text);
+        const token = (before && !before.endsWith('\n') ? '\n' : '') +
+          dockTokenText(seq, text, el.dataset.who);
         input.value = before + token + after;
         input.selectionStart = input.selectionEnd = (before + token).length;
       }
