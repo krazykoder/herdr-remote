@@ -79,10 +79,12 @@
     // the same thumb whatever the page below is doing, and it leads with what is read most.
     const SECTION_TABS = ['conversations', 'agents', 'terminals', 'pairs', 'recents'];
     const SECTION_GLYPHS = {
-      // Circles and not lucide's zero-length `h.01` dots: at 18px the round cap is a smudge, and
-      // a bot with no eyes reads as a plain box beside a terminal that is also a plain box.
-      agents: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4"/>'
-        + '<circle cx="9" cy="14" r="0.6"/><circle cx="15" cy="14" r="0.6"/>',
+      // Drawn to the same 18-unit span as the bubble and the terminal beside it: a 16-wide box
+      // between two 18s reads as the odd one out even though all three are on an 18px canvas.
+      // Circles and not lucide's zero-length `h.01` dots for the eyes — at this size the round cap
+      // is a smudge, and a bot with no eyes is a plain box next to a terminal that is also one.
+      agents: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M12 3v4"/>'
+        + '<circle cx="8.5" cy="14" r="0.6"/><circle cx="15.5" cy="14" r="0.6"/>',
       terminals: '<rect x="2" y="4" width="20" height="16" rx="2"/>'
         + '<polyline points="6 9 9 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/>',
       pairs: '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/>'
@@ -91,6 +93,8 @@
         + '<polyline points="12 7 12 12 15 14"/>',
       conversations: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     };
+
+    let sectionTabsHtml = '';
 
     function sectionIcon(key) {
       return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
@@ -108,15 +112,26 @@
       // Buttons for what is actually there. Fewer than two lists is nothing to choose between —
       // except while a filter is on, where the one button left is the way to switch it off.
       const keys = SECTION_TABS.filter(sectionHasContent);
+      // The markup says which buttons there are and nothing about which one is held down. Pressing
+      // a filter must not rewrite the strip: replacing the node under the finger re-parses five
+      // SVGs and drops the tap highlight mid-press, which is a phone's whole answer to "did that
+      // register" — and it reads as a delay the mouse never sees, because a mouse had :hover.
       const html = !landing || (keys.length < 2 && !sectionFilter) ? '' : keys.map(key =>
-        `<button class="sect-tab" aria-pressed="${sectionFilter === key}"`
+        `<button class="sect-tab" data-section="${key}"`
         + ` onclick="toggleSectionFilter('${key}')" title="${SECTION_NAMES[key]}"`
-        + ` aria-label="${sectionFilter === key ? 'Show every section again'
-          : 'Show only ' + SECTION_NAMES[key]}">${sectionIcon(key)}</button>`).join('');
-      // Rewritten only when it changes: this runs on every snapshot, and a strip rebuilt a few
-      // times a second drops hover and focus mid-press.
-      if (bar.innerHTML !== html) bar.innerHTML = html;
+        + `>${sectionIcon(key)}</button>`).join('');
+      // Compared against what was last written rather than against the node: the browser gives
+      // innerHTML back normalised, and a strip rebuilt a few times a second loses focus mid-press.
+      if (sectionTabsHtml !== html) { bar.innerHTML = html; sectionTabsHtml = html; }
       bar.hidden = !html;
+      keys.forEach(key => {
+        const btn = bar.querySelector(`[data-section="${key}"]`);
+        if (!btn) return;
+        const on = sectionFilter === key;
+        btn.setAttribute('aria-pressed', String(on));
+        btn.setAttribute('aria-label', on ? 'Show every section again'
+          : 'Show only ' + SECTION_NAMES[key]);
+      });
     }
 
     function toggleSectionFilter(key) {

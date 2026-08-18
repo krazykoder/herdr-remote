@@ -283,3 +283,18 @@ test('the shortcut row fits the header on a phone', async ({page}) => {
     expect(fit.h, `lost its height at ${width}px`).toBeGreaterThanOrEqual(44);
   }
 });
+
+test('pressing a shortcut does not replace the button under the finger', async ({page}) => {
+  // The strip used to carry the pressed state in its markup, so every press rewrote all five
+  // buttons — five SVGs re-parsed and the tap highlight dropped mid-press. A mouse never saw it,
+  // having had :hover on the way in; a phone saw it as the highlight arriving late.
+  const tab = page.locator('#sectionTabs button[title="Terminals"]');
+  const same = () => page.evaluate(() => window.__tab === document.querySelector('.sect-tab'));
+  await page.evaluate(() => { window.__tab = document.querySelector('.sect-tab'); });
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-pressed', 'true');
+  expect(await same(), 'the strip was rebuilt').toBe(true);
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-pressed', 'false');
+  expect(await same(), 'the strip was rebuilt on the way back').toBe(true);
+});

@@ -48,7 +48,18 @@ function sectionsCtx({stored, content = {}, landing = true} = {}) {
   };
   // The header strip and the landing view it belongs to. The strip writes markup and its own
   // hidden flag; the view is only read, for whether the landing page is the thing on screen.
-  const tabs = {id: 'sectionTabs', innerHTML: '', hidden: false};
+  // Which button is held down is set on the node rather than written into the markup, so the stub
+  // has to hand back buttons: one per key that the last written markup actually named.
+  const tabs = {
+    id: 'sectionTabs', innerHTML: '', hidden: false, buttons: {},
+    querySelector(sel) {
+      const key = (/data-section="(\w+)"/.exec(sel) || [])[1];
+      if (!key || !this.innerHTML.includes(`data-section="${key}"`)) return null;
+      this.buttons[key] = this.buttons[key]
+        || {attrs: {}, setAttribute(name, value) { this.attrs[name] = value; }};
+      return this.buttons[key];
+    },
+  };
   const view = {id: 'agentListView', style: {display: landing ? '' : 'none'}};
   const ctx = vm.createContext({
     console,
@@ -67,7 +78,8 @@ function sectionsCtx({stored, content = {}, landing = true} = {}) {
 
 // Which sections the header strip offers, and which one it is holding down.
 const offered = tabs => [...tabs.innerHTML.matchAll(/toggleSectionFilter\('(\w+)'\)/g)].map(m => m[1]);
-const pressed = tabs => [...tabs.innerHTML.matchAll(/aria-pressed="true" onclick="toggleSectionFilter\('(\w+)'\)/g)].map(m => m[1]);
+const pressed = tabs => offered(tabs).filter(key =>
+  (tabs.buttons[key] || {attrs: {}}).attrs['aria-pressed'] === 'true');
 
 // What is on screen, in the order it is painted. Reads the same two style properties the browser
 // does, so a section switched on but left empty is absent here exactly as it is on the page.

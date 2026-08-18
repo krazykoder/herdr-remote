@@ -420,6 +420,16 @@
       background: var(--border);
     }
 
+    /* A press paints before the state behind it changes. A mouse gets :hover on the way in and so
+       always looked instant; a finger had nothing until the filter had been applied and the strip
+       repainted, which is what read as lag. No transition on the way in for the same reason —
+       the 0.15s fade is what makes a real answer look like a late one. */
+    .header .sect-tab:active {
+      color: var(--blue);
+      background: var(--border);
+      transition: none;
+    }
+
     .agent-tabs::-webkit-scrollbar {
       display: none;
     }
