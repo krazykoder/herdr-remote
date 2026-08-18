@@ -16,6 +16,8 @@
     // talking to it. The picks are not: an instruction is attached to one message, so it is spent
     // by the send that carries it.
     let dockTarget = '', dockPicks = [], dockPicked = new Set(), dockPickedOf = 0;
+    const convComposerDrafts = new Map();
+    const convComposerTargets = new Map();
 
     // Both rows scroll, and a phone shows their left end — so what was used last is put back there,
     // because the thing used last is overwhelmingly the thing used next. Only use moves anything:
@@ -304,9 +306,7 @@
     // open. Switching tabs to read what somebody else said is part of writing a reply, and losing
     // the reply or the chosen agent made the strip something to avoid mid-sentence. Deliberately
     // in memory and not in storage: a draft is a thing in flight, and a reload is a session ending.
-    const convComposerDrafts = new Map();
-    const convComposerTargets = new Map();
-
+    //
     // Called before convViewId moves, so what is in the box and who is addressed is filed under the
     // conversation it was written to.
     function stashConvDraft() {
