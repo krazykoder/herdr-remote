@@ -155,3 +155,50 @@ test('warm cache performs incremental delta fetch with since_id', async ({page})
   expect(convLogMsg.fingerprints).toBeDefined();
 });
 
+
+// --- The live stream, in both sources ---
+//
+// Neither record holds a turn that has not ended: the relay writes its row when the turn is over,
+// and this browser's transcript settles one at the same moment. So what a pane is saying *right
+// now* has exactly one place to be drawn — the standing slot under the thread — and it has to be
+// there whichever record the thread is reading. It is never a message: nothing counts it, picks it
+// or hands it to Summary.
+test('the live stream is drawn under the thread over the relay’s record too', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await localRecord(page, key);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#paneLive')).toHaveAttribute('aria-pressed', 'true');
+
+  await page.evaluate(async () => {
+    paneOf(activePane).status = 'working';
+    await recordPane(activePane, ['❯ a question', '', '⏺ Halfway through a sentence', '', '❯']);
+    await renderConvView();
+  });
+  const slot = page.locator('#convThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Halfway through a sentence');
+  // The thread is still the relay's record — the stream sits beside it, not in it.
+  await expect(page.locator('#convThread .conv-msg.draft')).toHaveCount(0);
+  await expect(slot.locator('.conv-pick')).toHaveCount(0);
+
+  // And it goes when the turn does.
+  await page.evaluate(async () => { paneOf(activePane).status = 'done'; await renderConvView(); });
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
+});
+
+test('the conversation window streams its working members too', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.evaluate(async () => {
+    paneOf(activePane).status = 'working';
+    await recordPane(activePane, ['❯ a question', '', '⏺ Still writing this one', '', '❯']);
+    convViewId = 'c1';
+    openConversation('c1');
+    await renderConvStandalone(true);
+  });
+  const slot = page.locator('#convViewThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Still writing this one');
+  await expect(page.locator('#convViewThread .conv-msg.draft')).toHaveCount(0);
+});

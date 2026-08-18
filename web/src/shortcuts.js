@@ -843,7 +843,7 @@
       const token = ++convStandaloneToken;
       const keys = members.map(m => m.key);
       // No drafts: a draft belongs to a pane being watched, and this view watches none.
-      const composed = await convCompose(conv, keys, []);
+      const composed = await convCompose(conv, keys);
       if (token !== convStandaloneToken || convViewId !== conv.id) return;
       // Composed over every member and filtered after, never composed over the visible ones: the
       // member index is what picks a bubble's colour, so hiding the first member must not repaint
@@ -903,7 +903,10 @@
           : hidden.size && composed.all.length
             ? '<p class="conv-empty">Every member is hidden. Open the panel above to bring one ' +
               'back.</p>'
-            : '<p class="conv-empty">Nothing recorded here yet.</p>'));
+            : '<p class="conv-empty">Nothing recorded here yet.</p>')) +
+        // What the members are saying right now, under the record of what they have said. Only the
+        // shown ones: a member hidden out of this thread is hidden out of its live stream too.
+        convSlotsHtml(shownKeys, twoCol ? rightKey : '');
       // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
       // reader's text selection with it mid-copy. Only a thread that actually changed is written.
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }

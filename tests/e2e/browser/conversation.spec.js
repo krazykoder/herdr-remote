@@ -949,12 +949,15 @@ test('a live draft fills the slot rather than sitting beside it', async ({page})
     await recordPane(activePane, ['❯ a question', '', '⏺ Still working.', '', '❯']);
   });
   await thread(page);
-  // One bubble at the end in both states, in the same place: what changes is the text in it, not
-  // the shape of the thread.
-  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
-  const last = page.locator('#convThread .conv-msg').last();
-  await expect(last).toHaveClass(/draft/);
-  await expect(last).toContainText('Still working.');
+  // One element at the end in both states, in the same place: what changes is the text in it, not
+  // the shape of the thread. And it stays the slot — a turn that has not ended is not a message in
+  // either record, so it is never counted, picked, or handed to Summary.
+  const slot = page.locator('#convThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Still working.');
+  await expect(slot).toHaveClass(/draft/);
+  await expect(page.locator('#convThread .conv-msg.draft')).toHaveCount(0);
+  await expect(slot.locator('.conv-pick')).toHaveCount(0);
 });
 
 test('a member found already finished is read once, and recorded only if it is new',

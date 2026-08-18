@@ -297,18 +297,14 @@
 
     // The thread, composed from the store and from nothing else. No pane, no view, no selection —
     // a conversation is a record, and reading one must not require a live pane to read it through.
-    // The caller supplies the drafts, because a draft is the one part that only exists while a
-    // pane is being watched.
-    async function convCompose(conv, keys, drafts) {
+    // What a pane is saying mid-turn is not in here at all: it is not settled in either source, and
+    // it is drawn as the standing slot below the thread — see `convDraftSlotHtml`.
+    async function convCompose(conv, keys) {
       const recs = await convRecords(keys);
       const joint = keys.length > 1;
       // The relay's own record, when the reader has asked for it (conv_live.js). The records are
       // still read — the member panel names who was in this and what they were spawned as, and
       // that is the local record's job either way — but the bubbles come off the wire.
-      //
-      // Drafts go with them. A draft is this browser watching a pane mid-turn; the relay writes a
-      // row when the turn has *ended*, so a live thread showing one would be mixing the two
-      // sources in the one place they disagree.
       const fromRelay = convLiveOn();
       if (fromRelay) convLiveFetch(keys);
       const stored = fromRelay ? convLiveEntries(keys)
@@ -316,7 +312,7 @@
       // An entry recorded before convStamped existed carries no name and no harness, and a thread
       // read with no pane behind it has nothing else to fall back to. The record knows both.
       const by = new Map(recs.map(r => [r.key, r]));
-      const all = stored.concat(fromRelay ? [] : (drafts || [])).map(e => {
+      const all = stored.map(e => {
         if (e.label) return e;
         const rec = by.get(e.key || (recs[0] || {}).key) || {};
         return Object.assign({}, e, { label: rec.label, agent: e.agent || (rec.spawn || {}).agent });
@@ -383,15 +379,7 @@
       const members = pairedConvMembers(a, conv);
       const joint = convJointOn() && members.length > 1;
       const want = joint ? members.map(m => m.key) : [key];
-      // The live draft is drawn, never stored: it is what a working pane is saying right now, and
-      // the turn it belongs to has not ended, so there is nothing to record yet. Always last —
-      // whatever is still being written is newer than everything that has been.
-      const drafts = want.map((k, i) => {
-        const d = convDrafts.get(k), live = agents.find(x => convMemberKey(x) === k);
-        return d && live && live.status === 'working'
-          ? Object.assign({}, d, { key: k, member: joint ? i : 0 }) : null;
-      }).filter(Boolean);
-      const composed = await convCompose(conv, want, drafts);
+      const composed = await convCompose(conv, want);
       if (token !== convViewToken) return;
       const recs = composed.recs;
       // Following the newest message is the default, and a reader who has scrolled up keeps their
@@ -435,9 +423,10 @@
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
           : (convLiveOn() ? convLiveEmptyHtml(want)
             : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>'))) +
-        // No slot over the relay's record: it holds turns that have ended, and the slot is a place
-        // held open for one that has not.
-        (convLiveOn() ? '' : convDraftSlotHtml(a, key, drafts, paired));
+        // Below the thread in both sources. Neither record holds a turn that has not ended, so this
+        // is the only place the reader sees a pane mid-sentence — and the only reason to watch a
+        // thread rather than come back to it.
+        convSlotsHtml(want, paired ? key : '');
       // Only a thread that changed is written, exactly as the conversation window's is. The
       // snapshot redraws this every three seconds, and an innerHTML the reader cannot see any
       // difference from still costs them their text selection and their place in the scroll.
@@ -494,13 +483,17 @@
     //
     // Only while provisional content is shown. With "final messages only" on, the reader has asked
     // for the settled record and nothing else, and a draft slot is the opposite of that.
-    // Only the pane being read, too: in a joint thread a slot per member is three empty bubbles
-    // for a question nobody asked about the other two.
-    function convDraftSlotHtml(a, key, drafts, paired) {
+    //
+    // The slot is where the live stream goes, in both sources. What a pane is saying *now* is not
+    // in the relay's record — that gets a row when the turn has ended — and it is not settled in
+    // this browser's transcript either. So it is never an entry in either mode: the same standing
+    // slot carries it, filled from the pane rows as they are read and emptied when the turn ends.
+    // Before this the two sources disagreed in the one place a reader was most likely to look — a
+    // live thread showed nothing at all while a pane worked — and a parsed draft in the local
+    // thread became a countable, pickable `.conv-msg` that Summary could select mid-sentence.
+    function convDraftSlotHtml(a, key, draft, paired) {
       if (convFinalOnly()) return '';
-      // A real draft is already in the list, in this same place. One bubble in both states.
-      if ((drafts || []).some(d => d.key === key)) return '';
-      const live = paneOf(a.pane_id);
+      const live = paneOf(a.pane_id) || agents.find(x => convMemberKey(x) === key);
       // Nothing is coming until the pane is working. An empty draft over a pane that finished its
       // turn is a promise the thread cannot keep.
       if (!live || live.status !== 'working') return '';
@@ -508,12 +501,26 @@
       const dot = statusColor(live);
       const who = `<span class="dot pulse" style="background:${dot}"></span>` +
         `${escapeHtml(paneLabel(a) || '')}${agentBadge(a.agent)}`;
+      const text = (draft && draft.text || '').trim();
       // `conv-slot` and not `conv-msg`: it looks like a bubble but it is not a message, and the
       // pick handler, Summary, Last and the badge writer all find messages by that class.
       return `<div class="conv-slot provisional draft${paired ? ' conv-right' : ''}" ` +
         `data-key="${escapeHtml(key)}" style="--conv-agent:${color}">` +
         `<span class="conv-who">${who}<span class="conv-state">draft</span></span>` +
-        `<span class="conv-waiting">Nothing parsed out of the live pane yet.</span></div>`;
+        (text ? escapeHtml(text)
+          : '<span class="conv-waiting">Nothing parsed out of the live pane yet.</span>') +
+        `</div>`;
+    }
+
+    // Every member that is working, in roster order, so a joint thread streams all of them at once
+    // rather than only the pane that happens to be open. A member that is idle contributes nothing,
+    // so the common case of one agent working is still one slot.
+    function convSlotsHtml(keys, rightKey) {
+      return (keys || []).map(k => {
+        const live = agents.find(x => convMemberKey(x) === k);
+        if (!live) return '';
+        return convDraftSlotHtml(live, k, convDrafts.get(k), !!rightKey && k === rightKey);
+      }).join('');
     }
 
     // What each pane is doing right now, on that pane's newest bubble. Written in place rather
