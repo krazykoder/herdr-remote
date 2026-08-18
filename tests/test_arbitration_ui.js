@@ -154,6 +154,15 @@ test('the arbitrator’s pane is marked, and typing at it is asked twice', () =>
   assert.equal(g.arbGuardSend('w1:p3'), true, 'the second goes — this arms, it does not forbid');
 });
 
+test('arming one arbitrator never arms a later session’s arbitrator', () => {
+  const {g} = ctx();
+  g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  assert.equal(g.arbGuardSend('w1:p3'), false);
+  const next = {...SESSION, id: 's-next', arbitrator: {pane_id: 'w1:p4', status: 'idle'}};
+  g.arbReceiveSession({type: 'arb_session', session: next});
+  assert.equal(g.arbGuardSend('w1:p4'), false);
+});
+
 test('a blocked arbitrator is said out loud, with the way to its pane', () => {
   // From the strip a blocked arbitrator is indistinguishable from one that is thinking, and the
   // session will not move until somebody answers the prompt in that pane.

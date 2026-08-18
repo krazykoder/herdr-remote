@@ -70,11 +70,11 @@
 
     // Typing at the arbitrator is asked twice — not refused. A person may well need to answer a
     // permission prompt there, and that is exactly the case where a hard block would be wrong.
-    let arbTypeArmed = 0;
+    let arbTypeArmed = {paneId: '', at: 0};
     function arbGuardSend(paneId) {
       if (!arbIsArbitrator(paneId)) return true;
-      if (Date.now() - arbTypeArmed < 15000) return true;
-      arbTypeArmed = Date.now();
+      if (arbTypeArmed.paneId === paneId && Date.now() - arbTypeArmed.at < 15000) return true;
+      arbTypeArmed = {paneId: paneId, at: Date.now()};
       showToast('That pane is arbitrating. Send again to type at it anyway.');
       return false;
     }

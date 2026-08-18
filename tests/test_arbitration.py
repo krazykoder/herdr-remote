@@ -71,6 +71,37 @@ class Harness(unittest.TestCase):
         return self.arb.prompt(session_id, trigger, [{"label": "member-1", "text": "Done."}])
 
 
+class Lifecycle(Harness):
+    """What is still open, and what may still be done to it.
+
+    A paused session is not running — nothing fires for it — and it is very much still there: it
+    has a Resume button, and the reconnect that dropped its strip is exactly when a person goes
+    looking for one.
+    """
+
+    def test_paused_session_remains_open_for_reconnect(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.assertEqual(s["id"], self.arb.open()["id"])
+
+    def test_an_ended_session_cannot_be_resumed_or_ended_again(self):
+        s = self.start()
+        self.arb.end(s["id"], "cancelled")
+        for action in (lambda: self.arb.resume(s["id"]),
+                       lambda: self.arb.end(s["id"], "cancelled")):
+            with self.assertRaises(ArbiterError):
+                action()
+
+    def test_a_paused_session_cannot_resume_over_a_new_running_one(self):
+        first = self.start()
+        self.arb.pause(first["id"], "user")
+        second = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.resume(first["id"])
+        self.assertEqual("session_running", caught.exception.code)
+        self.assertEqual("active", self.arb.session(second["id"])["state"])
+
+
 class Pure(unittest.TestCase):
     def test_resolve_keeps_a_cached_pane_that_still_matches(self):
         live = [pane("p1", cwd="/a"), pane("p9", cwd="/a")]

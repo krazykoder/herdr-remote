@@ -404,6 +404,16 @@ class Arbitration:
             "SELECT * FROM sessions WHERE state IN ('active','awaiting')").fetchone()
         return dict(row) if row else None
 
+    def open(self):
+        """Most recent session a person can still resume or end.
+
+        Paused sessions do not execute, so `running()` deliberately excludes them. They are still
+        open, though: reconnecting must show their Resume control.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM sessions WHERE state != 'ended' ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+
     def members(self, session_id):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM members WHERE session_id = ? ORDER BY member_id", (session_id,))]
@@ -599,6 +609,12 @@ class Arbitration:
         stopped on `budget_steps` without raising the limit gets one more pause at the next trigger,
         which is honest, and the alternative is a Resume button that silently does nothing.
         """
+        session = self.session(session_id)
+        if session["state"] not in ("active", "paused"):
+            raise ArbiterError("not_paused", session["state"])
+        running = self.running()
+        if running and running["id"] != session_id:
+            raise ArbiterError("session_running", running["id"])
         self.conn.execute(
             "UPDATE sessions SET state='active', pause_reason=NULL, window_at=? WHERE id=?",
             (self.clock(), session_id))
@@ -606,6 +622,9 @@ class Arbitration:
         return self.session(session_id)
 
     def end(self, session_id, reason):
+        session = self.session(session_id)
+        if session["state"] == "ended":
+            raise ArbiterError("not_open", session["state"])
         self.conn.execute(
             "UPDATE sessions SET state='ended', ended_at=?, ended_reason=? WHERE id=?",
             (self.clock(), reason, session_id))
