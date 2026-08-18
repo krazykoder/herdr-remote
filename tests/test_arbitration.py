@@ -521,6 +521,88 @@ class InvalidRecords(Harness):
         self.assertEqual("sent", self.arb.collect(s["id"], handle["prompt_id"])["outcome"])
 
 
+class Clocks(Harness):
+    """§10's two clocks, evaluated in the poll loop rather than by a timer thread."""
+
+    IDLE = 5 * 60 * 1000
+
+    def due(self, ms=0):
+        self.now += ms
+        return self.arb.due()
+
+    def test_a_member_that_has_sat_idle_long_enough_is_due(self):
+        s = self.start(triggers={"idle_ms": self.IDLE})
+        self.assertEqual([], self.due(), "the first sighting starts the clock, it does not ring it")
+        self.assertEqual([], self.due(self.IDLE - 1000))
+        due = self.due(2000)
+        self.assertEqual([("member-1", "p1", "idle"), ("member-2", "p2", "idle")],
+                         [(d["member"], d["pane_id"], d["trigger"]) for d in due])
+        self.assertEqual(s["state"], "active")
+
+    def test_a_clock_rings_once_per_stay(self):
+        # An hour of sitting still is one prompt. Repeating it is how an unattended loop spends a
+        # budget on nothing.
+        self.start(triggers={"idle_ms": self.IDLE})
+        self.due()
+        self.assertEqual(2, len(self.due(self.IDLE)))
+        self.assertEqual([], self.due(self.IDLE))
+
+    def test_a_pane_that_moved_starts_its_clock_again(self):
+        self.start(triggers={"idle_ms": self.IDLE})
+        self.due()
+        self.due(self.IDLE)
+        self.live[0]["agent_status"] = "working"
+        self.due(1000)
+        self.live[0]["agent_status"] = "idle"
+        self.due(1000)
+        self.assertEqual(["p1"], [d["pane_id"] for d in self.due(self.IDLE)])
+
+    def test_a_member_that_was_just_written_to_is_not_idle(self):
+        # It is about to work. Prompting the arbitrator about it asks for a decision on a turn that
+        # has not started.
+        s = self.start(triggers={"idle_ms": self.IDLE})
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        self.due()
+        self.assertEqual(["p1"], [d["pane_id"] for d in self.due(self.IDLE)],
+                         "member-2 was sent to; only the other one is idle")
+
+    def test_the_runtime_clock_is_the_opposite_case(self):
+        self.start(triggers={"runtime_ms": self.IDLE})
+        self.live[0]["agent_status"] = "working"
+        self.due()
+        self.assertEqual([("member-1", "runtime")],
+                         [(d["member"], d["trigger"]) for d in self.due(self.IDLE)])
+
+    def test_a_session_with_no_clocks_never_has_anything_due(self):
+        self.start()
+        self.due()
+        self.assertEqual([], self.due(24 * 60 * 60 * 1000))
+
+    def test_a_paused_session_does_not_accumulate_time(self):
+        # N9's other half: a session that stopped is stopped. Resuming grants a fresh window, and a
+        # clock that had been running the whole time would fire on the resume itself.
+        s = self.start(triggers={"idle_ms": self.IDLE})
+        self.due()
+        self.arb.pause(s["id"], "user")
+        self.assertEqual([], self.due(self.IDLE * 2))
+        self.arb.resume(s["id"])
+        self.assertEqual([], self.due(), "the clock starts again from the resume")
+        self.assertEqual(2, len(self.due(self.IDLE)))
+
+    def test_a_clock_outside_its_bounds_is_refused_at_start(self):
+        for bad in ({"idle_ms": 5}, {"runtime_ms": 99 * 60 * 60 * 1000}, {"idle_ms": "5m"}):
+            with self.assertRaises(ArbiterError) as caught:
+                self.start(triggers=bad)
+            self.assertEqual("triggers_out_of_range", caught.exception.code)
+
+    def test_turn_end_cannot_be_switched_off(self):
+        # A session with every clock off and no turn-end trigger is one nothing will ever wake.
+        s = self.start(triggers={"on_turn_end": False})
+        self.assertTrue(json.loads(self.arb.session(s["id"])["triggers_json"])["on_turn_end"])
+
+
 class Detail(Harness):
     """§15.3's sheet — the record, the prompt that produced it, and the send it caused.
 

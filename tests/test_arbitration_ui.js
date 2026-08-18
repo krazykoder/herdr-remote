@@ -123,7 +123,48 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     type: 'arb_start', conversation: 'c-1', scope: 'Review the footer.',
     members: [{pane_id: 'w1:p1'}, {pane_id: 'w1:p2'}],
     arbitrator: {pane_id: 'w1:p3'},
+    // Both clocks off unless the form was asked for them: a trigger nobody chose is an
+    // unattended loop spending budget on a conversation that had stopped on purpose.
+    triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0},
   }]);
+});
+
+test('the clocks are sent in the unit the relay counts in, not the one the form asks in', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
+  els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbIdle = {id: 'arbIdle', value: '15'};
+  els.arbRuntime = {id: 'arbRuntime', value: '30'};
+  g.arbStart();
+  assert.deepEqual(sent[0].triggers,
+                   {on_turn_end: true, idle_ms: 900000, runtime_ms: 1800000});
+});
+
+test('the arbitrator’s pane is marked, and typing at it is asked twice', () => {
+  const {g, toasts} = ctx();
+  assert.equal(g.arbMark('w1:p3'), '', 'nothing running, nothing marked');
+  g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  assert.match(g.arbMark('w1:p3'), /⚖/);
+  assert.equal(g.arbMark('w1:p1'), '', 'a member is not the arbitrator');
+
+  assert.equal(g.arbGuardSend('w1:p1'), true, 'a member is typed at freely');
+  assert.equal(g.arbGuardSend('w1:p3'), false, 'the first send at the arbitrator is held');
+  assert.equal(toasts.length, 1);
+  assert.equal(g.arbGuardSend('w1:p3'), true, 'the second goes — this arms, it does not forbid');
+});
+
+test('a blocked arbitrator is said out loud, with the way to its pane', () => {
+  // From the strip a blocked arbitrator is indistinguishable from one that is thinking, and the
+  // session will not move until somebody answers the prompt in that pane.
+  const {g} = ctx();
+  const stuck = {...SESSION, state: 'awaiting',
+                 arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
+  const html = g.arbStripHtml(stuck, CONV, true, null);
+  assert.match(html, /Arbitrator needs you/);
+  assert.match(html, /openTerminal\('w1:p3'\)/);
+  assert.ok(!/Arbitrator needs you/.test(g.arbStripHtml(SESSION, CONV, true, null)),
+            'and an arbitrator that is merely working is not news');
 });
 
 test('an empty scope is refused here rather than on the wire', () => {

@@ -55,6 +55,30 @@
       arbRender();
     }
 
+    // Is this pane the one deciding? Asked by every list that draws a pane, because an arbitrator
+    // mid-session looks exactly like an ordinary agent and is not one: what is typed there is read
+    // by something whose entire instruction is to answer with a JSON file.
+    function arbIsArbitrator(paneId) {
+      return !!(arbSession && arbSession.arbitrator && paneId &&
+                arbSession.arbitrator.pane_id === paneId);
+    }
+
+    function arbMark(paneId) {
+      return arbIsArbitrator(paneId)
+        ? ' <span class="badge arb" title="The arbitrator of a running session">⚖</span>' : '';
+    }
+
+    // Typing at the arbitrator is asked twice — not refused. A person may well need to answer a
+    // permission prompt there, and that is exactly the case where a hard block would be wrong.
+    let arbTypeArmed = 0;
+    function arbGuardSend(paneId) {
+      if (!arbIsArbitrator(paneId)) return true;
+      if (Date.now() - arbTypeArmed < 15000) return true;
+      arbTypeArmed = Date.now();
+      showToast('That pane is arbitrating. Send again to type at it anyway.');
+      return false;
+    }
+
     // The panes of this conversation that are live right now, in the conversation's own order.
     // A member that has exited is a member nothing can be typed at, so it is not a candidate.
     function arbLiveMembers(conv) {
@@ -88,6 +112,16 @@
       return `${d.gate || '?'} · ${who} · ${d.why || ''}`;
     }
 
+    // Only what a person can act on. `working` is what an arbitrator mid-decision looks like and is
+    // not news; `blocked` is a question waiting in a pane, and a session that will not move until
+    // somebody answers it.
+    function arbArbitratorNote(s) {
+      const arb = s.arbitrator || {};
+      if (arb.status !== 'blocked' || !arb.pane_id) return '';
+      return `<button class="arb-btn warn" onclick="openTerminal('${escapeHtml(arb.pane_id)}')">` +
+        '⚖ Arbitrator needs you</button>';
+    }
+
     function arbBudgetLine(s) {
       const b = s.budget || {};
       return `${b.steps_left || 0} steps · ${b.minutes_left || 0} min`;
@@ -102,6 +136,10 @@
         const s = session, paused = s.state === 'paused';
         return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
           `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
+          // The arbitrator's own pane, when it is the thing holding the session up. A blocked
+          // arbitrator is a permission prompt nobody is looking at, and from the strip it is
+          // indistinguishable from thinking — this says which, and goes to the pane.
+          arbArbitratorNote(s) +
           // The line is the control: what a person wants after reading "review · Reviewer 1 · …"
           // is the rest of it, and a separate button for that would be chrome beside the answer.
           `<button class="arb-last" onclick="arbOpenDetail()"` +
@@ -130,9 +168,30 @@
         '<label>Arbitrator<select id="arbWho">' +
         formPanes.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
           `</option>`).join('') + '</select></label>' +
+        // §10's two clocks, off by default. A turn ending is always a trigger; these are for the
+        // two ways a conversation stops without anyone's turn ending — a member that went quiet,
+        // and one that has been working long enough to be stuck.
+        '<label>If a member goes quiet<select id="arbIdle">' +
+        arbClockOptions(ARB_IDLE_CHOICES) + '</select></label>' +
+        '<label>If a member works without stopping<select id="arbRuntime">' +
+        arbClockOptions(ARB_RUNTIME_CHOICES) + '</select></label>' +
         '<div class="arb-form-actions">' +
         '<button class="arb-btn" onclick="arbToggleForm()">Cancel</button>' +
         '<button class="arb-btn go" onclick="arbStart()">Start</button></div></div>';
+    }
+
+    // Minutes, because that is the unit a person thinks about a stuck agent in. `0` is off, and
+    // off is the default for both — a clock nobody asked for is an unattended loop spending budget.
+    const ARB_IDLE_CHOICES = [0, 5, 15, 30];
+    const ARB_RUNTIME_CHOICES = [0, 15, 30, 60];
+
+    function arbClockOptions(choices) {
+      return choices.map(m => `<option value="${m}">${m ? m + ' min' : 'Never'}</option>`).join('');
+    }
+
+    function arbClockValue(id) {
+      const minutes = parseInt((document.getElementById(id) || {}).value || '0', 10);
+      return minutes > 0 ? minutes * 60000 : 0;
     }
 
     function arbToggleForm() {
@@ -192,6 +251,8 @@
         type: 'arb_start', conversation: conv.id, scope: scope,
         members: live.map(a => ({ pane_id: a.pane_id })),
         arbitrator: { pane_id: who },
+        triggers: { on_turn_end: true, idle_ms: arbClockValue('arbIdle'),
+                    runtime_ms: arbClockValue('arbRuntime') },
       });
       // Nothing is drawn optimistically. The session exists when the relay says it does, and a
       // strip that appears before the starter prompt landed would be reporting a session that a

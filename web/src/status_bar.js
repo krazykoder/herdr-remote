@@ -571,6 +571,12 @@
       else if (msg.type === 'arb_detail') {
         arbReceiveDetail(msg);
       }
+      // Only failures arrive for a send, and only when the relay could not prove the pane took
+      // the text. Worth a toast: the composer clears either way, so this is the only difference a
+      // person can see between a send that landed and one that may not have.
+      else if (msg.type === 'command_result' && msg.command === 'send_text') {
+        showToast(`That pane did not confirm the send — check ${paneLabel(paneOf(msg.pane_id) || {}) || msg.pane_id}.`);
+      }
       else if (msg.type === 'command_result' &&
                (msg.command === 'start_agent' || msg.command === 'open_terminal')) {
         document.getElementById('startSubmit').disabled = false;

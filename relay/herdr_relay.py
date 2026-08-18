@@ -1163,6 +1163,11 @@ async def _poll_once():
                 if arbitration is not None:
                     await asyncio.to_thread(arbitrate_turn_end, a, pid)
             last_statuses[pid] = status
+        # §10's clocks, once per poll and after every transition above has been recorded: an idle
+        # clock is "nothing has happened for a while", so it must be evaluated against a record
+        # that already knows about anything that just did.
+        if arbitration is not None:
+            await asyncio.to_thread(arbitrate_clocks, agents)
         # Clean up panes that are no longer reported
         current_pane_ids = {p["pane_id"] for p in agents + shells}
         stale = known_panes - current_pane_ids
@@ -1261,6 +1266,31 @@ def arbitrate_turn_end(pane, pane_id):
             arb_broadcast(arbitration.session(session["id"]))
     except Exception as e:                       # noqa: BLE001 — see the docstring
         log.warning("arbitration: turn end for %s not handled: %s", pane_id, e)
+
+
+def arbitrate_clocks(agents):
+    """The idle and runtime triggers, offered to the running session. §10.
+
+    Same path a real turn end takes — the clock decides *when* to ask, never what is asked or what
+    happens next. Never raises into the poll loop, for the reason `arbitrate_turn_end` does not.
+    """
+    try:
+        due = arbitration.due()
+        if not due:
+            return
+        by_pane = {a["pane_id"]: a for a in agents}
+        for item in due:
+            pane = by_pane.get(item["pane_id"])
+            if pane is None:
+                continue
+            acted = arbitration.turn_ended(item["pane_id"], arbitration_entries(pane),
+                                           kind=item["trigger"])
+            if acted is not None:
+                session = arbitration.running()
+                if session is not None:
+                    arb_broadcast(arbitration.session(session["id"]))
+    except Exception as e:                       # noqa: BLE001 — see arbitrate_turn_end
+        log.warning("arbitration: clocks not handled: %s", e)
 
 
 def on_loop(coro, wait=False):
@@ -1788,7 +1818,16 @@ async def handle_client(ws, listener="lan"):
                          ip, device, pane_id, submit, len(text))
                 audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
                 if submit:
-                    await submit_paste(pane_id, text, remote=remote)
+                    # Said out loud when it could not be proven. submit_paste returns False for a
+                    # pane that never reported taking the text — commonly a pane already working,
+                    # where it very probably queued — and a client that hears nothing draws the
+                    # same empty composer either way. The text is still recorded as sent, because
+                    # it very likely was; what the client is told is that nobody confirmed it.
+                    if not await submit_paste(pane_id, text, remote=remote):
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": False,
+                            "pane_id": pane_id,
+                            "message": "the pane never confirmed it — check that it landed"}))
                 else:
                     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)

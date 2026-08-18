@@ -30,6 +30,7 @@ import sqlite3
 import time
 
 from arbitrator import MAX_INSTRUCTION, validate
+from pane_summary import ends_turn
 
 log = logging.getLogger("herdr-relay")
 
@@ -50,6 +51,12 @@ DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 3, "max_wall_clock_ms": 45 
 BUDGET_MAX = {"max_steps": 50, "max_consecutive": 20, "max_wall_clock_ms": 8 * 60 * 60 * 1000}
 
 MAX_SCOPE = 4_000
+# §10's two clocks. Off by default and off is `0`; the floor exists because a clock shorter than a
+# few poll intervals is a loop that fires on the pane's own settling, and the ceiling because these
+# run unattended. `on_turn_end` has no clock — a member finishing is an event.
+TRIGGERS_DEFAULT = {"on_turn_end": True, "idle_ms": 0, "runtime_ms": 0}
+TRIGGER_MIN_MS = 60_000
+TRIGGER_MAX_MS = 6 * 60 * 60 * 1000
 # What one `arb_detail` answers with. A session is bounded by its own budget, so the cap is a
 # ceiling on a payload rather than a policy — and the text fields are the prompt an arbitrator was
 # given and the instruction it produced, both of which are whole agent turns.
@@ -203,6 +210,26 @@ def check_budget(budget):
     return out
 
 
+def check_triggers(triggers):
+    """The triggers a person asked for, or a refusal. §10.
+
+    `on_turn_end` is not optional in v1: a session with every clock off and no turn-end trigger is
+    an arbitrator that will never be woken by anything, which is a session that looks armed and is
+    not. The clocks are bounded rather than free — see TRIGGER_MIN_MS.
+    """
+    out = dict(TRIGGERS_DEFAULT)
+    out.update({k: v for k, v in (triggers or {}).items() if k in TRIGGERS_DEFAULT})
+    out["on_turn_end"] = True
+    for key in ("idle_ms", "runtime_ms"):
+        value = out[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ArbiterError("triggers_out_of_range", f"{key}={value!r}")
+        if value and not TRIGGER_MIN_MS <= value <= TRIGGER_MAX_MS:
+            raise ArbiterError("triggers_out_of_range",
+                               f"{key}={value}, {TRIGGER_MIN_MS}..{TRIGGER_MAX_MS} or 0")
+    return out
+
+
 def resolve(fp, pane_id, panes, claimed=()):
     """Which live pane is this participant now, per §5.2. Returns (pane_id, None) or (None, code).
 
@@ -331,6 +358,9 @@ class Arbitration:
         # the same reason `send` is, and because a push that fails is not a reason to fail a pause.
         self.notify = notify
         self.clock = clock
+        # How long each member has been in the status it is in, for §10's clocks. Held in memory on
+        # purpose: it is a fact about this relay's uptime, and a restart pauses the session anyway.
+        self._since = {}
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, mode=0o700, exist_ok=True)
@@ -509,6 +539,7 @@ class Arbitration:
         if not gates or any("name" not in g or "template" not in g for g in gates):
             raise ArbiterError("bad_gates")
         budget = check_budget(budget)
+        triggers = check_triggers(triggers)
 
         at = self.clock()
         # Readable enough to recognise in a directory listing, and suffixed because the minute is
@@ -521,7 +552,7 @@ class Arbitration:
             "triggers_json, arbitrator_fp, arbitrator_pane, state, window_at, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,'active',?,?)",
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
-             json.dumps(triggers or {"on_turn_end": True}),
+             json.dumps(triggers),
              json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"], at, at))
         for i, p in enumerate(members, start=1):
             self.conn.execute(
@@ -632,6 +663,61 @@ class Arbitration:
             return self.prompt(s["id"], f"{kind} — {member_id}", entries)
         except (ArbiterError, sqlite3.Error, OSError):
             return None
+
+    def due(self, now=None):
+        """Which members' clocks have come round. §10 — evaluated by the caller's poll loop.
+
+        Returns a list of `{"member", "pane_id", "trigger"}`, which the relay turns into the same
+        `turn_ended` call a real turn end makes: the digest, the coalescing and the budget are one
+        path, and a clock is only another way of reaching it.
+
+        Fires once per stay. A member sitting idle for an hour with a five-minute clock is one
+        prompt, not twelve — the arbitrator has already been told, and repeating it is how an
+        unattended loop spends a budget on nothing. The clock restarts when the pane moves.
+        """
+        s = self.running()
+        if s is None or s["state"] != "active":
+            self._since = {}      # a paused session's clocks do not accumulate while it is stopped
+            return []
+        trig = json.loads(s["triggers_json"])
+        idle_ms, runtime_ms = int(trig.get("idle_ms") or 0), int(trig.get("runtime_ms") or 0)
+        now = self.clock() if now is None else now
+        try:
+            roster = self.roster(s["id"])
+        except (ArbiterError, sqlite3.Error):
+            return []
+        # A send resets the idle clock, because a member that was just written to is not idle in the
+        # sense that matters — it is about to work, and prompting the arbitrator about it would ask
+        # for a decision on a turn that has not started.
+        last_send = {r["pane_id"]: r["at"] for r in self.conn.execute(
+            "SELECT pane_id, MAX(at) AS at FROM sends WHERE session_id=? GROUP BY pane_id",
+            (s["id"],))}
+        out = []
+        live = set()
+        for member_id, m in roster.items():
+            pane_id, status = m["pane_id"], m["status"]
+            if not pane_id:
+                continue
+            live.add(pane_id)
+            seen = self._since.get(pane_id)
+            if seen is None or seen[0] != status:
+                self._since[pane_id] = [status, now, False]
+                continue
+            _, since, fired = seen
+            if fired or (not idle_ms and not runtime_ms):
+                continue
+            if idle_ms and ends_turn(status) and now - since >= idle_ms \
+                    and since > last_send.get(pane_id, 0):
+                trigger = "idle"
+            elif runtime_ms and status == "working" and now - since >= runtime_ms:
+                trigger = "runtime"
+            else:
+                continue
+            seen[2] = True
+            out.append({"member": member_id, "pane_id": pane_id, "trigger": trigger})
+        for pane_id in set(self._since) - live:
+            del self._since[pane_id]        # a member that moved pane starts its clock again
+        return out
 
     def arbitrator_finished(self, pane_id):
         """The arbitrator ended a turn, so its answer should be on disk. Reads it. §12.1 step 4.

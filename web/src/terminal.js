@@ -592,8 +592,12 @@
       const name = paneLabel(a);
       const proj = a.project && a.project !== name
         ? ` <span class="badge proj">@${escapeHtml(a.project)}</span>` : '';
+      // The arbitration mark rides here rather than in each list: a pane deciding a session is
+      // that in every place it is drawn, and a person who cannot see it in the pane list is one
+      // who will type into it from there.
+      const arb = typeof arbMark === 'function' ? arbMark(a.pane_id) : '';
       return `<span aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span> ` +
-        escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '');
+        escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '') + arb;
     }
 
     // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.

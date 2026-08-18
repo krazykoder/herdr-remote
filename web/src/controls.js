@@ -156,6 +156,9 @@
     // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
     // open — which is why this takes the pane rather than reading `activePane`.
     function sendTextTo(paneId, text) {
+      // Both composers land here, which is why the arbitration guard is here and not in each of
+      // them. It arms rather than refuses — see arbGuardSend.
+      if (typeof arbGuardSend === 'function' && !arbGuardSend(paneId)) return false;
       if (!submitText(paneId, text)) return false;
       // Recorded once the wire has taken it: a transcript that cannot tell a transfer from typing
       // claims the user said what another agent said, and one that records a send the socket

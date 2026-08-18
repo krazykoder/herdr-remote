@@ -323,6 +323,10 @@ test('the composer sends to the pane that is open', async ({page}) => {
   expect(sent.some(m => m.type === 'send_keys' && m.keys.includes('Enter'))).toBe(false);
   // And the composer is cleared, which is the only sign the user gets that it left.
   await expect(page.locator(R('termInput'))).toHaveValue('');
+  // The fake herdr reports a fixed board, so this pane never reports taking the text and the
+  // relay cannot prove the send landed. That is the case a cleared composer hides, and the only
+  // thing that distinguishes it from a send that worked is this.
+  await expect(page.locator('#toast')).toContainText('did not confirm the send');
 });
 
 // A working pane, read as a thread, with one bubble in it — which is where the Esc lives now. The
