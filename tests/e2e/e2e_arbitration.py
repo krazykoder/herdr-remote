@@ -184,6 +184,18 @@ async def wait_db(sql, args=(), timeout=25):
     return []
 
 
+async def wait_log(needle, timeout=15):
+    """Wait for a herdr call to appear. Rows and calls are not simultaneous — a prompt is written
+    down before it is delivered — so a check on the log has to wait for the delivery rather than
+    assume the row implies it."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if needle in herdr_log():
+            return True
+        await asyncio.sleep(0.2)
+    return False
+
+
 async def wait_msg(ws, kind, pred=lambda m: True, timeout=25):
     """Next message of a type that satisfies `pred`, or None. The socket also carries an `agents`
     broadcast every poll, so filtering is not optional."""
@@ -225,9 +237,11 @@ def drop(session_id, sequence, doc):
     return path
 
 
-def participant(pane):
-    return {"pane_id": pane["pane_id"], "host": "local", "agent": pane["agent"],
-            "cwd": pane["cwd"], "label": pane["label"]}
+def participant(pane, role=""):
+    """What a client is allowed to say about a participant: which pane, and what the person calls
+    its part. Identity — agent, cwd, label — is the relay's to read off its own snapshot, so this
+    deliberately sends none of it."""
+    return {"pane_id": pane["pane_id"], "role": role}
 
 
 # --- the runs -------------------------------------------------------------------------------
@@ -278,7 +292,7 @@ async def loop_run():
             open(LOG, "w").close()
             await ws.send(json.dumps({
                 "type": "arb_start", "conversation": "c-e2e", "scope": SCOPE,
-                "members": [participant(MEMBER_1), participant(MEMBER_2)],
+                "members": [participant(MEMBER_1, "Architect"), participant(MEMBER_2, "Reviewer")],
                 "arbitrator": participant(ARBITER)}))
             m = await wait_msg(ws, "arb_session")
             s = (m or {}).get("session", {})
@@ -289,6 +303,12 @@ async def loop_run():
             check("T12 both members are on the roster with live panes",
                   sorted((x["id"], x["pane_id"]) for x in s.get("members", []))
                   == [("member-1", "a1:p1"), ("member-2", "a1:p2")], s.get("members"))
+            # The client sent a pane id and a role and nothing else. Agent and label are on the
+            # roster because the relay read them off its own pane list.
+            check("T12 identity comes from the relay's snapshot, not the client's payload",
+                  sorted((x["agent"], x["label"], x["role"]) for x in s.get("members", []))
+                  == [("claude", "Architect 1", "Architect"),
+                      ("codex", "Reviewer 1", "Reviewer")], s.get("members"))
             check("T12 the starter prompt went to the arbitrator's pane and nowhere else",
                   "pane send-text a1:p3 You are the arbitrator" in herdr_log()
                   and "pane send-text a1:p1" not in herdr_log()
@@ -363,12 +383,6 @@ async def loop_run():
             check("T13 the decision is recorded as rejected, naming the code",
                   len(bad) == 1 and bad[0]["valid"] == 0
                   and bad[0]["reject_code"] == "target_working", bad)
-            check("T13 nothing was sent to the working member",
-                  "pane send-text a1:p2" not in herdr_log(),
-                  [l for l in herdr_log().splitlines() if "send-text" in l][:2])
-            check("T13 and no delivery was recorded",
-                  len(rows("SELECT * FROM sends WHERE session_id=?", session_id)) == 1)
-
             reprompts = await wait_db(
                 "SELECT * FROM prompts WHERE session_id=? AND trigger='reprompt'", (session_id,))
             check("T13 the arbitrator is told, once, and asked to correct the same file",
@@ -376,8 +390,17 @@ async def loop_run():
                   and "rejected: target_working" in reprompts[0]["body"],
                   [r["trigger"] for r in reprompts])
             check("T13 the re-prompt reached the arbitrator's pane",
-                  "pane send-text a1:p3" in herdr_log(),
+                  await wait_log("pane send-text a1:p3"),
                   [l for l in herdr_log().splitlines() if "send-text" in l][:2])
+
+            # Asserted last, once the rejection has run all the way to its re-prompt: "nothing was
+            # typed at the busy member" is only worth anything after the point where something
+            # would have been.
+            check("T13 nothing was sent to the working member",
+                  "pane send-text a1:p2" not in herdr_log(),
+                  [l for l in herdr_log().splitlines() if "send-text" in l][:2])
+            check("T13 and no delivery was recorded",
+                  len(rows("SELECT * FROM sends WHERE session_id=?", session_id)) == 1)
 
             row = rows("SELECT * FROM sessions WHERE id=?", session_id)[0]
             check("T13 no step is spent on a rejection", row["steps_used"] == 1, dict(row))

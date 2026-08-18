@@ -207,12 +207,31 @@ class Start(Harness):
             self.start(members=[self.live[0], pane("ghost")])
         self.assertEqual("participant_not_live", caught.exception.code)
 
+    def test_client_metadata_cannot_rewrite_a_live_participant_identity(self):
+        forged = {**self.live[0], "agent": "codex", "cwd": "/not-the-live-pane",
+                  "label": "Forged"}
+        s = self.start(members=[forged, self.live[1]])
+        member = self.arb.members(s["id"])[0]
+        self.assertEqual(("claude", "/a", "p1"),
+                         (member["agent"], member["cwd"], member["pane_id"]))
+
     def test_a_remote_participant_is_refused(self):
         # v1 is local-only, D13.
         far = pane("p3", cwd="/a", host="build-box")
         self.live.append(far)
         with self.assertRaises(ArbiterError) as caught:
             self.start(members=[self.live[0], far])
+        self.assertEqual("remote_participant", caught.exception.code)
+
+    def test_a_remote_pane_whose_id_collides_with_a_live_local_one_is_refused(self):
+        # The reason the *claimed* host is still checked after everything else stopped being
+        # trusted. Pane ids are per-host counters, so `box`'s p1 and this machine's p1 are two
+        # different agents wearing one id — and `panes()` only lists this machine's, so a claim of
+        # `box` matched against the snapshot alone would resolve to the local pane and start typing
+        # into it. Nothing about the participant is taken from the claim; the claim is only ever a
+        # reason to say no.
+        with self.assertRaises(ArbiterError) as caught:
+            self.start(members=[{"pane_id": "p1", "host": "box"}, self.live[1]])
         self.assertEqual("remote_participant", caught.exception.code)
 
     def test_a_starter_prompt_that_cannot_be_confirmed_fails_the_start(self):

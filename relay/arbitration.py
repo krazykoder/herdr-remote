@@ -407,24 +407,47 @@ class Arbitration:
         `members` and `arbitrator` are panes as herdr lists them; the front end chose them, because
         which panes are in a conversation is already the person's decision. **The relay never picks
         participants.**
+
+        What it does pick is who they *are*. Only `pane_id` and `role` are taken from the caller —
+        the pane id is the selection and the role is the person's own label for it. Everything the
+        session identifies a participant by is re-read from the live snapshot, because a fingerprint
+        the client supplies is a fingerprint the client can get wrong: a stale payload naming a pane
+        that has since been replaced would enrol the new pane under the old pane's identity, and
+        every later re-resolution would follow the wrong one.
         """
         if self.running():
             raise ArbiterError("session_running")
         if len(members) != MEMBERS_REQUIRED:
             raise ArbiterError("member_count", f"{len(members)}, expected {MEMBERS_REQUIRED}")
+        if not all(isinstance(p, dict) for p in [*members, arbitrator]):
+            raise ArbiterError("bad_participant")
         panes = [*members, arbitrator]
         ids = [p.get("pane_id") for p in panes]
         if len(set(ids)) != len(ids) or not all(ids):
             raise ArbiterError("duplicate_participant")
         live = self.panes()
-        live_ids = {p.get("pane_id") for p in live}
+        live_by_id = {p.get("pane_id"): p for p in live}
         for p in panes:
-            if p.get("pane_id") not in live_ids:
+            actual = live_by_id.get(p.get("pane_id"))
+            if actual is None:
                 raise ArbiterError("participant_not_live", p.get("pane_id") or "")
-            if (p.get("host") or "local") != "local":
-                # v1 is local-only (D13). A remote send is one ssh hop away and the recovery story
-                # for a half-delivered instruction over a dropped connection is not written yet.
-                raise ArbiterError("remote_participant", p.get("host") or "")
+            # v1 is local-only (D13). A remote send is one ssh hop away and the recovery story for
+            # a half-delivered instruction over a dropped connection is not written yet.
+            #
+            # The *claimed* host is checked even though it is not trusted for anything else, and
+            # this is the one place it has to be. `panes()` is this machine's herdr, so everything
+            # it lists is local by construction and a check against the snapshot alone can never
+            # fail. But pane ids are per-host counters and collide across hosts — a client that
+            # meant `box`'s w1:p1 would otherwise silently enrol *this* machine's w1:p1 and start
+            # typing into the wrong agent's terminal. A claim is never identity; it is only ever a
+            # reason to refuse.
+            host = p.get("host") or actual.get("host") or "local"
+            if host != "local":
+                raise ArbiterError("remote_participant", host)
+        # Pane ID is the user's selection; its identity belongs to the relay snapshot. Accepting a
+        # client-provided fingerprint lets a stale or forged payload enrol one pane as another.
+        members = [{**live_by_id[p["pane_id"]], "role": p.get("role") or ""} for p in members]
+        arbitrator = live_by_id[arbitrator["pane_id"]]
         scope = (scope or "").strip()
         if not scope or len(scope) > MAX_SCOPE:
             raise ArbiterError("bad_scope")
