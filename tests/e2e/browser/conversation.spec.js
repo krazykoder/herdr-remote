@@ -3433,6 +3433,31 @@ test('a note typed after a token goes out after the message it names', async ({p
   expect(body.indexOf('and mind the tests')).toBeGreaterThan(body.indexOf('the other pane spoke first'));
 });
 
+test('selecting a bubble preserves the thread scroll position rather than scrolling to bottom', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  await page.evaluate(() => {
+    const thread = document.getElementById('convViewThread');
+    for (let i = 0; i < 30; i++) {
+      const div = document.createElement('div');
+      div.className = 'conv-msg';
+      div.dataset.i = String(100 + i);
+      div.dataset.text = `Message line ${i}`;
+      div.innerHTML = `<button class="conv-pick" onclick="toggleConvDockPick(${100 + i})">✓</button>Message ${i}`;
+      thread.appendChild(div);
+    }
+    thread.scrollTop = 120;
+  });
+  const before = await page.evaluate(() => document.getElementById('convViewThread').scrollTop);
+  expect(before).toBe(120);
+  await page.locator('#convViewThread .conv-msg[data-i="105"] .conv-pick').click();
+  const after = await page.evaluate(() => document.getElementById('convViewThread').scrollTop);
+  expect(after).toBe(120);
+});
+
 test('a chip tapped twice comes back out', async ({page}) => {
   await open(page);
   await joinBoth(page);

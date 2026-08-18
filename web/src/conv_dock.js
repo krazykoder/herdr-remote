@@ -323,6 +323,8 @@
     // `[#1 …] - what I want done with it`, so the note the reader is about to type follows the
     // token rather than being pushed onto another line by the app.
     function toggleConvDockPick(i) {
+      const thread = document.getElementById('convViewThread') || document.getElementById('convThread');
+      const savedScrollTop = thread ? thread.scrollTop : null;
       const el = document.querySelector(`#convViewThread .conv-msg[data-i="${i}"]`);
       const input = document.getElementById('convInput');
       if (!el || !input) return;
@@ -342,11 +344,13 @@
         const token = (before && !before.endsWith('\n') ? '\n' : '') + dockTokenText(seq, text);
         input.value = before + token + after;
         input.selectionStart = input.selectionEnd = (before + token).length;
-        input.focus();
       }
       autoGrow(input);
       syncConvCursor();
       syncDockTokens();
+      if (thread && savedScrollTop !== null) {
+        thread.scrollTop = savedScrollTop;
+      }
     }
 
     // The box is the record of what is picked, so this reads it rather than being told: every token
