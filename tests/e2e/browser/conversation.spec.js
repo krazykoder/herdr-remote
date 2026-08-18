@@ -3391,6 +3391,29 @@ test('a filled instruction rides above the quote', async ({page}) => {
   expect(body.indexOf('Review, edit, fix')).toBeLessThan(body.indexOf('the other pane spoke first'));
 });
 
+// Who said it is a label on a quote, so it sits on the quote. At the top of the message it would
+// be labelling the reader's own notes as well — and sitting above the instruction that frames the
+// whole send.
+test('the attribution goes with the quote, not at the top of the message', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  await pickBubble(page, 'the other pane spoke first');
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review-fix")`).click();
+  await page.locator('#convInput').pressSequentially(' - and mind this');
+  await sendPicked(page);
+  const body = await sentBody(page);
+  // Instruction, then the note's own line, then the label, then what was said.
+  expect(body.indexOf('Review, edit, fix')).toBeLessThan(body.indexOf('feedback from'));
+  expect(body.indexOf('feedback from')).toBeLessThan(body.indexOf('the other pane spoke first'));
+  // Immediately before it, with nothing of the reader's in between.
+  expect(body).toContain('feedback from scratch:\nthe other pane spoke first');
+  // And said once per quote, not once per message.
+  expect(body.split('feedback from').length - 1).toBe(1);
+});
+
 test('a note typed after a token goes out after the message it names', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -4750,9 +4773,12 @@ test('an attached instruction is listed above the box', async ({page}) => {
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
 
-// The draft and the addressed agent are held per conversation for the life of the page. A
-// conversation that is gone cannot be returned to, and an id the cap recycles would otherwise hand
-// its next owner a stranger's half-written message.
+// The draft, the addressed agent and the quotes the draft's tokens stand for are held per
+// conversation for the life of the page. A conversation that is gone cannot be returned to, and an
+// id the cap recycles would otherwise hand its next owner a stranger's half-written message.
+const held3 = page => page.evaluate(() =>
+  [convComposerDrafts.size, convComposerTargets.size, convComposerTokens.size]);
+
 test('a deleted conversation takes its draft and its addressed agent with it', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -4760,17 +4786,44 @@ test('a deleted conversation takes its draft and its addressed agent with it', a
   await openWindow(page);
   await page.evaluate(() => setDockMru(false));
   await whoRow(page).filter({hasText: 'scratch'}).click();
-  await page.locator('#convInput').fill('half a thought');
+  await pickBubble(page, 'the other pane spoke first');
+  await page.locator('#convInput').pressSequentially(' half a thought');
   // Switching away is what files them, the same as the draft test above.
   await page.evaluate(() => {
     saveConvIndex(loadConvIndex().concat({id: 'c2', name: 'somewhere else', created: Date.now(),
       members: loadConvIndex()[0].members}));
     openConversation('c2');
   });
-  expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([1, 1]);
+  expect(await held3(page)).toEqual([1, 1, 1]);
   await page.evaluate(() => { convViewId = 'c1'; deleteConversation(); });
-  expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([0, 0]);
+  expect(await held3(page)).toEqual([0, 0, 0]);
 });
+
+// And a draft comes back with its quotes standing, not as `[#1 …]` naming nothing.
+test('a draft carries its quoted messages into the conversation it was written for',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await tapWire(page);
+    await openWindow(page);
+    await pickBubble(page, 'the other pane spoke first');
+    await page.locator('#convInput').pressSequentially(' - look at this');
+    const draft = await page.locator('#convInput').inputValue();
+    await page.evaluate(() => {
+      saveConvIndex(loadConvIndex().concat({id: 'c2', name: 'somewhere else', created: Date.now(),
+        members: loadConvIndex()[0].members}));
+      openConversation('c2');
+    });
+    await expect(page.locator('#convInput')).toHaveValue('');
+    await page.evaluate(() => openConversation('c1'));
+    await expect(page.locator('#convInput')).toHaveValue(draft);
+    // The bubble is lit again, and the send knows what it is carrying.
+    await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
+    await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (1) ›');
+    await sendPicked(page);
+    expect(await sentBody(page)).toContain('the other pane spoke first');
+  });
 
 // A token is one thing, so it deletes as one. Shortening it a character at a time would leave text
 // that still reads like a pick and no longer is one.

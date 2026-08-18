@@ -1055,13 +1055,23 @@
       // An @ prompt filled into the box is the exception, because it is an instruction rather than
       // a note: it is peeled off the front and joins the attached ones above the quote.
       const input = document.getElementById('convInput');
+      const from = paneLabel(source) || source.pane_id;
       const [filled, kept] = peelDockLead(input.value, agentOf(target));
       const lead = [dockInstruction(target), filled].filter(Boolean).join('\n');
-      const body = kept.replace(DOCK_TOKEN, (m, seq) => (dockTokens.get(Number(seq)) || {text: m}).text);
-      const out = composeTransfer(lead, paneLabel(source) || source.pane_id, body);
-      if (out.error) { showToast(out.error); return; }
+      // Who said it goes immediately above what they said, once per token, rather than once at the
+      // top of the message. The header is a label on a quote, and with the reader's own notes
+      // between the quotes a single one at the top would be labelling their sentences too — and
+      // would sit above the instruction that frames the whole send.
+      const body = kept.replace(DOCK_TOKEN, (m, seq) => {
+        const q = dockTokens.get(Number(seq));
+        return q ? `feedback from ${from}:\n${q.text}` : m;
+      });
+      const out = {text: (lead ? lead + '\n\n' : '') + body};
       // What the send is measured against, so the target's transcript records where the text came
       // from rather than claiming the reader typed another agent's words.
+      //
+      // Matched on one quoted message rather than on all of them joined: the reader can put their
+      // own words between two tokens, so there is no one string holding both.
       //
       // A payload that matches what went out is a clean transfer; anything else is `mixed`. So the
       // whole payload is offered only when the box held nothing but tokens — with a note of the
@@ -1069,8 +1079,8 @@
       // is what the record can honestly attribute.
       const bare = !kept.replace(DOCK_TOKEN, '').trim();
       pendingTransfer = {
-        key: convMemberKey(source), label: paneLabel(source) || source.pane_id,
-        body: quoted, payload: bare ? out.text : quoted, hash: convHash(quoted), at: Date.now(),
+        key: convMemberKey(source), label: from,
+        body: picked[0], payload: bare ? out.text : quoted, hash: convHash(quoted), at: Date.now(),
       };
       if (!sendTextTo(target, out.text)) return;
       noteDockUse('who', convMemberKey(live));
