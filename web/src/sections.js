@@ -84,7 +84,7 @@
       // Circles and not lucide's zero-length `h.01` dots for the eyes — at this size the round cap
       // is a smudge, and a bot with no eyes is a plain box next to a terminal that is also one.
       agents: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M12 3v4"/>'
-        + '<circle cx="8.5" cy="14" r="0.6"/><circle cx="15.5" cy="14" r="0.6"/>',
+        + '<circle cx="8.5" cy="13.5" r="1" fill="currentColor"/><circle cx="15.5" cy="13.5" r="1" fill="currentColor"/><path d="M8.5 17.5h7"/>',
       terminals: '<rect x="2" y="4" width="20" height="16" rx="2"/>'
         + '<polyline points="6 9 9 12 6 15"/><line x1="12" y1="15" x2="18" y2="15"/>',
       pairs: '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/>'

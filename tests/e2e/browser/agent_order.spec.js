@@ -70,7 +70,7 @@ test('rows identify agents and terminals without making the second line compete 
   await openSheet(page);
   const agent = rows(page).filter({hasText: 'Architect 1'});
   const terminal = rows(page).filter({hasText: 'build watch'});
-  await expect(agent.locator('.kind')).toHaveText('🤖');
+  await expect(agent.locator('.kind .agent-glyph')).toBeVisible();
   await expect(agent.locator('.meta .badge')).toHaveText('claude');
   await expect(terminal.locator('.kind')).toHaveText('⬛');
   await expect(terminal.locator('.meta')).toContainText('charts/relay');

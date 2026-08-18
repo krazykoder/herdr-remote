@@ -55,6 +55,7 @@
       --red: #f7768e;
       --blue: #7aa2f7;
       --orange: #e0af68;
+      --pink: #ff2d87;
       /* Agent kinds, in the badge only. --orange doubles as the pi yellow; claude needs its own
          because the two sit side by side in a list and #e0af68 twice reads as one colour. */
       --agent-claude: #ff9e64;
@@ -100,6 +101,7 @@
       --red: #cf1130;
       --blue: #2461da;
       --orange: #965904;
+      --pink: #ff2d87;
       --agent-claude: #b74208;
       --agent-agy: #6a3ec4;
       --shell: #046fa0;
@@ -415,6 +417,10 @@
       flex-shrink: 1;
     }
 
+    .header .sect-tab[data-section="agents"] {
+      color: var(--pink, #ff2d87);
+    }
+
     .header .sect-tab[aria-pressed="true"] {
       color: var(--blue);
       background: var(--border);
@@ -500,11 +506,23 @@
       text-overflow: ellipsis;
     }
 
-    /* The same 🤖 / ⬛ the cards use. Small, and it never shrinks — the label is what truncates. */
+    /* The same agent glyph / ⬛ the cards use. Small, and it never shrinks — the label is what truncates. */
     .agent-tab .kind {
       flex-shrink: 0;
       font-size: 0.62rem;
       line-height: 1;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .agent-glyph {
+      width: 1.1em;
+      height: 1.1em;
+      vertical-align: -0.15em;
+      display: inline-block;
+      stroke: var(--pink, #ff2d87);
+      color: var(--pink, #ff2d87);
+      flex-shrink: 0;
     }
 
     .agent-tab:hover .pill {

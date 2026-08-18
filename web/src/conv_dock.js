@@ -675,7 +675,7 @@
         `<button class="xfer-who-more list" onclick="toggleWhoMenu()" ` +
         `aria-expanded="${whoMenuOpen()}" ` +
         `title="Every agent, as a list" aria-label="Every agent, as a list">` +
-        `${(paneOf(target) || {}).agent ? '🤖' : '⬛'}</button>` +
+        `${(paneOf(target) || {}).agent ? agentGlyph() : '⬛'}</button>` +
         // The way out of the reading window and into the addressed pane itself. Beside the list it
         // is chosen from, because "who am I talking to" and "take me there" are the same question
         // asked twice. A screen rather than an arrow: what it opens is the pane's terminal, and an

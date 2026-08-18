@@ -609,7 +609,7 @@
       const name = paneLabel(a);
       const proj = a.project && a.project !== name
         ? ` <span class="badge proj">@${escapeHtml(a.project)}</span>` : '';
-      return `<span aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span> ` +
+      return `<span aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span> ` +
         escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '');
     }
 

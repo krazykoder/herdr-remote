@@ -17,7 +17,7 @@
           const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
           return `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
       <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
-      <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
+      <span class="kind" aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span>
       <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
       <span class="grip" aria-hidden="true">⠿</span>
     </div>`;
@@ -189,7 +189,7 @@
           const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
           return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="choosePartner('${escapeHtml(a.pane_id)}')">
       <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
-      <span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>
+      <span class="kind" aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span>
       <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
       ${note}<span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
     </button>`;

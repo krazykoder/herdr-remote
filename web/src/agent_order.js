@@ -268,7 +268,7 @@
             `title="${escapeHtml(paneTitle(a))} — double-click to pin it first">` +
             `<span class="pill">` +
             `<span class="dot${pulse}" style="background:${color}" aria-hidden="true"></span>` +
-            `<span class="kind" aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span>` +
+            `<span class="kind" aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span>` +
             `<span class="label">${escapeHtml(paneLabel(a))}</span></span></button>`;
         }).join('');
         tabsActive = null;  // the buttons are new, so the class has to be applied again

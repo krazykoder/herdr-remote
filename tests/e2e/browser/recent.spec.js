@@ -79,9 +79,8 @@ test('the list is every live pane, most recently opened first', async ({page}) =
 
 test('terminals are in it too, and the row says which is which', async ({page}) => {
   await page.locator('#statusBar .recent-btn').click();
-  const kinds = await rows(page).locator('.kind').allTextContents();
-  expect(new Set(kinds)).toEqual(new Set(['🤖', '⬛']));
-  // A shell has no harness badge and no status word, so its row is its label and its cwd.
+  const agentCount = await page.evaluate(() => agents.length);
+  await expect(rows(page).filter({has: page.locator('.kind .agent-glyph')})).toHaveCount(agentCount);
   const shell = rows(page).filter({hasText: 'build watch'});
   await expect(shell).toHaveCount(1);
   await expect(shell.locator('.kind')).toHaveText('⬛');

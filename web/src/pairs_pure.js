@@ -11,6 +11,17 @@
     // what makes a client-side split work against a relay this app did not ship with.
     const SEND_TEXT_MAX = 4000;
 
+    // The mark an agent is shown by, drawn as an inline SVG with bright pink color.
+    // Drawn rather than typed to ensure identical crisp rendering across platforms without emoji
+    // font differences.
+    function agentGlyph() {
+      return '<svg class="agent-glyph" viewBox="0 0 24 24" width="1em" height="1em" fill="none" ' +
+        'stroke="var(--pink, #ff2d87)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+        'aria-hidden="true" style="color:var(--pink, #ff2d87);"><rect x="3" y="7" width="18" height="14" rx="2"/>' +
+        '<path d="M12 3v4"/><circle cx="8.5" cy="13.5" r="1" fill="var(--pink, #ff2d87)"/>' +
+        '<circle cx="15.5" cy="13.5" r="1" fill="var(--pink, #ff2d87)"/><path d="M8.5 17.5h7"/></svg>';
+    }
+
     // Text too long for one message, split into messages that are not. Line boundaries where there
     // are any: a chunk boundary is invisible to the agent — it is one composer either way — but the
     // relay's audit log records one line per message, and a log that cuts a diff mid-hunk is harder

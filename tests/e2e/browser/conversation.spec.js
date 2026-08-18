@@ -3788,7 +3788,7 @@ test('the agent list button wears the agent icon', async ({page}) => {
   await read(page);
   await openWindow(page);
   // Said by the button rather than by a caret that could open anything.
-  await expect(page.locator('#xferRow .xfer-who-more.list')).toHaveText('🤖');
+  await expect(page.locator('#xferRow .xfer-who-more.list .agent-glyph')).toBeVisible();
 });
 
 test('what was used last comes back to the left, and the sort can be turned off',

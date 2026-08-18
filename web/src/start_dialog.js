@@ -526,7 +526,7 @@
         seen ? fmtAgo(new Date(seen)) : ''].filter(Boolean).join(' · ');
       return `<button class="pair-pick${p.pane_id === activePane ? ' on' : ''}" ` +
         `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
-        `<span class="kind" aria-hidden="true">${shell ? '⬛' : '🤖'}</span>` +
+        `<span class="kind" aria-hidden="true">${shell ? '⬛' : agentGlyph()}</span>` +
         `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
         `${shell ? '' : agentBadge(p.agent)}</span>` +
         `<span class="meta">${escapeHtml(meta)}</span></span>` +
