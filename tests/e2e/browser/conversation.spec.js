@@ -4205,3 +4205,55 @@ test('the composer bubble remains static at the bottom while the thread scrolls'
 });
 
 
+
+// The gesture the desktop test cannot make. `dblclick` is a mouse event and a phone never sends
+// one — a double-tap arrives as two touchend pairs and nothing else, which is why addressing an
+// author by tapping their bubble was dead on the device the app is mostly read on.
+test.describe('on a touch screen', () => {
+  test.use({hasTouch: true, viewport: {width: 390, height: 844}});
+
+  test('double tapping a bubble selects that agent in the composer bubble', async ({page}) => {
+    await open(page);
+    await page.evaluate(async () => {
+      const a1 = paneOf('w1:p1');
+      const a2 = agents.find(x => x.label === 'scratch');
+      const k1 = convMemberKey(a1), k2 = convMemberKey(a2);
+      await convPut({
+        key: k2, label: 'scratch', touched: Date.now(),
+        spawn: {agent: 'codex'},
+        entries: [{who: 'agent', text: 'Hello from scratch agent', at: Date.now(), at_src: 'state'}]
+      });
+      saveConvIndex([{
+        id: 'c1', name: 'two agent conv', created: Date.now(),
+        members: [{key: k1, added: 1, label: 'Architect 1'}, {key: k2, added: 2, label: 'scratch'}],
+      }]);
+      openConversation('c1');
+    });
+
+    const bubble = page.locator('#convViewThread .conv-msg', {hasText: 'Hello from scratch agent'});
+    await expect(bubble).toBeVisible();
+    const scratchId = await page.evaluate(() => agents.find(x => x.label === 'scratch').pane_id);
+
+    // `touchend` and nothing else, deliberately. Playwright's own `tap()` cannot prove this:
+    // Chromium synthesises a click from an emulated tap, two of them make a `dblclick`, and the
+    // desktop handler answers — so a tap-driven test passes with the touch handler deleted. The
+    // browsers this was reported broken on do not send that `dblclick`. Dispatching the raw event
+    // is the only way to hold the gesture handler to its own behaviour.
+    const tapTwice = (gapMs) => page.evaluate(async ({text, gap}) => {
+      const el = Array.from(document.querySelectorAll('#convViewThread .conv-msg'))
+        .find(n => n.textContent.includes(text));
+      const tap = () => el.dispatchEvent(new Event('touchend', {bubbles: true, cancelable: true}));
+      tap();
+      await new Promise(r => setTimeout(r, gap));
+      tap();
+    }, {text: 'Hello from scratch agent', gap: gapMs});
+
+    // One tap does nothing — a reader scrolling a thread with a finger touches bubbles constantly —
+    // and so do two far enough apart to be two separate touches.
+    await tapTwice(600);
+    expect(await page.evaluate(() => dockAddressed())).not.toBe(scratchId);
+
+    await tapTwice(50);
+    expect(await page.evaluate(() => dockAddressed())).toBe(scratchId);
+  });
+});
