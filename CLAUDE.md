@@ -119,7 +119,7 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/conv_query.py` | Read-only query over that record. Also a CLI, so an agent can read it from its own shell | Python (stdlib) |
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
-| `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 29 script modules) | HTML/CSS/JS |
+| `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 30 script modules) | HTML/CSS/JS |
 | `scripts/build.py` | Inlines the modules into the single-file `web/dist/index.html` | Python (stdlib) |
 | `herdi-mac/` | macOS menu bar app | Swift (SPM) |
 | `herdi-ios/` | iOS app with widgets + Live Activities | Swift (XcodeGen) |

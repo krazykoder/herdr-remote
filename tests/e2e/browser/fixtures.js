@@ -76,6 +76,15 @@ const test = base.test.extend({
           // read. It lands in this worker's own HERDR_STATE_DIR, which is a temp directory torn
           // down with the worker — no developer's real record is opened or written by a test run.
           HERDR_CONV_LOG: '1',
+          // Per worker, and stated rather than defaulted: unset, this lands on the repo's own
+          // .herdr-remote/arbitration.sqlite3 — the developer's real record, shared by every
+          // worker at once. Two relays writing one session table is also a suite that can see
+          // another worker's session on the strip.
+          HERDR_ARBITER_DB: path.join(logs, 'arbitration.sqlite3'),
+          // Arbitration, whose companions are the two above. On for the whole suite because the
+          // feature gate is a message arriving at all — a relay with it off sends nothing, and a
+          // suite that never sees it could not tell the gate from a broken render.
+          HERDR_ENABLE_ARBITER: '1',
           // No HERDR_REMOTES: one host keeps the fake's deliberate cross-host pane-ID collisions
           // out of the way, and the Projects fixture is not loaded because its entries name it.
         },

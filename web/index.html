@@ -2647,6 +2647,112 @@
       box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
     }
 
+    /* The session strip: what is arbitrating this conversation, above the thread it is
+       arbitrating. Opaque like .conv-panel and for the same reason — it rides the sticky header
+       and the thread scrolls under it. */
+    .arb-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 6px 12px;
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+
+    /* Nothing is running: one button, and no bar of chrome pretending to be a status. */
+    .arb-strip.idle {
+      border-bottom: none;
+      background: none;
+      padding: 4px 12px;
+      justify-content: flex-end;
+    }
+
+    .arb-strip .arb-state {
+      color: var(--text);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .arb-strip[data-state="paused"] .arb-state {
+      color: var(--orange);
+    }
+
+    /* The gate, who it went to, and why — the line that gives up the width, because the other two
+       are short and fixed and this one is a sentence. */
+    .arb-strip .arb-last {
+      flex: 1 1 120px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .arb-strip .arb-budget {
+      white-space: nowrap;
+    }
+
+    .arb-btn {
+      font-size: 0.65rem;
+      /* The roster's floor, not the menu's 44px: this rides a header and the thread is what the
+         screen is for. Both destructive paths are armed. */
+      min-height: 32px;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .arb-btn.go {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .arb-form {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+
+    .arb-form .arb-who {
+      margin: 0;
+      color: var(--text);
+    }
+
+    .arb-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .arb-form textarea,
+    .arb-form select {
+      font: inherit;
+      font-size: 0.72rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      resize: vertical;
+    }
+
+    .arb-form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
     /* The one action this read-only view offers, shaped like the header buttons a pane has. */
     .conv-view-head .open-pane {
       font-size: 0.7rem;
@@ -4781,6 +4887,10 @@
           <path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
         </svg></button>
     </div>
+    <!-- What is arbitrating this conversation, and the one control that stops it. Empty — no
+         element, no border, no gap — whenever nothing is running and the relay has not offered
+         the feature, which is every relay that has it switched off. -->
+    <div id="arbStrip"></div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
     <!-- The jump to the end, at the end. This view is its own scroller, so a zero-height sticky
@@ -5458,6 +5568,7 @@
   <script src="src/shortcuts.js"></script>
   <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
+  <script src="src/arbitration.js"></script>
   <!-- After history.js and shortcuts.js: it wires its listeners at load and calls scrollPaneToBottom
        and renderConvStandalone, which those two own. -->
   <script src="src/hang_controls.js"></script>

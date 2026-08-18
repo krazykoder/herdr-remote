@@ -888,6 +888,9 @@
       convViewEntries = entries;
       // The panel is its own element and diffed on its own: a message arriving must not rewrite the
       // roster under a reader who has just opened it.
+      // The session strip, above the thread it is about. Diffed on its own inside arbRender for
+      // the same reason the panel below is: this runs on every poll.
+      arbRender();
       const panel = document.getElementById('convViewRoster');
       const rosterHtml = convRosterOpen ? convRosterHtml(conv, composed.recs, hidden) : '';
       if (rosterHtml !== convRosterHtmlLast) { convRosterHtmlLast = rosterHtml; panel.innerHTML = rosterHtml; }

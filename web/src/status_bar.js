@@ -474,6 +474,9 @@
       if (ws) ws.close();
       // start_options is a per-connection capability advertisement, never cached state.
       startOptions = null;
+      // Same rule, same reason: arbitration is a capability of the relay on the other end of this
+      // socket, and the next socket may be a different relay.
+      arbReset();
       closeStart();
       render();
       setStatus('connecting');
@@ -554,6 +557,14 @@
       else if (msg.type === 'start_options') {
         startOptions = msg;
         render();
+      }
+      // Its presence is the feature gate, the way start_options gates Start — so an empty list is
+      // as meaningful as a full one and is handled by the same branch.
+      else if (msg.type === 'arb_sessions') {
+        arbReceiveSessions(msg);
+      }
+      else if (msg.type === 'arb_session') {
+        arbReceiveSession(msg);
       }
       else if (msg.type === 'command_result' &&
                (msg.command === 'start_agent' || msg.command === 'open_terminal')) {

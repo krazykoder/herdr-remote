@@ -353,7 +353,7 @@ class Arbitration:
         except Exception as e:
             # Logged rather than swallowed: this pauses a session, and "send_unconfirmed" with no
             # cause anywhere is the kind of stop a person cannot act on.
-            log.warning("arbitration: delivery to %s raised: %s", pane_id, e)
+            log.warning("arbitration: delivery to %s raised: %r", pane_id, e)
             return False
 
     # --- reading ---
