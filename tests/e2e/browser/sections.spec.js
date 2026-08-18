@@ -259,3 +259,27 @@ test('a filter is still on when the reader comes back from a pane', async ({page
   await expect(sectTab(page, 'Terminals')).toHaveAttribute('aria-pressed', 'true');
   await expect(sectTab(page, 'Recents')).toBeVisible();
 });
+
+test('the shortcut row fits the header on a phone', async ({page}) => {
+  // Five buttons at their full width overflow a 360px bar once the title and the two nav icons
+  // have taken theirs. They shrink together to a floor instead — no scroller, nothing pushed off.
+  await page.evaluate(() => {
+    for (const id of ['pairs', 'recents', 'conversations']) {
+      document.getElementById(id).innerHTML = '<div class="section-header">x</div>';
+      toggleSection(id, true);
+    }
+    applySections();
+  });
+  await expect(page.locator('#sectionTabs button')).toHaveCount(5);
+  for (const width of [320, 360, 390, 1024]) {
+    await page.setViewportSize({width, height: 780});
+    const fit = await page.evaluate(() => {
+      const bar = document.querySelector('.header');
+      const tab = document.querySelector('.sect-tab').getBoundingClientRect();
+      return {over: bar.scrollWidth - bar.clientWidth, w: Math.round(tab.width), h: Math.round(tab.height)};
+    });
+    expect(fit.over, `overflowed at ${width}px`).toBe(0);
+    expect(fit.w, `too small to hit at ${width}px`).toBeGreaterThanOrEqual(30);
+    expect(fit.h, `lost its height at ${width}px`).toBeGreaterThanOrEqual(44);
+  }
+});

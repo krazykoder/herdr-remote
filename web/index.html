@@ -391,7 +391,11 @@
       display: flex;
       align-items: center;
       gap: 2px;
-      flex-shrink: 0;
+      /* Takes its natural width where the header has the room and gives it back where it does not:
+         the buttons shrink together down to their floor rather than the row overflowing the bar or
+         growing a scroller. One rule instead of a breakpoint per phone width. */
+      flex: 0 1 auto;
+      min-width: 0;
       margin-left: 4px;
     }
 
@@ -399,10 +403,16 @@
       display: none;
     }
 
-    /* Narrower than the nav buttons: five of these sit next to two of those, and the full height
-       keeps the hit area honest while the width gives the title back its room. */
+    /* Wider than the 36px nav buttons rather than narrower: these are aimed at with a thumb on a
+       phone, and five in a row is five chances to hit the wrong one. 42 is what they take where
+       the header has the room; 30 is the floor they shrink to on a narrow screen, still a target
+       and still the full 44px tall. */
     .header .sect-tab {
+      /* A width and not a flex-basis: the row itself is sized from its content, and content sizing
+         reads a button's min-width, not the basis it would have taken had there been room. */
+      width: 42px;
       min-width: 30px;
+      flex-shrink: 1;
     }
 
     .header .sect-tab[aria-pressed="true"] {

@@ -180,7 +180,9 @@ test('the gap moves when the order does', () => {
 test('a shortcut narrows the page to its own section', () => {
   const {run, nodes, tabs} = sectionsCtx();
   run('applySections()');
-  assert.deepEqual(offered(tabs), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  // The row has its own fixed order, led by what is read most — not the sections' and not the
+  // order Settings is holding.
+  assert.deepEqual(offered(tabs), ['conversations', 'agents', 'terminals', 'pairs', 'recents']);
   run("toggleSectionFilter('conversations')");
   assert.deepEqual(painted(nodes), ['conversations']);
   assert.deepEqual(pressed(tabs), ['conversations'], 'and the button says which one');
@@ -217,7 +219,7 @@ test('a shortcut shows a section Settings has switched off', () => {
 test('a section with nothing in it is not offered', () => {
   const {run, tabs} = sectionsCtx({content: {terminals: '', pairs: ''}});
   run('applySections()');
-  assert.deepEqual(offered(tabs), ['agents', 'recents', 'conversations']);
+  assert.deepEqual(offered(tabs), ['conversations', 'agents', 'recents']);
 });
 
 test('a filter whose section empties out lets the page back', () => {

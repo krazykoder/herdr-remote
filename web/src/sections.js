@@ -75,6 +75,9 @@
       agents: 'Agents', terminals: 'Terminals', pairs: 'Pairs',
       recents: 'Recents', conversations: 'Conversations',
     };
+    // Its own order, not the sections' and not Settings': this row is fixed so a button stays under
+    // the same thumb whatever the page below is doing, and it leads with what is read most.
+    const SECTION_TABS = ['conversations', 'agents', 'terminals', 'pairs', 'recents'];
     const SECTION_GLYPHS = {
       // Circles and not lucide's zero-length `h.01` dots: at 18px the round cap is a smudge, and
       // a bot with no eyes reads as a plain box beside a terminal that is also a plain box.
@@ -104,7 +107,7 @@
       const landing = !!list && list.style.display !== 'none';
       // Buttons for what is actually there. Fewer than two lists is nothing to choose between —
       // except while a filter is on, where the one button left is the way to switch it off.
-      const keys = SECTION_KEYS.filter(sectionHasContent);
+      const keys = SECTION_TABS.filter(sectionHasContent);
       const html = !landing || (keys.length < 2 && !sectionFilter) ? '' : keys.map(key =>
         `<button class="sect-tab" aria-pressed="${sectionFilter === key}"`
         + ` onclick="toggleSectionFilter('${key}')" title="${SECTION_NAMES[key]}"`
