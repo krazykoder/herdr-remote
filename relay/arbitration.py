@@ -395,6 +395,9 @@ class Arbitration:
                 "panes": 1 if pane_id else (0 if not matches else len(matches)),
                 "pane_id": pane_id, "status": status,
                 "agent": m["agent"], "role": m["role"], "label": m["label"],
+                # The rest of the fingerprint, which is what a row written about this member has to
+                # be filed under — see `_record_turn`.
+                "host": m["host"], "cwd": m["cwd"],
             }
         return out
 
@@ -798,8 +801,7 @@ class Arbitration:
             # at), while `sends` does not: that table is the relay's record of deliveries it stands
             # behind, and a row there would make a maybe into a yes. No step is spent for the same
             # reason — a budget counts things that certainly happened.
-            self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id,
-                              pane_id=fresh["pane_id"], agent=member.get("agent") or "")
+            self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id, who=fresh)
             self.pause(s["id"], "send_unconfirmed")
             return {"outcome": "paused", "reason": "send_unconfirmed", "decision_id": decision_id,
                     "to": doc["to"], "pane_id": fresh["pane_id"], "text": text}
@@ -812,15 +814,27 @@ class Arbitration:
             "UPDATE sessions SET state='active', steps_used=steps_used+1, "
             "consecutive=consecutive+1 WHERE id=?", (s["id"],))
         self.conn.commit()
-        self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id,
-                          pane_id=fresh["pane_id"], agent=member.get("agent") or "")
+        self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id, who=fresh)
         return {"outcome": "sent", "to": doc["to"], "pane_id": fresh["pane_id"],
                 "text": text, "decision_id": decision_id}
 
-    def _record_turn(self, s, *, kind, text, decision_id, pane_id="", agent=""):
-        """N8: every automated send is visible in the thread. Nothing happens off-screen."""
+    def _record_turn(self, s, *, kind, text, decision_id, who=None):
+        """N8: every automated send is visible in the thread. Nothing happens off-screen.
+
+        Filed under the participant's whole fingerprint — host, agent and cwd — and not its pane id
+        alone. A thread asks the record for (host, agent, cwd) precisely because pane ids change on
+        every restart, so a row written with no cwd is a row no view will ever ask for: visible in
+        the table, invisible where N8 means it to be seen. `who` is a roster entry; without one the
+        row is the arbitrator's own, and its fingerprint is the one the session was started with.
+        """
         if self.log is None:
             return
-        self.log.record(agent=agent, pane_id=pane_id or s["arbitrator_pane"], kind=kind,
+        if who is None:
+            host, agent, cwd = json.loads(s["arbitrator_fp"])
+            pane_id, label = s["arbitrator_pane"], ""
+        else:
+            host, agent, cwd = who.get("host") or "local", who.get("agent") or "", who.get("cwd") or ""
+            pane_id, label = who["pane_id"] or s["arbitrator_pane"], who.get("label") or ""
+        self.log.record(host=host, agent=agent, cwd=cwd, pane_id=pane_id, label=label, kind=kind,
                         origin="arbitrator", at_src="sent", text=text, at=self.clock(),
                         decision_id=decision_id)

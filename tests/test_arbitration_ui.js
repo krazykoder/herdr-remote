@@ -216,3 +216,27 @@ test('a reconnect drops the capability rather than remembering it', () => {
   assert.equal(g.document.getElementById('arbStrip').innerHTML, '',
                'but the element is cleared, and nothing redraws until the next arb_sessions');
 });
+
+// The other half of a session a person did not watch: what the thread says about a prompt nobody
+// typed. The record grades it by `origin`; the thread grades provenance by `via`, which is the
+// field it already draws a transfer's badge from — so an arbitrated send has to arrive spelled the
+// thread's way or it renders as something the reader wrote themselves (N8).
+test('a prompt the arbitrator delivered is not drawn as one the reader typed', () => {
+  const LIVE = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'conv_live.js'), 'utf8');
+  const g = {console, window: {}, convMemberKey: key, escapeHtml: String,
+             renderConvView() {}, localStorage: {getItem: () => 'on', setItem() {}}};
+  g.globalThis = g;
+  vm.createContext(g);
+  vm.runInContext(LIVE, g);
+
+  g.convLiveReceive({turns: [
+    {kind: 'arbitrated', origin: 'arbitrator', text: 'Check the footer on mobile.',
+     pane_id: 'w1:p2', agent: 'codex', cwd: '/b', host: 'local', at: 2, at_src: 'sent'},
+    {kind: 'human_prompt', origin: 'human_web', text: 'Have a look at this.',
+     pane_id: 'w1:p1', agent: 'claude', cwd: '/a', host: 'local', at: 1, at_src: 'sent'},
+  ]});
+  const [arbitrated, typed] = g.convLiveEntries([key(PANE_B), key(PANE_A)]);
+  assert.equal(arbitrated.who, 'user', 'a prompt is a prompt, whoever wrote it');
+  assert.equal(arbitrated.via, 'arbitrator');
+  assert.equal(typed.via, undefined, 'and a person’s own prompt carries no badge');
+});

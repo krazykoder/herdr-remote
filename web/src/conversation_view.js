@@ -664,7 +664,11 @@
         const user = e.who === 'user';
         // `transfer` says the source alone; `mixed` adds "edited", because "approved verbatim" and
         // "rewrote it" are different facts about the same bubble.
-        const from = user && e.via && e.via !== 'typed' && e.from
+        // An arbitrated send has no `from` pane: it was composed by the arbitrator out of what two
+        // members said, so what the badge names is the arbitrator itself.
+        const from = user && e.via === 'arbitrator'
+          ? '<span class="via" aria-hidden="true">⚖</span> arbitrator'
+          : user && e.via && e.via !== 'typed' && e.from
           ? `<span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
             `${e.via === 'mixed' ? ' · edited' : ''}`
           : '';

@@ -579,6 +579,30 @@ class InTheThread(Harness):
         self.assertEqual("p2", row["pane_id"])
         self.assertIn("Take a look.", row["text"])
 
+    def test_an_arbitrated_send_is_filed_where_a_thread_will_ask_for_it(self):
+        # The row is not the point; being *found* is. Every thread queries the record by
+        # (host, agent, cwd), because pane ids change on every restart — so a row written with the
+        # pane id alone is one no view ever asks for, and N8's "visible in the thread" quietly
+        # becomes "present in a table nobody reads".
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        row = self.turns()[-1]
+        member = next(m for m in self.arb.members(s["id"]) if m["member_id"] == "member-2")
+        self.assertEqual((member["host"], member["agent"], member["cwd"]),
+                         (row["host"], row["agent"], row["cwd"]))
+        self.assertEqual(member["label"], row["label"])
+
+    def test_the_arbitrators_own_row_is_filed_under_the_arbitrator(self):
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"], gate="call_human", to=None, instruction=None,
+                   why="Out of scope.")
+        self.arb.collect(s["id"], handle["prompt_id"])
+        row = self.turns()[-1]
+        self.assertEqual(json.loads(s["arbitrator_fp"]), [row["host"], row["agent"], row["cwd"]])
+
     def test_call_human_puts_its_reason_in_the_thread(self):
         s = self.start()
         handle = self.step(s["id"])

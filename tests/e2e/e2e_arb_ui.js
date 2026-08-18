@@ -117,6 +117,17 @@ async function main() {
     const herdr = fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8');
     check('the instruction was typed at the member it named', herdr.includes('pane send-text a1:p2'), herdr.split('\n').slice(-4).join(' | '));
 
+    // And the other half of what a person reads back: the prompt itself, in the thread. It is on
+    // the user's side because it is a prompt, so the badge is the only thing telling a reader that
+    // nobody typed it (N8). Only the relay's record knows that, so the toggle goes on first.
+    await page.evaluate(() => toggleConvLive());
+    await page.waitForFunction(
+      () => /Check the footer change on mobile\./.test(document.querySelector('#convViewThread').textContent),
+      null, {timeout: 20000});
+    const thread = await page.textContent('#convViewThread');
+    check('the prompt is badged as the arbitrator’s, not the reader’s', /⚖ arbitrator/.test(thread),
+          thread.replace(/\s+/g, ' ').slice(0, 300));
+
     await page.getByRole('button', {name: 'Pause'}).click();
     await page.waitForFunction(() => /Paused/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 15000});
     check('Pause stops it, from the page', true);
@@ -127,6 +138,13 @@ async function main() {
     check('and ending takes the strip with it', true);
   } catch (e) {
     check('the run finished', false, String(e));
+    try {
+      console.log('  live:', JSON.stringify(await page.evaluate(() => ({
+        rows: typeof convLiveRows !== 'undefined' ? convLiveRows : 'n/a',
+        err: typeof convLiveError !== 'undefined' ? convLiveError : 'n/a',
+        ids: [...document.querySelectorAll('[id*=conv]')].map(x => x.id).slice(0, 20),
+      }))).slice(0, 1200));
+    } catch (e2) { console.log('  live: unreadable', String(e2)); }
     console.log(fs.readFileSync(path.join(TMP, 'relay.out'), 'utf8').split('\n').slice(-25).join('\n'));
   } finally {
     await browser.close();

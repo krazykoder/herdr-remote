@@ -153,6 +153,11 @@
           at_src: CONV_LIVE_AT_SRC[t.at_src] || 'read',
           key: key, member: at.has(key) ? at.get(key) : 0,
           label: t.label || '', agent: t.agent || '',
+          // Who sent it, on the same field the local transcript uses for a transfer. A prompt the
+          // arbitrator delivered sits on the user's side of the thread because that is the side
+          // prompts go on — but nobody typed it, and a reader scrolling back through an unattended
+          // session must be able to tell those two apart (N8).
+          via: t.origin === 'arbitrator' ? 'arbitrator' : undefined,
           kind: t.kind, live: true,
         };
       }).filter(e => e.text);
