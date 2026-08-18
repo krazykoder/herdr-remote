@@ -73,6 +73,7 @@ test('section headers carry their word and nothing else', async ({page}) => {
 test('a working agent gets the size pulse, an idle one gets nothing', async ({page}) => {
   const dotOf = name => page.locator('#agents .agent', {hasText: name}).locator('.dot');
   await expect(dotOf(WORKING)).toBeVisible();
+  await expect(dotOf(WORKING)).toHaveClass(/pulse/);
   const anim = await dotOf(WORKING).evaluate(el => {
     const cs = getComputedStyle(el);
     return {name: cs.animationName, duration: cs.animationDuration};
