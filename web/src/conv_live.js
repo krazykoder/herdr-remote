@@ -240,12 +240,31 @@
       const at = new Map((keys || []).map((k, i) => [k, i]));
       const turns = [];
       const seen = new Set();
+      // A bucket is a fingerprint, and a fingerprint has no pane id in it — that is what lets one
+      // survive the restart that renumbers every pane. But it also means two panes running the same
+      // agent in the same directory share a bucket, and "show this pane only" would draw both: the
+      // thread would be filtered by agent, which is not what the reader asked for.
+      //
+      // So a row belongs to the member whose pane id it carries. A row from a pane that is no
+      // longer live has no such claimant and goes to whoever holds the fingerprint now, which is
+      // what keeps a respawned pane's history attached to it.
+      // Every pane id with an owner: one that is live right now, or one this roster names. A row
+      // carrying any of them belongs to that member and to nobody else.
+      const claimed = new Set();
+      for (const x of (typeof agents !== 'undefined' ? agents : [])) {
+        if (x.pane_id) claimed.add(x.pane_id);
+      }
+      const paneOfKey = k => { try { return (JSON.parse(k) || [])[1] || ''; } catch (e) { return ''; } };
+      for (const k of (keys || [])) claimed.add(paneOfKey(k));
       for (const k of (keys || [])) {
         const fp = convKeyFingerprint(k);
         if (!fp) continue;
         const bucket = convLiveCache.get(convFpKey(fp));
         if (!bucket) continue;
+        const mine = paneOfKey(k);
         for (const t of bucket.turns) {
+          const pid = t.pane_id || '';
+          if (mine && pid && pid !== mine && claimed.has(pid)) continue;
           // Two roster members can fold to one fingerprint — a pane respawned under a new id is the
           // same pane to the record — and the bucket must not be drawn twice for them.
           if (t.seq && seen.has(t.seq)) continue;

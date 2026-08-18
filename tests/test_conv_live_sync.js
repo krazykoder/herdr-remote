@@ -35,6 +35,8 @@ const ctx = vm.createContext({
   escapeHtml: s => String(s),
   // The roster key builder, in the one spelling the rest of the app uses.
   convMemberKey: a => JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']),
+  // The live roster. A row is scoped to a pane by who is on it, so the tests below set it.
+  agents: [],
 });
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
@@ -53,9 +55,11 @@ const turn = (seq, fp, at, text) => ({
   pane_id: fp === FP_A ? '%1' : '%2',
 });
 
-function reset() {
+function reset(roster) {
   sent.length = 0;
   convLiveCache.clear();
+  ctx.agents.length = 0;
+  for (const a of (roster || [])) ctx.agents.push(a);
 }
 
 // The question the block last put on the wire.
@@ -180,4 +184,47 @@ test('a question in flight is not an empty record', () => {
   assert.match(convLiveEmptyHtml([KEY_A]), /Reading the relay/);
   convLiveReceive({fingerprints: [FP_A], turns: []});
   assert.match(convLiveEmptyHtml([KEY_A]), /recorded nothing/);
+});
+
+// --- "Show this pane only" is a pane, not an agent ---
+//
+// A bucket is keyed by fingerprint — [host, agent, cwd] with the pane id taken out, because that
+// is what survives the restart herdr renumbers every pane on. Two panes running claude in one
+// directory therefore share a bucket, and reading a solo thread straight off it filters the record
+// by *agent*: the reader asks for one pane and gets every claude in that directory.
+
+const KEY_A2 = JSON.stringify(['local', '%9', 'claude', '/work/a']);   // same fingerprint as KEY_A
+const paneTurn = (seq, paneId, at, text) => Object.assign(
+  turn(seq, FP_A, at, text), {pane_id: paneId});
+
+test('a solo thread is this pane, not every pane running the same agent here', () => {
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'mine'), paneTurn(2, '%9', 1100, 'the other pane')]});
+  assert.deepEqual(convLiveEntries([KEY_A]).map(e => e.text), ['mine']);
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text), ['the other pane']);
+});
+
+test('a joint thread gives each member its own rows out of the one bucket', () => {
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A, KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'mine'), paneTurn(2, '%9', 1100, 'theirs')]});
+  const entries = convLiveEntries([KEY_A, KEY_A2]);
+  assert.deepEqual(entries.map(e => e.text), ['mine', 'theirs']);
+  // And on the right side of the thread: each row is its own member, not both the first.
+  assert.deepEqual(entries.map(e => e.member), [0, 1]);
+});
+
+test('a pane that has exited leaves its history to whoever holds the fingerprint', () => {
+  // The restart case the fingerprint exists for: %1 is gone and %9 is the same work respawned.
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
+                   ['before the restart', 'after it']);
 });
