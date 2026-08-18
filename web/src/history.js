@@ -377,6 +377,20 @@
         `title="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}" ` +
         `aria-label="${threaded ? 'Read this pane as a terminal' : 'Read this pane as a conversation'}">${convGlyph()}</button>`
         : '';
+      // The way out of the pane and into the record it belongs to. The switch on the left changes
+      // how *this* pane is drawn; this leaves for the conversation itself, which outlives the pane
+      // and holds what every member said. They wear the same glyph because they are about the same
+      // thing — this one carries the conversation's name, which is both what tells the two apart
+      // and the only honest label for a button that goes somewhere in particular.
+      // `convViewConv` and not the first in the index: the reader means the thread on screen.
+      const here = inConv ? convViewConv(a) : null;
+      const goConv = here
+        ? `<button class="qa-goconv" data-id="${escapeHtml(here.id)}" ` +
+        `onclick="openConversation(this.dataset.id)" ` +
+        `title="Open the conversation ${escapeHtml(here.name)}" ` +
+        `aria-label="Open the conversation ${escapeHtml(here.name)}">${convGlyph()}` +
+        `<span class="qa-goconv-name">${escapeHtml(here.name)}</span></button>`
+        : '';
       const navRow = `<div class="qa-nav"><div class="qa-left">` +
         `<button class="qa-fold" onclick="toggleBottomDock()" aria-expanded="${open}" ` +
         `title="${open ? 'Fold the composer away' : 'Bring the composer back'}" ` +
@@ -388,9 +402,13 @@
         `<path d="m6 9 6 6 6-6"/></svg></button>${conv}</div>` +
         // The walk used to sit in a middle column here, where only a pane could reach it. It is in
         // the status bar now, one row down and on screen in every view, so the middle is empty
-        // track rather than a second pair of arrows disagreeing with the first.
+        // track rather than a second pair of arrows disagreeing with the first. What the middle
+        // holds instead is the door back to the record — centred because it belongs to neither
+        // edge's group, and absent on a pane in no conversation, which leaves the track empty
+        // exactly as it was.
         // No Last here any more: the same jump hangs over the text itself, in the corner the end
         // is in, and appears only while there is somewhere to jump to — see hangSync.
+        goConv +
         `<div class="qa-right">${summary}</div></div>`;
       let middle = '';
       if (blocked) {

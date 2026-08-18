@@ -4071,6 +4071,50 @@
       opacity: 1;
     }
 
+    /* The door out of the pane and into the conversation, in the middle track. Same pill as the
+       two switches on the edges, because it is the same weight of control — but named, since it
+       goes somewhere in particular and the glyph alone would read as a second copy of the switch
+       beside it. */
+    .quick-actions .qa-nav button.qa-goconv {
+      grid-column: 2;
+      /* Centred in the track it is given, not stretched across it: a pill as wide as the gap
+         between the two groups reads as a bar rather than a button. */
+      justify-self: center;
+      /* The track is what is left after both edges take their content, and on a 320px screen with
+         Summary showing that is not much. Shrinking is the right answer — the name truncates and
+         the glyph stays — where a fixed width would push the right group off its own edge. */
+      min-width: 0;
+      max-width: 100%;
+      height: 22px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
+      filter: none;
+      opacity: 1;
+    }
+
+    /* The glyph keeps the colour the conversation cards give it; only the name is muted, so the
+       button reads as "conversation: «name»" rather than as one grey lump. */
+    .quick-actions .qa-nav button.qa-goconv .conv-glyph {
+      color: var(--green);
+      flex: 0 0 auto;
+    }
+
+    .qa-goconv-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* The chevron folds the whole composer stack away — the button rail, the text area, and
        whichever dock is open — and leaves the quick actions bar itself on screen, so approvals and
        ‹ › stay reachable while a long pane gets the height back. !important because each dock's

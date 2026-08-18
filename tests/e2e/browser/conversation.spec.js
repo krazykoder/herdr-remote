@@ -1099,6 +1099,41 @@ test('a pane in no conversation is offered one, and starting it begins the recor
   expect((await held(page, key)).entries.length).toBe(2);
 });
 
+test('the pane offers a way into the conversation it is in, and it lands on that one', async ({page}) => {
+  await open(page);
+  // Nothing to go to on a pane in no conversation — the same rule the switch beside it follows.
+  await expect(page.locator('#quickActions .qa-goconv')).toHaveCount(0);
+
+  await join(page);
+  await page.evaluate(() => renderQuickActions());
+  const go = page.locator('#quickActions .qa-goconv');
+  await expect(go).toBeVisible();
+  // Named, which is what tells it apart from the switch wearing the same glyph.
+  await expect(go).toHaveText('new authentication feature');
+
+  await go.click();
+  await expect(page.locator('#convView')).toBeVisible();
+  expect(await page.evaluate(() => convViewId)).toBe('c1');
+});
+
+test('the way in follows the thread on screen, not the first record the pane joined', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    const key = convMemberKey(paneOf(activePane));
+    const member = {key: key, added: Date.now(), label: 'Architect 1'};
+    saveConvIndex([
+      {id: 'c1', name: 'the older one', created: 1, members: [member]},
+      {id: 'c2', name: 'the one being read', created: 2, members: [member]},
+    ]);
+    // Which the thread is showing. Index order says c1; the reader is looking at c2.
+    convSetView(paneOf(activePane), 'c2');
+    renderQuickActions();
+  });
+  await expect(page.locator('#quickActions .qa-goconv')).toHaveText('the one being read');
+  await page.locator('#quickActions .qa-goconv').click();
+  expect(await page.evaluate(() => convViewId)).toBe('c2');
+});
+
 test('on a phone, the menu scrolls and conversation controls keep the nav to one line', async ({page}) => {
   await open(page);
   await join(page);
@@ -1107,15 +1142,20 @@ test('on a phone, the menu scrolls and conversation controls keep the nav to one
   const nav = await page.locator('#quickActions .qa-nav').evaluate(el => ({
     children: el.children.length,
     conversationWidth: Math.round(el.querySelector('.qa-conv').getBoundingClientRect().width),
+    right: Math.round(el.getBoundingClientRect().right),
+    goRight: Math.round(el.querySelector('.qa-goconv').getBoundingClientRect().right),
     rows: [...el.children].map(child => {
       const r = child.getBoundingClientRect();
       return Math.round(r.y);
     }),
   }));
-  // Two groups, not three: the walk moved to the status bar and the middle is empty track now.
-  expect(nav.children).toBe(2);
+  // The two edge groups and the door to the conversation between them. The walk moved to the
+  // status bar; what is in the middle track now is one centred button, not a pair of arrows.
+  expect(nav.children).toBe(3);
   expect(nav.conversationWidth).toBe(34);
   expect(Math.max(...nav.rows) - Math.min(...nav.rows)).toBeLessThanOrEqual(1);
+  // A long conversation name truncates rather than pushing the right group off the row.
+  expect(nav.goRight).toBeLessThanOrEqual(nav.right);
 
   await page.locator('#termMenuBtn').click();
   const scroll = await page.locator('#termMenu').evaluate(el => {
