@@ -79,7 +79,7 @@ def open_ro(path):
 
 
 def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
-          grep=None, since=None, until=None, fingerprints=None, last=QUERY_ROWS_DEFAULT):
+          grep=None, since=None, until=None, since_id=None, fingerprints=None, last=QUERY_ROWS_DEFAULT):
     """Turns matching the selectors, oldest first, bounded.
 
     Selectors are AND-ed. `fingerprints` is a list of (host, agent, cwd) triples — how a session
@@ -115,6 +115,9 @@ def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
     if until is not None:
         where.append("at <= ?")
         args.append(int(until))
+    if since_id is not None:
+        where.append("id > ?")
+        args.append(int(since_id))
     if fingerprints:
         ors = " OR ".join("(host = ? AND agent = ? AND cwd = ?)" for _ in fingerprints)
         where.append("(" + ors + ")")
@@ -184,6 +187,7 @@ def main(argv=None):
     p.add_argument("--grep", help="case-insensitive substring over the message text")
     p.add_argument("--since", type=int, help="epoch ms; turns at or after this")
     p.add_argument("--until", type=int, help="epoch ms; turns at or before this")
+    p.add_argument("--since-id", type=int, help="turn id; turns strictly after this id")
     p.add_argument("--last", type=int, default=QUERY_ROWS_DEFAULT,
                    help=f"how many, newest kept (max {QUERY_ROWS_MAX})")
     p.add_argument("--format", choices=("text", "json"), default="text")
@@ -197,7 +201,8 @@ def main(argv=None):
     with conn:
         rows, truncated = query(
             conn, pane=args.pane, host=args.host, agent=args.agent, cwd=args.cwd,
-            kind=args.kind, grep=args.grep, since=args.since, until=args.until, last=args.last)
+            kind=args.kind, grep=args.grep, since=args.since, until=args.until,
+            since_id=args.since_id, last=args.last)
     if args.format == "json":
         print(json.dumps({"turns": [as_wire(r) for r in rows], "truncated": truncated},
                          indent=2))

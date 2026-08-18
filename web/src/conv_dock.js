@@ -15,7 +15,26 @@
     // property of a selection, it is who you are talking to, and having chosen an agent you go on
     // talking to it. The picks are not: an instruction is attached to one message, so it is spent
     // by the send that carries it.
-    let dockTarget = '', dockPicks = [], dockPicked = new Set(), dockPickedOf = 0;
+    let dockTarget = '', dockPicks = [], dockPicked = new Set();
+
+    // A picked bubble is written into the composer as a token — `[#1 the first words of it…]` —
+    // and the token is the pick. It sits in the text with everything else being written, so the
+    // caret goes after it, a note can follow it on the same line, and it is deleted by deleting it.
+    // Nothing mirrors the pick anywhere else: the box is the message, and what the box says is
+    // what goes out.
+    //
+    // Keyed by a number that only ever climbs, never by position: the reader can move a token,
+    // delete an earlier one or type between two, and the token still has to name the same bubble.
+    // The quoted text is kept here rather than read back off the thread, so a bubble that has
+    // scrolled out of the window — or out of the record — still sends what it said when it was
+    // picked.
+    let dockTokens = new Map(), dockTokenSeq = 0;
+    const DOCK_TOKEN = /\[#(\d+)[^\]\n]*\]/g;
+    const convComposerDrafts = new Map();
+    const convComposerTargets = new Map();
+    // What the draft's tokens stand for. The text alone would restore as `[#4 …]` with nothing
+    // behind it, so the quotes travel with the draft they are written into.
+    const convComposerTokens = new Map();
 
     // Both rows scroll, and a phone shows their left end — so what was used last is put back there,
     // because the thing used last is overwhelmingly the thing used next. Only use moves anything:
@@ -92,9 +111,9 @@
     // one, which is what the transfer sheet has always refused, so the row stands down rather than
     // guessing which of them the payload belongs to.
     function dockSource() {
-      if (!dockPicked.size) return null;
-      const keys = new Set(Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'))
-        .map(el => el.dataset.key));
+      const quoted = dockQuoted();
+      if (!quoted.length) return null;
+      const keys = new Set(quoted.map(q => q.key));
       if (keys.size !== 1) return null;
       return agents.find(a => convMemberKey(a) === keys.values().next().value) || null;
     }
@@ -129,8 +148,24 @@
       return dockTargetOf(dockMembers(), dockSource());
     }
 
+    // The row reorders around whoever is addressed, so the chip under the pointer for the second
+    // half of a double-click is no longer the one the first half hit. Which is a defect on its own
+    // — a reader tapping twice to be sure lands on a stranger — and it is what the solo gesture is
+    // read against: the pane the gesture is about is the one the *first* click named, recorded
+    // here, and a second click inside the double window extends that gesture rather than starting
+    // a new one.
+    let dockLastPick = {pane: '', at: 0};
+    const DOCK_DOUBLE_MS = 500;
+
     function setDockTarget(paneId) {
+      const now = Date.now();
+      if (now - dockLastPick.at > DOCK_DOUBLE_MS) dockLastPick = {pane: paneId, at: now};
+      else dockLastPick.at = now;
       dockTarget = paneId;
+      if (convViewId) {
+        if (paneId) convComposerTargets.set(convViewId, paneId);
+        else convComposerTargets.delete(convViewId);
+      }
       renderConvDock();
       if (window.cue) cue('tick');
     }
@@ -166,6 +201,15 @@
       if (window.cue) cue('tick');
     }
 
+    // The list's copy of the row's double-click. `toggleConvSolo` redraws the thread, the roster
+    // and this row; the list is the one thing that redraw does not reach, so it is reopened here
+    // for the same reason every other switch in it is.
+    function toggleDockSolo() {
+      toggleConvSolo();
+      if (optMenuOpen()) openOptMenu();
+      if (window.cue) cue('tick');
+    }
+
     // Everything about how the composer behaves, in one list. Both are switches rather than one
     // being a button and the other a menu item: they are the same kind of thing — a standing
     // preference about this box — and a row of lone toggles says nothing about what each one is.
@@ -177,6 +221,13 @@
         ['Autocorrect', autocorrectOn(), 'toggleDockAutocorrect()',
           "Let the keyboard correct what you type. Off by default — this box types filenames and flags"],
       ];
+      // Only where there is more than one member to be alone among. Same switch the chips' own
+      // double-click throws, listed here because it is a standing preference about this thread and
+      // a gesture nobody has been told about is not a feature.
+      if (convSoloKey(convViewId) || dockMembers().length > 1) {
+        opts.push(['Solo mode', !!convSoloKey(convViewId), 'toggleDockSolo()',
+          'Read only the agent this box is talking to, and hide the rest of the conversation']);
+      }
       box.innerHTML = opts.map(([label, on, call, why]) =>
         `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
         `onclick="${call}" title="${escapeHtml(why)}">` +
@@ -197,13 +248,28 @@
       if (optMenuOpen()) closeDockMenu('optMenu'); else openOptMenu();
     }
 
-    // The instruction is appended as its own line. A prompt is a new instruction, not an edit to
-    // whatever sentence happens to hold the caret.
+    // Written in at the caret, always as its own line. Where the caret is is where the writer is
+    // working, and a prompt tapped mid-message belongs there rather than at an end they are not
+    // looking at — but it is a new instruction and never an edit to the sentence holding the
+    // caret, so it never splices into one.
+    //
+    // With nothing written it goes on top instead, above the picked messages. Tokens are not
+    // writing — they are what the instruction is about — so a box holding only tokens is an empty
+    // box with a quote in it, and an instruction about a quote is read before it, not after.
     function insertDockShortcut(i) {
       const input = document.getElementById('convInput');
       const text = agentSlash(SHORTCUTS[i].text, agentOf(dockAddressed()));
-      input.value += input.value && !input.value.endsWith('\n') ? '\n' + text : text;
-      input.selectionStart = input.selectionEnd = input.value.length;
+      const written = input.value.replace(DOCK_TOKEN, '').trim();
+      const at = !written ? 0
+        : input.selectionStart == null ? input.value.length : input.selectionStart;
+      const before = input.value.slice(0, at), after = input.value.slice(at);
+      const block = (before && !before.endsWith('\n') ? '\n' : '') + text +
+        (after && !after.startsWith('\n') ? '\n' : '');
+      input.value = before + block + after;
+      // After what was written, so the next thing typed follows the instruction rather than
+      // landing in front of it — and when the instruction went on top of the quotes, at the end of
+      // them, because that is where the message carries on rather than between the two.
+      input.selectionStart = input.selectionEnd = written ? (before + block).length : input.value.length;
       autoGrow(input);
       syncConvCursor();
       input.focus();
@@ -225,36 +291,130 @@
       if (window.cue) cue('tick');
     }
 
-    function toggleConvDockPick(i) {
-      if (dockPicked.has(i)) dockPicked.delete(i); else dockPicked.add(i);
-      drawDockPicks();
+    // Every attached instruction at once, from the one line that draws them all as one sentence.
+    function clearDockChips() {
+      if (!dockPicks.length) return;
+      dockPicks = [];
       renderConvDock();
+      if (dockMenuOpen()) openDockMenu();
+      if (window.cue) cue('tick');
+    }
+
+    // The attached instruction is the one part of the load that is not in the box, so it is the one
+    // part backspace cannot reach on its own: with the caret at the very start of the text, a
+    // backspace takes it. Tokens need nothing here — they are text, and backspace already deletes
+    // text.
+    function dropLastDockLoad() {
+      if (dockFill() || !dockPicks.length) return false;
+      dockPicks.pop();
+      renderConvDock();
+      if (dockMenuOpen()) openDockMenu();
+      return true;
+    }
+
+    // What a token says on the face of it: who said it, then enough of the message to know which
+    // one it is, on one line, with the brackets it lives inside taken out of the text so it cannot
+    // be split in two. The name is what tells two quotes of the same length apart — the number only
+    // tells the app.
+    function dockTokenText(seq, text, who) {
+      const flat = s => String(s).replace(/\s+/g, ' ').replace(/[\[\]]/g, '').trim();
+      const said = flat(text), from = flat(who || '');
+      return `[#${seq} ${from ? from + ': ' : ''}${said.length > 40 ? said.slice(0, 40) + '…' : said}]`;
+    }
+
+    // Written in at the caret, on its own line, with the caret left after it — the sketch is
+    // `[#1 …] - what I want done with it`, so the note the reader is about to type follows the
+    // token rather than being pushed onto another line by the app.
+    function toggleConvDockPick(i) {
+      const el = document.querySelector(`#convViewThread .conv-msg[data-i="${i}"]`);
+      const thread = document.getElementById('convViewThread');
+      const wasAt = thread ? thread.scrollTop : 0;
+      const input = document.getElementById('convInput');
+      if (!el || !input) return;
+      const text = el.dataset.text || '';
+      if (!text) return;
+      // Tapped again, a bubble takes its token back out of the box, wherever the reader moved it to.
+      const had = Array.from(dockTokens).find(([, q]) => q.text === text);
+      if (had) {
+        dockTokens.delete(had[0]);
+        input.value = input.value.replace(
+          new RegExp(`[ \\t]*\\[#${had[0]}[^\\]\\n]*\\][ \\t]*\\n?`), '');
+      } else {
+        const seq = ++dockTokenSeq;
+        dockTokens.set(seq, {text, key: el.dataset.key || ''});
+        const at = input.selectionStart == null ? input.value.length : input.selectionStart;
+        const before = input.value.slice(0, at), after = input.value.slice(at);
+        const token = (before && !before.endsWith('\n') ? '\n' : '') +
+          dockTokenText(seq, text, el.dataset.who);
+        input.value = before + token + after;
+        input.selectionStart = input.selectionEnd = (before + token).length;
+      }
+      autoGrow(input);
+      syncConvCursor();
+      syncDockTokens();
+      // The box takes the caret, because a note is what usually follows a pick — but `preventScroll`,
+      // or the browser brings the composer into view and the reader loses the place they were
+      // reading. The thread is put back where it was as well: `autoGrow` changes the composer's
+      // height, and a taller composer moves the thread under a scrollTop that no longer means the
+      // same line.
+      input.focus({preventScroll: true});
+      if (thread) thread.scrollTop = wasAt;
+    }
+
+    // The box is the record of what is picked, so this reads it rather than being told: every token
+    // still standing is a pick, in the order it sits in the text, and a token that was edited past
+    // recognition or deleted is a pick that is gone. Called from the field's own `input`, so
+    // deleting a token by hand is the same act as tapping its bubble again.
+    function syncDockTokens() {
+      const input = document.getElementById('convInput');
+      const live = new Set();
+      if (input) for (const m of input.value.matchAll(DOCK_TOKEN)) live.add(Number(m[1]));
+      let lost = false;
+      for (const seq of dockTokens.keys()) if (!live.has(seq)) { dockTokens.delete(seq); lost = true; }
+      const was = dockPicked;
+      dockPicked = new Set(Array.from(dockTokens.values(), q => q.text));
+      if (lost || was.size !== dockPicked.size) { drawDockPicks(); renderConvDock(); }
+    }
+
+    // What the send is quoting, in the order the box holds it. Thread order was the rule while the
+    // picks lived on the bubbles; now the reader can move a token, so the text is the order.
+    function dockQuoted() {
+      const input = document.getElementById('convInput');
+      if (!input) return [];
+      return Array.from(input.value.matchAll(DOCK_TOKEN))
+        .map(m => dockTokens.get(Number(m[1]))).filter(Boolean);
     }
 
     // Painted in place rather than by re-rendering the thread: the snapshot redraws this view every
     // three seconds and a rebuild would take the reader's text selection with it mid-copy.
+    //
+    // Matched on what the bubble says rather than on its index: the thread is rebuilt from the
+    // record on every snapshot, and an index is only true until a row lands above the one it names.
     function drawDockPicks() {
       for (const el of document.querySelectorAll('#convViewThread .conv-msg')) {
-        const on = dockPicked.has(Number(el.dataset.i));
+        const on = !!el.dataset.text && dockPicked.has(el.dataset.text);
         el.classList.toggle('picked', on);
         const tick = el.querySelector('.conv-pick');
         if (tick) tick.setAttribute('aria-pressed', String(on));
       }
     }
 
-    // A render that only appended leaves the picks where they are; anything else moved them, and a
-    // pick on the wrong message is worse than none. Same rule the pane's thread follows.
-    function syncDockPicks(count) {
-      if (count < dockPickedOf) dockPicked.clear();
-      dockPickedOf = count;
+    // The thread was redrawn. The picks live in the box and are unaffected; the highlight is on the
+    // new rows, and it is painted here rather than in the render so the two cannot disagree.
+    function syncDockPicks() {
       drawDockPicks();
     }
 
     function clearDockPicks() {
-      if (!dockPicked.size) return;
-      dockPicked.clear();
-      drawDockPicks();
-      renderConvDock();
+      if (!dockTokens.size) return;
+      const input = document.getElementById('convInput');
+      dockTokens.clear();
+      if (input) {
+        input.value = input.value.replace(DOCK_TOKEN, '').replace(/[ \t]+\n/g, '\n').trim();
+        autoGrow(input);
+        syncConvCursor();
+      }
+      syncDockTokens();
     }
 
     // Leaving the conversation. Who you were talking to and what you were about to say belong to
@@ -262,42 +422,92 @@
     // message goes with the conversation it was being written to rather than into the next one's
     // box.
     function clearConvDock() {
-      dockTarget = ''; dockPicks = []; dockPicked.clear(); dockPickedOf = 0;
+      dockTarget = ''; dockPicks = []; dockPicked.clear(); dockTokens.clear(); dockTokenSeq = 0;
       closeDockMenu();
       const input = document.getElementById('convInput');
       if (input) { input.value = ''; autoGrow(input); syncConvCursor(); }
     }
 
-    // Half-written messages, one per conversation, for as long as the page is open. Switching tabs
-    // to read what somebody else said is part of writing a reply, and losing the reply to it made
-    // the strip something to avoid mid-sentence. Deliberately in memory and not in storage: a
-    // draft is a thing in flight, and a reload is a session ending — see D4's tiering for the same
-    // line drawn between what is asserted and what is passing.
-    const convComposerDrafts = new Map();
-
-    // Called before convViewId moves, so what is in the box is filed under the conversation it was
-    // written to. An empty box drops the entry rather than storing '': "nothing written" and
-    // "nothing kept" are the same state, and a stale empty draft would survive a Send.
+    // Half-written messages and selected targets, one per conversation, for as long as the page is
+    // open. Switching tabs to read what somebody else said is part of writing a reply, and losing
+    // the reply or the chosen agent made the strip something to avoid mid-sentence. Deliberately
+    // in memory and not in storage: a draft is a thing in flight, and a reload is a session ending.
+    //
+    // Called before convViewId moves, so the box's contents are filed under the conversation they
+    // were written to. Only the draft: the addressed agent is written by setDockTarget, at the
+    // moment it is chosen and under the conversation that was open then. Filing it here as well
+    // would file whatever dockTarget happens to hold under whatever convViewId happens to be, and
+    // convViewId is reassigned without a stash in at least two places.
     function stashConvDraft() {
       const input = document.getElementById('convInput');
       if (!input || !convViewId) return;
-      if (input.value.trim()) convComposerDrafts.set(convViewId, input.value);
-      else convComposerDrafts.delete(convViewId);
+      if (input.value.trim()) {
+        convComposerDrafts.set(convViewId, input.value);
+        convComposerTokens.set(convViewId, Array.from(dockTokens));
+      } else {
+        convComposerDrafts.delete(convViewId);
+        convComposerTokens.delete(convViewId);
+      }
+    }
+
+    // Called by saveConvIndex with the conversations that survived the write. Anything else held
+    // here is addressed to a conversation that no longer exists, and a recycled id would otherwise
+    // hand a stranger's draft to whoever creates the next one.
+    function forgetConvComposers(kept) {
+      const live = new Set((kept || []).map(c => c.id));
+      for (const id of convComposerDrafts.keys()) if (!live.has(id)) convComposerDrafts.delete(id);
+      for (const id of convComposerTargets.keys()) if (!live.has(id)) convComposerTargets.delete(id);
+      for (const id of convComposerTokens.keys()) if (!live.has(id)) convComposerTokens.delete(id);
     }
 
     function restoreConvDraft() {
       const input = document.getElementById('convInput');
       const text = convViewId ? convComposerDrafts.get(convViewId) : '';
-      if (!input || !text) return;
-      input.value = text;
-      autoGrow(input);
-      syncConvCursor();
+      if (input && text) {
+        input.value = text;
+        dockTokens = new Map(convViewId ? convComposerTokens.get(convViewId) || [] : []);
+        // The numbering belongs to the message being written, not to the page: a draft picked up
+        // again counts on from its own highest token rather than from wherever another
+        // conversation's picking left the counter, so a returning reader is not handed `[#7 …]`
+        // beside a fresh `[#1 …]`.
+        dockTokenSeq = Math.max(0, ...dockTokens.keys());
+        autoGrow(input);
+        syncConvCursor();
+        syncDockTokens();
+      }
+      dockTarget = (convViewId && convComposerTargets.get(convViewId)) || '';
+    }
+
+    // The one part of the payload that is not in the box: an instruction riding on the send rather
+    // than written into it. A lit chip says a thing is armed; it does not say what the agent will
+    // receive, so the words it expands to are shown above the box that the rest of the message is
+    // written in — with the way out at the start of the line, where it is the same control every
+    // time rather than one that moves with the length of the text beside it.
+    //
+    // Only in attach mode. Filling writes the instruction into the box already, and a strip
+    // repeating what is on screen an inch below is the app telling the reader something twice.
+    // Picked messages are never here either: they are tokens in the box, which is the whole point
+    // of them being tokens.
+    function dockLoadHtml() {
+      const lead = dockFill() ? '' : dockInstruction(dockAddressed());
+      if (!lead) return '';
+      return `<div class="xfer-load-line at" title="${escapeHtml(lead)}">` +
+        `<button class="xfer-load-drop" onclick="clearDockChips()" ` +
+        `title="Leave this out" aria-label="Leave the instruction out">×</button>` +
+        `<span class="xfer-load-tag">@</span>` +
+        `<span class="xfer-load-text">${escapeHtml(lead.replace(/\s*\n\s*/g, ' · '))}</span></div>`;
     }
 
     function renderConvDock() {
       const dock = document.getElementById('convDock');
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
+      const load = document.getElementById('xferLoad');
+      if (load) {
+        const html = dockLoadHtml();
+        if (load.dataset.sig !== html) { load.innerHTML = html; load.dataset.sig = html; }
+        load.hidden = !html;
+      }
       const all = dockMembers();
       // Always the whole membership. A pick decides what is being sent, never who is in the
       // conversation or who may have it.
@@ -340,12 +550,16 @@
       stickConvLatest();
     }
 
-    // The composer grows upward under the thread. Keep its newest bubble in view while writing;
-    // reading history still wins because this only runs after the writer explicitly focuses it.
+    // The composer grows upward under the thread. Keep its newest bubble in view while writing —
+    // but only for a reader who was already at the newest. Focusing the box is not on its own a
+    // request to leave where you were reading: picking a bubble halfway up a long thread focuses
+    // the composer so a note can follow the token, and this used to answer that by scrolling the
+    // thread out from under the reader. Same 24px rule the render's own `stick` uses.
     function stickConvLatest() {
-      const view = document.getElementById('convView');
-      if (!view || view.style.display === 'none') return;
-      requestAnimationFrame(() => { view.scrollTop = view.scrollHeight; });
+      const box = document.getElementById('convViewThread');
+      if (!box || !box.offsetParent) return;
+      if (box.scrollTop + box.clientHeight < box.scrollHeight - 24) return;
+      requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
     }
 
     // The block cursor. A textarea's own caret is a hairline that disappears with focus, and this
@@ -430,9 +644,11 @@
         const name = escapeHtml(paneLabel(a));
         return `<button class="xfer-who${a.pane_id === target ? ' on' : ''}" ` +
           `style="--who-accent:${agentColor(a.agent) || 'var(--text)'}" ` +
+          `data-pane="${escapeHtml(a.pane_id)}" ` +
           `onclick="setDockTarget('${a.pane_id}')" ` +
           `aria-pressed="${a.pane_id === target}" ` +
-          `title="Talk to ${name}" aria-label="Talk to ${name}">` +
+          `title="Talk to ${name}. Double-click to read only ${name}" ` +
+          `aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
           `${name}${agentBadge(a.agent)}</button>`;
       }).join('');
@@ -454,7 +670,7 @@
       const fillBtn = `<button class="xfer-chip opts" onclick="toggleOptMenu()" ` +
         `aria-expanded="${optMenuOpen()}" ` +
         `title="How the composer behaves" aria-label="How the composer behaves">⚙</button>`;
-      const n = dockPicked.size;
+      const n = dockTokens.size;
       // Send belongs to the bubbles. With nothing picked there is nothing for it to carry and the
       // composer's own send is what fires, so the row would be offering a second button for a
       // message it does not hold.
@@ -469,13 +685,18 @@
       // what scrolled away, so neither can scroll away itself. The same shape on both lines: the
       // things you choose from on the left, the way to see all of them on the right.
       const to = escapeHtml(paneLabel(paneOf(target)) || target);
-      return `<div class="xfer-act"><div class="xfer-who-row">${who}</div>` +
+      // Double rather than single, and for the same reason a bubble's is: a single tap here already
+      // means "talk to this one", and reading only this one is a second thing to want from the same
+      // chip. On the row and not on each chip: the row is redrawn between the two clicks, so the
+      // element the browser hands the second one is not the chip the gesture began on.
+      return `<div class="xfer-act"><div class="xfer-who-row" ondblclick="soloDockTarget(event)">` +
+        `${who}</div>` +
         // The same icon a pane wears in its header and on its card, so what the list holds is said
         // by the button that opens it rather than by a caret that could open anything.
         `<button class="xfer-who-more list" onclick="toggleWhoMenu()" ` +
         `aria-expanded="${whoMenuOpen()}" ` +
         `title="Every agent, as a list" aria-label="Every agent, as a list">` +
-        `${(paneOf(target) || {}).agent ? '🤖' : '⬛'}</button>` +
+        `${(paneOf(target) || {}).agent ? agentGlyph() : '⬛'}</button>` +
         // The way out of the reading window and into the addressed pane itself. Beside the list it
         // is chosen from, because "who am I talking to" and "take me there" are the same question
         // asked twice. A screen rather than an arrow: what it opens is the pane's terminal, and an
@@ -659,6 +880,28 @@
       closeNewAgent();
     }
 
+    // Read only this one. A second double-click is the way back out — the row cannot offer another,
+    // because in solo it holds one chip.
+    //
+    // The pane comes from the first click of the gesture and not from the event's target: by the
+    // time this fires the row has reordered twice under the pointer. Restoring the target undoes
+    // what the stray second click addressed.
+    function soloDockTarget(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const paneId = dockLastPick.pane;
+      const live = agents.find(a => a.pane_id === paneId);
+      if (!live) return;
+      dockTarget = paneId;
+      // The word the double-click selected is not a selection anybody asked for.
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      const key = convMemberKey(live);
+      const on = convSoloKey(convViewId) === key;
+      convSetSolo(convViewId, on ? '' : key);
+      showToast(on ? 'Showing every member' : `Reading only ${paneLabel(live) || live.pane_id}`);
+      if (window.cue) cue('tick');
+    }
+
     // Chosen from the list rather than the row, so the list has said what it was opened to say and
     // closes behind the choice. The pills stay where they are — they are the row, not a menu.
     function pickDockTarget(paneId) {
@@ -673,7 +916,20 @@
     // Only the conversation window's thread, because it is the only one with a target to change —
     // the pane's own composer types into the pane on screen.
     function addressConvAuthor(key) {
-      const live = dockMembers().find(a => convMemberKey(a) === key);
+      if (!key) return;
+      let parsed = null;
+      try { parsed = JSON.parse(key); } catch (e) {}
+      // The key first. Failing that, the same key with the local host spelled the one way — a live
+      // row is keyed under whichever spelling its record carried (see `convLiveKey`), and the two
+      // must land on the same member. The host is part of that comparison and never dropped from
+      // it: pane ids are unique per host and collide across them, so matching on a bare pane id
+      // would address a stranger on another machine.
+      const live = dockMembers().find(a => {
+        if (convMemberKey(a) === key) return true;
+        if (!Array.isArray(parsed)) return false;
+        const norm = h => (!h || h === 'local') ? 'local' : h;
+        return norm(a.host) === norm(parsed[0]) && a.pane_id === parsed[1];
+      });
       // No target: the author has exited or is folded out of the thread.
       if (!live) return;
       // The word the double-click selected is not a selection anybody asked for.
@@ -739,7 +995,7 @@
       // With bubbles picked there is one message being written, and the row's Send is a labelled
       // second view of this button rather than a different one. Sending only the typed half here
       // would quietly drop the quote the pick put on the message.
-      if (dockPicked.size && dockMembers().length) return convDockSend();
+      if (dockTokens.size && dockMembers().length) return convDockSend();
       const input = document.getElementById('convInput');
       const body = input.value.trim();
       if (!body) return;
@@ -762,6 +1018,28 @@
     // Ctrl/Cmd+Enter sends, Enter writes a newline. Never a bare Enter: there is no shell behind
     // this composer to make a line end at one, and the message being written is a paragraph.
     function convInputKey(e) {
+      const bare = e.key === 'Backspace' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey
+        && e.target.selectionStart === e.target.selectionEnd;
+      // A token is one thing, so it deletes as one: a backspace with the caret just past its
+      // closing bracket takes the whole token rather than shortening the quote to `[#1 the other…`
+      // — text that still reads like a pick and no longer is one.
+      const at = e.target.selectionStart;
+      const eats = bare && /\[#\d+[^\]\n]*\]$/.exec(e.target.value.slice(0, at));
+      if (eats) {
+        e.preventDefault();
+        e.target.value = e.target.value.slice(0, at - eats[0].length) + e.target.value.slice(at);
+        e.target.selectionStart = e.target.selectionEnd = at - eats[0].length;
+        autoGrow(e.target);
+        syncConvCursor();
+        syncDockTokens();
+        return;
+      }
+      // Held down, a backspace that ran off the end of the text would eat the whole load in a
+      // second. One per press, and only with nothing selected — a selection is text to delete.
+      if (bare && at === 0 && dropLastDockLoad()) {
+        e.preventDefault();
+        return;
+      }
       if (enterAction(e, {enterSends: false, shell: false}) !== 'send') return;
       e.preventDefault();
       convSend();
@@ -782,35 +1060,55 @@
     function convDockSend() {
       const source = dockSource();
       if (!source) { showToast('Select messages from one agent to transfer.'); return; }
-      const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'))
-        .map(el => el.dataset.text || '').filter(Boolean);
+      const picked = dockQuoted().map(q => q.text);
       if (!picked.length) return;
       const targets = dockMembers();
       if (!targets.length) { showToast('Nobody in this conversation to send it to.'); return; }
       const target = dockTargetOf(targets, source);
       const live = agents.find(a => a.pane_id === target);
       if (!live) { showToast('That agent is no longer running.'); return; }
-      // Read in thread order rather than in the order they were tapped: a pair of messages that
-      // arrives out of order is not the conversation the reader saw.
       const quoted = picked.join('\n\n');
-      const out = composeTransfer(dockInstruction(target), paneLabel(source) || source.pane_id, quoted);
-      if (out.error) { showToast(out.error); return; }
-      // Whatever was already typed goes under the quote. The composer here is always open, so a
-      // send that dropped it would throw away a message someone was in the middle of writing — and
-      // a payload with a note of your own on the end is what `classifyVia` already calls `mixed`.
+      // The box is sent as written, with each token standing up into the message it names. So a
+      // note typed after a token goes out after that message and a note before it goes out before
+      // it: the order the reader arranged is the order the agent reads, which is what putting the
+      // quotes in the text was for.
+      //
+      // An @ prompt filled into the box is the exception, because it is an instruction rather than
+      // a note: it is peeled off the front and joins the attached ones above the quote.
       const input = document.getElementById('convInput');
-      const kept = input.value.trim();
+      const from = paneLabel(source) || source.pane_id;
+      const [filled, kept] = peelDockLead(input.value, agentOf(target));
+      const lead = [dockInstruction(target), filled].filter(Boolean).join('\n');
+      // Who said it goes immediately above what they said, once per token, rather than once at the
+      // top of the message. The header is a label on a quote, and with the reader's own notes
+      // between the quotes a single one at the top would be labelling their sentences too — and
+      // would sit above the instruction that frames the whole send.
+      const body = kept.replace(DOCK_TOKEN, (m, seq) => {
+        const q = dockTokens.get(Number(seq));
+        return q ? `feedback from ${from}:\n${q.text}` : m;
+      });
+      const out = {text: (lead ? lead + '\n\n' : '') + body};
       // What the send is measured against, so the target's transcript records where the text came
       // from rather than claiming the reader typed another agent's words.
+      //
+      // Matched on one quoted message rather than on all of them joined: the reader can put their
+      // own words between two tokens, so there is no one string holding both.
+      //
+      // A payload that matches what went out is a clean transfer; anything else is `mixed`. So the
+      // whole payload is offered only when the box held nothing but tokens — with a note of the
+      // reader's own in it, the send is theirs as much as the quoted agent's, and the quote alone
+      // is what the record can honestly attribute.
+      const bare = !kept.replace(DOCK_TOKEN, '').trim();
       pendingTransfer = {
-        key: convMemberKey(source), label: paneLabel(source) || source.pane_id,
-        body: quoted, payload: out.text, hash: convHash(quoted), at: Date.now(),
+        key: convMemberKey(source), label: from,
+        body: picked[0], payload: bare ? out.text : quoted, hash: convHash(quoted), at: Date.now(),
       };
-      if (!sendTextTo(target, kept ? out.text + '\n\n' + kept : out.text)) return;
+      if (!sendTextTo(target, out.text)) return;
       noteDockUse('who', convMemberKey(live));
       input.value = ''; autoGrow(input); syncConvCursor();
       dockPicks = [];
       dockPicked.clear();
+      dockTokens.clear();
       drawDockPicks();
       closeDockMenu();
       renderConvDock();
@@ -853,10 +1151,58 @@
           projMenu.hidden = true;
       }, true);
       const thread = document.getElementById('convViewThread');
-      if (thread) thread.addEventListener('dblclick', e => {
-        const msg = e.target.closest && e.target.closest('.conv-msg');
-        if (msg) addressConvAuthor(msg.dataset.key);
-      });
+      if (thread) {
+        function onBubbleDouble(e) {
+          const msg = e.target.closest && e.target.closest('.conv-msg');
+          if (!msg || (e.target.closest && e.target.closest('.conv-pick'))) return;
+          addressConvAuthor(msg.dataset.key);
+        }
+        thread.addEventListener('dblclick', onBubbleDouble);
+
+        let lastTap = 0, lastMsg = null;
+        thread.addEventListener('touchend', e => {
+          const msg = e.target.closest && e.target.closest('.conv-msg');
+          if (!msg || (e.target.closest && e.target.closest('.conv-pick'))) return;
+          const now = Date.now();
+          if (now - lastTap < 350 && lastMsg === msg) {
+            e.preventDefault();
+            onBubbleDouble(e);
+            lastTap = 0;
+            lastMsg = null;
+          } else {
+            lastTap = now;
+            lastMsg = msg;
+          }
+        });
+      }
+      // The member chips need the same, and for the same reason: a phone browser fires `dblclick`
+      // only when it decides two taps were a double-click, and on a control it has already treated
+      // as a tap-to-address it mostly does not. So the gesture is read here — on the row, which
+      // survives the redraw between the two taps, and by pane id, because the chip element does
+      // not.
+      const row = document.getElementById('xferRow');
+      if (row) {
+        let whoTap = 0, whoPane = '';
+        row.addEventListener('touchend', e => {
+          const who = e.target.closest && e.target.closest('.xfer-who');
+          if (!who) return;
+          const now = Date.now();
+          if (now - whoTap < 350 && whoPane === who.dataset.pane) {
+            // Before the browser's own click, which would address the chip a second time and, in
+            // solo, address whichever chip the redraw put under the finger.
+            e.preventDefault();
+            // Named from the gesture rather than from the tap-to-address that normally records it:
+            // a fast double tap can land before the first tap's click has been dispatched at all.
+            dockLastPick = {pane: whoPane, at: now};
+            soloDockTarget(e);
+            whoTap = 0;
+            whoPane = '';
+          } else {
+            whoTap = now;
+            whoPane = who.dataset.pane || '';
+          }
+        });
+      }
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);
       syncDockHeight();

@@ -290,9 +290,10 @@ test('a transfer never ends in a send, and exactly one function says otherwise',
     'the pane view\'s transfer must never end in a send');
   assert.match(CONV_DOCK, /function convDockSend\(\)[\s\S]*?sendTextTo\(target,/);
   // And the bypass is scoped: a payload here is a recorded bubble, which *is* the message. In the
-  // pane view it is a range dragged across rows — a guess at where a message starts.
-  assert.match(CONV_DOCK,
-    /querySelectorAll\('#convViewThread \.conv-msg\.picked'\)/);
+  // pane view it is a range dragged across rows — a guess at where a message starts. What the
+  // send quotes is read from the tokens the picks wrote into the box, so it can only ever be
+  // bubbles that were picked.
+  assert.match(CONV_DOCK, /function dockQuoted\(\)[\s\S]*?matchAll\(DOCK_TOKEN\)/);
   assert.ok(!/#convThread/.test(CONV_DOCK), 'the dock must never reach into the pane\'s thread');
 });
 

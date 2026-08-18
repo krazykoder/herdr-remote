@@ -55,6 +55,7 @@
       --red: #f7768e;
       --blue: #7aa2f7;
       --orange: #e0af68;
+      --pink: #ff2d87;
       /* Agent kinds, in the badge only. --orange doubles as the pi yellow; claude needs its own
          because the two sit side by side in a list and #e0af68 twice reads as one colour. */
       --agent-claude: #ff9e64;
@@ -100,6 +101,7 @@
       --red: #cf1130;
       --blue: #2461da;
       --orange: #965904;
+      --pink: #ff2d87;
       --agent-claude: #b74208;
       --agent-agy: #6a3ec4;
       --shell: #046fa0;
@@ -384,6 +386,52 @@
       margin-left: auto;
     }
 
+    /* Sits where the tab strip would be — the landing page hides that, so this costs the header
+       nothing it was using. flex:0, not the strip's flex:1: five icons are a fixed width, and
+       taking the slack would push the title away from the dot for no gain. */
+    .sect-tabs {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      /* Takes its natural width where the header has the room and gives it back where it does not:
+         the buttons shrink together down to their floor rather than the row overflowing the bar or
+         growing a scroller. One rule instead of a breakpoint per phone width. */
+      flex: 0 1 auto;
+      min-width: 0;
+      margin-left: 4px;
+    }
+
+    .sect-tabs[hidden] {
+      display: none;
+    }
+
+    /* Wider than the 36px nav buttons rather than narrower: these are aimed at with a thumb on a
+       phone, and five in a row is five chances to hit the wrong one. 42 is what they take where
+       the header has the room; 30 is the floor they shrink to on a narrow screen, still a target
+       and still the full 44px tall. */
+    .header .sect-tab {
+      /* A width and not a flex-basis: the row itself is sized from its content, and content sizing
+         reads a button's min-width, not the basis it would have taken had there been room. */
+      width: 42px;
+      min-width: 30px;
+      flex-shrink: 1;
+    }
+
+    .header .sect-tab[aria-pressed="true"] {
+      color: var(--blue);
+      background: var(--border);
+    }
+
+    /* A press paints before the state behind it changes. A mouse gets :hover on the way in and so
+       always looked instant; a finger had nothing until the filter had been applied and the strip
+       repainted, which is what read as lag. No transition on the way in for the same reason —
+       the 0.15s fade is what makes a real answer look like a late one. */
+    .header .sect-tab:active {
+      color: var(--blue);
+      background: var(--border);
+      transition: none;
+    }
+
     .agent-tabs::-webkit-scrollbar {
       display: none;
     }
@@ -454,11 +502,23 @@
       text-overflow: ellipsis;
     }
 
-    /* The same 🤖 / ⬛ the cards use. Small, and it never shrinks — the label is what truncates. */
+    /* The same agent glyph / ⬛ the cards use. Small, and it never shrinks — the label is what truncates. */
     .agent-tab .kind {
       flex-shrink: 0;
       font-size: 0.62rem;
       line-height: 1;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .agent-glyph {
+      width: 1.1em;
+      height: 1.1em;
+      vertical-align: -0.15em;
+      display: inline-block;
+      stroke: var(--pink, #ff2d87);
+      color: var(--pink, #ff2d87);
+      flex-shrink: 0;
     }
 
     .agent-tab:hover .pill {
@@ -2132,12 +2192,21 @@
       color: var(--red);
     }
 
-    /* The selects in this menu are menu items too, and at the global 16px field size they read as
-       controls from a different sheet than the 0.8rem items above them.
-       Deliberately under the 16px floor, and the only place that is allowed: the floor exists
-       because iOS zooms the layout viewport for a focused field that summons the keyboard, and a
-       select summons a picker instead. */
+    /* The selects in this menu are menu items too, so they are built out of .menu-item's own
+       metrics — same height, same gutters, same type — rather than out of a per-select inline
+       style. A row that is 35px tall between 44px rows reads as a control from a different sheet,
+       and it is the one row in the menu a thumb can miss.
+       The 0.8rem is deliberately under the 16px field floor, and this is the only place that is
+       allowed: the floor exists because iOS zooms the layout viewport for a focused field that
+       summons the keyboard, and a select summons a picker instead. */
     .term-menu select {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
       font-size: 0.8rem;
       font-weight: 500;
     }
@@ -2236,16 +2305,28 @@
        text still passes beneath the row — that is what floating means — but nothing is born under
        it. 44px is the row (28) plus the 6px it hangs at, plus a bubble's own breathing room. */
     .conv-thread {
+      /* Named rather than written into the padding, because the conversation window sets its own
+         bottom inset and would otherwise have to repeat the top one — and then disagree with it
+         the first time either moved. */
+      --thread-top: 44px;
       flex: 1;
       min-width: 0;
       width: 100%;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 44px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+      padding: var(--thread-top) 12px calc(10px + env(safe-area-inset-bottom, 0px));
       display: flex;
       flex-direction: column;
       gap: 8px;
       -webkit-overflow-scrolling: touch;
+    }
+
+    /* A second lane, for the working badges hanging under the button row. They are pressable — the
+       badge goes to what that agent last said — so a bubble may not be born beneath one: the pick
+       button in a bubble's own top corner is exactly what a chip would swallow. 26px is the chip
+       (22) plus the gap the row keeps everywhere else. */
+    .conv-thread.has-working {
+      --thread-top: 70px;
     }
 
     /* display:flex outranks the user agent's [hidden] rule, the same guard .block-nav carries. */
@@ -2253,23 +2334,36 @@
       display: none;
     }
 
-    /* The standalone view scrolls as a whole — .view already does — so the thread is content here
-       rather than its own scroller, and the header stays put by sticking rather than by a second
-       flex column. */
+    /* The standalone conversation view. #convView is fixed and flexed, with the thread scrolling
+       independently so the composer dock remains static at the bottom without rubber-banding. */
     #convView {
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      height: 100%;
     }
 
-    /* Grows to fill the view so the dock below it is at the bottom of the screen and not halfway
-       up it: a conversation of three messages is the ordinary case, and a composer that floats in
-       the middle of an empty view reads as an unfinished layout. */
+    .conv-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+    }
+
     #convViewThread {
-      flex: 1 0 auto;
-      overflow: visible;
-      /* Room to scroll past the floating dock — measured, because the dock grows with the address
-         row, the instruction list and a composer that has been typed into. See syncDockHeight. */
-      padding-bottom: calc(var(--dock-h, 96px) + 8px);
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      /* The class's own top inset, so the badge lane opens here too; only the bottom differs, this
+         view having a dock under it rather than a safe-area edge. */
+      padding: var(--thread-top) 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     /* Full width, unlike the pane's thread. There the 86% leaves room for the other half of a pair
@@ -2280,25 +2374,25 @@
     }
 
     .conv-view-top {
-      position: sticky;
-      top: 0;
+      flex-shrink: 0;
+      position: relative;
       z-index: 2;
     }
 
-    /* The dock floats: sticky pins it to the bottom of the view, and the negative margin takes back
-       the space it would otherwise occupy, so the conversation scrolls behind it rather than
-       stopping above it. #convViewThread's padding is what lets the last bubble clear it. */
+    /* The dock sits statically at the bottom of the conversation view, never rubber-banding or
+       moving with the scrolling bubbles. */
     .conv-dock {
-      position: sticky;
-      bottom: 0;
+      flex-shrink: 0;
+      position: relative;
       z-index: 3;
       display: flex;
       flex-direction: column;
-      margin-top: calc(-1 * var(--dock-h, 96px));
-      /* Not a hard edge: the thread fades into the dock instead of sliding under a line, which is
-         what makes it read as depth rather than as two panels meeting. */
-      background: linear-gradient(to top, var(--bg) 68%, transparent);
-      pointer-events: none;   /* the fade is not a wall; the controls in it take their own taps */
+      background: var(--bg);
+      /* The thread scrolls to the dock's edge and stops there. Standing still, it needs to say
+         which of the two is in front — the fade that used to do that went when the dock stopped
+         floating, and a flat panel butted against text reads as the text simply running out.
+         The shadow is cast upward, over the thread, because that is what the dock is above. */
+      box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.18), 0 -8px 20px rgba(0, 0, 0, 0.26);
     }
 
     .conv-dock[hidden] {
@@ -3597,6 +3691,158 @@
       --hang-right: 22px;
     }
 
+    /* Who is working, hung directly under the refresh and record buttons rather than in the far
+       corner. Same right edge as that row, so the two read as one stack about the same thread
+       instead of two floating things at opposite ends of it. 40px is that row's own extent —
+       6px of inset plus a 28px button — plus the 6px gap the pair keep everywhere else. */
+    .hang-working {
+      position: absolute;
+      top: calc(6px + 28px + 6px);
+      right: var(--hang-right, 36px);
+      z-index: 5;
+      display: flex;
+      flex-wrap: wrap;
+      /* Wrapped rows stack against the same edge as the buttons above them. */
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      /* Bounded so a long pane name cannot run the chips across the whole view. Past this they
+         wrap, which is what the flex-wrap above is for. */
+      max-width: min(60%, 320px);
+      pointer-events: none;
+    }
+
+    .conv-view-top .hang-working {
+      top: 100%;
+      margin-top: calc(6px + 28px + 6px);
+    }
+
+    /* Centred between the two floating corners and level with the right-hand one, because it is
+       about the whole thread rather than about either corner's controls. Same 28px height as a
+       hang button, so the three read as one line across the top of the view. */
+    .hang-solo {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 28px;
+      padding: 0 4px 0 10px;
+      border: 1px solid color-mix(in srgb, var(--text) 25%, var(--border));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text) 14%, var(--surface));
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 6px 16px rgba(0, 0, 0, 0.35);
+      font-size: 0.75rem;
+      color: var(--text);
+      /* Bounded so a long pane name cannot reach either corner's buttons. */
+      max-width: min(48%, 260px);
+    }
+
+    .conv-view-top .hang-solo {
+      top: 100%;
+      margin-top: 6px;
+    }
+
+    .hang-solo[hidden] { display: none; }
+
+    .solo-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .solo-x {
+      flex: none;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 999px;
+      background: none;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .solo-x:hover { color: var(--text); }
+
+    .conv-working-chip {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      min-height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--who-accent, color-mix(in srgb, var(--text) 22%, var(--border)));
+      /* Lifted off the surface it floats over rather than level with it: this hangs over live pane
+         text, and a chip the same value as the panel behind it reads as part of that text. Neutral,
+         not the dot's green: the dot is what says live, and a chip that said it too would be a
+         status the size of a paragraph. */
+      background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 600;
+      line-height: 1.2;
+      /* Two shadows: a tight one for the edge and a wide soft one for the height. One blur cannot
+         do both — it either smears the outline or leaves the chip sitting flat on the text. */
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px rgba(0, 0, 0, 0.3);
+      pointer-events: auto;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .conv-working-chip .badge {
+      font-size: 1em;
+      padding: 0 0.4em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+    }
+
+    .conv-working-chip .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .conv-working-chip:hover {
+      border-color: var(--who-accent, var(--text));
+    }
+
+    /* Where a badge just took the reader. Colour for a moment and then nothing: the class is left
+       on the bubble, and the animation not repeating is what ends it — no timer to cancel when the
+       thread redraws underneath it. */
+    .conv-msg.found {
+      animation: conv-found 1.2s ease-out 1;
+    }
+
+    @keyframes conv-found {
+      0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 55%, transparent); }
+      100% { box-shadow: 0 0 0 3px transparent; }
+    }
+
+    .conv-working-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 1.6s ease-in-out infinite;
+      flex: 0 0 auto;
+    }
+
     /* Sized and coloured as the step buttons beside them, because they are the same kind of thing
        in the same corner: a row that mixed two button languages would read as two toolbars that
        happened to collide. */
@@ -3651,7 +3897,12 @@
        looks away and comes back has to be able to tell which record is on screen without tapping
        anything. Drawn rather than lettered for the reason convGlyph gives: an emoji is whatever
        the platform's font decided, and a colour is a request that font can refuse. */
-    .hang-live svg {
+    /* Drawn, not lettered. `⟳` is U+27F3 and every platform answers it with a different font:
+       macOS gives a chunky arrow at 13px, iOS a hairline one about half the size, which is why the
+       same button read as tiny on a phone and fine on a desktop. Same reasoning as convGlyph. */
+    .hang-live svg,
+    .hang-tidy svg,
+    .conv-analytics-refresh svg {
       display: block;
     }
 
@@ -3822,6 +4073,83 @@
 
     .xfer-row[hidden] {
       display: none;
+    }
+
+    /* What the send is carrying, between the row that arms it and the box it goes out of. Same
+       hairline as the row above, so the bubble stays one thing divided rather than three boxes. */
+    .xfer-load {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      width: 100%;
+      padding: 5px 10px;
+      max-height: 22vh;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .xfer-load[hidden] {
+      display: none;
+    }
+
+    /* One load to a line, and each line only as wide as what it holds — a tag rather than a row.
+       A fixed half-width drew a ruled column of boxes down the composer whatever was in them; a
+       chip that hugs its text reads as a label on the send. Half the composer is the ceiling, so a
+       long quote truncates instead of pushing the strip across the box. */
+    .xfer-load-line {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      gap: 2px;
+      max-width: 50%;
+      min-width: 0;
+      padding: 1px 8px 1px 1px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+
+    /* The number is the fact — which part of the payload this is, and in what order — so it keeps
+       its width whatever the text beside it does. */
+    .xfer-load-tag {
+      flex: 0 0 auto;
+      font-weight: 700;
+      color: var(--dock-accent, var(--muted));
+    }
+
+    /* One line each, cut off rather than wrapped: this says what is loaded, and a quote that
+       redrew the composer at three lines tall would be the thread again in a worse place. */
+    .xfer-load-text {
+      flex: 0 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .xfer-load-line.at .xfer-load-text {
+      color: var(--text);
+    }
+
+    .xfer-load-drop {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .xfer-load-drop:hover {
+      background: var(--border);
+      color: var(--text);
     }
 
     /* Both lines scroll rather than wrap. A conversation can hold more agents than fit across a
@@ -4219,6 +4547,50 @@
       background: color-mix(in srgb, var(--blue) 20%, var(--surface));
       filter: none;
       opacity: 1;
+    }
+
+    /* The door out of the pane and into the conversation, in the middle track. Same pill as the
+       two switches on the edges, because it is the same weight of control — but named, since it
+       goes somewhere in particular and the glyph alone would read as a second copy of the switch
+       beside it. */
+    .quick-actions .qa-nav button.qa-goconv {
+      grid-column: 2;
+      /* Centred in the track it is given, not stretched across it: a pill as wide as the gap
+         between the two groups reads as a bar rather than a button. */
+      justify-self: center;
+      /* The track is what is left after both edges take their content, and on a 320px screen with
+         Summary showing that is not much. Shrinking is the right answer — the name truncates and
+         the glyph stays — where a fixed width would push the right group off its own edge. */
+      min-width: 0;
+      max-width: 100%;
+      height: 22px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 400;
+      filter: none;
+      opacity: 1;
+    }
+
+    /* The glyph keeps the colour the conversation cards give it; only the name is muted, so the
+       button reads as "conversation: «name»" rather than as one grey lump. */
+    .quick-actions .qa-nav button.qa-goconv .conv-glyph {
+      color: var(--green);
+      flex: 0 0 auto;
+    }
+
+    .qa-goconv-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     /* The chevron folds the whole composer stack away — the button rail, the text area, and
@@ -4691,6 +5063,9 @@
     <div class="agent-tabs" id="agentTabs"></div>
     <!-- Replaces pane tabs while a standalone conversation is open. -->
     <div class="conv-strip" id="convStrip"></div>
+    <!-- One icon per landing section, in the space the tab strip leaves empty there. Filled by
+         renderSectionTabs, and on screen only on the landing page. -->
+    <div class="sect-tabs" id="sectionTabs" role="group" aria-label="Show one section" hidden></div>
     <div class="nav-group">
       <button id="navTimeline" onclick="toggleTimeline()" aria-label="Activity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -4925,7 +5300,7 @@
     </section>
     <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
       <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
-      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage">⟳</button></h2>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
       <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
     </section>
   </div>
@@ -4968,10 +5343,19 @@
          header rather than placed in it: this view is its own scroller, and the header is already
          sticky — so riding it is what keeps the pair over the thread at every scroll position
          without measuring anything. -->
+    <div class="hang-working" id="convViewWorking" aria-live="polite"></div>
+    <!-- What is missing from the thread, said between the two floating corners it hangs level
+         with: solo hides most of a conversation on purpose, and the reader has to be able to see
+         that it did and get back out in one tap. Hidden whenever the whole roster is on screen. -->
+    <div class="hang-solo" id="convViewSolo" role="status" hidden></div>
     <div class="hang-float">
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
-        aria-label="Refresh and tidy">⟳</button>
+        aria-label="Refresh and tidy">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+        </svg></button>
       <button class="hang-btn hang-live" id="convLive" onclick="toggleConvLive()"
         aria-pressed="false" aria-label="Read the relay’s record">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
@@ -4986,16 +5370,13 @@
          the feature, which is every relay that has it switched off. -->
     <div id="arbStrip"></div>
     </div>
-    <div class="conv-thread" id="convViewThread"></div>
-    <!-- The jump to the end, at the end. This view is its own scroller, so a zero-height sticky
-         layer is what holds a button still over content that scrolls under it — an absolute one
-         inside a scroll box scrolls away with the text. -->
-    <div class="hang-layer hang-bottom">
-      <button class="hang-btn hang-last" id="convLast" onclick="hangToLastConv()"
+    <div class="conv-wrap" id="convWrap">
+      <div class="conv-thread" id="convViewThread"></div>
+      <button class="hang-btn hang-last hang-corner" id="convLast" onclick="hangToLastConv()"
         aria-label="Jump to the newest message">↓ Last</button>
     </div>
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
-         modifies. It floats over the thread rather than sitting under it — see .conv-dock. -->
+         modifies. Sits statically at the bottom of the conversation view. -->
     <div class="conv-dock" id="convDock">
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
@@ -5006,6 +5387,9 @@
            being addressed and written. Its border carries the chosen agent's colour. -->
       <div class="conv-bubble" id="convBubble">
         <div class="xfer-row" id="xferRow" hidden></div>
+        <!-- What the send is carrying: the instruction in words, and the picked messages in the
+             order they will be quoted. renderConvDock writes it; empty when nothing is armed. -->
+        <div class="xfer-load" id="xferLoad" hidden></div>
         <!-- The whole bubble is the field: a tap anywhere in it puts the caret in the text, the way
              tapping a message box on a phone does. Buttons inside it keep their own taps. -->
         <div class="conv-composer" id="convComposer" onclick="focusConvInput(event)">
@@ -5015,7 +5399,8 @@
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-              oninput="autoGrow(this); keepConvCaret(); stickConvLatest()" onkeydown="convInputKey(event)"
+              oninput="autoGrow(this); keepConvCaret(); stickConvLatest(); syncDockTokens()"
+              onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
               onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
               onscroll="syncConvCursor()"></textarea>
@@ -5125,9 +5510,17 @@
                this browser keeps a record at all, and the per-pane switch is membership. -->
           <button class="menu-item" role="menuitem" id="menuConvAuto"
             onclick="closeTermMenu(); toggleConvAuto()">Record every session</button>
-          <!-- Shown only while this pane's conversation has someone else in it. -->
-          <button class="menu-item" role="menuitem" id="menuConvJoint" hidden
-            onclick="closeTermMenu(); toggleConvJoint()">Show paired conversation</button>
+          <!-- How much of the conversation this pane's thread draws. A list and not one switch:
+               "not alone" was two different threads depending on whether a pair happened to exist,
+               with no way to ask for the other one. A select and not three menu rows, the same as
+               Line width and Tab bar below — it is one setting with a current value, and three rows
+               spend the menu's whole height saying so. renderTermMenuState fills it and decides
+               whether this pane has a second thread to offer at all. -->
+          <div id="menuConvScope" hidden>
+            <div class="menu-label" style="margin-top:10px">Thread shows</div>
+            <select id="convScopeSel" onchange="setConvScope(this.value)"
+              aria-label="How much of this conversation the thread draws"></select>
+          </div>
           <!-- Drafts and backfill are drawn unfilled; this hides them outright. Offered only while
                the thread is the view on screen, which is the only place they appear. -->
           <button class="menu-item" role="menuitem" id="menuConvFinal" hidden
@@ -5172,16 +5565,14 @@
             </div>
           </div>
           <div class="menu-label" style="margin-top:10px">Line width</div>
-          <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out"
-            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out">
             <option value="true">True size — pan sideways</option>
             <option value="fit">Fit width — shrink to the pane</option>
             <option value="reflow">Reflow — wrap to the screen</option>
           </select>
           <div id="wrapHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <div class="menu-label" style="margin-top:10px">Tab bar</div>
-          <select id="tabScope" onchange="setTabScope(this.value)" aria-label="Which panes the tab bar lists"
-            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <select id="tabScope" onchange="setTabScope(this.value)" aria-label="Which panes the tab bar lists">
             <option value="project">This project only</option>
             <option value="all">Every live pane</option>
             <option value="pairs">Every pair</option>
@@ -5191,8 +5582,7 @@
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
           <div id="menuPairPlace">
             <div class="menu-label" style="margin-top:10px">Pair bar</div>
-            <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
-              style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits">
               <option value="top">Top of the pane</option>
               <option value="above">Above the composer</option>
               <option value="bottom">Bottom</option>
@@ -5231,10 +5621,15 @@
            the text — bottom right, where a thumb already is. -->
       <button class="hang-btn hang-last hang-corner" id="paneLast" onclick="hangToLast()"
         aria-label="Jump to the newest message">↓ Last</button>
+      <div class="hang-working" id="paneWorking" aria-live="polite"></div>
       <div class="hang-float">
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
-          aria-label="Refresh and tidy">⟳</button>
+          aria-label="Refresh and tidy">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+          </svg></button>
         <!-- Which record the thread is reading: this browser's transcript, or the one the relay
              writes for every pane whether anyone is watching or not. Beside the refresh because it
              is the same question about the same text — "show me this properly" and "show me what

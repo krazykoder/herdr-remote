@@ -204,3 +204,97 @@ test('the order survives a reload', async ({page}) => {
   await expect(page.locator('#agents .agent', {hasText: AGENT})).toBeVisible();
   expect(await painted(page)).toEqual(['terminals', 'agents']);
 });
+
+// --- The header's section shortcuts ---
+// The vm slice pins which section a filter draws. What only a browser can say is that the row is
+// in the header at all, that it is not there over a pane or a panel, and that pressing one really
+// does leave one list on screen.
+const sectTab = (page, name) => page.locator(`#sectionTabs button[title="${name}"]`);
+
+test('a header shortcut narrows the page to one section, and gives it back', async ({page}) => {
+  expect(await painted(page)).toEqual(['agents', 'terminals']);
+  await sectTab(page, 'Terminals').click();
+  expect(await painted(page)).toEqual(['terminals']);
+  await expect(sectTab(page, 'Terminals')).toHaveAttribute('aria-pressed', 'true');
+
+  await sectTab(page, 'Terminals').click();
+  expect(await painted(page)).toEqual(['agents', 'terminals']);
+  await expect(sectTab(page, 'Terminals')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('a shortcut reaches a section Settings has switched off, and hands the page back unchanged', async ({page}) => {
+  await settings(page).click();
+  await page.locator('#sectionTerminals').uncheck();
+  await settings(page).click();
+  expect(await painted(page)).toEqual(['agents']);
+
+  await sectTab(page, 'Terminals').click();
+  expect(await painted(page)).toEqual(['terminals']);
+  await sectTab(page, 'Terminals').click();
+  expect(await painted(page)).toEqual(['agents'], 'the visit changed no setting');
+  await expect(page.locator('#sectionTerminals')).not.toBeChecked();
+});
+
+test('the shortcuts belong to the landing page and leave with it', async ({page}) => {
+  await expect(page.locator('#sectionTabs')).toBeVisible();
+  await settings(page).click();
+  await expect(page.locator('#sectionTabs')).toBeHidden();
+  await settings(page).click();
+  await expect(page.locator('#sectionTabs')).toBeVisible();
+
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#sectionTabs')).toBeHidden();
+  await page.locator('.term-header .back').click();
+  await expect(page.locator('#sectionTabs')).toBeVisible();
+});
+
+test('a filter is still on when the reader comes back from a pane', async ({page}) => {
+  // Opening a pane fills Recents — a section that was not on the page when the filter was set. It
+  // stays off it: coming back to where you were is worth more than showing a list you never asked
+  // for, and the pressed button is on screen saying why.
+  await sectTab(page, 'Terminals').click();
+  await page.locator('#terminals .agent').first().click();
+  await page.locator('.term-header .back').click();
+  expect(await painted(page)).toEqual(['terminals']);
+  await expect(sectTab(page, 'Terminals')).toHaveAttribute('aria-pressed', 'true');
+  await expect(sectTab(page, 'Recents')).toBeVisible();
+});
+
+test('the shortcut row fits the header on a phone', async ({page}) => {
+  // Five buttons at their full width overflow a 360px bar once the title and the two nav icons
+  // have taken theirs. They shrink together to a floor instead — no scroller, nothing pushed off.
+  await page.evaluate(() => {
+    for (const id of ['pairs', 'recents', 'conversations']) {
+      document.getElementById(id).innerHTML = '<div class="section-header">x</div>';
+      toggleSection(id, true);
+    }
+    applySections();
+  });
+  await expect(page.locator('#sectionTabs button')).toHaveCount(5);
+  for (const width of [320, 360, 390, 1024]) {
+    await page.setViewportSize({width, height: 780});
+    const fit = await page.evaluate(() => {
+      const bar = document.querySelector('.header');
+      const tab = document.querySelector('.sect-tab').getBoundingClientRect();
+      return {over: bar.scrollWidth - bar.clientWidth, w: Math.round(tab.width), h: Math.round(tab.height)};
+    });
+    expect(fit.over, `overflowed at ${width}px`).toBe(0);
+    expect(fit.w, `too small to hit at ${width}px`).toBeGreaterThanOrEqual(30);
+    expect(fit.h, `lost its height at ${width}px`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test('pressing a shortcut does not replace the button under the finger', async ({page}) => {
+  // The strip used to carry the pressed state in its markup, so every press rewrote all five
+  // buttons — five SVGs re-parsed and the tap highlight dropped mid-press. A mouse never saw it,
+  // having had :hover on the way in; a phone saw it as the highlight arriving late.
+  const tab = page.locator('#sectionTabs button[title="Terminals"]');
+  const same = () => page.evaluate(() => window.__tab === document.querySelector('.sect-tab'));
+  await page.evaluate(() => { window.__tab = document.querySelector('.sect-tab'); });
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-pressed', 'true');
+  expect(await same(), 'the strip was rebuilt').toBe(true);
+  await tab.click();
+  await expect(tab).toHaveAttribute('aria-pressed', 'false');
+  expect(await same(), 'the strip was rebuilt on the way back').toBe(true);
+});

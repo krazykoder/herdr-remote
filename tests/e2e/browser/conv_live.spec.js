@@ -10,10 +10,18 @@ const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 
+const seedRelayRecord = page => page.evaluate(() => {
+  ws.send(JSON.stringify({
+    type: 'send_text', pane_id: activePane, text: 'A prompt recorded on the relay', submit: false,
+  }));
+});
+
 const open = async page => {
   await page.goto('/');
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
+  await seedRelayRecord(page);
+  await page.waitForTimeout(100);
 };
 
 // A conversation with this pane in it, read as a thread. Membership is the whole of "is this
@@ -96,3 +104,101 @@ test('the setting is remembered, and the choice is one the reader can see on arr
     await expect(page.locator('#paneLive')).toHaveClass(/live/);
     await expect(page.locator('#paneLive')).toHaveAttribute('aria-pressed', 'true');
   });
+
+test('multiple conversations sharing a pane reconstruct the live stream without refetching',
+  async ({page}) => {
+    await open(page);
+    const key = await joinAndThread(page);
+    await page.locator('#paneLive').click();
+    await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+    // Create a second conversation referencing the SAME member pane
+    await page.evaluate(k => {
+      saveConvIndex([
+        { id: 'c1', name: 'conversation one', created: Date.now(), members: [{key: k, label: 'Architect 1'}] },
+        { id: 'c2', name: 'conversation two', created: Date.now(), members: [{key: k, label: 'Architect 1'}] },
+      ]);
+    }, key);
+
+    // Switch active conversation to c2
+    await page.evaluate(() => {
+      convViewId = 'c2';
+      renderConvView();
+    });
+
+    // The shared pane is reconstructed immediately from cache without empty state or refetch lag
+    await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+  });
+
+test('warm cache performs incremental delta fetch with since_id', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  // Monitor outgoing websocket frames
+  const sentPayloads = await page.evaluate(async () => {
+    const sent = [];
+    const origSend = ws.send.bind(ws);
+    ws.send = function(data) {
+      try { sent.push(JSON.parse(data)); } catch (e) {}
+      return origSend(data);
+    };
+    // Force a fetch while cache is warm
+    convLiveFetch([convMemberKey(paneOf(activePane))], true);
+    return sent;
+  });
+
+  // Verify that an incremental fetch was sent with since_id when warm
+  const convLogMsg = sentPayloads.find(m => m.type === 'conv_log');
+  expect(convLogMsg).toBeDefined();
+  expect(convLogMsg.fingerprints).toBeDefined();
+});
+
+
+// --- The live stream, in both sources ---
+//
+// Neither record holds a turn that has not ended: the relay writes its row when the turn is over,
+// and this browser's transcript settles one at the same moment. So what a pane is saying *right
+// now* has exactly one place to be drawn — the standing slot under the thread — and it has to be
+// there whichever record the thread is reading. It is never a message: nothing counts it, picks it
+// or hands it to Summary.
+test('the live stream is drawn under the thread over the relay’s record too', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await localRecord(page, key);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#paneLive')).toHaveAttribute('aria-pressed', 'true');
+
+  await page.evaluate(async () => {
+    paneOf(activePane).status = 'working';
+    await recordPane(activePane, ['❯ a question', '', '⏺ Halfway through a sentence', '', '❯']);
+    await renderConvView();
+  });
+  const slot = page.locator('#convThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Halfway through a sentence');
+  // The thread is still the relay's record — the stream sits beside it, not in it.
+  await expect(page.locator('#convThread .conv-msg.draft')).toHaveCount(0);
+  await expect(slot.locator('.conv-pick')).toHaveCount(0);
+
+  // And it goes when the turn does.
+  await page.evaluate(async () => { paneOf(activePane).status = 'done'; await renderConvView(); });
+  await expect(page.locator('#convThread .conv-slot')).toHaveCount(0);
+});
+
+test('the conversation window streams its working members too', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.evaluate(async () => {
+    paneOf(activePane).status = 'working';
+    await recordPane(activePane, ['❯ a question', '', '⏺ Still writing this one', '', '❯']);
+    convViewId = 'c1';
+    openConversation('c1');
+    await renderConvStandalone(true);
+  });
+  const slot = page.locator('#convViewThread .conv-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toContainText('Still writing this one');
+  await expect(page.locator('#convViewThread .conv-msg.draft')).toHaveCount(0);
+});

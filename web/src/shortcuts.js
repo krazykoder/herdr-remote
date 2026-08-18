@@ -243,10 +243,17 @@
       });
       const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
       const autoControl = autos.length
-        ? `<button class="section-action" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
+        ? `<button class="section-action conv-auto-toggle" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
           `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
           `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
-      el.innerHTML = list.all.length ? `<div class="section-header">Conversations${autoControl}</div>` + shown.map(r =>
+      // The + is drawn whether or not there is anything under it, which is the one place this
+      // section differs from the others: an entry point that only appears once you already have a
+      // conversation cannot be how the first one is made.
+      const newControl = `<button class="section-action conv-new" onclick="newConversation()"` +
+        ` title="Start an empty conversation and add panes to it"` +
+        ` aria-label="Start a new conversation">+ New</button>`;
+      el.innerHTML = `<div class="section-header">Conversations${autoControl}${newControl}</div>` +
+        (list.all.length ? shown.map(r =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
@@ -268,8 +275,42 @@
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
         `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
         `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`
-      ).join('') : '';
+        ).join('')
+        : '<p class="pair-empty">No conversations yet. Start one here, or record a pane into one '
+          + 'from its own menu.</p>');
       applySections();
+    }
+
+    // An empty conversation, opened on its roster with the picker already down: the thing the
+    // reader came to do is add the first pane, and a view of nothing with a panel closed over the
+    // one control that matters is a dead end. Named rather than asked for — a name is a rename
+    // away, and a dialog between the tap and the picker is the dialog this button exists to skip.
+    async function newConversation() {
+      const items = loadConvIndex();
+      if (items.length >= CONV_CONV_MAX) {
+        showToast(`Already at ${CONV_CONV_MAX} conversations — leave one first.`);
+        return;
+      }
+      const conv = {
+        // Not crypto.randomUUID(), for the reason newPairId() gives: no secure context on a LAN.
+        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        name: newConvName(items), created: Date.now(), members: [],
+      };
+      saveConvIndex([conv].concat(items));
+      renderConversations();
+      openConversation(conv.id);
+      convRosterOpen = true;
+      await convToggleAdd();   // which renders the roster, and again once the records are read
+    }
+
+    // "New conversation", then the first number that is free. Numbered and not stamped: two of
+    // these are told apart by which was made first, and a date is a worse answer to that than a 2.
+    function newConvName(items) {
+      const taken = new Set(items.map(c => c.name));
+      const base = 'New conversation';
+      if (!taken.has(base)) return base;
+      for (let n = 2; n < 100; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
+      return base;
     }
 
     // The conversation the standalone view is showing, or null. Held rather than passed, because
@@ -359,6 +400,44 @@
       catch (e) { /* private mode: this session only */ }
       convStandaloneHtml = '';
       renderConvManage();
+    }
+
+    // Reading one member of a conversation and nothing else. Not a mode with storage of its own:
+    // it is the hide list with everyone but one in it, which is what it would have had to write
+    // anyway — and it means the roster panel, the composer's target row and the thread all already
+    // agree about it, because all three read the hide list. A conversation of one has no solo to
+    // be in, so it never reports one.
+    function convSoloKey(id) {
+      const conv = loadConvIndex().find(c => c.id === id);
+      const members = (conv && conv.members) || [];
+      if (members.length < 2) return '';
+      const hidden = convHidden(id);
+      const shown = members.filter(m => !hidden.has(m.key));
+      return shown.length === 1 ? shown[0].key : '';
+    }
+
+    function convSetSolo(id, key) {
+      const conv = loadConvIndex().find(c => c.id === id);
+      const members = (conv && conv.members) || [];
+      const rest = members.filter(m => m.key !== key).map(m => m.key);
+      const all = convHiddenAll();
+      // Off is the empty list and not a shorter one: leaving whatever was hidden before solo began
+      // would make the X put the reader somewhere they never chose.
+      if (key && rest.length) all[id] = rest; else delete all[id];
+      try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
+      catch (e) { /* private mode: this session only */ }
+      convStandaloneHtml = '';
+      renderConvManage();
+    }
+
+    // The composer's switch and the banner's X are the same one: on, it solos whoever the composer
+    // is addressing, because that is the member the reader has already named.
+    function toggleConvSolo() {
+      if (convSoloKey(convViewId)) { convSetSolo(convViewId, ''); return; }
+      const live = agents.find(a => a.pane_id === dockAddressed());
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const key = live ? convMemberKey(live) : ((((conv || {}).members || [])[0] || {}).key || '');
+      convSetSolo(convViewId, key);
     }
 
     // Whichever of the two views is on screen. Same roster, same actions; only the frame differs,
@@ -824,7 +903,7 @@
       const view = document.getElementById('convView');
       if (!view || view.style.display === 'none') return;
       const box = document.getElementById('convViewThread');
-      const stick = bottom || view.scrollTop + view.clientHeight >= view.scrollHeight - 24;
+      const stick = bottom || box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
@@ -843,7 +922,7 @@
       const token = ++convStandaloneToken;
       const keys = members.map(m => m.key);
       // No drafts: a draft belongs to a pane being watched, and this view watches none.
-      const composed = await convCompose(conv, keys, []);
+      const composed = await convCompose(conv, keys);
       if (token !== convStandaloneToken || convViewId !== conv.id) return;
       // Composed over every member and filtered after, never composed over the visible ones: the
       // member index is what picks a bubble's colour, so hiding the first member must not repaint
@@ -906,7 +985,10 @@
           : hidden.size && composed.all.length
             ? '<p class="conv-empty">Every member is hidden. Open the panel above to bring one ' +
               'back.</p>'
-            : '<p class="conv-empty">Nothing recorded here yet.</p>'));
+            : '<p class="conv-empty">Nothing recorded here yet.</p>')) +
+        // What the members are saying right now, under the record of what they have said. Only the
+        // shown ones: a member hidden out of this thread is hidden out of its live stream too.
+        convSlotsHtml(shownKeys, twoCol ? rightKey : '');
       // The snapshot redraws this view every three seconds, and rewriting innerHTML would take the
       // reader's text selection with it mid-copy. Only a thread that actually changed is written.
       if (html !== convStandaloneHtml) { convStandaloneHtml = html; box.innerHTML = html; }
@@ -915,10 +997,40 @@
       // What each member is doing right now, on that member's newest bubble — several at once in a
       // conversation of several, which is the whole point of reading them together.
       syncConvBadge('convViewThread');
-      syncDockPicks(entries.length);
+      syncDockPicks();
       renderConvDock();
       renderConvStrip();
-      if (stick) view.scrollTop = view.scrollHeight;
+      const workingEl = document.getElementById('convViewWorking');
+      if (workingEl) {
+        const workingList = (members || []).map(m => {
+          const liveAgent = agents.find(x => convMemberKey(x) === m.key);
+          return (liveAgent && (liveAgent.status === 'working' || liveAgent.agent_status === 'working')) ? liveAgent : null;
+        }).filter(Boolean);
+        workingEl.innerHTML = typeof convWorkingBadgesHtml === 'function'
+          ? convWorkingBadgesHtml(workingList, 'convViewThread') : '';
+        // Same reservation the pane's thread makes: the chips hang over the top of the box, and a
+        // bubble drawn under one cannot be picked.
+        box.classList.toggle('has-working', !!workingEl.innerHTML);
+      }
+      renderConvSoloBanner(conv, members);
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+
+    // Solo is a thread that is deliberately missing most of itself, so it says so where the reader
+    // is looking — over the thread, between the two floating corners — and carries the way out.
+    // Hidden the rest of the time: a banner that is always there is chrome, not an answer.
+    function renderConvSoloBanner(conv, members) {
+      const bar = document.getElementById('convViewSolo');
+      if (!bar) return;
+      const key = convSoloKey(conv.id);
+      bar.hidden = !key;
+      if (!key) { bar.innerHTML = ''; return; }
+      const m = (members || []).find(x => x.key === key) || {};
+      const live = agents.find(a => convMemberKey(a) === key);
+      const name = (live && paneLabel(live)) || m.label || 'one member';
+      bar.innerHTML = `<span class="solo-name">Solo · ${escapeHtml(name)}</span>` +
+        `<button class="solo-x" onclick="convSetSolo('${escapeHtml(conv.id)}', '')" ` +
+        `title="Show every member again" aria-label="Leave solo mode">✕</button>`;
     }
 
     // Title and terminal-only chrome for whatever is open. Called on open and again after every

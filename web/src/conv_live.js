@@ -26,11 +26,42 @@
     // past this — see `convLiveSync` — so the cadence costs freshness only while nothing happens.
     const CONV_LIVE_EVERY = 5000;
 
-    // The answer to the last fetch, and enough about it to know whether another one is worth
-    // sending. `null` rows are "nothing has come back yet", which the view says differently from an
-    // empty record.
-    let convLiveRows = null, convLiveAt = 0, convLiveWant = '';
+    // The record, one bucket per pane fingerprint rather than one answer per roster, so a pane in
+    // two conversations is fetched once and the second thread draws with no round trip.
+    //
+    //   Map<fpKey, { turns: Array, syncedTo: number, lastFetch: number }>
+    //
+    // `syncedTo` is the id this fingerprint has been *answered through*, which is not the same as
+    // the id of its newest turn. A roster query covers every member jointly, so a member that
+    // produced nothing is still proven empty up to the highest id the answer carried. Storing the
+    // newest-turn id instead would make a quiet pane look permanently stale and re-ask for its
+    // whole history every cadence — see `convLiveFetch`.
+    const convLiveCache = new Map();
     let convLiveTruncated = false, convLiveError = '';
+
+    // One host has two spellings: the relay's snapshot and the record both name the local host
+    // `local`, but a pane that reached this app with no host at all is keyed under ''. Folded here
+    // so a bucket is not filled under one spelling and read under the other.
+    function convNormHost(h) {
+      return !h || h === 'local' ? 'local' : h;
+    }
+
+    function convFpKey(fp) {
+      if (!fp) return '';
+      if (Array.isArray(fp)) {
+        return JSON.stringify([convNormHost(fp[0]), fp[1] || '', fp[2] || '']);
+      }
+      return String(fp);
+    }
+
+    function convLiveBucket(fpKey) {
+      let bucket = convLiveCache.get(fpKey);
+      if (!bucket) {
+        bucket = { turns: [], syncedTo: 0, lastFetch: 0 };
+        convLiveCache.set(fpKey, bucket);
+      }
+      return bucket;
+    }
 
     function convLiveOn() {
       try { return localStorage.getItem(CONV_LIVE_KEY) === 'on'; } catch (e) { return false; }
@@ -40,11 +71,11 @@
       const on = !convLiveOn();
       try { localStorage.setItem(CONV_LIVE_KEY, on ? 'on' : 'off'); }
       catch (e) { /* private mode: this session only */ }
-      // Dropped rather than kept for the way back: what is on screen must never be a record the
-      // reader has just switched away from, and the fetch that refills this is one message.
-      convLiveRows = null;
-      convLiveAt = 0;
-      convLiveWant = '';
+      // Kept rather than dropped, now that a row belongs to a bucket and a bucket belongs to a
+      // pane: what comes back on screen is this reader's own members and never the thread they
+      // switched away from. Only the cadence goes, so the way back in is drawn at once and
+      // corrected by the answer to the ask that follows it.
+      convLiveInvalidate();
       convLiveError = '';
       renderConvView();
       if (typeof renderConvStandalone === 'function') renderConvStandalone(true);
@@ -58,27 +89,57 @@
     function convKeyFingerprint(key) {
       try {
         const p = JSON.parse(key);
-        return Array.isArray(p) && p.length >= 4 ? [p[0] || '', p[2] || '', p[3] || ''] : null;
+        return Array.isArray(p) && p.length >= 4 ? [convNormHost(p[0]), p[2] || '', p[3] || ''] : null;
       } catch (e) { return null; }
     }
 
-    // One query for the whole roster. Sent only when the answer on hand cannot serve: a different
-    // set of members, or old enough to be worth asking again. `force` is a turn ending or the ⟳,
-    // both of which are someone saying "now".
+    // "Ask the relay again on the way through." Called where something has happened that the record
+    // already knows about and this cache does not — a turn ending, or a reader pressing ⟳. It drops
+    // the cadence rather than the rows: the next render re-asks, and asks only for what is new.
+    // Passing no keys invalidates every bucket, which is what the callers that do not know whose
+    // thread is on screen want.
+    function convLiveInvalidate(keys) {
+      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      const buckets = fps.length
+        ? fps.map(fp => convLiveCache.get(convFpKey(fp))).filter(Boolean)
+        : Array.from(convLiveCache.values());
+      for (const bucket of buckets) bucket.lastFetch = 0;
+    }
+
+    // One query for the whole roster. Sent only when the answer on hand cannot serve: a member with
+    // no bucket yet, or a bucket old enough to be worth asking again. `force` is a turn ending or
+    // the ⟳, both of which are someone saying "now".
     function convLiveFetch(keys, force) {
       if (!convLiveOn()) return;
       const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
       if (!fps.length) return;
-      const want = JSON.stringify(fps), now = Date.now();
-      if (!force && want === convLiveWant && now - convLiveAt < CONV_LIVE_EVERY) return;
       if (!ws || ws.readyState !== 1) {
         convLiveError = 'Not connected — the relay’s record cannot be read right now.';
         return;
       }
-      convLiveWant = want;
-      convLiveAt = now;
-      ws.send(JSON.stringify(
-        { type: 'conv_log', fingerprints: fps, last: CONV_LIVE_ROWS }));
+      const now = Date.now();
+      let needsFetch = !!force;
+      // The floor over the roster, not the ceiling: the buckets were last answered by different
+      // queries, so the only id every member is proven current through is the lowest of them. A
+      // member with no bucket has been answered through nothing, and the query goes out whole.
+      let syncedTo = Infinity;
+      for (const fp of fps) {
+        const bucket = convLiveCache.get(convFpKey(fp));
+        if (!bucket) { syncedTo = 0; needsFetch = true; continue; }
+        if (bucket.syncedTo < syncedTo) syncedTo = bucket.syncedTo;
+        if (now - bucket.lastFetch >= CONV_LIVE_EVERY) needsFetch = true;
+      }
+      if (!needsFetch) return;
+
+      for (const fp of fps) convLiveBucket(convFpKey(fp)).lastFetch = now;
+
+      const payload = { type: 'conv_log', fingerprints: fps, last: CONV_LIVE_ROWS };
+      // A delta only when every member is proven current through the same id. `force` still asks
+      // for the window, because the reader pressing ⟳ is asking for the record and not for the
+      // difference — a row edited or pruned behind this client's back is repaired by that ask and
+      // by nothing else.
+      if (!force && syncedTo > 0 && syncedTo !== Infinity) payload.since_id = syncedTo;
+      ws.send(JSON.stringify(payload));
     }
 
     // The relay answering. Addressed to the client that asked and never broadcast, so this arrives
@@ -86,7 +147,43 @@
     function convLiveReceive(msg) {
       convLiveError = '';
       convLiveTruncated = !!msg.truncated;
-      convLiveRows = Array.isArray(msg.turns) ? msg.turns : [];
+      const turns = Array.isArray(msg.turns) ? msg.turns : [];
+      const now = Date.now();
+
+      // The highest id this answer carried, over every member of it. That is what proves the whole
+      // queried roster current — including the members it returned nothing for.
+      let answeredThrough = 0;
+      const touched = new Set();
+      for (const t of turns) {
+        const fpKey = convFpKey([t.host, t.agent, t.cwd]);
+        const bucket = convLiveBucket(fpKey);
+        const seq = t.seq || 0;
+        if (seq > answeredThrough) answeredThrough = seq;
+        if (seq && bucket.turns.some(x => x.seq === seq)) continue;
+        bucket.turns.push(t);
+        touched.add(fpKey);
+      }
+
+      // Every fingerprint the query named, whether it answered with rows or with silence. The relay
+      // echoes the request back for exactly this: without it an empty answer is indistinguishable
+      // from one that was never asked, and a quiet pane would never come up to date.
+      for (const fp of (Array.isArray(msg.fingerprints) ? msg.fingerprints : [])) {
+        const bucket = convLiveBucket(convFpKey(fp));
+        bucket.lastFetch = now;
+        bucket.answered = true;
+        if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
+      }
+
+      for (const fpKey of touched) {
+        const bucket = convLiveCache.get(fpKey);
+        bucket.turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || 0) - (b.seq || 0));
+        // The same ceiling a single query carries, held across the deltas that follow it: without
+        // this a session left open all day grows a bucket without bound.
+        if (bucket.turns.length > CONV_LIVE_ROWS) {
+          bucket.turns.splice(0, bucket.turns.length - CONV_LIVE_ROWS);
+        }
+      }
+
       if (!convLiveOn()) return;
       renderConvView();
       // `false`: an answer arriving is not the reader asking to be moved. Both views already follow
@@ -103,7 +200,7 @@
       if (!/^conv_log|conversation log is off/.test(text)) return;
       convLiveError = text === 'conversation log is off'
         ? 'The relay is not recording. Set HERDR_CONV_LOG=1 and restart it.' : text;
-      convLiveRows = [];
+      convLiveCache.clear();
       if (convLiveOn()) renderConvView();
     }
 
@@ -122,11 +219,11 @@
     // colour, for which side of a pair a bubble goes on, and for the roster panel's hide-a-member
     // filter, so a key that is right but spelled differently is a bubble drawn as a stranger.
     //
-    // Two spellings exist for one host. The relay's snapshot names the local host `local` and so
-    // does the record — that is the ordinary case and the first key matches outright. But the
-    // browser's own key builder folds a missing host to '', and the record's column defaults to
-    // `local`, so a pane that reached this app with no host at all is stored under a name its
-    // member key does not carry. Both are tried against the roster before either is believed.
+    // Two spellings exist for one host — see `convNormHost`. The relay's snapshot names the local
+    // host `local` and so does the record, and that ordinary case matches outright. But the
+    // browser's own key builder folds a missing host to '', so a pane that reached this app with no
+    // host at all is stored under a name its member key does not carry. Both are tried against the
+    // roster before either is believed.
     function convLiveKey(t, roster) {
       const pane = { pane_id: t.pane_id || '', agent: t.agent || '', cwd: t.cwd || '' };
       const mine = convMemberKey(Object.assign({ host: t.host || '' }, pane));
@@ -137,10 +234,47 @@
 
     // The record, in the shape the thread already renders. `keys` is the roster, so a row's member
     // index — which is what the standalone view picks a column from — is the position of its own
-    // member rather than the order rows came back in.
+    // member rather than the order rows came back in. The buckets are per pane and each is already
+    // in order; interleaving them is what turns a set of members into one conversation.
     function convLiveEntries(keys) {
       const at = new Map((keys || []).map((k, i) => [k, i]));
-      return (convLiveRows || []).map(t => {
+      const turns = [];
+      const seen = new Set();
+      // A bucket is a fingerprint, and a fingerprint has no pane id in it — that is what lets one
+      // survive the restart that renumbers every pane. But it also means two panes running the same
+      // agent in the same directory share a bucket, and "show this pane only" would draw both: the
+      // thread would be filtered by agent, which is not what the reader asked for.
+      //
+      // So a row belongs to the member whose pane id it carries. A row from a pane that is no
+      // longer live has no such claimant and goes to whoever holds the fingerprint now, which is
+      // what keeps a respawned pane's history attached to it.
+      // Every pane id with an owner: one that is live right now, or one this roster names. A row
+      // carrying any of them belongs to that member and to nobody else.
+      const claimed = new Set();
+      for (const x of (typeof agents !== 'undefined' ? agents : [])) {
+        if (x.pane_id) claimed.add(x.pane_id);
+      }
+      const paneOfKey = k => { try { return (JSON.parse(k) || [])[1] || ''; } catch (e) { return ''; } };
+      for (const k of (keys || [])) claimed.add(paneOfKey(k));
+      for (const k of (keys || [])) {
+        const fp = convKeyFingerprint(k);
+        if (!fp) continue;
+        const bucket = convLiveCache.get(convFpKey(fp));
+        if (!bucket) continue;
+        const mine = paneOfKey(k);
+        for (const t of bucket.turns) {
+          const pid = t.pane_id || '';
+          if (mine && pid && pid !== mine && claimed.has(pid)) continue;
+          // Two roster members can fold to one fingerprint — a pane respawned under a new id is the
+          // same pane to the record — and the bucket must not be drawn twice for them.
+          if (t.seq && seen.has(t.seq)) continue;
+          if (t.seq) seen.add(t.seq);
+          turns.push(t);
+        }
+      }
+      turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || 0) - (b.seq || 0));
+
+      return turns.map(t => {
         const key = convLiveKey(t, at);
         return {
           who: CONV_LIVE_USER_KINDS.includes(t.kind) ? 'user' : 'agent',
@@ -165,9 +299,15 @@
 
     // What the thread says when the relay's record is on screen and empty. Three different facts,
     // and a reader who cannot tell them apart will go looking for the wrong problem.
-    function convLiveEmptyHtml() {
+    function convLiveEmptyHtml(keys) {
       if (convLiveError) return `<p class="conv-empty">${escapeHtml(convLiveError)}</p>`;
-      if (convLiveRows === null) {
+      // `answered`, not "has a bucket": a bucket is opened when the question goes out, so asking
+      // that instead would tell a reader the record is empty while the answer is still in flight.
+      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      const answered = fps.length
+        ? fps.every(fp => (convLiveCache.get(convFpKey(fp)) || {}).answered)
+        : Array.from(convLiveCache.values()).some(b => b.answered);
+      if (!answered) {
         return '<p class="conv-empty">Reading the relay’s record…</p>';
       }
       return '<p class="conv-empty">The relay has recorded nothing for these panes yet. ' +

@@ -297,7 +297,11 @@ test('a prompt the arbitrator delivered is not drawn as one the reader typed', (
     {kind: 'human_prompt', origin: 'human_web', text: 'Have a look at this.',
      pane_id: 'w1:p1', agent: 'claude', cwd: '/a', host: 'local', at: 1, at_src: 'sent'},
   ]});
-  const [arbitrated, typed] = g.convLiveEntries([key(PANE_B), key(PANE_A)]);
+  // Entries come back in the record's own order, which is chronological — so pick them by
+  // what they say rather than by where they land.
+  const entries = g.convLiveEntries([key(PANE_B), key(PANE_A)]);
+  const arbitrated = entries.find(e => e.text.startsWith('Check the footer'));
+  const typed = entries.find(e => e.text.startsWith('Have a look'));
   assert.equal(arbitrated.who, 'user', 'a prompt is a prompt, whoever wrote it');
   assert.equal(arbitrated.via, 'arbitrator');
   assert.equal(typed.via, undefined, 'and a person’s own prompt carries no badge');
