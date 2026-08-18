@@ -1063,8 +1063,11 @@ test('a turn that ended while nothing was connected is recovered off the pane', 
   // The pane says something the transcript has never heard, which is what a turn that ended while
   // the tab was closed looks like from here.
   await read(page, '❯ what changed?\n\n⏺ The relay now polls slower.\n\n❯\n');
+  // Polled rather than read once: the three-second snapshot lands in the middle of this on a loaded
+  // machine, and the recorder's write is behind whatever that snapshot set going.
+  await expect.poll(async () => (await held(page, key)).entries.map(e => e.text))
+    .toContain('The relay now polls slower.');
   const rec = await held(page, key);
-  expect(rec.entries.map(e => e.text)).toContain('The relay now polls slower.');
   // Found, not watched: the reconnect is not when the agent finished, and the stamp says so.
   expect(rec.entries[rec.entries.length - 1].at_src).toBe('read');
 });
@@ -4378,11 +4381,12 @@ test('Resend is per pane, not one clipboard for all of them', async ({page}) => 
 
 test('floating working badges appear in the top-left for working conversation members', async ({page}) => {
   await open(page);
+  // Held rather than set: the badge is drawn off the live `agents` entry, and the three-second
+  // snapshot replaces that array wholesale — a status written onto it is gone by the next poll.
+  await forceStatus(page, await page.evaluate(() => paneOf(activePane).label), 'working');
   // Pane mode thread
   await page.evaluate(() => {
     const a = paneOf(activePane);
-    a.agent_status = 'working';
-    a.status = 'working';
     saveConvIndex([{
       id: 'c1', name: 'working conversation', created: Date.now(),
       members: [{key: convMemberKey(a), added: Date.now(), label: 'Architect 1'}],
