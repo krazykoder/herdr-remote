@@ -51,7 +51,9 @@ const captureSends = page => page.evaluate(() => {
 
 const sent = page => page.evaluate(() => window.__sent.filter(m => m.type.startsWith('arb_')));
 
-// A session as the relay broadcasts it, fed to the page's own handler.
+// A session as the relay broadcasts it, fed to the page's own handler. The shape is the relay's,
+// and it is `tests/e2e/e2e_arbitration.py` that holds the real relay to it — a failed start like
+// the one above never broadcasts at all, so this suite cannot be the thing that checks it.
 const session = (over = {}) => Object.assign({
   id: 's-20260817-1103', state: 'active', pause_reason: null, conversation: 'c1',
   scope: 'Get the footer reviewed.',
