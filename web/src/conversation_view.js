@@ -507,19 +507,20 @@
     function convWorkingBadgesHtml(workingList, boxId) {
       if (!workingList || !workingList.length) return '';
       return workingList.map(a => {
-        const name = paneLabel(a) || a.pane_id || 'Agent';
+        const name = escapeHtml(paneLabel(a) || a.pane_id || 'Agent');
         const badge = a.agent ? agentBadge(a.agent) : '';
         const key = convMemberKey(a);
+        const accent = agentColor(a.agent) || 'var(--text)';
         // A button, because it does something: the badge says who is working and pressing it goes
         // to the last thing they said, which is the message the one being written continues.
         return `<button type="button" class="conv-working-chip" data-key="${escapeHtml(key)}" ` +
           `data-box="${escapeHtml(boxId || 'convThread')}" ` +
+          `style="--who-accent:${accent}" ` +
           `onclick="convGoToLastFrom(this.dataset.key, this.dataset.box)" ` +
-          `title="Go to ${escapeHtml(name)}'s last message" ` +
-          `aria-label="Go to ${escapeHtml(name)}'s last message">` +
-          `<span class="conv-working-dot" aria-hidden="true"></span> ` +
-          `<span>Working … <strong>${escapeHtml(name)}</strong></span>${badge}` +
-          `</button>`;
+          `title="Go to ${name}'s last message" ` +
+          `aria-label="Go to ${name}'s last message">` +
+          `<span class="dot pulse" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
+          `${name}${badge}</button>`;
       }).join('');
     }
 

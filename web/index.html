@@ -3557,24 +3557,24 @@
     .solo-x:hover { color: var(--text); }
 
     .conv-working-chip {
+      flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
       gap: 6px;
       padding: 3px 10px;
       min-height: 26px;
       border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border));
+      border: 1px solid var(--who-accent, color-mix(in srgb, var(--text) 22%, var(--border)));
       /* Lifted off the surface it floats over rather than level with it: this hangs over live pane
-         text, and a chip the same value as the panel behind it reads as part of that text. Mixing
-         toward --bg left it a shade of the thing it floats over, which read as translucent over
-         dense text however opaque it was — so it mixes toward --text instead, which is away from
-         the background on all eleven themes. Neutral, not the dot's green: the dot is what says
-         live, and a chip that said it too would be a status the size of a paragraph. */
-      background: color-mix(in srgb, var(--text) 12%, var(--surface));
+         text, and a chip the same value as the panel behind it reads as part of that text. Neutral,
+         not the dot's green: the dot is what says live, and a chip that said it too would be a
+         status the size of a paragraph. */
+      background: color-mix(in srgb, var(--surface) 92%, var(--bg));
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
       letter-spacing: 0.04em;
+      text-transform: uppercase;
       font-weight: 600;
       line-height: 1.2;
       /* Two shadows: a tight one for the edge and a wide soft one for the height. One blur cannot
@@ -3583,14 +3583,6 @@
       pointer-events: auto;
       text-align: left;
       cursor: pointer;
-    }
-
-    .conv-working-chip strong {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--text);
     }
 
     .conv-working-chip .badge {
@@ -3603,8 +3595,15 @@
       background: color-mix(in srgb, var(--text) 8%, transparent);
     }
 
+    .conv-working-chip .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
     .conv-working-chip:hover {
-      border-color: color-mix(in srgb, var(--text) 45%, var(--border));
+      border-color: var(--who-accent, var(--text));
     }
 
     /* Where a badge just took the reader. Colour for a moment and then nothing: the class is left

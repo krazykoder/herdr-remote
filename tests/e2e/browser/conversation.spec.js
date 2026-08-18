@@ -4358,7 +4358,7 @@ test('floating working badges appear in the top-left for working conversation me
     renderConvView();
   });
   await expect(page.locator('#paneWorking .conv-working-chip')).toBeVisible();
-  await expect(page.locator('#paneWorking')).toContainText('Working … Architect 1');
+  await expect(page.locator('#paneWorking .conv-working-chip')).toContainText('Architect 1');
   await expect(page.locator('#paneWorking .badge')).toContainText('claude');
 
   // Standalone conversation window
@@ -4366,7 +4366,7 @@ test('floating working badges appear in the top-left for working conversation me
     openConversation('c1');
   });
   await expect(page.locator('#convViewWorking .conv-working-chip')).toBeVisible();
-  await expect(page.locator('#convViewWorking')).toContainText('Working … Architect 1');
+  await expect(page.locator('#convViewWorking .conv-working-chip')).toContainText('Architect 1');
 });
 
 test('double clicking a bubble selects that agent in the composer bubble', async ({page}) => {
