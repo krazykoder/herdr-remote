@@ -3640,13 +3640,13 @@ test('the dock floats over the thread, at the bottom of the window', async ({pag
     const dock = document.getElementById('convDock').getBoundingClientRect();
     const view = document.getElementById('convView').getBoundingClientRect();
     const thread = document.getElementById('convViewThread').getBoundingClientRect();
-    return {dockBottom: dock.bottom, viewBottom: view.bottom, threadBottom: thread.bottom,
+    return {dockTop: dock.top, dockBottom: dock.bottom, viewBottom: view.bottom, threadBottom: thread.bottom,
       measured: getComputedStyle(document.getElementById('convView')).getPropertyValue('--dock-h')};
   });
   // Sitting on the bottom of the view, not halfway up it behind a short thread.
   expect(Math.abs(box.dockBottom - box.viewBottom)).toBeLessThan(2);
-  // And over the thread rather than under it: the thread runs to the bottom too, behind it.
-  expect(box.threadBottom).toBeGreaterThanOrEqual(box.dockBottom - 2);
+  // And static at the bottom of the view with the thread above it.
+  expect(box.threadBottom).toBeGreaterThanOrEqual(box.dockTop - 2);
   // Measured, not guessed — the row, the chip list and a growing composer all change it.
   expect(parseFloat(box.measured)).toBeGreaterThan(0);
 });
@@ -4133,4 +4133,72 @@ test('floating working badges appear in the top-left for working conversation me
   await expect(page.locator('#convViewWorking .conv-working-chip')).toBeVisible();
   await expect(page.locator('#convViewWorking')).toContainText('Working … Architect 1');
 });
+
+test('double clicking a bubble selects that agent in the composer bubble', async ({page}) => {
+  await open(page);
+  await page.evaluate(async () => {
+    const a1 = paneOf('w1:p1');
+    const a2 = agents.find(x => x.label === 'scratch');
+    const k1 = convMemberKey(a1), k2 = convMemberKey(a2);
+    await convPut({
+      key: k2, label: 'scratch', touched: Date.now(),
+      spawn: {agent: 'codex'},
+      entries: [{who: 'agent', text: 'Hello from scratch agent', at: Date.now(), at_src: 'state'}]
+    });
+    saveConvIndex([{
+      id: 'c1', name: 'two agent conv', created: Date.now(),
+      members: [
+        {key: k1, added: 1, label: 'Architect 1'},
+        {key: k2, added: 2, label: 'scratch'}
+      ],
+    }]);
+    openConversation('c1');
+  });
+
+  const scratchBubble = page.locator('#convViewThread .conv-msg', {hasText: 'Hello from scratch agent'});
+  await expect(scratchBubble).toBeVisible();
+  await scratchBubble.dblclick();
+
+  // Composer bubble now addresses scratch
+  await expect(page.locator('#convBubble')).toBeVisible();
+  const addressed = await page.evaluate(() => dockAddressed());
+  const scratchId = await page.evaluate(() => agents.find(x => x.label === 'scratch').pane_id);
+  expect(addressed).toBe(scratchId);
+});
+
+test('the composer bubble remains static at the bottom while the thread scrolls', async ({page}) => {
+  await open(page);
+  await page.evaluate(async () => {
+    const a1 = paneOf('w1:p1');
+    const entries = [];
+    for (let i = 1; i <= 30; i++) {
+      entries.push({who: 'user', text: `Question ${i}`, at: i * 1000, at_src: 'state'});
+      entries.push({who: 'agent', text: `Answer ${i}`, at: i * 1000 + 500, at_src: 'state'});
+    }
+    await convPut({
+      key: convMemberKey(a1), label: 'Architect 1', touched: Date.now(),
+      spawn: {agent: 'claude'}, entries: entries
+    });
+    saveConvIndex([{
+      id: 'c1', name: 'long conv', created: Date.now(),
+      members: [{key: convMemberKey(a1), added: 1, label: 'Architect 1'}],
+    }]);
+    openConversation('c1');
+  });
+
+  const dock = page.locator('#convDock');
+  await expect(dock).toBeVisible();
+  const initBox = await dock.boundingBox();
+
+  // Scroll the thread to top
+  await page.evaluate(() => {
+    const thread = document.getElementById('convViewThread');
+    thread.scrollTop = 0;
+  });
+
+  // The dock position remains completely static
+  const scrolledBox = await dock.boundingBox();
+  expect(scrolledBox.y).toBeCloseTo(initBox.y, 1);
+});
+
 

@@ -343,9 +343,9 @@
     // The composer grows upward under the thread. Keep its newest bubble in view while writing;
     // reading history still wins because this only runs after the writer explicitly focuses it.
     function stickConvLatest() {
-      const view = document.getElementById('convView');
-      if (!view || view.style.display === 'none') return;
-      requestAnimationFrame(() => { view.scrollTop = view.scrollHeight; });
+      const box = document.getElementById('convViewThread');
+      if (!box || !box.offsetParent) return;
+      requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
     }
 
     // The block cursor. A textarea's own caret is a hairline that disappears with focus, and this
@@ -673,7 +673,20 @@
     // Only the conversation window's thread, because it is the only one with a target to change —
     // the pane's own composer types into the pane on screen.
     function addressConvAuthor(key) {
-      const live = dockMembers().find(a => convMemberKey(a) === key);
+      if (!key) return;
+      let parsed = null;
+      try { parsed = JSON.parse(key); } catch (e) {}
+      const targetPane = Array.isArray(parsed) && parsed[1] ? parsed[1] : null;
+      const live = dockMembers().find(a => {
+        if (convMemberKey(a) === key) return true;
+        if (targetPane && a.pane_id === targetPane) return true;
+        if (Array.isArray(parsed)) {
+          const aHost = (a.host === 'local' || !a.host) ? 'local' : a.host;
+          const kHost = (parsed[0] === 'local' || !parsed[0]) ? 'local' : parsed[0];
+          return aHost === kHost && a.pane_id === parsed[1];
+        }
+        return false;
+      });
       // No target: the author has exited or is folded out of the thread.
       if (!live) return;
       // The word the double-click selected is not a selection anybody asked for.
@@ -853,10 +866,30 @@
           projMenu.hidden = true;
       }, true);
       const thread = document.getElementById('convViewThread');
-      if (thread) thread.addEventListener('dblclick', e => {
-        const msg = e.target.closest && e.target.closest('.conv-msg');
-        if (msg) addressConvAuthor(msg.dataset.key);
-      });
+      if (thread) {
+        function onBubbleDouble(e) {
+          const msg = e.target.closest && e.target.closest('.conv-msg');
+          if (!msg || (e.target.closest && e.target.closest('.conv-pick'))) return;
+          addressConvAuthor(msg.dataset.key);
+        }
+        thread.addEventListener('dblclick', onBubbleDouble);
+
+        let lastTap = 0, lastMsg = null;
+        thread.addEventListener('touchend', e => {
+          const msg = e.target.closest && e.target.closest('.conv-msg');
+          if (!msg || (e.target.closest && e.target.closest('.conv-pick'))) return;
+          const now = Date.now();
+          if (now - lastTap < 350 && lastMsg === msg) {
+            e.preventDefault();
+            onBubbleDouble(e);
+            lastTap = 0;
+            lastMsg = null;
+          } else {
+            lastTap = now;
+            lastMsg = msg;
+          }
+        });
+      }
       if (!dock || !window.ResizeObserver) return;
       new ResizeObserver(syncDockHeight).observe(dock);
       syncDockHeight();
