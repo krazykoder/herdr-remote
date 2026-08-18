@@ -422,7 +422,7 @@
     // message goes with the conversation it was being written to rather than into the next one's
     // box.
     function clearConvDock() {
-      dockTarget = ''; dockPicks = []; dockPicked.clear(); dockTokens.clear();
+      dockTarget = ''; dockPicks = []; dockPicked.clear(); dockTokens.clear(); dockTokenSeq = 0;
       closeDockMenu();
       const input = document.getElementById('convInput');
       if (input) { input.value = ''; autoGrow(input); syncConvCursor(); }
@@ -466,6 +466,11 @@
       if (input && text) {
         input.value = text;
         dockTokens = new Map(convViewId ? convComposerTokens.get(convViewId) || [] : []);
+        // The numbering belongs to the message being written, not to the page: a draft picked up
+        // again counts on from its own highest token rather than from wherever another
+        // conversation's picking left the counter, so a returning reader is not handed `[#7 …]`
+        // beside a fresh `[#1 …]`.
+        dockTokenSeq = Math.max(0, ...dockTokens.keys());
         autoGrow(input);
         syncConvCursor();
         syncDockTokens();

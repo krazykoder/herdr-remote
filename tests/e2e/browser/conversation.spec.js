@@ -4826,6 +4826,33 @@ test('a half-written message survives leaving the conversation window and coming
     await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
   });
 
+// The numbering is the message's, not the page's. It used to climb for the life of the tab, so a
+// conversation opened second began at `[#4 …]` for no reason its reader could see.
+test('token numbering starts again in each conversation, and carries on in a draft',
+  async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await openWindow(page);
+    await pickBubble(page, 'the other pane spoke first');
+    await pickBubble(page, 'and again, last');
+    await expect(page.locator('#convInput')).toHaveValue(/\[#2 /);
+    // A second conversation is a second message, and it counts from one.
+    await page.evaluate(() => {
+      saveConvIndex(loadConvIndex().concat({id: 'c2', name: 'somewhere else', created: Date.now(),
+        members: loadConvIndex()[0].members}));
+      openConversation('c2');
+    });
+    await pickBubble(page, 'the other pane spoke first');
+    await expect(page.locator('#convInput')).toHaveValue(/^\[#1 /);
+    // Back to the first, whose draft already holds #1 and #2: the next pick is #3, not #2 again.
+    await page.evaluate(() => openConversation('c1'));
+    await expect(page.locator('#convInput')).toHaveValue(/\[#2 /);
+    // Any bubble not already in the draft — the open pane's own read is the third speaker here.
+    await page.locator('#convViewThread .conv-msg:not(.picked)').first().locator('.conv-pick').click();
+    await expect(page.locator('#convInput')).toHaveValue(/\[#3 /);
+  });
+
 // The draft, the addressed agent and the quotes the draft's tokens stand for are held per
 // conversation for the life of the page. A conversation that is gone cannot be returned to, and an
 // id the cap recycles would otherwise hand its next owner a stranger's half-written message.
