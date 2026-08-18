@@ -307,15 +307,16 @@
     // the reply or the chosen agent made the strip something to avoid mid-sentence. Deliberately
     // in memory and not in storage: a draft is a thing in flight, and a reload is a session ending.
     //
-    // Called before convViewId moves, so what is in the box and who is addressed is filed under the
-    // conversation it was written to.
+    // Called before convViewId moves, so the box's contents are filed under the conversation they
+    // were written to. Only the draft: the addressed agent is written by setDockTarget, at the
+    // moment it is chosen and under the conversation that was open then. Filing it here as well
+    // would file whatever dockTarget happens to hold under whatever convViewId happens to be, and
+    // convViewId is reassigned without a stash in at least two places.
     function stashConvDraft() {
       const input = document.getElementById('convInput');
-      if (!convViewId) return;
-      if (input && input.value.trim()) convComposerDrafts.set(convViewId, input.value);
+      if (!input || !convViewId) return;
+      if (input.value.trim()) convComposerDrafts.set(convViewId, input.value);
       else convComposerDrafts.delete(convViewId);
-      if (dockTarget) convComposerTargets.set(convViewId, dockTarget);
-      else convComposerTargets.delete(convViewId);
     }
 
     function restoreConvDraft() {

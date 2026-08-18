@@ -2178,12 +2178,21 @@
       color: var(--red);
     }
 
-    /* The selects in this menu are menu items too, and at the global 16px field size they read as
-       controls from a different sheet than the 0.8rem items above them.
-       Deliberately under the 16px floor, and the only place that is allowed: the floor exists
-       because iOS zooms the layout viewport for a focused field that summons the keyboard, and a
-       select summons a picker instead. */
+    /* The selects in this menu are menu items too, so they are built out of .menu-item's own
+       metrics — same height, same gutters, same type — rather than out of a per-select inline
+       style. A row that is 35px tall between 44px rows reads as a control from a different sheet,
+       and it is the one row in the menu a thumb can miss.
+       The 0.8rem is deliberately under the 16px field floor, and this is the only place that is
+       allowed: the floor exists because iOS zooms the layout viewport for a focused field that
+       summons the keyboard, and a select summons a picker instead. */
     .term-menu select {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
       font-size: 0.8rem;
       font-weight: 500;
     }
@@ -5186,13 +5195,12 @@
                "not alone" was two different threads depending on whether a pair happened to exist,
                with no way to ask for the other one. A select and not three menu rows, the same as
                Line width and Tab bar below — it is one setting with a current value, and three rows
-               spend the menu's whole height saying so. renderTermMenuState writes the options, so
-               a choice that would draw what another already draws is never in the list. -->
+               spend the menu's whole height saying so. renderTermMenuState fills it and decides
+               whether this pane has a second thread to offer at all. -->
           <div id="menuConvScope" hidden>
             <div class="menu-label" style="margin-top:10px">Thread shows</div>
             <select id="convScopeSel" onchange="setConvScope(this.value)"
-              aria-label="How much of this conversation the thread draws"
-              style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"></select>
+              aria-label="How much of this conversation the thread draws"></select>
           </div>
           <!-- Drafts and backfill are drawn unfilled; this hides them outright. Offered only while
                the thread is the view on screen, which is the only place they appear. -->
@@ -5238,16 +5246,14 @@
             </div>
           </div>
           <div class="menu-label" style="margin-top:10px">Line width</div>
-          <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out"
-            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <select id="wrapMode" onchange="setWrapMode(this.value)" aria-label="How pane lines are laid out">
             <option value="true">True size — pan sideways</option>
             <option value="fit">Fit width — shrink to the pane</option>
             <option value="reflow">Reflow — wrap to the screen</option>
           </select>
           <div id="wrapHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <div class="menu-label" style="margin-top:10px">Tab bar</div>
-          <select id="tabScope" onchange="setTabScope(this.value)" aria-label="Which panes the tab bar lists"
-            style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <select id="tabScope" onchange="setTabScope(this.value)" aria-label="Which panes the tab bar lists">
             <option value="project">This project only</option>
             <option value="all">Every live pane</option>
             <option value="pairs">Every pair</option>
@@ -5257,8 +5263,7 @@
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
           <div id="menuPairPlace">
             <div class="menu-label" style="margin-top:10px">Pair bar</div>
-            <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits"
-              style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+            <select id="pairPlace" onchange="setPairPlace(this.value)" aria-label="Where the pair bar sits">
               <option value="top">Top of the pane</option>
               <option value="above">Above the composer</option>
               <option value="bottom">Bottom</option>

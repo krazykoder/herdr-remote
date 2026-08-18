@@ -1557,10 +1557,13 @@ test('with no pair to narrow it, the joint thread is still every member', async 
   await expect(thread).toContainText('said by my partner');
   await expect(thread).toContainText('said by a stranger');
   await expect(page.locator('#convThread .conv-member')).toHaveCount(3);
-  // No pair to narrow to, so "paired" is not offered: it would be the whole conversation under a
-  // second name.
+  // All three threads are always on offer. With no pair to narrow to, "paired" draws the whole
+  // conversation — the same fallback the thread itself takes, rather than an option that vanishes.
   await page.locator('#termMenuBtn').click();
-  await expect(scopeOpt(page, 'pair')).toHaveCount(0);
+  await expect(scopeOpt(page, 'pair')).toHaveCount(1);
+  await pickScope(page, 'pair');
+  await expect(thread).toContainText('said by a stranger');
+  await expect(page.locator('#convThread .conv-member')).toHaveCount(3);
   await pickScope(page, 'alone');
   await expect(scopeSel(page)).toHaveValue('alone');
   await expect(scopeOpt(page, 'all')).toHaveCount(1);
@@ -2486,8 +2489,8 @@ test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was
   const rec = await held(page, mine);
   expect(rec.entries.map(e => e.text)).not.toContain('the other pane spoke first');
   await expect(scopeSel(page)).toHaveValue('alone');
-  // No live pair here, so "paired" is not offered — the whole conversation is these two.
-  await expect(scopeOpt(page, 'pair')).toHaveCount(0);
+  // Three threads, always the same three, whether or not a pair happens to exist here.
+  await expect(scopeSel(page).locator('option')).toHaveCount(3);
   await pickScope(page, 'all');
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(4);
   await expect(page.locator('#convThread .conv-members')).toHaveCount(1);

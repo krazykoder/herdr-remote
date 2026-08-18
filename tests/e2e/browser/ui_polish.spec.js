@@ -359,3 +359,25 @@ test('the loading pill hangs over the pane without moving the composer', async (
   await expect(page.locator('#termLoading')).toBeHidden({timeout: 6000});
   await expect(page.locator('#termContent')).toHaveCSS('opacity', '1');
 });
+
+// The pane menu is a list of rows, and a select is one of the rows. At the browser's own select
+// metrics it came out 9px shorter than the buttons around it with different gutters — one row in
+// the middle of the list drawn from a different sheet, and the only one a thumb can miss.
+test('the pane menu draws its selects at the same size as its other items', async ({page}) => {
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#termContent')).toContainText('done.');
+  await page.locator('#termMenuBtn').click();
+  const rows = await page.evaluate(() => {
+    const box = el => { const r = el.getBoundingClientRect(); return {w: Math.round(r.width), h: Math.round(r.height)}; };
+    const item = box(document.querySelector('#termMenu .menu-item'));
+    return Array.from(document.querySelectorAll('#termMenu select'))
+      .filter(el => el.offsetParent).map(el => ({item, sel: box(el),
+        size: getComputedStyle(el).fontSize, itemSize: getComputedStyle(document.querySelector('#termMenu .menu-item')).fontSize}));
+  });
+  expect(rows.length).toBeGreaterThan(0);
+  rows.forEach(r => {
+    expect(r.sel.h).toBe(r.item.h);
+    expect(r.sel.w).toBe(r.item.w);
+    expect(r.size).toBe(r.itemSize);
+  });
+});

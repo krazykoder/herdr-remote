@@ -428,33 +428,22 @@
         // over the roster and not over what is currently drawn: narrowing to a pair must not hide
         // the way back out to the members it narrowed away.
         const roster = shown ? (shown.members || []) : [];
-        // One option per thread that is actually different. A pair the size of the roster is the
-        // whole conversation under a second name, and a roster of one is this pane under a second
-        // name — a list offering either tells the reader there are two answers where there is one.
-        // `alone` is offered only when there is something to be alone from.
+        // The list is the three threads this app can draw, always all three and always in the same
+        // order: a menu whose options come and go is one the reader has to re-read every time, and
+        // "paired" disappearing the moment a partner exits reads as the setting having been taken
+        // away. Where two of them would draw the same thing — no pair to narrow to, a pair that is
+        // the whole roster — picking either draws it, which is the honest answer to a question with
+        // one answer. Offered at all only when there is more than this pane on its own to show.
         const pairOnly = shown ? convPairMembers(a, shown) : null;
-        const can = {
-          alone: false,
-          pair: !!pairOnly && pairOnly.length !== roster.length,
-          all: roster.length > 1,
-        };
-        can.alone = can.all || can.pair;
-        const at = convScope();
-        scope.hidden = !can.alone;
+        scope.hidden = !(roster.length > 1 || (!!pairOnly && pairOnly.length > 1));
         if (!scope.hidden) {
           const sel = document.getElementById('convScopeSel');
-          const opts = CONV_SCOPES.filter(s => can[s]);
-          const html = opts.map(s =>
+          const html = CONV_SCOPES.map(s =>
             `<option value="${s}">${escapeHtml(CONV_SCOPE_LABELS[s])}</option>`).join('');
           // Rewritten only when the choices themselves changed: replacing the options while the
           // list is open on a phone closes it under the thumb.
           if (sel.innerHTML !== html) sel.innerHTML = html;
-          // The stored scope may not be on offer here — a pane whose pair has gone is still set to
-          // `pair`, and the list must show what the thread is actually drawing rather than a value
-          // it does not hold. Falling back rather than writing: the pair may come back. Whichever
-          // end is on offer is also what `pairedConvMembers` falls back to drawing.
-          sel.value = opts.indexOf(at) >= 0 ? at
-            : (opts.indexOf('all') >= 0 ? 'all' : 'alone');
+          sel.value = convScope();
         }
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());
