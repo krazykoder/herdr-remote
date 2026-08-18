@@ -7,6 +7,7 @@
 import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
+from arbitration import Arbitration
 from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
@@ -209,6 +210,21 @@ WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
 # enabled it to spawn a session from a phone did not thereby consent to a shell. Off means the
 # shells are never parsed, so known_panes does not grow and pane_guard behaves exactly as before.
 TERMINAL = os.environ.get("HERDR_ENABLE_TERMINAL", "") == "1"
+
+# Arbitration. Off means off (N10): unset, nothing is constructed, no trigger fires, and the wire is
+# byte-for-byte what it was. Both companions are hard requirements rather than conveniences — the
+# whole output of a session is text typed into somebody's terminal, which is what WRITE_EXT gates,
+# and every prompt is built out of the record, so a session without one is an arbitrator asked to
+# decide with no evidence. Quiet when the flag is off; loud when it is on and cannot be honoured.
+ENABLE_ARBITER = os.environ.get("HERDR_ENABLE_ARBITER", "") == "1"
+if ENABLE_ARBITER and not (WRITE_EXT and conv_log is not None):
+    print("herdr-remote: HERDR_ENABLE_ARBITER=1 requires HERDR_ENABLE_WRITE_EXT=1 and "
+          "HERDR_CONV_LOG=1", file=sys.stderr)
+    sys.exit(1)
+# Built in main(), once the herdr helpers it calls exist. MAIN_LOOP is how the thread a session
+# runs on reaches them — see on_loop.
+arbitration = None
+MAIN_LOOP = None
 
 # An externally reachable listener is never token-free. This is the one rule with no opt-out:
 # the external port exists to be published through a tunnel.
@@ -825,6 +841,17 @@ def pane_agent_status(pane_id, remote=None):
     return ""
 
 
+def live_panes():
+    """Every pane herdr lists here, raw. What arbitration resolves fingerprints against.
+
+    Local only, which is exactly v1's rule (D13): a remote send is one ssh hop away, and the
+    recovery story for an instruction half-delivered over a dropped connection is not written yet.
+    A remote participant is refused at session start rather than silently skipped here.
+    """
+    data, err = _herdr_json("pane", "list")
+    return [] if err else dig_panes(data)
+
+
 async def submit_paste(pane_id, text, remote=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
@@ -1125,6 +1152,15 @@ async def _poll_once():
                     await asyncio.to_thread(conv_log.record_turn_end, a, captured, was, status)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
+                # A pane ending a turn means one of two opposite things, and arbitration decides
+                # which — a member finishing is a wake-up (N3), the arbitrator finishing is the
+                # signal to read the drop-box. Both are no-ops when nothing is running, so this
+                # asks on every transition rather than the poll loop knowing about sessions.
+                #
+                # Recorded first, deliberately: the prompt is built out of the record, so a turn
+                # that has not landed yet is a turn the arbitrator would be asked to decide without.
+                if arbitration is not None:
+                    await asyncio.to_thread(arbitrate_turn_end, a, pid)
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
         current_pane_ids = {p["pane_id"] for p in agents + shells}
@@ -1135,6 +1171,83 @@ async def _poll_once():
                 pane_remote_map.pop(pid, None)
                 last_statuses.pop(pid, None)
                 agent_cache.pop(pid, None)
+
+
+ARB_DIGEST = 6      # entries of context behind the one that fired, per §11.3
+
+
+def arbitration_entries(pane):
+    """What the arbitrator is shown: the roster's recent turns, oldest first.
+
+    Read back out of the record rather than passed down from the capture, because the record is
+    what a session is *about* — it holds both members and every human prompt this relay delivered,
+    and the pane that just finished is only one voice in that. Selected by fingerprint for the same
+    reason everything else is: pane ids do not survive a restart.
+
+    Assembles prose; reads none of it (N1).
+    """
+    session = arbitration.running()
+    if session is None:
+        return []
+    members = arbitration.members(session["id"])
+    fingerprints = [[m["host"], m["agent"], m["cwd"]] for m in members]
+    labels = {(m["host"], m["agent"], m["cwd"]): (m["role"] or m["label"] or m["member_id"])
+              for m in members}
+    rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST)
+    return [{"label": labels.get((r["host"], r["agent"], r["cwd"]), r["origin"]),
+             "text": r["text"]} for r in rows]
+
+
+def arbitrate_turn_end(pane, pane_id):
+    """One pane's turn end, offered to the running session. Called from a worker thread.
+
+    Never raises into the poll loop. Arbitration is one feature among many and a session that
+    cannot proceed is its own problem to report — it pauses and pushes — not a reason for the
+    relay to stop telling everyone else what their agents are doing.
+    """
+    try:
+        if arbitration.arbitrator_finished(pane_id) is not None:
+            return
+        arbitration.turn_ended(pane_id, arbitration_entries(pane))
+    except Exception as e:                       # noqa: BLE001 — see the docstring
+        log.warning("arbitration: turn end for %s not handled: %s", pane_id, e)
+
+
+def on_loop(coro, wait=False):
+    """Run a relay coroutine from the worker thread arbitration lives on.
+
+    Everything Arbitration calls out to — delivering an instruction, announcing a pause — is async
+    here, and the session runs inside `asyncio.to_thread` so the poll loop is not blocked by an
+    agent that takes eight seconds to accept a paste. This is the one bridge between the two, and
+    keeping it in a single named place is what stops the class itself from growing an event loop.
+    """
+    future = asyncio.run_coroutine_threadsafe(coro, MAIN_LOOP)
+    return future.result() if wait else None
+
+
+def arbitration_send(pane_id, text):
+    """Deliver an arbitrated instruction, and wait for it to land.
+
+    Not `pane run`, which is what the spec was written against. That form sends the text and its
+    Enter in one herdr call with no gap, and herdr pastes with bracketed paste — a TUI still laying
+    out a payload drops the Enter and the instruction sits unsent in a composer nobody is watching.
+    See the decision log for submitting a paste; `submit_paste` confirms against the pane instead.
+
+    Waits, because the next thing this session does is record that the send happened.
+    """
+    return on_loop(submit_paste(pane_id, text, remote=pane_remote_map.get(pane_id)), wait=True)
+
+
+def arbitration_paused(session, reason):
+    """Every pause reaches a Lock Screen. §9.3 — an unattended loop that stops must not be news
+    six hours later. Fire and forget: the pause is already committed, and a push nobody receives
+    is not a reason to hold up the thread that stopped the session."""
+    on_loop(send_web_push(
+        title="🐑 Arbitration paused",
+        body=f"{reason.replace('_', ' ')} — {session['scope'][:120]}",
+        url="/",
+        tag=f"herdr-arb-{session['id']}",
+    ))
 
 
 def annotate_pane(pane):
@@ -1762,8 +1875,22 @@ def start_mdns():
 
 
 async def main():
+    global arbitration, MAIN_LOOP
     zc, info = start_mdns()
     loop = asyncio.get_running_loop()
+    MAIN_LOOP = loop
+    if ENABLE_ARBITER:
+        # Built here rather than at import: it calls back into the relay's own herdr helpers, and
+        # it needs the running loop to reach them from the thread a session runs on.
+        arbitration = Arbitration(CONV_LOG_DB, send=arbitration_send, panes=live_panes,
+                                  log=conv_log, notify=arbitration_paused)
+        # A session that was running when the relay stopped is paused, never resumed (§9.4): the
+        # relay cannot promise exactly-once delivery into a terminal, and re-sending a phase's
+        # instructions is worse than stopping and showing the person the last one.
+        recovered = arbitration.recover()
+        if recovered:
+            log.warning("arbitration: session %s paused after a relay restart — read its last "
+                        "send before resuming", recovered["id"])
     try:
         await loop.create_datagram_endpoint(UDPPlugin, local_addr=("127.0.0.1", 8376))
     except OSError:

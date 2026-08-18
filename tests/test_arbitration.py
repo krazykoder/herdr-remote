@@ -38,10 +38,12 @@ class Harness(unittest.TestCase):
         self.live = [pane("p1", cwd="/a"), pane("p2", agent="codex", cwd="/a"),
                      pane("pA", agent="claude", cwd="/arb")]
         self.sent = []
+        self.pushed = []
         self.now = 1_000_000
         self.arb = Arbitration(str(Path(self.tmp.name) / "a.sqlite3"),
                                send=lambda pid, text: self.sent.append((pid, text)),
                                panes=lambda: list(self.live),
+                               notify=lambda s, reason: self.pushed.append(reason),
                                clock=lambda: self.now)
         self.addCleanup(self.arb.close)
 
@@ -505,6 +507,116 @@ class InTheThread(Harness):
         self.write(s["id"], handle["sequence"], gate="deploy")
         self.arb.collect(s["id"], handle["prompt_id"])
         self.assertEqual([], self.turns())
+
+
+class Triggers(Harness):
+    """§10 — who wakes the loop, who does not, and what a second one in flight does.
+
+    These are the entry points the relay's poll loop calls on every pane transition, so the first
+    thing each has to be is a no-op. A relay with no session running calls both of these hundreds
+    of times an hour.
+    """
+
+    def test_a_member_finishing_prompts_the_arbitrator(self):
+        s = self.start()
+        out = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.assertEqual(1, out["sequence"])
+        self.assertEqual("pA", self.sent[-1][0])
+        self.assertIn("member-1", self.sent[-1][1])
+        self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+
+    def test_a_restarted_member_still_triggers(self):
+        # The poll loop knows a pane id; the session knows a fingerprint. After a herdr restart
+        # those disagree, and the trigger has to resolve rather than match.
+        s = self.start()
+        self.live[0] = pane("p1-new", cwd="/a")
+        self.assertIsNotNone(self.arb.turn_ended("p1-new", []))
+
+    def test_the_arbitrators_own_turn_end_is_not_a_trigger(self):
+        # It is the signal to read the drop-box, which is the opposite of asking it a question.
+        s = self.start()
+        before = len(self.sent)
+        self.assertIsNone(self.arb.turn_ended("pA", []))
+        self.assertEqual(before, len(self.sent))
+
+    def test_a_pane_that_is_not_on_the_roster_is_ignored(self):
+        self.start()
+        self.live.append(pane("p9", cwd="/elsewhere"))
+        self.assertIsNone(self.arb.turn_ended("p9", []))
+
+    def test_nothing_happens_with_no_session(self):
+        self.assertIsNone(self.arb.turn_ended("p1", []))
+        self.assertIsNone(self.arb.arbitrator_finished("pA"))
+        self.assertEqual([], self.sent)
+
+    def test_nothing_happens_while_paused(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        before = len(self.sent)
+        self.assertIsNone(self.arb.turn_ended("p1", []))
+        self.assertEqual(before, len(self.sent))
+
+    def test_a_second_member_finishing_is_coalesced_not_queued(self):
+        # One prompt outstanding at a time. The other member's news folds into the next prompt's
+        # roster; queueing it would have the arbitrator answering about a conversation that moved.
+        s = self.start()
+        self.arb.turn_ended("p1", [])
+        before = len(self.sent)
+        self.assertIsNone(self.arb.turn_ended("p2", []))
+        self.assertEqual(before, len(self.sent))
+        self.assertEqual(1, self.arb.session(s["id"])["sequence"])
+
+    def test_the_arbitrator_finishing_reads_the_drop_box(self):
+        s = self.start()
+        handle = self.arb.turn_ended("p1", [])
+        self.write(s["id"], handle["sequence"])
+        out = self.arb.arbitrator_finished("pA")
+        self.assertEqual("sent", out["outcome"])
+        self.assertEqual("p2", out["pane_id"])
+
+    def test_a_member_finishing_does_not_read_the_drop_box(self):
+        s = self.start()
+        handle = self.arb.turn_ended("p1", [])
+        self.write(s["id"], handle["sequence"])
+        self.assertIsNone(self.arb.arbitrator_finished("p1"))
+        self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+
+    def test_the_arbitrator_finishing_before_it_wrote_is_not_an_error(self):
+        # An agent that ends its turn without writing is ordinary — it thought, it did not answer.
+        s = self.start()
+        self.arb.turn_ended("p1", [])
+        self.assertEqual("waiting", self.arb.arbitrator_finished("pA")["outcome"])
+
+    def test_a_trigger_that_cannot_proceed_pauses_instead_of_raising(self):
+        # The poll loop calls this for every pane on the machine. A session that cannot go on is
+        # its own problem to report, not a reason to stop telling everyone else about their agents.
+        s = self.start()
+        self.live = [p for p in self.live if p["pane_id"] != "p2"]
+        self.assertIsNone(self.arb.turn_ended("p1", []))
+        self.assertEqual("member_gone", self.arb.session(s["id"])["pause_reason"])
+
+
+class Announced(Harness):
+    """§9.3 — every pause reaches a person. An unattended loop that stops is not news in six hours."""
+
+    def test_a_pause_is_announced(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.assertEqual(["user"], self.pushed)
+
+    def test_a_budget_pause_is_announced_with_its_own_reason(self):
+        s = self.start()
+        self.arb.conn.execute("UPDATE sessions SET steps_used=8 WHERE id=?", (s["id"],))
+        self.arb.conn.commit()
+        self.arb.turn_ended("p1", [])
+        self.assertEqual(["budget_steps"], self.pushed)
+
+    def test_a_push_that_fails_does_not_break_the_pause(self):
+        # The pause is committed before anyone is told. The worst case is a stopped session nobody
+        # was pinged about, which is the state the push improves on — not one it can make worse.
+        s = self.start()
+        self.arb.notify = lambda *a: (_ for _ in ()).throw(RuntimeError("no subscriptions"))
+        self.assertEqual("paused", self.arb.pause(s["id"], "user")["state"])
 
 
 class Restart(Harness):

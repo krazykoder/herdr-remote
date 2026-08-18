@@ -312,12 +312,16 @@ class Arbitration:
     between them, and neither a pane nor a subprocess is needed to test that.
     """
 
-    def __init__(self, path, *, send, panes, log=None, clock=now_ms):
+    def __init__(self, path, *, send, panes, log=None, notify=None, clock=now_ms):
         self.path = path
         self.dir = os.path.join(os.path.dirname(path) or ".", "arbitration")
         self.send = send
         self.panes = panes
         self.log = log                     # a ConversationLog, or None
+        # Called on every pause. §9.3: an unattended loop that stops must not be discovered hours
+        # later, and the relay's answer to that is a Web Push — injected rather than imported for
+        # the same reason `send` is, and because a push that fails is not a reason to fail a pause.
+        self.notify = notify
         self.clock = clock
         parent = os.path.dirname(path)
         if parent:
@@ -436,10 +440,23 @@ class Arbitration:
         return self.session(session_id)
 
     def pause(self, session_id, reason):
+        """Stop the loop and say why. The one choke point, so every pause is announced.
+
+        Announcing is best-effort by design: a push that fails must not turn a clean pause into an
+        exception halfway through the poll loop that called it. The pause is already committed by
+        the time anyone is told, so the worst case is a stopped session nobody was pinged about —
+        which is the state the notification exists to improve on, not one it can make worse.
+        """
         self.conn.execute("UPDATE sessions SET state='paused', pause_reason=? WHERE id=?",
                           (reason, session_id))
         self.conn.commit()
-        return self.session(session_id)
+        s = self.session(session_id)
+        if self.notify:
+            try:
+                self.notify(s, reason)
+            except Exception:
+                pass
+        return s
 
     def resume(self, session_id):
         """Back to `active`, with a fresh wall-clock window.
@@ -478,6 +495,63 @@ class Arbitration:
         """A person put text into the conversation, which is what "not consecutive" means."""
         self.conn.execute("UPDATE sessions SET consecutive=0 WHERE id=?", (session_id,))
         self.conn.commit()
+
+    # --- what a pane ending its turn means ------------------------------------------------
+    #
+    # Two panes can end a turn, and it means opposite things. A **member** finishing is a
+    # wake-up (N3) — read the thing you were already expecting, never "the step passed". The
+    # **arbitrator** finishing is not a trigger at all: it is the signal to read the drop-box
+    # (§12.1). Both entry points are no-ops unless a session is running, so the poll loop can
+    # call them on every pane transition without knowing anything about arbitration.
+
+    def turn_ended(self, pane_id, entries, kind="turn_end"):
+        """A pane ended a turn. Prompts the arbitrator if that pane is a member. §10.
+
+        Returns the prompt handle, or None if nothing was asked — which covers no session, a
+        session that is paused, a pane that is not on the roster, and the coalescing case.
+
+        **Coalesced, not queued.** While a session is `awaiting` there is already one prompt
+        outstanding, and a second member finishing in that window folds into the next prompt's
+        roster rather than producing a prompt of its own. Queueing them would have the arbitrator
+        answering a question about a conversation that had already moved on.
+
+        Never raises. A trigger that cannot proceed pauses the session and says why, and the poll
+        loop that called this has fifty other panes to get through.
+        """
+        s = self.running()
+        if s is None or s["state"] != "active":
+            return None
+        try:
+            member_id = next((mid for mid, m in self.roster(s["id"]).items()
+                              if m["pane_id"] == pane_id), None)
+            if member_id is None:
+                return None
+            return self.prompt(s["id"], f"{kind} — {member_id}", entries)
+        except (ArbiterError, sqlite3.Error, OSError):
+            return None
+
+    def arbitrator_finished(self, pane_id):
+        """The arbitrator ended a turn, so its answer should be on disk. Reads it. §12.1 step 4.
+
+        Reads *the path the relay already knew* — the arbitrator never tells the relay where to
+        look, which is what stops a compromised or confused agent from pointing it at a file
+        somebody else wrote.
+        """
+        s = self.running()
+        if s is None or s["state"] != "awaiting":
+            return None
+        try:
+            arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
+            if arb is None or arb != pane_id:
+                return None
+            row = self.conn.execute(
+                "SELECT id FROM prompts WHERE session_id=? AND sequence=? ORDER BY id DESC LIMIT 1",
+                (s["id"], s["sequence"])).fetchone()
+            if row is None:
+                return None
+            return self.collect(s["id"], row["id"])
+        except (ArbiterError, sqlite3.Error, OSError):
+            return None
 
     # --- the loop ---
 
