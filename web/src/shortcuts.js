@@ -994,7 +994,7 @@
       // What each member is doing right now, on that member's newest bubble — several at once in a
       // conversation of several, which is the whole point of reading them together.
       syncConvBadge('convViewThread');
-      syncDockPicks(entries.length);
+      syncDockPicks();
       renderConvDock();
       renderConvStrip();
       const workingEl = document.getElementById('convViewWorking');

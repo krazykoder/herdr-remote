@@ -205,6 +205,34 @@
       return { text: (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}` };
     }
 
+    // What the composer holds that is an instruction rather than a message, split off the front.
+    //
+    // A filled @ prompt is ordinary text in the box — being readable and editable is the whole
+    // point of filling it in — so at the send there is nothing marking it as anything but typing,
+    // and it went out *under* the quoted bubbles: the instruction framing the quote, printed after
+    // it. Recognised here instead, by what it says: text that still matches a shortcut verbatim is
+    // the app's own sentence and is lifted above the quote. Edited even slightly, it stops matching
+    // and travels as the message, which is the honest reading — it is the user's sentence now.
+    //
+    // Only at the front, and only whole: an instruction under a paragraph is being quoted or
+    // answered, not issued.
+    //
+    // Returns [lead, note].
+    function peelDockLead(text, agent) {
+      const known = SHORTCUTS.map(s => agentSlash(s.text, agent).trim()).filter(Boolean)
+        // Longest first, so an instruction that begins with another is matched whole.
+        .sort((a, b) => b.length - a.length);
+      const lead = [];
+      let rest = text.trim();
+      for (;;) {
+        const hit = known.find(t => rest === t || rest.startsWith(t + '\n'));
+        if (!hit) break;
+        lead.push(hit);
+        rest = rest.slice(hit.length).replace(/^\n+/, '');
+      }
+      return [lead.join('\n'), rest];
+    }
+
     // A ruler selection is a pair of line indices, and `pane read` returns the *last* N lines —
     // so anything the agent prints shifts every index up, and loading more scrollback shifts them
     // down. The selection therefore follows its own text, not its position.

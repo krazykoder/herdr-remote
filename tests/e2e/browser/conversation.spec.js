@@ -3375,6 +3375,38 @@ test('chips add up, in the order they were tapped', async ({page}) => {
   expect(body.indexOf('Write /update tests')).toBeLessThan(body.indexOf('Review, edit, fix'));
 });
 
+test('a filled instruction rides above the quote', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  await pickBubble(page, 'the other pane spoke first');
+  // Filled in rather than attached, the instruction is ordinary text in the box — but it is still
+  // the instruction, so it goes out where the attached form puts it: above what it is about.
+  await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
+  await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
+  await sendPicked(page);
+  const body = await sentBody(page);
+  expect(body.indexOf('Review, edit, fix')).toBeLessThan(body.indexOf('the other pane spoke first'));
+});
+
+test('a note typed after a token goes out after the message it names', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  // The token is written in at the caret and the caret is left after it, so this is what typing
+  // straight after a pick produces.
+  await pickBubble(page, 'the other pane spoke first');
+  await page.locator('#convInput').pressSequentially(' - and mind the tests');
+  await sendPicked(page);
+  const body = await sentBody(page);
+  expect(body).not.toContain('[#1');
+  expect(body.indexOf('and mind the tests')).toBeGreaterThan(body.indexOf('the other pane spoke first'));
+});
+
 test('a chip tapped twice comes back out', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3567,20 +3599,22 @@ test('leaving the conversation preserves the chosen agent and keeps the draft', 
   await expect(page.locator('#convInput')).toHaveValue('half a thought');
 });
 
-test('a transfer keeps what was already being typed, under the quote', async ({page}) => {
+test('a transfer keeps what was already being typed, where it was written', async ({page}) => {
   await open(page);
   const [mine] = await joinBoth(page);
   await read(page);
   await tapWire(page);
   await openWindow(page);
   // The composer is always open, so a half-written note is the ordinary state to be in when a
-  // bubble is picked.
+  // bubble is picked. The token lands at the caret — after what is written — and the send keeps
+  // that order.
   await page.locator('#convInput').fill('this is the bit that broke');
   await pickBubble(page, 'the other pane spoke first');
   await sendPicked(page);
   const body = await sentBody(page);
   expect(body).toContain('the other pane spoke first');
-  expect(body.endsWith('this is the bit that broke')).toBe(true);
+  expect(body.indexOf('this is the bit that broke'))
+    .toBeLessThan(body.indexOf('the other pane spoke first'));
   // Payload plus a note of your own is neither a clean transfer nor something typed.
   await expect.poll(async () => {
     const rec = await held(page, mine);
@@ -4227,16 +4261,15 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     // The default: what the agent will receive is on screen, editable, before anything is sent.
     await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
     await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
-    // Prompts land on top as their own line, whatever is already written and wherever the caret
-    // is: the instruction is the frame the message is written inside, and it is where the attached
-    // form puts it too — so both modes send the same thing in the same order.
+    // With something written, a prompt lands at the caret — where the writer is working — and
+    // always as its own line, never spliced into the sentence holding it.
     await page.locator('#convInput').fill('here is the branch: ');
     await page.evaluate(() => {
       const i = document.getElementById('convInput');
       i.setSelectionRange(i.value.length, i.value.length);
     });
     await page.locator(`#xferRow .xfer-chip:text-matches("^@test$")`).click();
-    await expect(page.locator('#convInput')).toHaveValue(/^Write \/update tests[\s\S]*\nhere is the branch: $/);
+    await expect(page.locator('#convInput')).toHaveValue(/^here is the branch: \nWrite \/update tests/);
     // The pane composer uses the same rule: an @ prompt appends after the draft, regardless of
     // where its caret was left.
     await page.evaluate(() => {
@@ -4455,6 +4488,38 @@ test.describe('on a touch screen', () => {
     await tapTwice(50);
     expect(await page.evaluate(() => dockAddressed())).toBe(scratchId);
   });
+
+  // The same gesture on the composer's own member chips, dead for the same reason: the row's solo
+  // toggle was an `ondblclick`, and the phone the app is read on does not send one.
+  test('double tapping a member chip reads that agent alone', async ({page}) => {
+    await open(page);
+    await joinBoth(page);
+    await read(page);
+    await openWindow(page);
+    const scratchKey = await page.evaluate(() =>
+      convMemberKey(agents.find(x => x.label === 'scratch')));
+
+    const tapTwice = (gapMs) => page.evaluate(async ({gap}) => {
+      const el = Array.from(document.querySelectorAll('#xferRow .xfer-who'))
+        .find(n => n.textContent.includes('scratch'));
+      const tap = () => el.dispatchEvent(new Event('touchend', {bubbles: true, cancelable: true}));
+      tap();
+      await new Promise(r => setTimeout(r, gap));
+      tap();
+    }, {gap: gapMs});
+
+    // Two taps far enough apart are two taps — the first is how an agent is addressed, and a row
+    // that soloed on a slow second one would strand the reader in a one-member thread.
+    await tapTwice(600);
+    expect(await page.evaluate(() => convSoloKey(convViewId))).toBeFalsy();
+
+    await tapTwice(50);
+    expect(await page.evaluate(() => convSoloKey(convViewId))).toBe(scratchKey);
+    await expect(page.locator('#convViewSolo')).toBeVisible();
+    // And back out, which is the only way out: in solo the row holds one chip.
+    await tapTwice(50);
+    expect(await page.evaluate(() => convSoloKey(convViewId))).toBeFalsy();
+  });
 });
 
 // --- Solo mode ---------------------------------------------------------------------------------
@@ -4618,9 +4683,40 @@ test('switching between conversations preserves each conversation’s selected a
 });
 
 
-// A lit chip and a highlighted bubble each say something is armed; neither says what the agent is
-// about to receive. The strip above the box is the payload itself, in the order it will be written.
-test('the composer lists what the send is carrying', async ({page}) => {
+// A picked bubble is a token in the box, so what the send is carrying is readable in the message
+// being written, in the order it will go out — and the caret sits after it, ready for the note.
+test('a picked message is written into the box as a token', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  const input = page.locator('#convInput');
+  await pickBubble(page, 'the other pane spoke first');
+  await expect(input).toHaveValue('[#1 the other pane spoke first]');
+  await expect(page.locator('#xferRow .xfer-send')).toHaveText('Send (1) ›');
+  // Written at the caret, which is where the reader left it — so a second pick lands on its own
+  // line under the note typed after the first.
+  await input.pressSequentially(' - this bit');
+  await pickBubble(page, 'and again, last');
+  await expect(input).toHaveValue('[#1 the other pane spoke first] - this bit\n[#2 and again, last]');
+  // Tapping the bubble again takes its token back out of the text, wherever it sits.
+  await page.locator('#convViewThread .conv-msg', {hasText: 'the other pane spoke first'})
+    .locator('.conv-pick').click();
+  await expect(input).toHaveValue('- this bit\n[#2 and again, last]');
+  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
+  // And deleting the token by hand is the same act — the box is what says what is picked.
+  await page.evaluate(() => {
+    const el = document.getElementById('convInput');
+    el.value = '- this bit';
+    el.dispatchEvent(new Event('input'));
+  });
+  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(0);
+  await expect(page.locator('#xferRow .xfer-send')).toHaveCount(0);
+});
+
+// The attached instruction is the one part of the payload that is not in the box, so it is the one
+// part that still needs saying above it.
+test('an attached instruction is listed above the box', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
@@ -4630,28 +4726,17 @@ test('the composer lists what the send is carrying', async ({page}) => {
   // Nothing armed, nothing to say.
   await expect(page.locator('#xferLoad')).toBeHidden();
   await pickBubble(page, 'the other pane spoke first');
-  await pickBubble(page, 'and again, last');
+  // A pick is in the box, not here.
+  await expect(page.locator('#xferLoad')).toBeHidden();
   await page.locator('#xferRow .xfer-chip').first().click();      // @review
-  await expect(load).toHaveCount(3);
+  await expect(load).toHaveCount(1);
   // The instruction as the words it expands to, not as its @name — the @name is what the chip
   // already says, and what the agent gets is the sentence.
   await expect(load.first()).toContainText('Review, edit, fix');
-  // Numbered in thread order, which is the order they are quoted in.
-  await expect(load.nth(1)).toContainText('#1');
-  await expect(load.nth(1)).toContainText('the other pane spoke first');
-  await expect(load.nth(2)).toContainText('and again, last');
-  // And a message can be taken back out from here: this is where the reader is looking when they
-  // notice the wrong one is on, and the bubble may have scrolled away by then.
-  await load.nth(1).locator('.xfer-load-drop').click();
-  await expect(load).toHaveCount(2);
-  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
-  await expect(load.nth(1)).toContainText('and again, last');
-  // Renumbered against what is left, so #1 is still the first thing the agent will read.
-  await expect(load.nth(1)).toContainText('#1');
-  // The instruction line drops the same way, and takes every attached instruction with it — the
-  // line draws them as one sentence, so it goes as one.
+  // It drops the same way, and takes every attached instruction with it — the line draws them as
+  // one sentence, so it goes as one.
   await load.first().locator('.xfer-load-drop').click();
-  await expect(load).toHaveCount(1);
+  await expect(page.locator('#xferLoad')).toBeHidden();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
 
@@ -4677,37 +4762,30 @@ test('a deleted conversation takes its draft and its addressed agent with it', a
   expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([0, 0]);
 });
 
-// The strip is part of the message, so it deletes the way the message does. Chip fields have
-// answered a backspace at the start of the box this way for twenty years, and the alternative is
-// aiming at a 20px × on a phone for something the thumb is already resting next to.
-test('backspace at the start of the box drops what was loaded last', async ({page}) => {
+// A token is one thing, so it deletes as one. Shortening it a character at a time would leave text
+// that still reads like a pick and no longer is one.
+test('backspace takes a whole token, and the instruction at the start of the box', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   await openWindow(page);
   await attachMode(page);
   await pickBubble(page, 'the other pane spoke first');
-  await pickBubble(page, 'and again, last');
   await page.locator('#xferRow .xfer-chip').first().click();      // @review
-  const load = page.locator('#xferLoad .xfer-load-line');
-  await expect(load).toHaveCount(3);
-  // Typed text is text: the caret is not at the start, so backspace is a backspace.
-  await page.locator('#convInput').fill('mine');
-  await page.locator('#convInput').press('Backspace');
-  await expect(page.locator('#convInput')).toHaveValue('min');
-  await expect(load).toHaveCount(3);
-  // At the start of the box it takes the last thing loaded, newest first — the picks, then the
-  // instruction under them.
-  await page.evaluate(() => document.getElementById('convInput').setSelectionRange(0, 0));
-  await page.locator('#convInput').press('Backspace');
-  await expect(load).toHaveCount(2);
-  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
-  await page.locator('#convInput').press('Backspace');
-  await page.locator('#convInput').press('Backspace');
+  const input = page.locator('#convInput');
+  // Typed text is text: the caret is not against a token, so backspace is a backspace.
+  await input.pressSequentially(' mine');
+  await input.press('Backspace');
+  await expect(input).toHaveValue('[#1 the other pane spoke first] min');
+  // Against the closing bracket it takes the token, and the pick goes with it.
+  for (const _ of 'min ') await input.press('Backspace');
+  await expect(input).toHaveValue('[#1 the other pane spoke first]');
+  await input.press('Backspace');
+  await expect(input).toHaveValue('');
+  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(0);
+  // At the start of an empty box the only thing left to take is the attached instruction.
+  await expect(page.locator('#xferLoad .xfer-load-line')).toHaveCount(1);
+  await input.press('Backspace');
   await expect(page.locator('#xferLoad')).toBeHidden();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
-  // And with nothing left loaded it is a backspace again, on text it did not touch.
-  await expect(page.locator('#convInput')).toHaveValue('min');
-  await page.locator('#convInput').press('Backspace');
-  await expect(page.locator('#convInput')).toHaveValue('min');
 });
