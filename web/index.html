@@ -3560,8 +3560,9 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 3px 8px;
-      border-radius: 12px;
+      padding: 3px 10px;
+      min-height: 26px;
+      border-radius: 999px;
       border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border));
       /* Lifted off the surface it floats over rather than level with it: this hangs over live pane
          text, and a chip the same value as the panel behind it reads as part of that text. Mixing
@@ -3571,18 +3572,35 @@
          live, and a chip that said it too would be a status the size of a paragraph. */
       background: color-mix(in srgb, var(--text) 12%, var(--surface));
       color: var(--text);
-      font-size: 0.72rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.9));
+      letter-spacing: 0.04em;
       font-weight: 600;
       line-height: 1.2;
       /* Two shadows: a tight one for the edge and a wide soft one for the height. One blur cannot
          do both — it either smears the outline or leaves the chip sitting flat on the text. */
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 16px rgba(0, 0, 0, 0.3);
       pointer-events: auto;
-      /* It is a button now — it goes to what that agent last said — so it has to stop looking like
-         a `<button>` and start looking like the chip it already was. */
-      font-family: inherit;
       text-align: left;
       cursor: pointer;
+    }
+
+    .conv-working-chip strong {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .conv-working-chip .badge {
+      font-size: 1em;
+      padding: 0 0.4em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
     }
 
     .conv-working-chip:hover {
@@ -3603,12 +3621,13 @@
 
     .conv-working-dot {
       display: inline-block;
-      width: 6px;
-      height: 6px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       background: var(--green);
       box-shadow: 0 0 6px var(--green);
       animation: pulse 1.6s ease-in-out infinite;
+      flex: 0 0 auto;
     }
 
     /* Sized and coloured as the step buttons beside them, because they are the same kind of thing
@@ -3860,15 +3879,21 @@
       display: none;
     }
 
-    /* Half the composer, one load to a line. Full width made the strip a second thread above the
-       box — three rows of prose to read before the message being written. Half is enough to know
-       which message it is and short enough that the eye keeps going down. */
+    /* One load to a line, and each line only as wide as what it holds — a tag rather than a row.
+       A fixed half-width drew a ruled column of boxes down the composer whatever was in them; a
+       chip that hugs its text reads as a label on the send. Half the composer is the ceiling, so a
+       long quote truncates instead of pushing the strip across the box. */
     .xfer-load-line {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 6px;
-      width: 50%;
+      align-self: flex-start;
+      gap: 2px;
+      max-width: 50%;
       min-width: 0;
+      padding: 1px 8px 1px 1px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
       font-size: 0.7rem;
       color: var(--muted);
     }
@@ -3884,7 +3909,7 @@
     /* One line each, cut off rather than wrapped: this says what is loaded, and a quote that
        redrew the composer at three lines tall would be the thread again in a worse place. */
     .xfer-load-text {
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -3897,8 +3922,8 @@
 
     .xfer-load-drop {
       flex: 0 0 auto;
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       padding: 0;
       border: 0;
       border-radius: 6px;
@@ -5157,7 +5182,8 @@
             <div class="conv-ghost" id="convGhost" aria-hidden="true"></div>
             <textarea id="convInput" rows="1" maxlength="16000" placeholder="Message…  ⌘/Ctrl+Enter sends"
               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-              oninput="autoGrow(this); keepConvCaret(); stickConvLatest()" onkeydown="convInputKey(event)"
+              oninput="autoGrow(this); keepConvCaret(); stickConvLatest(); syncDockTokens()"
+              onkeydown="convInputKey(event)"
               onkeyup="syncConvCursor()" onclick="syncConvCursor()" onselect="syncConvCursor()"
               onfocus="syncConvCursor(); stickConvLatest()" onblur="syncConvCursor()"
               onscroll="syncConvCursor()"></textarea>
