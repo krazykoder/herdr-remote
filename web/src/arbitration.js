@@ -18,6 +18,7 @@
     // into. A stale option is answered by the relay, which re-checks every participant anyway; a
     // sentence taken out from under someone is not answered by anything.
     let arbFormPanes = null;
+    let arbFormConv = '';
     let arbHtmlLast = '';
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
@@ -26,6 +27,7 @@
       arbOn = false;
       arbSession = null;
       arbFormPanes = null;
+      arbFormConv = '';
       arbHtmlLast = '';
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
@@ -44,7 +46,7 @@
       if (!s) return;
       arbOn = true;
       arbSession = s.state === 'ended' ? null : s;
-      if (s.state !== 'ended') arbFormPanes = null;
+      if (s.state !== 'ended') { arbFormPanes = null; arbFormConv = ''; }
       arbRender();
     }
 
@@ -127,7 +129,13 @@
 
     function arbToggleForm() {
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
-      arbFormPanes = arbFormPanes ? null : (conv ? arbCandidates(conv) : null);
+      if (arbFormPanes) {
+        arbFormPanes = null;
+        arbFormConv = '';
+      } else if (conv) {
+        arbFormPanes = arbCandidates(conv);
+        arbFormConv = conv.id;
+      }
       arbRender();
     }
 
@@ -138,6 +146,10 @@
       if (!el) return;
       const conv = typeof convCurrentId === 'function'
         ? loadConvIndex().find(c => c.id === convCurrentId()) : null;
+      if (arbFormPanes && (!conv || arbFormConv !== conv.id)) {
+        arbFormPanes = null;
+        arbFormConv = '';
+      }
       const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes);
       if (html !== arbHtmlLast) { arbHtmlLast = html; el.innerHTML = html; }
     }

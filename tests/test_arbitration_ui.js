@@ -217,6 +217,18 @@ test('a reconnect drops the capability rather than remembering it', () => {
                'but the element is cleared, and nothing redraws until the next arb_sessions');
 });
 
+test('a frozen arbitrator form is discarded when the reader changes conversation', () => {
+  const second = {...CONV, id: 'c-2', name: 'Another conversation'};
+  const {g, els} = ctx({convs: [CONV, second]});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbToggleForm();
+  assert.ok(els.arbStrip.innerHTML.includes('arb-form'));
+  g.convCurrentId = () => 'c-2';
+  g.arbRender();
+  assert.ok(els.arbStrip.innerHTML.includes('⚖ Arbitrate'));
+  assert.ok(!els.arbStrip.innerHTML.includes('arb-form'));
+});
+
 // The other half of a session a person did not watch: what the thread says about a prompt nobody
 // typed. The record grades it by `origin`; the thread grades provenance by `via`, which is the
 // field it already draws a transfer's badge from — so an arbitrated send has to arrive spelled the
