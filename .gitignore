@@ -7,7 +7,7 @@ __pycache__/
 .swiftpm/
 .venv/
 .wrangler/
-.venv313/
+.venv313
 tests/e2e/logs/
 tests/e2e/fake_herdr.log
 .github/workflows/*

@@ -48,7 +48,7 @@ const read = (page, text = LONG) => page.evaluate(async text => {
 // Scroll a box to its top and let the listener run. Playwright's own wheel needs a hover target
 // and a real pointer; the control reads scrollTop, and so does the event it listens for.
 const toTop = (page, id) => page.evaluate(id => {
-  const el = document.getElementById(id);
+  const el = id === 'convView' ? (document.getElementById('convViewThread') || document.getElementById(id)) : document.getElementById(id);
   el.scrollTop = 0;
   el.dispatchEvent(new Event('scroll'));
 }, id);

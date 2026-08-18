@@ -11,6 +11,17 @@
     // what makes a client-side split work against a relay this app did not ship with.
     const SEND_TEXT_MAX = 4000;
 
+    // The mark an agent is shown by, drawn as an inline SVG with bright pink color.
+    // Drawn rather than typed to ensure identical crisp rendering across platforms without emoji
+    // font differences.
+    function agentGlyph() {
+      return '<svg class="agent-glyph" viewBox="0 0 24 24" width="1em" height="1em" fill="none" ' +
+        'stroke="var(--pink, #ff2d87)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+        'aria-hidden="true" style="color:var(--pink, #ff2d87);"><rect x="3" y="7" width="18" height="14" rx="2"/>' +
+        '<path d="M12 3v4"/><circle cx="8.5" cy="13.5" r="1" fill="var(--pink, #ff2d87)"/>' +
+        '<circle cx="15.5" cy="13.5" r="1" fill="var(--pink, #ff2d87)"/><path d="M8.5 17.5h7"/></svg>';
+    }
+
     // Text too long for one message, split into messages that are not. Line boundaries where there
     // are any: a chunk boundary is invisible to the agent — it is one composer either way — but the
     // relay's audit log records one line per message, and a log that cuts a diff mid-hunk is harder
@@ -48,7 +59,8 @@
     // everywhere else. Two fields rather than one derived from the other: a label is prose and can
     // be renamed without silently renaming the control the user has learned to tap.
     const SHORTCUTS = [
-      { at: 'review', label: 'Review', text: 'Review, edit, fix; then propose next steps.' },
+      { at: 'review-fix', label: 'Review, edit & fix', text: 'Review, edit, fix; then propose next steps.' },
+      { at: 'review-only', label: 'Review only', text: 'Review only. Dont edit/ change code; then propose next steps.' },
       { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
       { at: 'test', label: 'Test',
         text: 'Write /update tests this needs, run them, and report what actually failed.' },
@@ -203,6 +215,34 @@
       // someone to "select less" was never advice about their work — it was the wire's limit
       // wearing the shape of an editorial one.
       return { text: (instruction ? instruction + '\n\n' : '') + `feedback from ${from}:\n${text}` };
+    }
+
+    // What the composer holds that is an instruction rather than a message, split off the front.
+    //
+    // A filled @ prompt is ordinary text in the box — being readable and editable is the whole
+    // point of filling it in — so at the send there is nothing marking it as anything but typing,
+    // and it went out *under* the quoted bubbles: the instruction framing the quote, printed after
+    // it. Recognised here instead, by what it says: text that still matches a shortcut verbatim is
+    // the app's own sentence and is lifted above the quote. Edited even slightly, it stops matching
+    // and travels as the message, which is the honest reading — it is the user's sentence now.
+    //
+    // Only at the front, and only whole: an instruction under a paragraph is being quoted or
+    // answered, not issued.
+    //
+    // Returns [lead, note].
+    function peelDockLead(text, agent) {
+      const known = SHORTCUTS.map(s => agentSlash(s.text, agent).trim()).filter(Boolean)
+        // Longest first, so an instruction that begins with another is matched whole.
+        .sort((a, b) => b.length - a.length);
+      const lead = [];
+      let rest = text.trim();
+      for (;;) {
+        const hit = known.find(t => rest === t || rest.startsWith(t + '\n'));
+        if (!hit) break;
+        lead.push(hit);
+        rest = rest.slice(hit.length).replace(/^\n+/, '');
+      }
+      return [lead.join('\n'), rest];
     }
 
     // A ruler selection is a pair of line indices, and `pane read` returns the *last* N lines —

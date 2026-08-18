@@ -404,12 +404,12 @@
       conv.hidden = !(a && profileFor(a.agent));
       document.getElementById('menuConvAuto').textContent = convAutoOn()
         ? 'Stop recording new sessions' : 'Record every session';
-      const joint = document.getElementById('menuConvJoint');
+      const scope = document.getElementById('menuConvScope');
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
       const recover = document.getElementById('menuConvRecover');
       const final = document.getElementById('menuConvFinal');
-      joint.hidden = true;
+      scope.hidden = true;
       convFont.hidden = true;
       dedupe.hidden = true;
       recover.hidden = true;
@@ -424,10 +424,27 @@
         const shown = convViewConv(a);
         conv.textContent = shown ? `In "${shown.name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
-        // A conversation of one has no joint thread to show, so the preference is not offered.
-        joint.hidden = !(shown && pairedConvMembers(a, shown).length > 1);
-        joint.textContent = convJointOn()
-          ? 'Show this pane alone' : 'Show paired conversation';
+        // A conversation of one has no joint thread to show, so the list is not offered. Counted
+        // over the roster and not over what is currently drawn: narrowing to a pair must not hide
+        // the way back out to the members it narrowed away.
+        const roster = shown ? (shown.members || []) : [];
+        // The list is the three threads this app can draw, always all three and always in the same
+        // order: a menu whose options come and go is one the reader has to re-read every time, and
+        // "paired" disappearing the moment a partner exits reads as the setting having been taken
+        // away. Where two of them would draw the same thing — no pair to narrow to, a pair that is
+        // the whole roster — picking either draws it, which is the honest answer to a question with
+        // one answer. Offered at all only when there is more than this pane on its own to show.
+        const pairOnly = shown ? convPairMembers(a, shown) : null;
+        scope.hidden = !(roster.length > 1 || (!!pairOnly && pairOnly.length > 1));
+        if (!scope.hidden) {
+          const sel = document.getElementById('convScopeSel');
+          const html = CONV_SCOPES.map(s =>
+            `<option value="${s}">${escapeHtml(CONV_SCOPE_LABELS[s])}</option>`).join('');
+          // Rewritten only when the choices themselves changed: replacing the options while the
+          // list is open on a phone closes it under the thumb.
+          if (sel.innerHTML !== html) sel.innerHTML = html;
+          sel.value = convScope();
+        }
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());
         // Same condition as the text size: both are about reading a thread, and neither means
@@ -592,7 +609,7 @@
       const name = paneLabel(a);
       const proj = a.project && a.project !== name
         ? ` <span class="badge proj">@${escapeHtml(a.project)}</span>` : '';
-      return `<span aria-hidden="true">${a.agent ? '🤖' : '⬛'}</span> ` +
+      return `<span aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span> ` +
         escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '');
     }
 

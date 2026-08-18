@@ -182,7 +182,11 @@ test('a record older than today says which day, and clearing throws the stack aw
     await page.locator('#navTimeline').click();
     await expect(page.locator('#bandwidth')).toBeHidden();
     await page.locator('#navSettings').click();
-    await page.locator('#bandwidthOn').check();
+    // Cleared with collection still off, and deliberately: the relay broadcasts a snapshot every
+    // few seconds, and with collection on one could land between the click and the assertion and
+    // refill the bucket this is checking is empty. The button is not gated on the toggle, so
+    // nothing is lost by clearing from here — what is being proved is that Clear throws the stack
+    // away, not that it can be pressed while collecting.
     await page.getByRole('button', {name: 'Clear recorded data'}).click();
     expect(await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).length)).toBe(0);
     // Including the per-pane totals, which are the same record split another way.

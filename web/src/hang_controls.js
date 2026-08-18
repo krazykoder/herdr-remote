@@ -24,10 +24,9 @@
       return box && !box.hidden ? box : document.getElementById('termContent');
     }
 
-    // The conversation window scrolls as a whole — see `.view` — so the scroller is the view, not
-    // the thread inside it.
+    // The conversation window thread box is the scroller inside .conv-wrap.
     function hangConvBox() {
-      return document.getElementById('convView');
+      return document.getElementById('convViewThread') || document.getElementById('convView');
     }
 
     function hangSync() {
@@ -87,7 +86,7 @@
         // pane alone would narrow a joint thread for one frame. The tidy below is a repair of the
         // local transcript and runs either way — the toggle changes what is drawn, not what is
         // stored.
-        if (convLiveOn()) { convLiveAt = 0; renderConvView(); }
+        if (convLiveOn()) { convLiveInvalidate(); renderConvView(); }
         const removed = await convTidyQuiet([convMemberKey(a)]);
         if (removed) showToast(`Removed ${removed} duplicate message${removed > 1 ? 's' : ''}`);
       } finally {
@@ -104,7 +103,7 @@
       if (!conv) return;
       if (btn) btn.classList.add('busy');
       try {
-        if (convLiveOn()) convLiveAt = 0;   // ask the relay again, on the way through
+        if (convLiveOn()) convLiveInvalidate();   // ask the relay again, on the way through
         const removed = await convTidyQuiet((conv.members || []).map(m => m.key));
         convStandaloneHtml = '';        // the thread is being redrawn from the record, not diffed
         await renderConvStandalone(true);
@@ -117,7 +116,7 @@
     // Scroll says where the reader is; a resize of the content says the thread grew under them,
     // which changes the same answer without a scroll event ever firing.
     {
-      const boxes = ['termContent', 'convThread', 'convView']
+      const boxes = ['termContent', 'convThread', 'convViewThread', 'convView']
         .map(id => document.getElementById(id)).filter(Boolean);
       for (const el of boxes) el.addEventListener('scroll', hangSync, { passive: true });
       if (typeof ResizeObserver === 'function') {

@@ -1457,14 +1457,19 @@ async def handle_client(ws, listener="lan"):
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
                         since=msg.get("since"), until=msg.get("until"),
+                        since_id=msg.get("since_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))
                     continue
-                await ws.send(json.dumps({
+                out_msg = {
                     "type": "conv_log", "truncated": truncated,
-                    "turns": [conv_as_wire(r) for r in rows]}))
+                    "turns": [conv_as_wire(r) for r in rows],
+                }
+                if "fingerprints" in msg:
+                    out_msg["fingerprints"] = msg.get("fingerprints")
+                await ws.send(json.dumps(out_msg))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
