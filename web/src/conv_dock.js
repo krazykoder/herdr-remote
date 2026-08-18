@@ -323,9 +323,9 @@
     // `[#1 …] - what I want done with it`, so the note the reader is about to type follows the
     // token rather than being pushed onto another line by the app.
     function toggleConvDockPick(i) {
-      const thread = document.getElementById('convViewThread') || document.getElementById('convThread');
-      const savedScrollTop = thread ? thread.scrollTop : null;
       const el = document.querySelector(`#convViewThread .conv-msg[data-i="${i}"]`);
+      const thread = document.getElementById('convViewThread');
+      const wasAt = thread ? thread.scrollTop : 0;
       const input = document.getElementById('convInput');
       if (!el || !input) return;
       const text = el.dataset.text || '';
@@ -348,9 +348,13 @@
       autoGrow(input);
       syncConvCursor();
       syncDockTokens();
-      if (thread && savedScrollTop !== null) {
-        thread.scrollTop = savedScrollTop;
-      }
+      // The box takes the caret, because a note is what usually follows a pick — but `preventScroll`,
+      // or the browser brings the composer into view and the reader loses the place they were
+      // reading. The thread is put back where it was as well: `autoGrow` changes the composer's
+      // height, and a taller composer moves the thread under a scrollTop that no longer means the
+      // same line.
+      input.focus({preventScroll: true});
+      if (thread) thread.scrollTop = wasAt;
     }
 
     // The box is the record of what is picked, so this reads it rather than being told: every token
@@ -537,11 +541,15 @@
       stickConvLatest();
     }
 
-    // The composer grows upward under the thread. Keep its newest bubble in view while writing;
-    // reading history still wins because this only runs after the writer explicitly focuses it.
+    // The composer grows upward under the thread. Keep its newest bubble in view while writing —
+    // but only for a reader who was already at the newest. Focusing the box is not on its own a
+    // request to leave where you were reading: picking a bubble halfway up a long thread focuses
+    // the composer so a note can follow the token, and this used to answer that by scrolling the
+    // thread out from under the reader. Same 24px rule the render's own `stick` uses.
     function stickConvLatest() {
       const box = document.getElementById('convViewThread');
       if (!box || !box.offsetParent) return;
+      if (box.scrollTop + box.clientHeight < box.scrollHeight - 24) return;
       requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
     }
 

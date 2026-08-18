@@ -3433,29 +3433,35 @@ test('a note typed after a token goes out after the message it names', async ({p
   expect(body.indexOf('and mind the tests')).toBeGreaterThan(body.indexOf('the other pane spoke first'));
 });
 
+// Picking is done while reading, halfway up a long thread. The composer takes the caret so a note
+// can follow the token straight away — and that is exactly what drags the thread to the bottom if
+// the focus is allowed to scroll, putting the reader somewhere they were not.
 test('selecting a bubble preserves the thread scroll position rather than scrolling to bottom', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   await tapWire(page);
   await openWindow(page);
-  await page.evaluate(() => {
-    const thread = document.getElementById('convViewThread');
-    for (let i = 0; i < 30; i++) {
-      const div = document.createElement('div');
-      div.className = 'conv-msg';
-      div.dataset.i = String(100 + i);
-      div.dataset.text = `Message line ${i}`;
-      div.innerHTML = `<button class="conv-pick" onclick="toggleConvDockPick(${100 + i})">✓</button>Message ${i}`;
-      thread.appendChild(div);
-    }
-    thread.scrollTop = 120;
+  // A thread long enough to scroll, out of the record rather than out of fabricated markup: the
+  // next render rebuilds these bubbles, and a test the render would erase proves nothing.
+  await page.evaluate(async () => {
+    const k = convMemberKey(agents.find(a => a.label === 'scratch'));
+    const rec = (await convGet([k]))[0];
+    for (let i = 0; i < 40; i++)
+      rec.entries.push({who: 'agent', text: `line ${i}`, seen: 100 + i, label: 'scratch', agent: 'codex'});
+    convHeld.delete(k);
+    await convPut(rec);
+    await renderConvStandalone();
   });
-  const before = await page.evaluate(() => document.getElementById('convViewThread').scrollTop);
-  expect(before).toBe(120);
-  await page.locator('#convViewThread .conv-msg[data-i="105"] .conv-pick').click();
-  const after = await page.evaluate(() => document.getElementById('convViewThread').scrollTop);
-  expect(after).toBe(120);
+  const thread = page.locator('#convViewThread');
+  const scroll = () => thread.evaluate(el => el.scrollTop);
+  await thread.evaluate(el => { el.scrollTop = 120; });
+  expect(await scroll()).toBe(120);
+  await page.locator('#convViewThread .conv-msg', {hasText: 'line 3'}).first()
+    .locator('.conv-pick').click();
+  expect(await scroll()).toBe(120);
+  // And the note can be typed without going looking for the box.
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('convInput');
 });
 
 test('a chip tapped twice comes back out', async ({page}) => {
