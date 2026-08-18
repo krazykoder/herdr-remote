@@ -26,11 +26,23 @@
     // past this — see `convLiveSync` — so the cadence costs freshness only while nothing happens.
     const CONV_LIVE_EVERY = 5000;
 
-    // The answer to the last fetch, and enough about it to know whether another one is worth
-    // sending. `null` rows are "nothing has come back yet", which the view says differently from an
-    // empty record.
-    let convLiveRows = null, convLiveAt = 0, convLiveWant = '';
+    // Per-fingerprint cache of turns: Map<fpKey, { turns: Array, maxSeq: number, maxAt: number, lastFetch: number }>
+    // This ensures turns for a pane are fetched once and shared across all conversations containing that pane.
+    const convLiveCache = new Map();
     let convLiveTruncated = false, convLiveError = '';
+    let convLiveAt = 0;
+
+    function convNormHost(h) {
+      return !h || h === 'local' ? 'local' : h;
+    }
+
+    function convFpKey(fp) {
+      if (!fp) return '';
+      if (Array.isArray(fp)) {
+        return JSON.stringify([convNormHost(fp[0]), fp[1] || '', fp[2] || '']);
+      }
+      return String(fp);
+    }
 
     function convLiveOn() {
       try { return localStorage.getItem(CONV_LIVE_KEY) === 'on'; } catch (e) { return false; }
@@ -40,11 +52,6 @@
       const on = !convLiveOn();
       try { localStorage.setItem(CONV_LIVE_KEY, on ? 'on' : 'off'); }
       catch (e) { /* private mode: this session only */ }
-      // Dropped rather than kept for the way back: what is on screen must never be a record the
-      // reader has just switched away from, and the fetch that refills this is one message.
-      convLiveRows = null;
-      convLiveAt = 0;
-      convLiveWant = '';
       convLiveError = '';
       renderConvView();
       if (typeof renderConvStandalone === 'function') renderConvStandalone(true);
@@ -58,8 +65,23 @@
     function convKeyFingerprint(key) {
       try {
         const p = JSON.parse(key);
-        return Array.isArray(p) && p.length >= 4 ? [p[0] || '', p[2] || '', p[3] || ''] : null;
+        return Array.isArray(p) && p.length >= 4 ? [convNormHost(p[0]), p[2] || '', p[3] || ''] : null;
       } catch (e) { return null; }
+    }
+
+    // Invalidate cached lastFetch timestamp for given keys or all cache entries to allow re-fetching.
+    function convLiveInvalidate(keys) {
+      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      if (fps.length) {
+        for (const fp of fps) {
+          const bucket = convLiveCache.get(convFpKey(fp));
+          if (bucket) bucket.lastFetch = 0;
+        }
+      } else {
+        for (const bucket of convLiveCache.values()) {
+          bucket.lastFetch = 0;
+        }
+      }
     }
 
     // One query for the whole roster. Sent only when the answer on hand cannot serve: a different
@@ -69,16 +91,45 @@
       if (!convLiveOn()) return;
       const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
       if (!fps.length) return;
-      const want = JSON.stringify(fps), now = Date.now();
-      if (!force && want === convLiveWant && now - convLiveAt < CONV_LIVE_EVERY) return;
       if (!ws || ws.readyState !== 1) {
         convLiveError = 'Not connected — the relay’s record cannot be read right now.';
         return;
       }
-      convLiveWant = want;
-      convLiveAt = now;
-      ws.send(JSON.stringify(
-        { type: 'conv_log', fingerprints: fps, last: CONV_LIVE_ROWS }));
+      const now = Date.now();
+      let allWarm = true;
+      let minMaxSeq = Infinity;
+      let needsFetch = !!force;
+
+      for (const fp of fps) {
+        const bucket = convLiveCache.get(convFpKey(fp));
+        if (!bucket || bucket.maxSeq === 0) {
+          allWarm = false;
+          needsFetch = true;
+        } else {
+          if (bucket.maxSeq < minMaxSeq) minMaxSeq = bucket.maxSeq;
+          if (now - (bucket.lastFetch || 0) >= CONV_LIVE_EVERY) {
+            needsFetch = true;
+          }
+        }
+      }
+
+      if (!needsFetch) return;
+
+      for (const fp of fps) {
+        let bucket = convLiveCache.get(convFpKey(fp));
+        if (!bucket) {
+          bucket = { turns: [], maxSeq: 0, maxAt: 0, lastFetch: now };
+          convLiveCache.set(convFpKey(fp), bucket);
+        } else {
+          bucket.lastFetch = now;
+        }
+      }
+
+      const payload = { type: 'conv_log', fingerprints: fps, last: CONV_LIVE_ROWS };
+      if (allWarm && minMaxSeq > 0 && minMaxSeq !== Infinity && !force) {
+        payload.since_id = minMaxSeq;
+      }
+      ws.send(JSON.stringify(payload));
     }
 
     // The relay answering. Addressed to the client that asked and never broadcast, so this arrives
@@ -86,12 +137,44 @@
     function convLiveReceive(msg) {
       convLiveError = '';
       convLiveTruncated = !!msg.truncated;
-      convLiveRows = Array.isArray(msg.turns) ? msg.turns : [];
+      const turns = Array.isArray(msg.turns) ? msg.turns : [];
+      const now = Date.now();
+
+      for (const t of turns) {
+        const fp = [convNormHost(t.host), t.agent || '', t.cwd || ''];
+        const fpKey = convFpKey(fp);
+        let bucket = convLiveCache.get(fpKey);
+        if (!bucket) {
+          bucket = { turns: [], maxSeq: 0, maxAt: 0, lastFetch: now };
+          convLiveCache.set(fpKey, bucket);
+        }
+        const seq = t.seq || t.id || 0;
+        const exists = bucket.turns.some(x => (x.seq || x.id) === seq && seq !== 0);
+        if (!exists) {
+          bucket.turns.push(t);
+          if (seq > bucket.maxSeq) bucket.maxSeq = seq;
+          if ((t.at || 0) > bucket.maxAt) bucket.maxAt = t.at || 0;
+        }
+      }
+
+      const queriedFps = Array.isArray(msg.fingerprints) ? msg.fingerprints : [];
+      for (const fp of queriedFps) {
+        const fpKey = convFpKey(fp);
+        let bucket = convLiveCache.get(fpKey);
+        if (!bucket) {
+          bucket = { turns: [], maxSeq: 0, maxAt: 0, lastFetch: now };
+          convLiveCache.set(fpKey, bucket);
+        } else {
+          bucket.lastFetch = now;
+        }
+      }
+
+      for (const bucket of convLiveCache.values()) {
+        bucket.turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || a.id || 0) - (b.seq || b.id || 0));
+      }
+
       if (!convLiveOn()) return;
       renderConvView();
-      // `false`: an answer arriving is not the reader asking to be moved. Both views already follow
-      // the newest message for anyone sitting at the bottom, and forcing it here dragged a reader
-      // who had scrolled up back down every time the record was re-read — every five seconds.
       if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
     }
 
@@ -103,7 +186,7 @@
       if (!/^conv_log|conversation log is off/.test(text)) return;
       convLiveError = text === 'conversation log is off'
         ? 'The relay is not recording. Set HERDR_CONV_LOG=1 and restart it.' : text;
-      convLiveRows = [];
+      convLiveCache.clear();
       if (convLiveOn()) renderConvView();
     }
 
@@ -118,15 +201,7 @@
     // which would draw every captured turn with the `~` that means "this time is a guess".
     const CONV_LIVE_AT_SRC = { poll: 'state', state: 'state', sent: 'sent', backfill: 'backfill' };
 
-    // A live row's key, in the spelling the roster uses. The rest of the view reads the key for
-    // colour, for which side of a pair a bubble goes on, and for the roster panel's hide-a-member
-    // filter, so a key that is right but spelled differently is a bubble drawn as a stranger.
-    //
-    // Two spellings exist for one host. The relay's snapshot names the local host `local` and so
-    // does the record — that is the ordinary case and the first key matches outright. But the
-    // browser's own key builder folds a missing host to '', and the record's column defaults to
-    // `local`, so a pane that reached this app with no host at all is stored under a name its
-    // member key does not carry. Both are tried against the roster before either is believed.
+    // A live row's key, in the spelling the roster uses.
     function convLiveKey(t, roster) {
       const pane = { pane_id: t.pane_id || '', agent: t.agent || '', cwd: t.cwd || '' };
       const mine = convMemberKey(Object.assign({ host: t.host || '' }, pane));
@@ -135,20 +210,30 @@
       return roster.has(bare) ? bare : mine;
     }
 
-    // The record, in the shape the thread already renders. `keys` is the roster, so a row's member
-    // index — which is what the standalone view picks a column from — is the position of its own
-    // member rather than the order rows came back in.
+    // The record, in the shape the thread already renders.
     function convLiveEntries(keys) {
       const at = new Map((keys || []).map((k, i) => [k, i]));
-      return (convLiveRows || []).map(t => {
+      const turns = [];
+      const seenSeqs = new Set();
+      for (const k of (keys || [])) {
+        const fp = convKeyFingerprint(k);
+        if (!fp) continue;
+        const bucket = convLiveCache.get(convFpKey(fp));
+        if (!bucket || !bucket.turns) continue;
+        for (const t of bucket.turns) {
+          const seq = t.seq || t.id;
+          if (seq && seenSeqs.has(seq)) continue;
+          if (seq) seenSeqs.add(seq);
+          turns.push(t);
+        }
+      }
+      turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || a.id || 0) - (b.seq || b.id || 0));
+
+      return turns.map(t => {
         const key = convLiveKey(t, at);
         return {
           who: CONV_LIVE_USER_KINDS.includes(t.kind) ? 'user' : 'agent',
-          // `text` is the closing message the relay detected. `tail` is the last few lines it kept
-          // when it detected none, which is a worse answer than a message and a much better one
-          // than a blank bubble — the pane tail usually holds the message the profile missed.
           text: t.text || t.tail || '',
-          // `seen` as well as `at`: every reader goes through convAt, and old records have neither.
           at: t.at || 0, seen: t.at || 0,
           at_src: CONV_LIVE_AT_SRC[t.at_src] || 'read',
           key: key, member: at.has(key) ? at.get(key) : 0,
@@ -160,9 +245,11 @@
 
     // What the thread says when the relay's record is on screen and empty. Three different facts,
     // and a reader who cannot tell them apart will go looking for the wrong problem.
-    function convLiveEmptyHtml() {
+    function convLiveEmptyHtml(keys) {
       if (convLiveError) return `<p class="conv-empty">${escapeHtml(convLiveError)}</p>`;
-      if (convLiveRows === null) {
+      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      const anyFetched = fps.length ? fps.some(fp => convLiveCache.has(convFpKey(fp))) : (convLiveCache.size > 0);
+      if (!anyFetched) {
         return '<p class="conv-empty">Reading the relay’s record…</p>';
       }
       return '<p class="conv-empty">The relay has recorded nothing for these panes yet. ' +

@@ -431,7 +431,7 @@
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
-          : (convLiveOn() ? convLiveEmptyHtml()
+          : (convLiveOn() ? convLiveEmptyHtml(want)
             : '<p class="conv-empty">Nothing recorded yet. The next read of this pane is the first entry.</p>'))) +
         // No slot over the relay's record: it holds turns that have ended, and the slot is a place
         // held open for one that has not.

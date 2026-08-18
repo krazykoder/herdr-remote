@@ -301,6 +301,17 @@ class ReadOnly(Log):
         self.assertEqual(len(rows), 1)
         conn.close()
 
+    def test_since_id_returns_strictly_newer_turns(self):
+        id1 = self.add(text="first")
+        id2 = self.add(text="second")
+        id3 = self.add(text="third")
+        conn = open_ro(self.path)
+        rows, _ = query(conn, since_id=id1)
+        self.assertEqual([r["id"] for r in rows], [id2, id3])
+        rows_none, _ = query(conn, since_id=id3)
+        self.assertEqual(rows_none, [])
+        conn.close()
+
     def test_a_missing_record_is_a_different_answer_from_an_empty_one(self):
         with self.assertRaises(FileNotFoundError):
             open_ro(str(Path(self.dir.name) / "not-there.sqlite3"))

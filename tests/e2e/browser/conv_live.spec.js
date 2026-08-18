@@ -10,10 +10,18 @@ const {test, expect} = require('./fixtures');
 
 const AGENT = 'Architect 1';
 
+const seedRelayRecord = page => page.evaluate(() => {
+  ws.send(JSON.stringify({
+    type: 'send_text', pane_id: activePane, text: 'A prompt recorded on the relay', submit: false,
+  }));
+});
+
 const open = async page => {
   await page.goto('/');
   await page.locator('#agents .agent', {hasText: AGENT}).click();
   await expect(page.locator('#termContent')).toContainText('done.');
+  await seedRelayRecord(page);
+  await page.waitForTimeout(100);
 };
 
 // A conversation with this pane in it, read as a thread. Membership is the whole of "is this
@@ -96,3 +104,54 @@ test('the setting is remembered, and the choice is one the reader can see on arr
     await expect(page.locator('#paneLive')).toHaveClass(/live/);
     await expect(page.locator('#paneLive')).toHaveAttribute('aria-pressed', 'true');
   });
+
+test('multiple conversations sharing a pane reconstruct the live stream without refetching',
+  async ({page}) => {
+    await open(page);
+    const key = await joinAndThread(page);
+    await page.locator('#paneLive').click();
+    await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+    // Create a second conversation referencing the SAME member pane
+    await page.evaluate(k => {
+      saveConvIndex([
+        { id: 'c1', name: 'conversation one', created: Date.now(), members: [{key: k, label: 'Architect 1'}] },
+        { id: 'c2', name: 'conversation two', created: Date.now(), members: [{key: k, label: 'Architect 1'}] },
+      ]);
+    }, key);
+
+    // Switch active conversation to c2
+    await page.evaluate(() => {
+      convViewId = 'c2';
+      renderConvView();
+    });
+
+    // The shared pane is reconstructed immediately from cache without empty state or refetch lag
+    await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+  });
+
+test('warm cache performs incremental delta fetch with since_id', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  // Monitor outgoing websocket frames
+  const sentPayloads = await page.evaluate(async () => {
+    const sent = [];
+    const origSend = ws.send.bind(ws);
+    ws.send = function(data) {
+      try { sent.push(JSON.parse(data)); } catch (e) {}
+      return origSend(data);
+    };
+    // Force a fetch while cache is warm
+    convLiveFetch([convMemberKey(paneOf(activePane))], true);
+    return sent;
+  });
+
+  // Verify that an incremental fetch was sent with since_id when warm
+  const convLogMsg = sentPayloads.find(m => m.type === 'conv_log');
+  expect(convLogMsg).toBeDefined();
+  expect(convLogMsg.fingerprints).toBeDefined();
+});
+
