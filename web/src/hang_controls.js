@@ -40,6 +40,23 @@
       const convTidy = document.getElementById('convTidy');
       if (paneTidy) paneTidy.classList.toggle('on', !!activePane);
       if (convTidy) convTidy.classList.toggle('on', !!convViewId);
+      // Which record the thread is reading. Offered only where there is a thread to read — over the
+      // pane's rows there is no bubble for it to change — and pressed is a state, so it is marked
+      // on the button rather than said in a toast the reader has to remember.
+      const thread = document.getElementById('convThread');
+      hangSyncLive(document.getElementById('paneLive'), !!thread && !thread.hidden);
+      hangSyncLive(document.getElementById('convLive'), !!convViewId);
+    }
+
+    function hangSyncLive(btn, offered) {
+      if (!btn) return;
+      const on = convLiveOn();
+      btn.classList.toggle('on', offered);
+      btn.classList.toggle('live', on);
+      btn.setAttribute('aria-pressed', String(on));
+      btn.title = on
+        ? 'Reading the relay’s record — tap for this browser’s transcript'
+        : 'Reading this browser’s transcript — tap for the relay’s record';
     }
 
     function hangToLast() {
@@ -64,6 +81,13 @@
       if (btn) btn.classList.add('busy');
       try {
         refreshPane();
+        // "Show me this properly" over the relay's record is one more question to it, asked now
+        // rather than at the next cadence. Invalidated rather than fetched from here: the roster
+        // the thread is showing is the render's answer, not this button's, and asking for the open
+        // pane alone would narrow a joint thread for one frame. The tidy below is a repair of the
+        // local transcript and runs either way — the toggle changes what is drawn, not what is
+        // stored.
+        if (convLiveOn()) { convLiveAt = 0; renderConvView(); }
         const removed = await convTidyQuiet([convMemberKey(a)]);
         if (removed) showToast(`Removed ${removed} duplicate message${removed > 1 ? 's' : ''}`);
       } finally {
@@ -80,6 +104,7 @@
       if (!conv) return;
       if (btn) btn.classList.add('busy');
       try {
+        if (convLiveOn()) convLiveAt = 0;   // ask the relay again, on the way through
         const removed = await convTidyQuiet((conv.members || []).map(m => m.key));
         convStandaloneHtml = '';        // the thread is being redrawn from the record, not diffed
         await renderConvStandalone(true);

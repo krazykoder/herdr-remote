@@ -598,6 +598,12 @@
     function convReadTurnEnd(paneId, status) {
       if (!ws || !paneId) return;
       if (!endsTurn(status)) return;
+      // A turn ending is the one event the relay's record is written on, and it has already written
+      // it — the row goes in inside the poll that produced this status, ahead of the broadcast that
+      // carried it here. So a thread reading that record is stale the moment this runs: the fetch
+      // is invalidated rather than sent, and the render that follows asks for the roster it is
+      // actually showing (conv_live.js).
+      if (convLiveOn()) { convLiveAt = 0; renderConvView(); }
       const a = paneOf(paneId);
       if (!a || !profileFor(a.agent) || !convReferenced().has(convMemberKey(a))) return;
       // Not while a recovery is in flight for this transcript. `pane_content` carries no request

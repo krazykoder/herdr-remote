@@ -40,7 +40,7 @@ def relay_env(**extra):
         "HERDR_REMOTES": "box",
         "HERDR_PROJECTS_FILE": f"{HERE}/projects.json",
         "HERDR_RELAY_PORT": PORT,
-        "HERDR_LOG_DIR": f"{HERE}/logs",
+        "HERDR_STATE_DIR": f"{HERE}/logs",
     })
     env.pop("HERDR_ENABLE_WRITE_EXT", None)
     env.pop("HERDR_ENABLE_TERMINAL", None)
@@ -427,11 +427,11 @@ async def naming_run():
         stop_relay(proc)
 
 
-def http_status(port, token=None):
-    """GET / and report the status. 401 is the interesting one — process_request gates the whole
-    HTTP surface, not only the WebSocket upgrade."""
+def http_status(port, token=None, path="/"):
+    """GET a path and report the status. 401 is the interesting one — process_request gates the
+    whole HTTP surface, not only the WebSocket upgrade."""
     import urllib.error, urllib.request
-    u = f"http://127.0.0.1:{port}/" + (f"?token={token}" if token else "")
+    u = f"http://127.0.0.1:{port}{path}" + (f"?token={token}" if token else "")
     try:
         with urllib.request.urlopen(u, timeout=5) as r:
             return r.status
@@ -516,7 +516,14 @@ async def dual_listener_run():
         check("D7 LAN listener accepts the token", http_status(PORT, TOKEN) == 200)
         check("D8 external listener refuses without a token", http_status(EXT_PORT) == 401)
         check("D8 external listener refuses a wrong token", http_status(EXT_PORT, "nope") == 401)
-        check("D8 external listener accepts the token", http_status(EXT_PORT, TOKEN) == 200)
+        # Accepted, and still 404: the external listener carries the API and not the app's files,
+        # so a good token gets past the gate and finds nothing to serve at `/`. Anything but 401
+        # is the token being accepted; 200 here would mean the tunnel had started publishing the
+        # file surface, which is the thing the split exists to prevent.
+        check("D8 external listener accepts the token", http_status(EXT_PORT, TOKEN) == 404,
+              http_status(EXT_PORT, TOKEN))
+        check("D8 external listener still serves the API", http_status(EXT_PORT, TOKEN,
+              "/api/vapid-public-key") == 200)
 
         # One poll loop, whatever the listener and client count.
         async with connect(f"ws://127.0.0.1:{PORT}?token={TOKEN}") as a, \

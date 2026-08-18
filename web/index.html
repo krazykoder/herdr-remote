@@ -3446,6 +3446,20 @@
       border-color: var(--blue);
     }
 
+    /* Reading the relay's record rather than this browser's transcript. Green and filled, because
+       it is a state the whole thread is in and not an action that just happened — a reader who
+       looks away and comes back has to be able to tell which record is on screen without tapping
+       anything. Drawn rather than lettered for the reason convGlyph gives: an emoji is whatever
+       the platform's font decided, and a colour is a request that font can refuse. */
+    .hang-live svg {
+      display: block;
+    }
+
+    .hang-live.live {
+      color: var(--green);
+      border-color: var(--green);
+    }
+
     /* The jump to the end, in the corner the end is in. The pane is not a scroller itself — its
        rows and its thread are — so an absolute corner holds still here. Same --hang-right as the
        row at the top: the two corners are one column, and a button 24px off the one above it reads
@@ -4758,6 +4772,14 @@
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">⟳</button>
+      <button class="hang-btn hang-live" id="convLive" onclick="toggleConvLive()"
+        aria-pressed="false" aria-label="Read the relay’s record">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+          <path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13" />
+          <path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
+        </svg></button>
     </div>
     </div>
     <div class="conv-thread" id="convViewThread"></div>
@@ -5009,6 +5031,18 @@
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
           aria-label="Refresh and tidy">⟳</button>
+        <!-- Which record the thread is reading: this browser's transcript, or the one the relay
+             writes for every pane whether anyone is watching or not. Beside the refresh because it
+             is the same question about the same text — "show me this properly" and "show me what
+             was actually said" belong in one corner. -->
+        <button class="hang-btn hang-live" id="paneLive" onclick="toggleConvLive()"
+          aria-pressed="false" aria-label="Read the relay’s record">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+            <path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13" />
+            <path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
+          </svg></button>
         <div class="block-nav" id="blockNav" hidden>
           <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
           <button onclick="stepBlock(-1)" title="Previous agent message" aria-label="Previous agent message">↑</button>
@@ -5417,6 +5451,7 @@
   <script src="src/conversation_pure.js"></script>
   <script src="src/conversation_store.js"></script>
   <script src="src/conversation_view.js"></script>
+  <script src="src/conv_live.js"></script>
   <script src="src/terminal.js"></script>
   <script src="src/reorder.js"></script>
   <script src="src/transfer.js"></script>

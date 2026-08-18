@@ -16,7 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
-from pane_summary import final_message, is_user_input, last_user_input, summary_body
+from pane_summary import (final_message, is_user_input, last_user_input, pane_messages,
+                          summary_body, turn_messages)
 
 
 def fixture(name):
@@ -163,6 +164,89 @@ class SummaryBody(unittest.TestCase):
         self.assertIsNone(summary_body("⏺ Bash(ls)\n  ⎿  web/", "claude"))
         self.assertIsNone(summary_body("", "claude"))
         self.assertIsNone(summary_body(None, "claude"))
+
+
+class PaneMessages(unittest.TestCase):
+    """Everything said in a window, which is what the *record* captures — not the one closing
+    message a Lock Screen asks for.
+
+    The expected shapes below are what `paneMessages` in web/src/conversation_pure.js returns over
+    these same bytes, taken from it rather than invented here. Two copies of one parser stay in step
+    only if one set of bytes proves both, and this is the wider half of that: the closing message,
+    the narration above it, and the prompts the user typed.
+    """
+
+    # (agent, fixture) -> the who-sequence, and a distinguishing opening for each message.
+    CASES = {
+        "claude": ("pane_claude_done.txt", [
+            ("agent", "Ready. Name the change."),
+            ("user", "allow the test commands without prompting"),
+        ]),
+        "codex": ("pane_codex_done.txt", [
+            ("agent", "S2b review clean."),
+        ]),
+        "pi": ("pane_pi_done.txt", [
+            ("user", "explain the last commit"),
+            ("agent", "Here's a breakdown"),
+        ]),
+        "agy": ("pane_agy_done.txt", [
+            ("user", "summarize the last 5 commits"),
+            ("agent", "Here is a summary of the last 5 commit"),
+            ("user", "and explain the pi extension"),
+            ("agent", "Formulating The Response"),
+            ("user", "say only the word OK"),
+            ("agent", "OK"),
+        ]),
+    }
+
+    def test_the_same_messages_the_browser_extracts(self):
+        for agent, (name, want) in self.CASES.items():
+            with self.subTest(agent=agent):
+                got = pane_messages(fixture(name), agent)
+                self.assertEqual([w for w, _, _ in got], [w for w, _ in want])
+                for (_, text, _), (_, opening) in zip(got, want):
+                    self.assertTrue(text.startswith(opening), f"{agent}: {text[:60]!r}")
+
+    def test_a_message_carries_its_own_range(self):
+        rows = fixture("pane_claude_done.txt")
+        for _, text, span in pane_messages(rows, "claude"):
+            self.assertLessEqual(span[0], span[1])
+            self.assertLess(span[1], len(rows))
+            # The range is where the text came from, which is the whole use a reader has for it.
+            self.assertIn(text.split("\n")[0], rows[span[0]])
+
+    def test_no_gutter_glyph_survives_into_a_message(self):
+        for agent, (name, _) in self.CASES.items():
+            for _, text, _ in pane_messages(fixture(name), agent):
+                self.assertFalse(text.startswith(("⏺", "•", "❯", "›", ">")), f"{agent}: {text[:40]!r}")
+
+    def test_agy_is_found_positionally_and_needs_its_blank_lines(self):
+        # agy has no speaker glyph at all: a block is the first indented line under a column-0 line
+        # agy itself printed, and the blank line above it is what tells a reply from the rest of a
+        # wrapped prompt. This is the case the relay's old push-preview read destroyed by dropping
+        # blank lines — and the failure is not a message missing, it is a message misattributed:
+        # the agent's reply is swallowed into the prompt above it and the record says the user
+        # said it. Which is worse than recording nothing, and why capture reads raw rows.
+        rows = fixture("pane_agy_done.txt")
+        self.assertEqual(pane_messages(rows, "agy")[-1], ("agent", "OK", (37, 37)))
+        stripped = pane_messages([r for r in rows if r.strip()], "agy")
+        self.assertEqual(stripped[-1][0], "user")
+        self.assertIn("OK", stripped[-1][1])
+
+    def test_a_harness_with_no_profile_says_nothing(self):
+        self.assertEqual(pane_messages(fixture("pane_claude_done.txt"), "amp"), [])
+        self.assertEqual(pane_messages(fixture("pane_claude_done.txt"), None), [])
+
+    def test_a_turn_is_its_closing_message_and_the_prompt_that_opened_it(self):
+        ms = [("user", "first", (0, 0)), ("agent", "answer one", (1, 1)),
+              ("user", "second", (2, 2)), ("user", "and also", (3, 3)),
+              ("agent", "answer two", (4, 4))]
+        self.assertEqual([w for w, _, _ in turn_messages(ms)], ["user", "user", "agent"])
+        self.assertEqual(turn_messages(ms)[-1][1], "answer two")
+
+    def test_a_turn_with_no_reply_in_it_contributes_nothing(self):
+        self.assertEqual(turn_messages([("user", "hello", (0, 0))]), [])
+        self.assertEqual(turn_messages([]), [])
 
 
 if __name__ == "__main__":

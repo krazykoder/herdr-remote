@@ -541,7 +541,11 @@
     }
     function handleMessage(msg) {
       if (msg.type === 'error') {
+        convLiveNoteError(msg.message);
         showToast(msg.message || 'The relay refused that.');
+      }
+      else if (msg.type === 'conv_log') {
+        convLiveReceive(msg);
       }
       else if (msg.type === 'projects') {
         projects = msg.projects || [];

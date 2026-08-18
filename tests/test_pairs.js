@@ -275,8 +275,10 @@ test('the chunk size matches the cap the relay enforces', () => {
   // This is what makes a client-side split work against a relay this app did not ship with: the
   // number is the *oldest* relay's, and the app never sends a message past it.
   const relay = fs.readFileSync(path.join(__dirname, '..', 'relay', 'herdr_relay.py'), 'utf8');
-  assert.match(relay, new RegExp(`len\\(text\\) > ${SEND_TEXT_MAX}`),
+  assert.match(relay, new RegExp(`SEND_TEXT_MAX = ${SEND_TEXT_MAX}\\b`),
     'web/src/pairs_pure.js and herdr_relay.py disagree about the send_text cap');
+  // And the relay still enforces it, rather than declaring a number it never checks.
+  assert.match(relay, /len\(text\) > SEND_TEXT_MAX/);
 });
 
 test('a transfer never ends in a send, and exactly one function says otherwise', () => {

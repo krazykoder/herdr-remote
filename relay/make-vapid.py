@@ -5,7 +5,7 @@
 # ///
 """Print a VAPID keypair as the two env lines the relay wants.
 
-    uv run relay/make-vapid.py >> ~/.config/herdr-remote/secrets.env
+    mkdir -p ~/.config/herdr-remote && uv run relay/make-vapid.py >> ~/.config/herdr-remote/secrets.env
 
 VAPID is not an API key and there is nothing to sign up for: the pair is generated here, the
 public half is handed to the browser so it can name this relay when it subscribes, and the private

@@ -119,7 +119,10 @@ test('the jump lines up under the row it belongs to, in both views', async ({pag
   await page.locator('#conversations .conversation-card').click();
   await toTop(page, 'convView');
   await expect(page.locator('#convLast')).toBeVisible();
-  expect(await rightEdge(page, '#convLast')).toBe(await rightEdge(page, '#convTidy'));
+  // The row here too, and for the same reason: it ends with the record toggle beside the refresh,
+  // and the eye reads the column off the edge of the row rather than off whichever button it
+  // happens to start with.
+  expect(await rightEdge(page, '#convLast')).toBe(await rightEdge(page, '#convView .hang-float'));
 });
 
 test('the pane refresh reads again and tidies without asking', async ({page}) => {

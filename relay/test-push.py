@@ -22,8 +22,10 @@ import os
 import sys
 from pathlib import Path
 
-SECRETS = Path.home() / ".config" / "herdr-remote" / "secrets.env"
-SUBS = Path.home() / "Library" / "Logs" / "herdr-remote" / "push_subs.json"
+CONFIG = Path.home() / ".config" / "herdr-remote"
+LOGS = Path.home() / "Library" / "Logs" / "herdr-remote"
+SECRETS = CONFIG / "secrets.env"
+SUBS = LOGS / "push_subs.json"
 
 
 def load_env():

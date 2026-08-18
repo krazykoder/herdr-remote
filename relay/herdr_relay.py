@@ -4,10 +4,13 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, subprocess, tempfile, time
+import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
-from pane_summary import summary_body
+from conversation_log import ConversationLog
+from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
+                        fingerprints_from as conv_fingerprints)
+from pane_summary import ends_turn, summary_body
 from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
@@ -46,17 +49,10 @@ except ImportError:
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from logging.handlers import RotatingFileHandler
-import sys
 
-def _get_log_dir():
-    if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Logs/herdr-remote")
-    if os.path.isdir("/var/log") and os.access("/var/log", os.W_OK):
-        return "/var/log/herdr-remote"
-    return os.path.expanduser("~/.local/state/herdr-remote/log")
-
-LOG_DIR = os.environ.get("HERDR_LOG_DIR", _get_log_dir())
-os.makedirs(LOG_DIR, exist_ok=True)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+LOG_DIR = os.path.expanduser("~/Library/Logs/herdr-remote")
+os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "relay.log")
 AUDIT_FILE = os.path.join(LOG_DIR, "audit.log")
 
@@ -93,6 +89,63 @@ EXTERNAL_PORT = int(os.environ.get("HERDR_EXTERNAL_PORT", "0") or 0)
 # needs longer, make this per-agent rather than raising it for everyone.
 SEND_SETTLE = 0.15
 
+# What a bigger paste needs. 0.15 was measured against a one-line approval, and a TUI given a
+# transferred payload or an edited prompt is still laying it out when an Enter that close behind
+# arrives — which is the "the text is sitting in the composer" report, intermittent because it
+# depends on how much there was to lay out. Scaled by length rather than raised for everyone: a
+# short send stays as quick as it was.
+SEND_SETTLE_MAX = 0.9
+
+# --- Submitting a paste, and knowing whether it took ---
+#
+# The history matters, because this is the third attempt at it and each of the first two fixed a
+# real bug while introducing the next one.
+#
+#   1. The client sent `send_text` and then its own `send_keys ["Enter"]`, two WebSocket messages,
+#      with SEND_SETTLE holding the first handler so the second landed late enough. That works for
+#      a TUI that is *running*. It does not work for one that is *starting*: a claude or codex that
+#      has been alive for 200 ms is not at a composer yet, and the Enter goes nowhere. Which is
+#      exactly the New agent dialog's opening prompt, every time.
+#   2. So `submit` was served by herdr's `pane run`, which sends text and Enter in one call and
+#      cannot be interrupted. That fixed the interruption and removed the beat — and herdr pastes
+#      with bracketed paste, so a TUI still laying out a transferred payload dropped the Enter.
+#      Short generated commands went through; long or hand-edited ones sat in the composer.
+#   3. Both of those are the same mistake in two sizes: guessing a duration for something that has
+#      no fixed duration. A boot can take five seconds; a paste can take fifty milliseconds. No
+#      constant is right for both.
+#
+# So: stop guessing, and ask. herdr already reports `agent_status` per pane, and it is the readiness
+# signal this file's older comments say does not exist — a pane whose TUI has not started reports
+# no agent at all, and one that has taken a prompt reports `working` or `blocked`. Paste, then press
+# Enter and watch that field until it says the pane is acting on something.
+#
+# The one thing this must never do is press Enter into a pane that is `blocked`, because the box a
+# blocked agent is showing is a permission prompt and Enter accepts its default. That is the whole
+# reason this verifies rather than simply pressing twice and hoping.
+SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something to submit
+SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
+SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
+SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
+SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
+
+# The longest text one send_text may carry. 4000, not 1000: a transferred selection is usually code
+# or a diff (P3 spec §6). Mirrors SEND_TEXT_MAX in web/src/pairs_pure.js, which is what the browser
+# chunks against — the two are one number and a client that splits by a different one would be
+# refused mid-message.
+SEND_TEXT_MAX = 4000
+
+
+def submit_settle(text):
+    """How long to leave a TUI between the paste and the *first* Enter.
+
+    Still a guess, and deliberately only used for the first press — a long paste usually needs a
+    beat and waiting one costs nothing, but nothing depends on this number being right. What makes
+    the submit land is submit_paste watching the pane afterwards.
+    """
+    span = SEND_SETTLE_MAX - SEND_SETTLE
+    return SEND_SETTLE + span * min(1.0, len(text or "") / SEND_TEXT_MAX)
+
+
 # VAPID Web Push
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
 VAPID_PRIVATE_KEY = os.environ.get("HERDR_VAPID_PRIVATE", "")
@@ -105,6 +158,22 @@ VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
 PUSH_SUMMARY = os.environ.get("HERDR_PUSH_SUMMARY", "") == "1"
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
+
+# The durable conversation record. Off by default: it keeps what agents said on disk, which is a
+# decision about the user's data and not one to make for them. On, it is written once per turn end
+# and read back by `conv_log` — and later by an arbitrator deciding what happens next.
+CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(
+    PROJECT_ROOT, ".herdr-remote", "arbitration.sqlite3")
+conv_log = None
+if os.environ.get("HERDR_CONV_LOG", "") == "1":
+    try:
+        conv_log = ConversationLog(
+            CONV_LOG_DB, max_rows=int(os.environ.get("HERDR_CONV_LOG_MAX", "") or 50000))
+    except (sqlite3.Error, OSError, ValueError) as e:
+        # A record that cannot be opened is not a reason to refuse to relay. Everything else here
+        # works without it, and a relay that will not start because a log file is unwritable is a
+        # worse failure than one that says so and carries on.
+        print(f"herdr-remote: conversation log disabled: {e}", file=sys.stderr)
 
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -544,6 +613,31 @@ def read_pane(pane_id, remote=None):
     return "\n".join(lines[-20:])
 
 
+# What the record reads, and deliberately not what `read_pane` above reads. That one squashes a
+# pane into a push preview — blank lines dropped, chrome lines dropped, the last twenty kept — and
+# every one of those three is destructive to the detector:
+#
+#   * the last twenty lines are usually not the whole closing block, so the block is clipped or
+#     missed outright;
+#   * blank lines are structure. `block_span` keeps them inside a block, and agy has no speaker
+#     glyph at all — its blocks are found positionally off the blank line above them, so a pane
+#     with its blanks removed detects nothing;
+#   * CHROME_RE matches `❯`, `›` and `⏵`, which are the *prompt gutters* of claude, codex and pi.
+#     Stripping them removes every line the user typed, which is the whole of input detection.
+#
+# Measured over the panes on this machine, the preview detected a closing message on 8 of 20 and
+# this read on 14 of 20, with no pane going the other way. So capture asks for what the browser's
+# recorder asks for — `convReadTurnEnd` in web/src/conversation_store.js — and hands the parser the
+# rows exactly as herdr returned them.
+CAPTURE_LINES = 200
+CAPTURE_SOURCE = "recent-unwrapped"
+
+
+def read_pane_for_record(pane_id, remote=None):
+    return run_herdr("pane", "read", pane_id, "--lines", str(CAPTURE_LINES),
+                     "--source", CAPTURE_SOURCE, remote=remote)
+
+
 def detect_options(text):
     lower = text.lower()
     if "yes, single permission" in lower:
@@ -566,6 +660,30 @@ async def broadcast(msg):
     if dead:
         log.debug("Removed %d dead client(s)", len(dead))
     clients.difference_update(dead)
+
+
+async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
+    """A prompt this relay delivered, into the record.
+
+    `human_web` is claimed only here, because this is the one place the relay *knows* a person put
+    those words in: it performed the send. Text typed straight into a terminal is seen later as an
+    echo in the pane and can never be attributed to anyone, so it is never given this origin.
+
+    Agent panes only. A shell has no conversation to be part of.
+    """
+    if conv_log is None:
+        return
+    pane = agent_cache.get(pane_id)
+    if not pane:
+        return
+    try:
+        await asyncio.to_thread(
+            conv_log.record, agent=pane.get("agent") or "", pane_id=pane_id,
+            host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
+            label=pane.get("label") or "", project=pane.get("project") or "",
+            kind=kind, origin=origin, at_src="sent", text=text)
+    except (sqlite3.Error, OSError) as e:
+        log.warning("conversation log write failed for %s: %s", pane_id, e)
 
 
 async def poll_loop():
@@ -685,6 +803,77 @@ def slot_exec(pane_id, slot, remote=None):
 def dig_panes(data):
     panes = ((data or {}).get("result") or {}).get("panes")
     return panes if isinstance(panes, list) else []
+
+
+def pane_agent_status(pane_id, remote=None):
+    """What herdr says this pane's agent is doing, right now.
+
+    Straight from herdr rather than out of `agent_cache`, because the cache is only as fresh as the
+    last poll and the caller is deciding, this instant, whether a keystroke landed.
+
+    Two spellings mean "herdr does not know", and the caller must treat them alike: `unknown`,
+    which is what a real `pane list` returns for a pane carrying no agent — including the case that
+    matters, an agent that has not finished starting — and an empty string, for a pane herdr did not
+    list at all or a call that failed. Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
+    """
+    data, err = _herdr_json("pane", "list", remote=remote)
+    if err:
+        return ""
+    for p in dig_panes(data):
+        if p.get("pane_id") == pane_id:
+            return p.get("agent_status") or ""
+    return ""
+
+
+async def submit_paste(pane_id, text, remote=None):
+    """Press Enter until the pane says it took what it was handed. Returns whether it did.
+
+    The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
+    and hoped. This one watches `agent_status` instead, which turns three separate problems into
+    one loop:
+
+      * a TUI that has not started yet reports no status, so nothing is pressed until it does —
+        that is the New agent dialog's opening prompt, which no fixed delay ever covered;
+      * a TUI that is still laying out a big paste is still `idle`, so the next pass presses again;
+      * a pane that has taken the prompt reports `working` or `blocked`, and the loop stops.
+
+    Never presses Enter at a `blocked` pane. That box is a permission prompt and Enter accepts its
+    default, which is the one outcome worse than a message that did not send.
+
+    A pane already `working` when the paste arrives is a message queued behind what the agent is
+    doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
+    nothing to watch. One press after the settle, exactly as before, and the return says so.
+    """
+    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
+    await asyncio.sleep(submit_settle(text))
+    deadline = time.monotonic() + SUBMIT_TIMEOUT
+    presses, first = 0, True
+    while time.monotonic() < deadline:
+        status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
+        # Already busy when the paste landed, which only the first look can tell apart from busy
+        # *because* of it. Press once and say nothing was proven — `working` is what this pane will
+        # keep reporting either way.
+        if first and status == "working":
+            await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            return False
+        first = False
+        if status in SUBMIT_TOOK:
+            return True
+        if status in SUBMIT_READY:
+            if presses >= SUBMIT_TRIES:
+                break
+            await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            presses += 1
+        # Anything else is a pane herdr has no status for — `unknown` from a real pane list, or an
+        # empty string from a pane it did not list — which is a TUI still starting. Wait for it
+        # rather than pressing into a terminal that is not listening yet.
+        await asyncio.sleep(SUBMIT_POLL)
+    # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is
+    # in the composer and a person has to press Enter. Silence here is what made this bug take
+    # three attempts to find.
+    log.warning("submit: pane=%s never left %s after %d Enter press(es) — text may be unsent",
+                pane_id, SUBMIT_READY, presses)
+    return False
 
 
 def log_tab_geometry():
@@ -877,7 +1066,9 @@ async def _poll_once():
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
-            if status == "blocked" and last_statuses.get(pid) != "blocked":
+            was = last_statuses.get(pid)
+            content = None
+            if status == "blocked" and was != "blocked":
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
                 options = detect_options(content)
                 await broadcast({
@@ -899,7 +1090,7 @@ async def _poll_once():
             # blocked, so a pane already sitting done at startup does not announce itself. Sharing
             # the pane's tag means this *replaces* its blocked notification rather than stacking
             # under it, which is why it is also the clear for the approve-then-finish path.
-            elif status == "done" and last_statuses.get(pid) in ("working", "blocked"):
+            elif status == "done" and was in ("working", "blocked"):
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
                 # Only the finished push reads the closing message. A blocked pane's news is the
                 # question in the box at its foot, which is what notify_body already reads; the
@@ -912,8 +1103,28 @@ async def _poll_once():
                 )
             # Unblocked into anything else — someone answered it elsewhere, so take the
             # notification off this device's Lock Screen too.
-            elif status != "blocked" and last_statuses.get(pid) == "blocked":
+            elif status != "blocked" and was == "blocked":
                 await send_web_push("", "", clear=True, tag=push_tag(pid))
+            # The record, on any move into an ending state — the same rule the browser's recorder
+            # uses (endsTurn in web/src/state.js), and deliberately not "on done". A pane that
+            # finishes and drops to idle has said its piece exactly as much as one that reports
+            # done, and several harnesses end that way every time.
+            #
+            # First sight seeds the state; it is not a transition. Reading it would fill a fresh
+            # database, on the first poll, with the scrollback of every pane that happened to be
+            # sitting idle — most of which will never say another word. A pane that does go on to
+            # end a turn backfills its window then, when there is a reason to believe it is live.
+            if conv_log is not None and was is not None and status != was and ends_turn(status):
+                # Its own read. `content` above is the push preview, which is the wrong shape for a
+                # parser — see read_pane_for_record. Two reads of a pane that just ended a turn is
+                # the price of the record being right, and it is paid once per turn rather than
+                # once per poll.
+                try:
+                    captured = await asyncio.to_thread(
+                        read_pane_for_record, pid, remote=a.get("remote"))
+                    await asyncio.to_thread(conv_log.record_turn_end, a, captured, was, status)
+                except (sqlite3.Error, OSError) as e:
+                    log.warning("conversation log write failed for %s: %s", pid, e)
             last_statuses[pid] = status
         # Clean up panes that are no longer reported
         current_pane_ids = {p["pane_id"] for p in agents + shells}
@@ -1219,7 +1430,9 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                log.info("Response from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
+                # The allowlist name, not free text: a response is one of SAFE_RESPONSES by the
+                # check above, so this says everything the console needs without echoing input.
+                log.info("Response from %s (%s): pane=%s", ip, device, pane_id)
                 audit("respond", ip, device, pane_id, f"text={text!r}")
                 # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
                 # inserted as literal text and the approval never submits. Paste, let the TUI
@@ -1227,8 +1440,31 @@ async def handle_client(ws, listener="lan"):
                 await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
                 await asyncio.sleep(SEND_SETTLE)
                 await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+                await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
+            elif msg_type == "conv_log":
+                # Answered to the asking client and never broadcast: this is the one message that
+                # carries what an agent actually said, and a client that did not ask for a
+                # transcript should not be handed one.
+                if conv_log is None:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "conversation log is off"}))
+                    continue
+                try:
+                    rows, truncated = await asyncio.to_thread(
+                        conv_log.query,
+                        pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
+                        cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
+                        since=msg.get("since"), until=msg.get("until"),
+                        fingerprints=conv_fingerprints(msg.get("fingerprints")),
+                        last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
+                except (sqlite3.Error, OSError, ValueError, TypeError) as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))
+                    continue
+                await ws.send(json.dumps({
+                    "type": "conv_log", "truncated": truncated,
+                    "turns": [conv_as_wire(r) for r in rows]}))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
@@ -1287,28 +1523,39 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     continue
                 text = msg.get("text", "")
-                # 4000, not 1000: a transferred selection is usually code or a diff (P3 spec §6).
                 # The bound stays — an unbounded write is a real abuse vector.
-                if not text or len(text) > 4000:
+                if not text or len(text) > SEND_TEXT_MAX:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
-                # `submit` asks for the Enter to go with the text rather than behind it. herdr's
-                # `pane run` sends both in one call, which is the only way they cannot be separated:
-                # a busy agent handed a paste and then, a moment later, an Enter would swallow the
-                # Enter and leave the message sitting unsent in its composer. Optional, because the
-                # other clients still send their own send_keys ["Enter"] and must keep working.
+                # `submit` asks the relay to submit the text, rather than the client sending its own
+                # `send_keys ["Enter"]` behind this message. Two separate reasons, and both of them
+                # were bugs first:
+                #
+                #   * an Enter travelling as its own client message arrives whenever the network
+                #     feels like it, and there is nothing at this end that can hold it to the text;
+                #   * whoever presses it has to know *when*, and neither end can know that from a
+                #     clock — see SUBMIT_READY. submit_paste watches the pane instead.
+                #
+                # Optional, because the other clients still send their own Enter and must keep
+                # working; those get the old fixed settle below and nothing more.
                 submit = bool(msg.get("submit"))
-                log.info("Text from %s (%s): pane=%s submit=%s text=%r",
-                         ip, device, pane_id, submit, text)
+                # Length, not the text: this line goes to the console the relay was started from,
+                # and a person watching their own terminal has not asked to be shown every message
+                # they send from their phone. The audit log below keeps the text itself.
+                log.info("Text from %s (%s): pane=%s submit=%s chars=%d",
+                         ip, device, pane_id, submit, len(text))
                 audit("send_text", ip, device, pane_id, f"submit={submit} text={text!r}")
-                await asyncio.to_thread(run_herdr, "pane", "run" if submit else "send-text",
-                                        pane_id, text, remote=remote)
-                # Hold the handler until the pane has settled, so a send_keys ["Enter"] arriving
-                # right behind this — which is what a client that submits for itself does — lands
-                # late enough to submit. One choke point, rather than a delay in each client.
-                if not submit:
+                if submit:
+                    await submit_paste(pane_id, text, remote=remote)
+                else:
+                    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
+                                            remote=remote)
+                    # Hold the handler until the pane has settled, so a `send_keys ["Enter"]`
+                    # arriving right behind this — which is what a client that submits for itself
+                    # does — lands late enough. One choke point, rather than a delay in each client.
                     await asyncio.sleep(SEND_SETTLE)
+                await record_sent(pane_id, text)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
