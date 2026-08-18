@@ -5124,17 +5124,18 @@
                this browser keeps a record at all, and the per-pane switch is membership. -->
           <button class="menu-item" role="menuitem" id="menuConvAuto"
             onclick="closeTermMenu(); toggleConvAuto()">Record every session</button>
-          <!-- How much of the conversation this pane's thread draws. Shown only while there is
-               someone else in it to draw, and the middle one only while there is a live pair —
-               with no pair to narrow to it would be a second name for the third choice. Radios
-               rather than one switch: "not alone" was two different threads depending on whether a
-               pair existed, and no way to ask for the other one. -->
-          <button class="menu-item" role="menuitemradio" id="menuConvScopeAlone" hidden
-            onclick="closeTermMenu(); setConvScope('alone')"><span class="tick"></span>Show this pane alone</button>
-          <button class="menu-item" role="menuitemradio" id="menuConvScopePair" hidden
-            onclick="closeTermMenu(); setConvScope('pair')"><span class="tick"></span>Show paired conversation</button>
-          <button class="menu-item" role="menuitemradio" id="menuConvScopeAll" hidden
-            onclick="closeTermMenu(); setConvScope('all')"><span class="tick"></span>Show the whole conversation</button>
+          <!-- How much of the conversation this pane's thread draws. A list and not one switch:
+               "not alone" was two different threads depending on whether a pair happened to exist,
+               with no way to ask for the other one. A select and not three menu rows, the same as
+               Line width and Tab bar below — it is one setting with a current value, and three rows
+               spend the menu's whole height saying so. renderTermMenuState writes the options, so
+               a choice that would draw what another already draws is never in the list. -->
+          <div id="menuConvScope" hidden>
+            <div class="menu-label" style="margin-top:10px">Thread shows</div>
+            <select id="convScopeSel" onchange="setConvScope(this.value)"
+              aria-label="How much of this conversation the thread draws"
+              style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"></select>
+          </div>
           <!-- Drafts and backfill are drawn unfilled; this hides them outright. Offered only while
                the thread is the view on screen, which is the only place they appear. -->
           <button class="menu-item" role="menuitem" id="menuConvFinal" hidden

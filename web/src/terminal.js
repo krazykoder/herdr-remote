@@ -404,13 +404,12 @@
       conv.hidden = !(a && profileFor(a.agent));
       document.getElementById('menuConvAuto').textContent = convAutoOn()
         ? 'Stop recording new sessions' : 'Record every session';
-      const scopes = CONV_SCOPES.map(s =>
-        document.getElementById('menuConvScope' + s[0].toUpperCase() + s.slice(1)));
+      const scope = document.getElementById('menuConvScope');
       const convFont = document.getElementById('menuConvFont');
       const dedupe = document.getElementById('menuConvDedupe');
       const recover = document.getElementById('menuConvRecover');
       const final = document.getElementById('menuConvFinal');
-      for (const el of scopes) el.hidden = true;
+      scope.hidden = true;
       convFont.hidden = true;
       dedupe.hidden = true;
       recover.hidden = true;
@@ -425,29 +424,37 @@
         const shown = convViewConv(a);
         conv.textContent = shown ? `In "${shown.name}"…`
           : (loadConvIndex().length ? 'Add to a conversation…' : 'Start conversation…');
-        // A conversation of one has no joint thread to show, so the choice is not offered. Counted
+        // A conversation of one has no joint thread to show, so the list is not offered. Counted
         // over the roster and not over what is currently drawn: narrowing to a pair must not hide
         // the way back out to the members it narrowed away.
         const roster = shown ? (shown.members || []) : [];
-        // Only where narrowing to a pair would draw something the whole conversation does not.
-        // With no live pair it is the third choice under a second name, which is a menu telling
-        // the reader there are two answers when there is one.
-        // One entry per thread that is actually different. A pair the size of the roster is the
+        // One option per thread that is actually different. A pair the size of the roster is the
         // whole conversation under a second name, and a roster of one is this pane under a second
-        // name — a menu offering either is telling the reader there are two answers where there is
-        // one. `alone` is offered only when there is something to be alone from.
+        // name — a list offering either tells the reader there are two answers where there is one.
+        // `alone` is offered only when there is something to be alone from.
         const pairOnly = shown ? convPairMembers(a, shown) : null;
         const can = {
-          all: roster.length > 1,
+          alone: false,
           pair: !!pairOnly && pairOnly.length !== roster.length,
+          all: roster.length > 1,
         };
         can.alone = can.all || can.pair;
         const at = convScope();
-        for (const el of scopes) {
-          const s = el.id.replace('menuConvScope', '').toLowerCase();
-          el.hidden = !can[s];
-          el.setAttribute('aria-checked', String(s === at));
-          el.querySelector('.tick').textContent = s === at ? '✓' : '';
+        scope.hidden = !can.alone;
+        if (!scope.hidden) {
+          const sel = document.getElementById('convScopeSel');
+          const opts = CONV_SCOPES.filter(s => can[s]);
+          const html = opts.map(s =>
+            `<option value="${s}">${escapeHtml(CONV_SCOPE_LABELS[s])}</option>`).join('');
+          // Rewritten only when the choices themselves changed: replacing the options while the
+          // list is open on a phone closes it under the thumb.
+          if (sel.innerHTML !== html) sel.innerHTML = html;
+          // The stored scope may not be on offer here — a pane whose pair has gone is still set to
+          // `pair`, and the list must show what the thread is actually drawing rather than a value
+          // it does not hold. Falling back rather than writing: the pair may come back. Whichever
+          // end is on offer is also what `pairedConvMembers` falls back to drawing.
+          sel.value = opts.indexOf(at) >= 0 ? at
+            : (opts.indexOf('all') >= 0 ? 'all' : 'alone');
         }
         convFont.hidden = !(mine.length && convViewOn(a));
         if (!convFont.hidden) setConvFont(currentConvFont());

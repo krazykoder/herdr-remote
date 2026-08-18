@@ -155,6 +155,12 @@
     // never merged on disk.
     const CONV_SCOPE_KEY = 'herdr_conv_scope', CONV_JOINT_KEY = 'herdr_conv_joint';
     const CONV_SCOPES = ['alone', 'pair', 'all'];
+    // Named for what each draws, not for the switch that used to draw it.
+    const CONV_SCOPE_LABELS = {
+      alone: 'This pane alone',
+      pair: 'This pane and its pair',
+      all: 'Every member',
+    };
 
     function convScope() {
       try {

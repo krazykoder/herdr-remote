@@ -1463,6 +1463,12 @@ test('a pane no conversation names is not read when its turn ends', async ({page
   expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'))).toEqual([]);
 });
 
+// The thread's scope, as the pane menu offers it: one list with an option per thread that is
+// actually different, rather than three rows the reader has to tell apart.
+const scopeSel = page => page.locator('#convScopeSel');
+const scopeOpt = (page, v) => page.locator(`#convScopeSel option[value="${v}"]`);
+const pickScope = (page, v) => page.locator('#convScopeSel').selectOption(v);
+
 test('Show paired conversation joins separately recorded pair threads', async ({page}) => {
   await open(page);
   await joinSeparatePair(page);
@@ -1473,11 +1479,12 @@ test('Show paired conversation joins separately recorded pair threads', async ({
   await page.locator('#termMenuBtn').click();
   // The scope the thread is on is the one that is ticked, and the other choices are the other
   // threads — not a single switch whose meaning depends on what the pane happens to be in.
-  await expect(page.locator('#menuConvScopePair')).toHaveAttribute('aria-checked', 'true');
-  await page.locator('#menuConvScopeAlone').click();
+  await expect(scopeSel(page)).toHaveValue('pair');
+  await pickScope(page, 'alone');
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
-  await page.locator('#termMenuBtn').click();
-  await page.locator('#menuConvScopePair').click();
+  // The list stays where it is — picking from it is a setting, not a command, and the menu below
+  // it holds the rest of them.
+  await pickScope(page, 'pair');
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(3);
 });
 
@@ -1509,12 +1516,11 @@ test('a joint thread is the pair when there is one, not everybody in the convers
   await expect(page.locator('#convThread .conv-member')).toHaveCount(2);
   // And the menu offers all three threads by name, with the one on screen ticked.
   await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopePair')).toHaveAttribute('aria-checked', 'true');
-  await expect(page.locator('#menuConvScopeAll')).toBeVisible();
-  await page.locator('#menuConvScopeAlone').click();
+  await expect(scopeSel(page)).toHaveValue('pair');
+  await expect(scopeOpt(page, 'all')).toHaveCount(1);
+  await pickScope(page, 'alone');
   await expect(thread).not.toContainText('said by my partner');
-  await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopeAlone')).toHaveAttribute('aria-checked', 'true');
+  await expect(scopeSel(page)).toHaveValue('alone');
 });
 
 // The third choice, and the reason there are three: a pair inside a wider conversation is two
@@ -1528,16 +1534,15 @@ test('the whole conversation is a choice of its own, over a pair that would narr
   await expect(thread).not.toContainText('said by a stranger');
 
   await page.locator('#termMenuBtn').click();
-  await page.locator('#menuConvScopeAll').click();
+  await pickScope(page, 'all');
   await expect(thread).toContainText('said by a stranger');
   await expect(thread).toContainText('said by my partner');
   await expect(page.locator('#convThread .conv-member')).toHaveCount(3);
 
   // And back: leaving the pair must not take the way back to it off the menu.
-  await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopeAll')).toHaveAttribute('aria-checked', 'true');
-  await expect(page.locator('#menuConvScopePair')).toBeVisible();
-  await page.locator('#menuConvScopePair').click();
+  await expect(scopeSel(page)).toHaveValue('all');
+  await expect(scopeOpt(page, 'pair')).toHaveCount(1);
+  await pickScope(page, 'pair');
   await expect(thread).not.toContainText('said by a stranger');
 });
 
@@ -1555,11 +1560,10 @@ test('with no pair to narrow it, the joint thread is still every member', async 
   // No pair to narrow to, so "paired" is not offered: it would be the whole conversation under a
   // second name.
   await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopePair')).toBeHidden();
-  await page.locator('#menuConvScopeAlone').click();
-  await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopeAlone')).toHaveAttribute('aria-checked', 'true');
-  await expect(page.locator('#menuConvScopeAll')).toBeVisible();
+  await expect(scopeOpt(page, 'pair')).toHaveCount(0);
+  await pickScope(page, 'alone');
+  await expect(scopeSel(page)).toHaveValue('alone');
+  await expect(scopeOpt(page, 'all')).toHaveCount(1);
 });
 
 test('a paired thread fills the pane, keeps agent colors, and keeps prompts beside their agent', async ({page}) => {
@@ -1611,7 +1615,7 @@ test('a thread with one speaker gives the bubble the whole width', async ({page}
   expect(both.solo).toBe(false);
   expect(both.bubble).toBeLessThan(both.thread);
   await page.locator('#termMenuBtn').click();
-  await page.locator('#menuConvScopeAlone').click();
+  await pickScope(page, 'alone');
   await expect(page.locator('#convThread.conv-solo')).toBeVisible();
   const alone = await width();
   expect(alone.bubble).toBe(alone.thread);
@@ -2475,17 +2479,16 @@ test('"Show this pane alone" leaves the pane\'s own transcript exactly as it was
   await page.locator('#quickActions .qa-conv').click();
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(4);
   await page.locator('#termMenuBtn').click();
-  await page.locator('#menuConvScopeAlone').click();
+  await pickScope(page, 'alone');
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(2);
   await expect(page.locator('#convThread .conv-members')).toHaveCount(0);
   // The joint view is only ever a render: nothing was merged on disk.
   const rec = await held(page, mine);
   expect(rec.entries.map(e => e.text)).not.toContain('the other pane spoke first');
-  await page.locator('#termMenuBtn').click();
-  await expect(page.locator('#menuConvScopeAlone')).toHaveAttribute('aria-checked', 'true');
+  await expect(scopeSel(page)).toHaveValue('alone');
   // No live pair here, so "paired" is not offered — the whole conversation is these two.
-  await expect(page.locator('#menuConvScopePair')).toBeHidden();
-  await page.locator('#menuConvScopeAll').click();
+  await expect(scopeOpt(page, 'pair')).toHaveCount(0);
+  await pickScope(page, 'all');
   await expect(page.locator('#convThread .conv-msg')).toHaveCount(4);
   await expect(page.locator('#convThread .conv-members')).toHaveCount(1);
 });
