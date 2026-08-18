@@ -548,6 +548,52 @@ class Arbitration:
             return None, None
         return raw, hashlib.sha256(raw).hexdigest()
 
+    def _reject(self, s, decision_id, code):
+        """One rejection: written down, counted, and answered with a re-prompt or a pause.
+
+        Every way a decision can fail comes through here, so the bound is over all of them together
+        rather than per cause. Two failures at one sequence pause the session: an arbitrator that
+        cannot produce a deliverable record twice running is not going to on the third try, and a
+        loop that keeps asking is the unattended failure this whole design exists to avoid.
+
+        The row is marked invalid *here* rather than at insert, because a decision can fail after
+        validating — a target that moved between the check and the send is a rejection that only
+        exists at delivery time, and one that is not recorded is one the bound cannot see.
+        """
+        self.conn.execute("UPDATE decisions SET valid=0, reject_code=? WHERE id=?",
+                          (code, decision_id))
+        self.conn.commit()
+        failures = self.conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE session_id=? AND sequence=? AND valid=0",
+            (s["id"], s["sequence"])).fetchone()[0]
+        if failures >= 2:
+            self.pause(s["id"], "invalid_record")
+            return {"outcome": "paused", "reason": "invalid_record", "reject_code": code}
+        reprompt_id = self._reprompt(s, code)
+        if reprompt_id is None:
+            return {"outcome": "paused", "reason": self.session(s["id"])["pause_reason"],
+                    "reject_code": code}
+        return {"outcome": "reprompt", "reject_code": code, "decision_id": decision_id,
+                "prompt_id": reprompt_id}
+
+    def _reprompt(self, s, code):
+        """Ask the still-live arbitrator to correct the same decision file once."""
+        arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
+        if arb is None:
+            self.pause(s["id"], "arbitrator_gone")
+            return None
+        roster = self.roster(s["id"])
+        body = trigger_prompt(roster, f"reprompt — {code}", [], json.loads(s["gates_json"]),
+                              budget_left(s, self.clock()), s["sequence"],
+                              self.drop_path(s["id"], s["sequence"]))
+        body = f"Your decision was rejected: {code}. Correct the same file.\n\n{body}"
+        cur = self.conn.execute(
+            "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
+            (s["id"], s["sequence"], "reprompt", body, self.clock()))
+        self.conn.commit()
+        self.send(arb, body)
+        return cur.lastrowid
+
     def collect(self, session_id, prompt_id):
         """Read the drop-box, validate it, and act. The one place a decision becomes a keystroke.
 
@@ -589,16 +635,7 @@ class Arbitration:
         self.conn.commit()
 
         if code:
-            # One re-prompt, naming the failure. A second is a pause: an arbitrator that cannot
-            # produce a valid record twice running is not going to on the third try, and the loop
-            # asking forever is the unattended failure this whole design is built to avoid.
-            failures = self.conn.execute(
-                "SELECT COUNT(*) FROM decisions WHERE session_id=? AND sequence=? AND valid=0",
-                (session_id, sequence)).fetchone()[0]
-            if failures >= 2:
-                self.pause(session_id, "invalid_record")
-                return {"outcome": "paused", "reason": "invalid_record", "reject_code": code}
-            return {"outcome": "reprompt", "reject_code": code, "decision_id": decision_id}
+            return self._reject(s, decision_id, code)
 
         if doc["gate"] == "call_human":
             self.pause(session_id, "call_human")
@@ -614,8 +651,12 @@ class Arbitration:
         fresh = self.roster(s["id"])[doc["to"]]
         if fresh["panes"] != 1 or fresh["pane_id"] != member["pane_id"] \
                 or fresh["status"] in BUSY:
-            return {"outcome": "reprompt", "reject_code": "target_not_live",
-                    "decision_id": decision_id}
+            # §13.2 step 1: "treat as target_not_live and re-prompt" — and *treat as* is the whole
+            # instruction. This record validated a moment ago, so it is on the row as valid; a race
+            # that left it undeliverable makes it a rejection like any other, and it has to be
+            # written down as one or it escapes the bound below. A member that keeps moving would
+            # otherwise re-prompt forever, spending no step and tripping no budget.
+            return self._reject(s, decision_id, "target_not_live")
         text = render(json.loads(s["gates_json"]), doc["gate"], doc["instruction"])
         self.send(fresh["pane_id"], text)
         now = self.clock()

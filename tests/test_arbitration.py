@@ -310,7 +310,8 @@ class TheLoop(Harness):
         out = self.arb.collect(s["id"], handle["prompt_id"])
         self.assertEqual("reprompt", out["outcome"])
         self.assertEqual("target_working", out["reject_code"])
-        self.assertEqual(before, len(self.sent))
+        self.assertEqual(before + 1, len(self.sent))
+        self.assertEqual("pA", self.sent[-1][0])
         self.assertEqual(0, self.arb.session(s["id"])["steps_used"])
 
     def test_a_member_that_moved_between_validation_and_delivery_is_not_typed_into(self):
@@ -328,7 +329,8 @@ class TheLoop(Harness):
         before = len(self.sent)
         out = self.arb.collect(s["id"], handle["prompt_id"])
         self.assertEqual("reprompt", out["outcome"])
-        self.assertEqual(before, len(self.sent))
+        self.assertEqual(before + 1, len(self.sent))
+        self.assertEqual("pA", self.sent[-1][0])
 
 
 class InvalidRecords(Harness):
@@ -338,10 +340,62 @@ class InvalidRecords(Harness):
         s = self.start()
         handle = self.step(s["id"])
         self.write(s["id"], handle["sequence"], gate="deploy")
+        before = len(self.sent)
         out = self.arb.collect(s["id"], handle["prompt_id"])
         self.assertEqual("reprompt", out["outcome"])
         self.assertEqual("unknown_gate", out["reject_code"])
+        self.assertEqual(before + 1, len(self.sent))
+        self.assertEqual("pA", self.sent[-1][0])
+        self.assertIn("unknown_gate", self.sent[-1][1])
         self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+
+    def race(self):
+        """Make every target vanish *after* validation has looked at it.
+
+        A target that is already busy is caught by `validate`, so it never reaches delivery — the
+        only way to exercise the race is to move the pane in the window between the two, which is
+        precisely the window §13.2's re-resolution exists for.
+        """
+        real = self.arb.roster
+        seen = []
+
+        def roster(session_id):
+            out = real(session_id)
+            seen.append(1)
+            if len(seen) % 2 == 0:          # the delivery-time look, not the validating one
+                for m in out.values():
+                    m["panes"], m["pane_id"] = 0, None
+            return out
+
+        self.arb.roster = roster
+
+    def test_a_race_is_recorded_as_a_rejection_not_as_a_valid_decision(self):
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.race()
+        self.assertEqual("reprompt", self.arb.collect(s["id"], handle["prompt_id"])["outcome"])
+        row = self.arb.conn.execute(
+            "SELECT valid, reject_code FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(0, row["valid"], "a record that failed at delivery is still a rejection")
+        self.assertEqual("target_not_live", row["reject_code"])
+
+    def test_a_target_that_keeps_racing_is_bounded_like_any_other_rejection(self):
+        # The re-prompt for a target that moved between validation and delivery runs on a record
+        # that *validated*. Unless the race is written down as a rejection the bound never sees it,
+        # and a member that keeps moving re-prompts forever — spending no step and tripping no
+        # budget. N9 says budgets are hard stops; a free path around them is not one.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.race()
+        self.assertEqual("reprompt", self.arb.collect(s["id"], handle["prompt_id"])["outcome"])
+        self.write(s["id"], handle["sequence"], why="Second attempt, target still moving.")
+        out = self.arb.collect(s["id"], handle["prompt_id"])
+        self.assertEqual("paused", out["outcome"])
+        self.assertEqual("invalid_record", self.arb.session(s["id"])["pause_reason"])
+        self.assertEqual(0, self.arb.session(s["id"])["steps_used"])
+        self.assertEqual([], [t for p, t in self.sent if "Take a look." in t])
 
     def test_the_second_invalid_record_pauses(self):
         s = self.start()
