@@ -43,6 +43,39 @@ PANES = {
 with open(log, "a") as f:
     f.write(f"{host} {' '.join(args)}\n")
 
+# A pane list that can change. Unset, this fake is the fixed board above and every existing E2E
+# sees exactly what it always did. Set, `pane list` is read from the file on every call and the
+# test drives status transitions by rewriting it — which is the only way to have a turn *end*,
+# and a turn ending is the whole trigger arbitration runs on.
+STATE = os.environ.get("FAKE_PANES", "")
+
+
+def state():
+    with open(STATE) as f:
+        return json.load(f)
+
+
+def write_state(panes):
+    with open(STATE, "w") as f:
+        json.dump(panes, f)
+
+
+# Enter at a pane that is waiting moves it to working, which is what a real TUI does when it
+# accepts a submit — and what submit_paste watches for. Without this the relay presses its four
+# times, never sees the pane move, and reports every arbitrated send unconfirmed.
+if STATE and args[:2] == ["pane", "send-keys"] and "Enter" in args[3:]:
+    panes = state()
+    for p in panes:
+        if p.get("pane_id") == args[2] and p.get("agent_status") in ("idle", "done"):
+            p["agent_status"] = "working"
+    write_state(panes)
+    print(json.dumps({"result": {}}))
+    sys.exit(0)
+
+if STATE and args[:2] == ["pane", "list"]:
+    print(json.dumps({"result": {"panes": state()}}))
+    sys.exit(0)
+
 # Agent names are a separate namespace from pane labels and `pane list` does not report them,
 # so the fake keeps its own. FAKE_TAKEN_NAMES seeds it.
 TAKEN = [n for n in os.environ.get("FAKE_TAKEN_NAMES", "").split(",") if n]

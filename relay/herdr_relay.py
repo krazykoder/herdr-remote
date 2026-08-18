@@ -7,7 +7,8 @@
 import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
-from arbitration import Arbitration
+from arbitration import (Arbitration, ArbiterError, budget_left, now_ms as arb_now,
+                         resolve as arb_resolve)
 from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
@@ -1198,6 +1199,47 @@ def arbitration_entries(pane):
              "text": r["text"]} for r in rows]
 
 
+def arb_session_message(session):
+    """One session as the wire describes it — §15.2. Never carries an instruction.
+
+    `why` is here and `instruction` is not, deliberately. The reason for a decision is what a
+    person reviews and belongs on a strip above the thread; the instruction itself is an entry in
+    the thread, which is where the record already puts it. Broadcasting it twice would put agent
+    prose on a channel every connected client receives.
+    """
+    roster = arbitration.roster(session["id"])
+    left = budget_left(session, arb_now())
+    last = arbitration.conn.execute(
+        "SELECT sequence, gate, to_member, why, ambiguity, at FROM decisions "
+        "WHERE session_id=? AND valid=1 ORDER BY id DESC LIMIT 1", (session["id"],)).fetchone()
+    arb_pane, _ = arb_resolve(json.loads(session["arbitrator_fp"]),
+                              session["arbitrator_pane"], live_panes())
+    return {
+        "type": "arb_session",
+        "session": {
+            "id": session["id"], "state": session["state"],
+            "pause_reason": session["pause_reason"],
+            "conversation": session["conversation"], "scope": session["scope"],
+            "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
+                         "pane_id": m["pane_id"], "status": m["status"]}
+                        for mid, m in roster.items()],
+            "arbitrator": {"pane_id": arb_pane, "status": next(
+                (p.get("agent_status") or "" for p in live_panes()
+                 if p.get("pane_id") == arb_pane), "")},
+            "budget": {"steps_left": left["steps"], "consecutive_left": left["consecutive"],
+                       "minutes_left": left["ms"] // 60000},
+            "last_decision": None if last is None else {
+                "sequence": last["sequence"], "gate": last["gate"], "to": last["to_member"],
+                "why": last["why"], "ambiguity": last["ambiguity"], "at": last["at"]},
+        },
+    }
+
+
+def arb_broadcast(session):
+    """Announce a state change from the thread a session runs on. §15.2."""
+    on_loop(broadcast(arb_session_message(session)))
+
+
 def arbitrate_turn_end(pane, pane_id):
     """One pane's turn end, offered to the running session. Called from a worker thread.
 
@@ -1206,9 +1248,17 @@ def arbitrate_turn_end(pane, pane_id):
     relay to stop telling everyone else what their agents are doing.
     """
     try:
-        if arbitration.arbitrator_finished(pane_id) is not None:
+        session = arbitration.running()
+        if session is None:
             return
-        arbitration.turn_ended(pane_id, arbitration_entries(pane))
+        acted = arbitration.arbitrator_finished(pane_id)
+        if acted is None:
+            acted = arbitration.turn_ended(pane_id, arbitration_entries(pane))
+        if acted is not None:
+            # Read back rather than reused: whatever just happened is very likely to have changed
+            # the state, the budget or the last decision, and the strip above the thread is only
+            # worth having if it says what is true now.
+            arb_broadcast(arbitration.session(session["id"]))
     except Exception as e:                       # noqa: BLE001 — see the docstring
         log.warning("arbitration: turn end for %s not handled: %s", pane_id, e)
 
@@ -1242,6 +1292,9 @@ def arbitration_paused(session, reason):
     """Every pause reaches a Lock Screen. §9.3 — an unattended loop that stops must not be news
     six hours later. Fire and forget: the pause is already committed, and a push nobody receives
     is not a reason to hold up the thread that stopped the session."""
+    # And every open client, which is the one that costs nothing and is seen soonest. A pause can
+    # happen with nobody's phone locked at all — the person is looking at the app.
+    arb_broadcast(session)
     on_loop(send_web_push(
         title="🐑 Arbitration paused",
         body=f"{reason.replace('_', ' ')} — {session['scope'][:120]}",
@@ -1520,6 +1573,16 @@ async def handle_client(ws, listener="lan"):
         # legacy wire unchanged: nothing until the first poll broadcast.
         if PROJECTS or TERMINAL:
             await ws.send(json.dumps(snapshot_message()))
+        # After the snapshot, because a session names panes and a client that has not been told
+        # what panes exist cannot render it. Sent even when nothing is running — an empty list is
+        # what tells the browser the feature is on, exactly as start_options gates Start (§15.2).
+        if arbitration is not None:
+            running = await asyncio.to_thread(arbitration.running)
+            await ws.send(json.dumps({
+                "type": "arb_sessions",
+                "sessions": [] if running is None else
+                            [(await asyncio.to_thread(arb_session_message, running))["session"]],
+            }))
         async for raw in ws:
             try:
                 msg = json.loads(raw)
@@ -1578,6 +1641,51 @@ async def handle_client(ws, listener="lan"):
                 await ws.send(json.dumps({
                     "type": "conv_log", "truncated": truncated,
                     "turns": [conv_as_wire(r) for r in rows]}))
+            elif msg_type.startswith("arb_"):
+                # One gate for the whole family. With arbitration off these are not merely
+                # rejected, they are unknown — the wire is what it was, and a client that never
+                # saw `arb_sessions` in the snapshot has no reason to send one (N10).
+                if arbitration is None:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "arbitration is off"}))
+                    continue
+                try:
+                    if msg_type == "arb_start":
+                        # The relay assigns the id; a client never names one, because every path
+                        # this feature writes to is derived from it.
+                        session = await asyncio.to_thread(
+                            functools.partial(
+                                arbitration.start,
+                                conversation=msg.get("conversation") or "",
+                                members=msg.get("members") or [],
+                                arbitrator=msg.get("arbitrator") or {},
+                                scope=msg.get("scope") or "",
+                                gates=msg.get("gates"), budget=msg.get("budget"),
+                                triggers=msg.get("triggers")))
+                    elif msg_type == "arb_pause":
+                        # `user`, always: this is the one pause a person asks for by hand, and
+                        # letting a client name the reason would let it forge a budget stop.
+                        session = await asyncio.to_thread(
+                            arbitration.pause, msg["session"], "user")
+                    elif msg_type == "arb_resume":
+                        session = await asyncio.to_thread(arbitration.resume, msg["session"])
+                    elif msg_type == "arb_cancel":
+                        session = await asyncio.to_thread(
+                            arbitration.end, msg["session"], msg.get("reason") or "cancelled")
+                    else:
+                        await ws.send(json.dumps({
+                            "type": "error", "message": f"unknown message type: {msg_type}"}))
+                        continue
+                except ArbiterError as e:
+                    log.info("Arbitration %s from %s refused: %s", msg_type, ip, e.code)
+                    await ws.send(json.dumps({
+                        "type": "error", "code": e.code, "message": str(e)}))
+                    continue
+                except (KeyError, sqlite3.Error, OSError) as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"{msg_type}: {e}"}))
+                    continue
+                audit(msg_type, ip, device, session["id"], f"state={session['state']}")
+                await broadcast(await asyncio.to_thread(arb_session_message, session))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
