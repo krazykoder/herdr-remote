@@ -3562,13 +3562,14 @@
       gap: 6px;
       padding: 3px 8px;
       border-radius: 12px;
-      border: 1px solid color-mix(in srgb, var(--green) 55%, var(--border));
+      border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border));
       /* Lifted off the surface it floats over rather than level with it: this hangs over live pane
-         text, and a chip the same value as the panel behind it reads as part of that text. Solid,
-         and tinted with the same green as its dot: mixing toward --bg left it a shade of the thing
-         it floats over, which read as translucent over dense text however opaque it actually was.
-         The tint is what makes it the live-agent chip at a glance and not a label. */
-      background: color-mix(in srgb, var(--green) 16%, var(--surface));
+         text, and a chip the same value as the panel behind it reads as part of that text. Mixing
+         toward --bg left it a shade of the thing it floats over, which read as translucent over
+         dense text however opaque it was — so it mixes toward --text instead, which is away from
+         the background on all eleven themes. Neutral, not the dot's green: the dot is what says
+         live, and a chip that said it too would be a status the size of a paragraph. */
+      background: color-mix(in srgb, var(--text) 12%, var(--surface));
       color: var(--text);
       font-size: 0.72rem;
       font-weight: 600;
@@ -3585,7 +3586,7 @@
     }
 
     .conv-working-chip:hover {
-      border-color: var(--green);
+      border-color: color-mix(in srgb, var(--text) 45%, var(--border));
     }
 
     /* Where a badge just took the reader. Colour for a moment and then nothing: the class is left
@@ -3859,10 +3860,14 @@
       display: none;
     }
 
+    /* Half the composer, one load to a line. Full width made the strip a second thread above the
+       box — three rows of prose to read before the message being written. Half is enough to know
+       which message it is and short enough that the eye keeps going down. */
     .xfer-load-line {
       display: flex;
       align-items: center;
       gap: 6px;
+      width: 50%;
       min-width: 0;
       font-size: 0.7rem;
       color: var(--muted);

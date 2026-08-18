@@ -4227,14 +4227,16 @@ test('a chip writes its instruction into the box, and the toggle changes that',
     // The default: what the agent will receive is on screen, editable, before anything is sent.
     await page.locator(`#xferRow .xfer-chip:text-matches("^@review")`).click();
     await expect(page.locator('#convInput')).toHaveValue(/^Review, edit, fix/);
-    // Prompts append as their own line; they never splice into the sentence holding the caret.
+    // Prompts land on top as their own line, whatever is already written and wherever the caret
+    // is: the instruction is the frame the message is written inside, and it is where the attached
+    // form puts it too — so both modes send the same thing in the same order.
     await page.locator('#convInput').fill('here is the branch: ');
     await page.evaluate(() => {
       const i = document.getElementById('convInput');
       i.setSelectionRange(i.value.length, i.value.length);
     });
     await page.locator(`#xferRow .xfer-chip:text-matches("^@test$")`).click();
-    await expect(page.locator('#convInput')).toHaveValue(/^here is the branch: \nWrite \/update tests/);
+    await expect(page.locator('#convInput')).toHaveValue(/^Write \/update tests[\s\S]*\nhere is the branch: $/);
     // The pane composer uses the same rule: an @ prompt appends after the draft, regardless of
     // where its caret was left.
     await page.evaluate(() => {
@@ -4646,6 +4648,11 @@ test('the composer lists what the send is carrying', async ({page}) => {
   await expect(load.nth(1)).toContainText('and again, last');
   // Renumbered against what is left, so #1 is still the first thing the agent will read.
   await expect(load.nth(1)).toContainText('#1');
+  // The instruction line drops the same way, and takes every attached instruction with it — the
+  // line draws them as one sentence, so it goes as one.
+  await load.first().locator('.xfer-load-drop').click();
+  await expect(load).toHaveCount(1);
+  await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
 
 // The draft and the addressed agent are held per conversation for the life of the page. A
@@ -4668,4 +4675,39 @@ test('a deleted conversation takes its draft and its addressed agent with it', a
   expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([1, 1]);
   await page.evaluate(() => { convViewId = 'c1'; deleteConversation(); });
   expect(await page.evaluate(() => [convComposerDrafts.size, convComposerTargets.size])).toEqual([0, 0]);
+});
+
+// The strip is part of the message, so it deletes the way the message does. Chip fields have
+// answered a backspace at the start of the box this way for twenty years, and the alternative is
+// aiming at a 20px × on a phone for something the thumb is already resting next to.
+test('backspace at the start of the box drops what was loaded last', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+  await attachMode(page);
+  await pickBubble(page, 'the other pane spoke first');
+  await pickBubble(page, 'and again, last');
+  await page.locator('#xferRow .xfer-chip').first().click();      // @review
+  const load = page.locator('#xferLoad .xfer-load-line');
+  await expect(load).toHaveCount(3);
+  // Typed text is text: the caret is not at the start, so backspace is a backspace.
+  await page.locator('#convInput').fill('mine');
+  await page.locator('#convInput').press('Backspace');
+  await expect(page.locator('#convInput')).toHaveValue('min');
+  await expect(load).toHaveCount(3);
+  // At the start of the box it takes the last thing loaded, newest first — the picks, then the
+  // instruction under them.
+  await page.evaluate(() => document.getElementById('convInput').setSelectionRange(0, 0));
+  await page.locator('#convInput').press('Backspace');
+  await expect(load).toHaveCount(2);
+  await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(1);
+  await page.locator('#convInput').press('Backspace');
+  await page.locator('#convInput').press('Backspace');
+  await expect(page.locator('#xferLoad')).toBeHidden();
+  await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
+  // And with nothing left loaded it is a backspace again, on text it did not touch.
+  await expect(page.locator('#convInput')).toHaveValue('min');
+  await page.locator('#convInput').press('Backspace');
+  await expect(page.locator('#convInput')).toHaveValue('min');
 });

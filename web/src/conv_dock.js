@@ -231,12 +231,15 @@
       if (optMenuOpen()) closeDockMenu('optMenu'); else openOptMenu();
     }
 
-    // The instruction is appended as its own line. A prompt is a new instruction, not an edit to
-    // whatever sentence happens to hold the caret.
+    // The instruction goes on top, as its own line, and the caret stays at the end of the message.
+    // It is what the agent reads first — the frame the rest of the message is written inside — and
+    // it is what the attached form does too, so the two modes send the same thing in the same
+    // order. A prompt is a new instruction, never an edit to whatever sentence holds the caret.
     function insertDockShortcut(i) {
       const input = document.getElementById('convInput');
       const text = agentSlash(SHORTCUTS[i].text, agentOf(dockAddressed()));
-      input.value += input.value && !input.value.endsWith('\n') ? '\n' + text : text;
+      const body = input.value;
+      input.value = body ? text + '\n' + body.replace(/^\n+/, '') : text;
       input.selectionStart = input.selectionEnd = input.value.length;
       autoGrow(input);
       syncConvCursor();
@@ -257,6 +260,34 @@
       // open, it would keep showing the ticks it had when it opened.
       if (dockMenuOpen()) openDockMenu();
       if (window.cue) cue('tick');
+    }
+
+    // Every attached instruction at once, from the one line that draws them all as one sentence.
+    function clearDockChips() {
+      if (!dockPicks.length) return;
+      dockPicks = [];
+      renderConvDock();
+      if (dockMenuOpen()) openDockMenu();
+      if (window.cue) cue('tick');
+    }
+
+    // The strip is part of the message, so it deletes the way the message does: a backspace with
+    // the caret at the very start of the box takes the last thing loaded, newest first. The same
+    // gesture a field full of chips answers, and the reason the strip sits directly above the box
+    // rather than above the address row — what backspace reaches has to be what is nearest to it.
+    function dropLastDockLoad() {
+      const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'));
+      if (picked.length) {
+        toggleConvDockPick(Number(picked[picked.length - 1].dataset.i));
+        return true;
+      }
+      if (!dockFill() && dockPicks.length) {
+        dockPicks.pop();
+        renderConvDock();
+        if (dockMenuOpen()) openDockMenu();
+        return true;
+      }
+      return false;
     }
 
     function toggleConvDockPick(i) {
@@ -356,8 +387,15 @@
       const lead = dockFill() ? '' : dockInstruction(dockAddressed());
       const picked = Array.from(document.querySelectorAll('#convViewThread .conv-msg.picked'));
       if (!lead && !picked.length) return '';
+      // The way out first, at the start of every line: it is the same control on each of them, and
+      // a column of them down the left is one target to aim at rather than one that moves with the
+      // length of the text beside it.
+      const drop = (call, label) =>
+        `<button class="xfer-load-drop" onclick="${call}" ` +
+        `title="Leave this out" aria-label="Leave ${label} out">×</button>`;
       const at = lead
         ? `<div class="xfer-load-line at" title="${escapeHtml(lead)}">` +
+          drop('clearDockChips()', 'the instruction') +
           `<span class="xfer-load-tag">@</span>` +
           `<span class="xfer-load-text">${escapeHtml(lead.replace(/\s*\n\s*/g, ' · '))}</span></div>`
         : '';
@@ -365,14 +403,13 @@
       // reads them off the DOM rather than off the pick set.
       const rows = picked.map((el, n) => {
         const text = (el.dataset.text || '').replace(/\s+/g, ' ').trim();
+        // Taking one back out from here rather than only from the bubble: the strip is where the
+        // reader is looking when they notice they picked the wrong one, and the bubble it names
+        // may have scrolled out of the thread by then.
         return `<div class="xfer-load-line" title="${escapeHtml(text)}">` +
+          drop(`toggleConvDockPick(${Number(el.dataset.i)})`, `message ${n + 1}`) +
           `<span class="xfer-load-tag">#${n + 1}</span>` +
-          `<span class="xfer-load-text">${escapeHtml(text)}</span>` +
-          // Taking one back out from here rather than only from the bubble: the strip is where the
-          // reader is looking when they notice they picked the wrong one, and the bubble it names
-          // may have scrolled out of the thread by then.
-          `<button class="xfer-load-drop" onclick="toggleConvDockPick(${Number(el.dataset.i)})" ` +
-          `title="Leave this message out" aria-label="Leave message ${n + 1} out">×</button></div>`;
+          `<span class="xfer-load-text">${escapeHtml(text)}</span></div>`;
       }).join('');
       return at + rows;
     }
@@ -892,6 +929,14 @@
     // Ctrl/Cmd+Enter sends, Enter writes a newline. Never a bare Enter: there is no shell behind
     // this composer to make a line end at one, and the message being written is a paragraph.
     function convInputKey(e) {
+      // Held down, a backspace that ran off the end of the text would eat the whole load in a
+      // second. One per press, and only with nothing selected — a selection is text to delete.
+      if (e.key === 'Backspace' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey
+        && e.target.selectionStart === 0 && e.target.selectionEnd === 0
+        && dropLastDockLoad()) {
+        e.preventDefault();
+        return;
+      }
       if (enterAction(e, {enterSends: false, shell: false}) !== 'send') return;
       e.preventDefault();
       convSend();
