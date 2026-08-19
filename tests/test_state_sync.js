@@ -328,6 +328,21 @@ test('a close before an ack retries the in-flight edit after reconnecting', () =
   assert.deepEqual(puts.map(p => [p.rev, p.body]), [[1, 'v1'], [2, 'v1']]);
 });
 
+test('replacing a socket retries its unacknowledged write', () => {
+  const s = boot({herdr_pairs: 'v0'});
+  const replacementSent = [];
+  const replacement = {send: d => replacementSent.push(JSON.parse(d))};
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();                           // old socket accepted put; its ack was lost
+  s.stateSyncOpen(replacement);       // old close is stale and intentionally ignored
+  s.stateSyncReceive(answer({pairs: doc(2, 'v0')}));
+  assert.deepEqual(replacementSent.filter(m => m.type === 'state_put'),
+                   [{type: 'state_put', name: 'pairs', rev: 2, body: 'v1'}]);
+});
+
 test('a write goes to the socket it learned its revision from, not the global one', () => {
   // connect() assigns the new socket before it opens, so between those two moments the global is
   // a CONNECTING socket that cannot take a frame — and the revision being quoted belongs to the

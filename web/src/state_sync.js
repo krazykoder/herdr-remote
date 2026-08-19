@@ -91,11 +91,16 @@
 
     function stateSyncOpen(socket = ws) {
       stateBindUnload();
+      // Anything the previous socket accepted but never acknowledged, retried here — the one place
+      // that runs for every way a socket can be replaced. A socket that closed came through
+      // stateSyncClose; a socket replaced while still open (a manual reconnect) produces a close
+      // event that arrives late and is dropped as stale, so open is all that is left.
+      for (const name of stateInFlight) stateDirty.add(name);
+      stateInFlight.clear();
       stateSocket = socket;
       stateMode = 'pulling';
       stateSeeded = false;
       stateRev = {};
-      stateInFlight.clear();
       try { stateSocket.send(JSON.stringify({ type: 'state_get' })); }
       catch (e) { stateMode = 'off'; }
     }
@@ -106,11 +111,10 @@
       if (socket && socket !== stateSocket) return;
       stateMode = 'idle';
       for (const name in stateTimers) { clearTimeout(stateTimers[name]); delete stateTimers[name]; }
-      // `send()` accepting a frame is not an ack: the socket may close after the browser handed
-      // it off but before the relay replied. Keep those documents dirty, so the next state_get
-      // learns its revision and retries rather than silently dropping the local edit.
-      for (const name of stateInFlight) stateDirty.add(name);
-      stateInFlight.clear();
+      // `send()` accepting a frame is not an ack: the socket may close after the browser handed it
+      // off but before the relay replied. Those documents stay in flight — deliberately not
+      // cleared here — and stateSyncOpen turns them back into dirty when a socket returns. While
+      // there is no socket the set blocks nothing: every flush is already gated on `live`.
       stateSocket = null;
     }
 

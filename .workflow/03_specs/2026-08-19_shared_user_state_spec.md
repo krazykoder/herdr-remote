@@ -188,7 +188,10 @@ final state.
 
 **A handed-off frame is not an ack.** `send()` returning only means the browser took the bytes; the
 socket may close before the relay replies. So on close, every document still in flight goes back to
-dirty, and the next `state_get` learns its revision and retries. A `send()` that throws — a socket
+dirty, and the next `state_get` learns its revision and retries. Opening a socket does the same
+before it sends `state_get`: a socket replaced while still open — a manual reconnect — produces a
+close event that arrives late and is correctly ignored as stale by §3.1, so the open is the only
+place left where its unacknowledged writes can be recovered. A `send()` that throws — a socket
 that closed between the timer firing and the frame leaving — is the same case reached by the other
 door, and re-marks dirty too. Neither path may drop the edit silently; that is the loss this whole
 section exists to prevent.
