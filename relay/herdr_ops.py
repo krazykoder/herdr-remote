@@ -106,11 +106,19 @@ async def send(update_or_chat, ctx, text: str, mono: bool = False, **kwargs):
 
 
 async def send_html(update_or_chat, ctx, markup: Html, **kwargs):
-    """Send pre-escaped markup. Not chunked: a split would land inside a tag, and every caller is
-    a short card that this module composed. Preview off — the link is for tapping, not unfurling.
+    """Send pre-escaped markup. Preview off — the link is for tapping, not unfurling.
+
+    Not chunked, and not truncated either. Every caller composes a short card, so anything over the
+    limit is a composition bug — and cutting markup at a byte count lands inside a tag, which
+    Telegram rejects outright. Losing the whole message to save the tail is the wrong trade, so an
+    oversized card falls back to the escaped, chunked, plain-text path instead.
     """
+    text = scrub(markup)
+    if len(text) > tg_util.MAX_MESSAGE:
+        log.warning("markup too long for one message (%d chars) — sending as text", len(text))
+        return await send(chat_of(update_or_chat), ctx, str(text))
     await ctx.bot.send_message(
-        chat_id=chat_of(update_or_chat), text=scrub(markup)[:tg_util.MAX_MESSAGE],
+        chat_id=chat_of(update_or_chat), text=text,
         parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kwargs)
 
 
@@ -693,7 +701,12 @@ async def relay_restart_flow(update: Update, ctx):
             if TUNNEL_URL_FILE.exists() and TUNNEL_URL_FILE.stat().st_mtime > time.time() - 120:
                 break
             await asyncio.sleep(1)
-        return Html(f"{tg_util.pre(scrub(result))}\n\n{tunnel_card()}")
+        # Capped before it is wrapped, not after: `unit_action` hands back launchctl's own output,
+        # and the tunnel card underneath is the part worth keeping.
+        head = scrub(result)
+        if len(head) > 2000:
+            head = head[:2000] + "\n… truncated"
+        return Html(f"{tg_util.pre(head)}\n\n{tunnel_card()}")
 
     await ask_confirm(update, ctx, "restart the relay + tunnel", action_then_link)
 
