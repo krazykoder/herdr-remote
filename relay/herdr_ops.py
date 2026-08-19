@@ -29,6 +29,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+from urllib.parse import quote
 import urllib.request
 from pathlib import Path
 
@@ -77,15 +78,38 @@ def scrub(value) -> str:
 
 # --- Replying ---
 
+class Html(str):
+    """Markup this module built and escaped itself.
+
+    Everything else is escaped on the way out, because log lines, pane output and command stdout
+    are not ours to trust. This type is the narrow exception, and the only way to say so — so it
+    must never wrap anything that came from a subprocess or a file's contents.
+    """
+
+
+def chat_of(update_or_chat) -> int:
+    return (update_or_chat.effective_chat.id if isinstance(update_or_chat, Update)
+            else update_or_chat)
+
+
 async def send(update_or_chat, ctx, text: str, mono: bool = False, **kwargs):
     """Every outbound message goes through here: scrubbed, then split to Telegram's limit."""
-    chat_id = (update_or_chat.effective_chat.id if isinstance(update_or_chat, Update)
-               else update_or_chat)
+    if isinstance(text, Html):
+        return await send_html(update_or_chat, ctx, text, **kwargs)
     for part in tg_util.chunks(scrub(text)):
         await ctx.bot.send_message(
-            chat_id=chat_id,
+            chat_id=chat_of(update_or_chat),
             text=tg_util.pre(part) if mono else html.escape(part),
             parse_mode=ParseMode.HTML, **kwargs)
+
+
+async def send_html(update_or_chat, ctx, markup: Html, **kwargs):
+    """Send pre-escaped markup. Not chunked: a split would land inside a tag, and every caller is
+    a short card that this module composed. Preview off — the link is for tapping, not unfurling.
+    """
+    await ctx.bot.send_message(
+        chat_id=chat_of(update_or_chat), text=scrub(markup)[:tg_util.MAX_MESSAGE],
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kwargs)
 
 
 def authorized(update: Update) -> bool:
@@ -156,33 +180,60 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # --- Tunnel link ---
 
-def tunnel_block() -> str:
-    """What /relay url and a finished /relay restart answer with. Carries the relay token, which
-    is exactly why this bot's chat is allowlisted."""
+NO_TUNNEL = "No tunnel URL recorded (named mode, or the tunnel is not up)."
+
+
+def tunnel_wss() -> str:
+    """The recorded address as a wss:// URL, or "" if there is none."""
     if not TUNNEL_URL_FILE.exists():
-        return "No tunnel URL recorded (named mode, or the tunnel is not up)."
+        return ""
     url = TUNNEL_URL_FILE.read_text(encoding="utf-8").strip()
-    if not url:
-        return "No tunnel URL recorded."
-    wss = url.replace("https://", "wss://", 1)
-    reach = "reachable"
+    return url.replace("https://", "wss://", 1) if url else ""
+
+
+def tunnel_reach(wss: str) -> str:
+    url = wss.replace("wss://", "https://", 1)
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
-            if response.status >= 500:
-                reach = f"http {response.status}"
+            return f"http {response.status}" if response.status >= 500 else "reachable"
+    except urllib.error.HTTPError as exc:
+        # A 4xx is the relay answering — GET / on the API-only external listener is a 404, and
+        # urlopen raises on it. Reporting that as "not answering" called a healthy tunnel dead.
+        return "reachable" if exc.code < 500 else f"http {exc.code}"
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        reach = f"not answering ({type(exc).__name__})"
+        return f"not answering ({type(exc).__name__})"
 
-    lines = [f"Tunnel:  {wss}   ({reach})"]
-    relay_token = os.environ.get("HERDR_RELAY_TOKEN", "")
-    if relay_token:
-        from urllib.parse import quote
-        app = os.environ.get("HERDR_APP_URL", "https://eagerkoder.github.io/mini/")
-        lines.append(f"Open:    {app}?relay={quote(wss, safe='')}&token={relay_token}")
-    age = int(time.time() - TUNNEL_URL_FILE.stat().st_mtime)
-    lines.append(f"Recorded {sup.uptime({'started_at': TUNNEL_URL_FILE.stat().st_mtime})} ago"
-                 if age > 5 else "Recorded just now")
-    return "\n".join(lines)
+
+def tunnel_age() -> str:
+    stat = TUNNEL_URL_FILE.stat()
+    return ("recorded just now" if time.time() - stat.st_mtime <= 5
+            else f"recorded {sup.uptime({'started_at': stat.st_mtime})} ago")
+
+
+def tunnel_status() -> str:
+    """One plain line, for the monospace /health table."""
+    wss = tunnel_wss()
+    return f"Tunnel:  {wss}   ({tunnel_reach(wss)})" if wss else NO_TUNNEL
+
+
+def tunnel_card() -> "Html":
+    """What /relay_url and a finished /relay_restart answer with.
+
+    No token. The link used to carry HERDR_RELAY_TOKEN, and scrub() redacted it on the way out —
+    the link arrived broken. Sending the token for real is the wrong trade anyway: only the
+    hostname rotates, the token is stable and already in the phone's localStorage, so `?relay=`
+    alone is enough to reconnect and nothing in this chat is a credential.
+
+    The address goes out as <code> — tap to copy on a phone — and the app link as a real anchor.
+    """
+    wss = tunnel_wss()
+    if not wss:
+        return Html(html.escape(NO_TUNNEL))
+    app = os.environ.get("HERDR_APP_URL", "https://eagerkoder.github.io/mini/")
+    link = f"{app}?relay={quote(wss, safe='')}"
+    return Html(f"<b>Tunnel</b> — {html.escape(tunnel_reach(wss))}, {html.escape(tunnel_age())}\n"
+                f"<code>{html.escape(wss)}</code>\n"
+                f'<a href="{html.escape(link, quote=True)}">Open in the app</a>')
 
 
 # --- Streaming ---
@@ -469,7 +520,7 @@ async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     lines = [service_line(name) for name in CFG.services] or ["(no services configured)"]
     lines.append("")
-    lines.append(tunnel_block())
+    lines.append(tunnel_status())
     lines.append("")
     try:
         disk = subprocess.run(["df", "-h", "/"], capture_output=True, text=True, timeout=3)
@@ -541,7 +592,7 @@ async def service_action(svc, action: str) -> str:
 
 
 async def relay_url_reply(update: Update, ctx):
-    await send(update, ctx, tunnel_block(), mono=True)
+    await send_html(update, ctx, tunnel_card())
 
 
 async def relay_restart_flow(update: Update, ctx):
@@ -564,7 +615,7 @@ async def relay_restart_flow(update: Update, ctx):
             if TUNNEL_URL_FILE.exists() and TUNNEL_URL_FILE.stat().st_mtime > time.time() - 120:
                 break
             await asyncio.sleep(1)
-        return f"{result}\n\n{tunnel_block()}"
+        return Html(f"{tg_util.pre(scrub(result))}\n\n{tunnel_card()}")
 
     await ask_confirm(update, ctx, "restart the relay + tunnel", action_then_link)
 

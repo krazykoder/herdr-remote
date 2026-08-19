@@ -159,9 +159,9 @@ set +a
 HERDR_OPS_TG_TOKEN="<token>" uv run relay/herdr_ops.py
 ```
 
-Sourcing `secrets.env` is what puts `HERDR_RELAY_TOKEN` in the bot's environment. Without it,
-`/relay_url` still gives the `wss://` address but omits the one-tap `Open:` link — that link
-carries the token, so it can only be built where the token is known.
+Sourcing `secrets.env` is what puts `HERDR_RELAY_TOKEN` in the bot's environment — not for the
+link, which never carries it, but so `scrub()` can recognise the token and redact it out of any log
+line or command output on its way to Telegram.
 
 ## 5. Verify
 
@@ -174,7 +174,7 @@ In order. Each row is pass/fail.
 | `/df` | Same as `/run df`. Registry entries are commands in their own right |
 | `/whoami` | Your id, `allowlisted` |
 | `/health` | `up   relay      tcp 8375 open`, a tunnel line, disk free, load average |
-| `/relay_url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6) |
+| `/relay_url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6). After one: a card with the `wss://` address as tap-to-copy text and an **Open in the app** link — no token in it |
 | `/run uptime` | Load averages, `[exit 0]` |
 | `/git_log ~/code/python/herdr-remote 5` | Five commits — the hyphen in `git-log` becomes an underscore, because Telegram command names cannot contain one |
 | `/run git-log ~/code/python/herdr-remote 5` | The same thing, the long way |
@@ -211,8 +211,9 @@ Then, from Telegram:
 ```
 
 Expect, within ~30s: `relay stopped (SIGTERM).`, `relay started (pid N).`, `health: tcp 8375 open`,
-then a block with a **new** `wss://` hostname and an `Open:` link. Tap it on the phone — the app
-should connect without typing anything.
+then a card with a **new** `wss://` hostname and an **Open in the app** link. Tap it on the phone —
+the app should connect. The link carries no token: the phone already stored one on first setup, and
+only the hostname rotates. A phone that has never connected still needs the token entered once.
 
 Then confirm the process-group behaviour, which is the part a pid-only kill would get wrong:
 

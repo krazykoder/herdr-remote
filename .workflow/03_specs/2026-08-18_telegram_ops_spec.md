@@ -239,18 +239,31 @@ auto-restart in v1 — the bot reports, the human decides. Transitions only; nev
 ## 7. Tunnel link block
 
 `start.sh` writes `$CONFIG_DIR/tunnel.url` (single line, the `https://` form) whenever it learns
-one, and removes it on exit. `/relay url` and a successful `/relay restart` reply with:
+one, and removes it on exit. It is read two ways.
+
+**`/relay_url`, and a successful `/relay_restart`** — an HTML card, so the address can be tapped
+to copy and the app can be opened in one tap:
 
 ```
-Tunnel:  wss://<host>.trycloudflare.com   (reachable | not answering)
-Open:    https://…/mini/?relay=<enc>&token=<token>
+Tunnel — reachable, recorded 2m ago
+<code>wss://<host>.trycloudflare.com</code>
+<a href="https://…/mini/?relay=<enc>">Open in the app</a>
 ```
+
+**`/health`** — one plain line inside the monospace table, no link: `Tunnel:  wss://…  (reachable)`.
 
 - No file → `No tunnel URL recorded (named mode, or the tunnel is not up).`
 - File older than the relay's start time → say it is stale rather than serve a dead hostname.
-- Reachability is a `GET https://<host>/` with a 5 s timeout; < 500 counts.
-- The `Open:` line is only emitted when `HERDR_RELAY_TOKEN` is known — it carries the token, which
-  is exactly why it goes to the ops chat and nowhere else.
+- Reachability is a `GET https://<host>/` with a 5 s timeout; **any** status < 500 counts,
+  including the 404 the API-only external listener answers `/` with.
+- **No token in the link.** It used to carry `HERDR_RELAY_TOKEN`, and §8's scrub redacted it on the
+  way out — the link arrived broken. Sending it for real is the wrong trade regardless: only the
+  hostname rotates, the token is stable and already in the phone's `localStorage`, and `?relay=`
+  alone updates the address while leaving the stored token alone (`web/src/settings.js`). So
+  nothing in this chat is a credential.
+- Markup is only ever composed here, never interpolated from output. The `Html` marker type is the
+  single way a caller declares "already escaped"; `send()` routes it to `send_html()` unchunked,
+  and everything without it is escaped as before.
 
 ---
 
