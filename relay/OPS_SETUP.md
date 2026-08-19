@@ -22,6 +22,35 @@ cd /Users/towshif/code/python/herdr-remote/.claude/worktrees/feat+telegram-ops
 
 ---
 
+# The short way
+
+Get a token from `@BotFather` (§1 below, one minute), then:
+
+```bash
+./relay/ops-setup.sh
+```
+
+It validates the token against Telegram rather than a regex, refuses the agent bot's token (the
+`409 Conflict` mistake), finds your chat id by watching for the message you send the bot, writes an
+`ops.json` whose ports match what this machine actually runs, saves the token to `secrets.env` at
+mode 0600, and validates the result. Re-running it is safe: an existing registry is backed up, and
+`[k]` updates only the chat id, leaving your command allowlist alone.
+
+Then start the bot by hand — there is no service unit, by choice
+([deferred](../.workflow/03_specs/2026-08-18_telegram_ops_deferred.md) item 1):
+
+```bash
+set -a; source ~/.config/herdr-remote/config.env; source ~/.config/herdr-remote/secrets.env; set +a
+uv run relay/herdr_ops.py
+```
+
+Skip to [§5 Verify](#5-verify). The sections below are the same thing done by hand — read them if
+the script fails, or to know what it wrote.
+
+---
+
+# The long way
+
 ## 1. Create the bot
 
 It must be a **second** bot, not the one `herdr_telegram.py` uses. Two processes long-polling one
@@ -200,16 +229,18 @@ same pid must still be listed, and no second relay started — the bot adopts wh
 
 ## Keeping it running
 
-There is no service unit yet (see [deferred](../.workflow/03_specs/2026-08-18_telegram_ops_deferred.md)).
-For manual testing, a terminal or a tmux pane is fine. Detached:
+**Started by hand, on purpose.** No launchd plist, no systemd unit — a new user runs
+`ops-setup.sh` once and then starts the bot themselves. A terminal or a tmux pane is the supported
+way. Detached, if you want the terminal back:
 
 ```bash
 nohup env HERDR_OPS_TG_TOKEN="<token>" uv run relay/herdr_ops.py \
   >> ~/Library/Logs/herdr-remote/ops.log 2>&1 &
 ```
 
-Nothing restarts it if it crashes or the machine reboots. That is the first deferred item, and the
-one worth doing before relying on this.
+The trade-off to know: nothing restarts the bot if it crashes or the machine reboots, so after a
+reboot the recovery channel is only there once you start it. Revisit when that actually bites —
+[deferred](../.workflow/03_specs/2026-08-18_telegram_ops_deferred.md) item 1.
 
 ## Troubleshooting
 

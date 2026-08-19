@@ -5,26 +5,29 @@
 [plan](../04_implementation_plans/2026-08-18_telegram_ops_plan.md) ·
 [setup](../../relay/OPS_SETUP.md)
 
-Each item below was a deliberate omission, not an oversight. The order is the order to build them
-in: item 1 is the one that stands between "works when I run it" and "works when I need it".
+Each item below was a deliberate omission, not an oversight. Item 1 was reconsidered on
+2026-08-18 and **closed as "not for now"**: setup is `relay/ops-setup.sh` plus a manual start, and
+that is the supported shape rather than a gap waiting to be filled.
 
 ---
 
 ## 1. A service unit for the ops bot itself — `com.herdr-remote.ops`
 
-**What is missing.** `install-service.sh` writes launchd plists / systemd units for the relay, the
-tunnel and the agent bot. It writes nothing for the ops bot, so today it runs from a terminal and
-nothing restarts it after a crash or a reboot.
+**Decided 2026-08-18: not doing this for now.** The supported path is `relay/ops-setup.sh` once,
+then start the bot by hand. No launchd plist, no systemd unit.
 
-**Why deferred.** Supervising a process is a separate, separately-testable change from writing it,
-and shipping the bot runnable by hand first meant the manual E2E could run without touching an
-installer that already works for three other services. It also keeps the risky edit — a script that
-installs launchd units on the user's machine — out of the commit that introduces 1,000 lines of new
-code.
+**What that costs.** Nothing restarts the bot after a crash or a reboot. The failure that matters:
+the machine reboots while you are away, and the recovery channel is not there when you reach for
+it — which is the one situation the bot exists for.
 
-**Build it when:** you rely on the bot. Which is the first time the relay dies while you are away
-from the machine — precisely the case the bot exists for, and precisely the case where "it was
-running in a terminal I closed" makes it useless.
+**Why that is acceptable today.** Supervising a process is a separate, separately-testable change,
+and an installer that writes launchd units is the riskiest thing in this feature to get wrong.
+Running it by hand also means every session is one you started deliberately, which is the right
+default while the Telegram round trip is still being proven.
+
+**Build it when:** you have gone to use the bot and found it not running. That is the signal — not
+before. `install-service.sh` already carries `HERDR_OPS_TG_TOKEN` through its `secrets.env` rewrite,
+so the token side is ready whenever the unit is written.
 
 **Shape.** A fourth label alongside `LABEL_RELAY` / `LABEL_TUNNEL` / `LABEL_TELEGRAM`, with
 `KeepAlive` true and `RunAtLoad` true, the token read from `secrets.env` like the others. One

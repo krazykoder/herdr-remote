@@ -139,10 +139,13 @@ relay/start.sh
 HERDI_TG_TOKEN="..." HERDI_TG_CHAT_ID="..." uv run relay/herdr_telegram.py
 
 # Ops bot — a *second* @BotFather bot. Two pollers on one token get 409 Conflict, and machine
-# control does not belong in the chat where agents are approved. Setup: relay/OPS_SETUP.md
-cp relay/ops.example.json ~/.config/herdr-remote/ops.json   # then add your chat id
-uv run relay/herdr_ops.py --check                            # validate the registry, no token needed
-HERDR_OPS_TG_TOKEN="..." uv run relay/herdr_ops.py
+# control does not belong in the chat where agents are approved.
+relay/ops-setup.sh                  # token, chat id, registry, secrets. Re-runnable. See relay/OPS_SETUP.md
+uv run relay/herdr_ops.py --check   # validate the registry alone, no token needed
+
+# Started by hand, by choice — no launchd/systemd unit for this one.
+set -a; source ~/.config/herdr-remote/config.env; source ~/.config/herdr-remote/secrets.env; set +a
+uv run relay/herdr_ops.py
 
 # Terminal TUI
 uv run relay/herdr_tui.py
