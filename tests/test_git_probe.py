@@ -356,6 +356,27 @@ class RelayWiringTest(unittest.TestCase):
         self.assertIsNone(self.probe({"cwd": "/work", "host": "local"}))
         self.assertEqual(self.calls, [], "a switched-off feature runs no subprocesses")
 
+    def test_the_branch_is_remembered_so_a_snapshot_can_carry_it(self):
+        # The app shows the addressed agent's branch beside its composer, and herdr does not report
+        # one. This is where it comes from: what the probe already saw, kept per pane. Asking git
+        # per poll instead is the cost this whole feature was designed to avoid.
+        self.addCleanup(self.relay.pane_branch.clear)
+        self.relay.pane_branch.clear()
+        self.probe({"pane_id": "%1", "cwd": "/work", "host": "local"})
+        self.assertEqual(self.relay.pane_branch, {"%1": "work"})
+
+    def test_a_pane_outside_a_checkout_is_not_remembered_as_being_on_a_branch(self):
+        self.addCleanup(self.relay.pane_branch.clear)
+        self.relay.pane_branch.clear()
+
+        class NoRepo:
+            def probe(inner, cwd, remote=None, since_sha=None, with_commits=False):  # noqa: N805
+                return None
+
+        self.relay.git_cache = NoRepo()
+        self.probe({"pane_id": "%1", "cwd": "/work", "host": "local"})
+        self.assertEqual(self.relay.pane_branch, {})
+
 
 class TextOutputTest(unittest.TestCase):
     """What an agent reads in its own terminal, via relay/conv_query.py."""

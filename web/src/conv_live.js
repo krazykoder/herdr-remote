@@ -374,12 +374,55 @@
       return null;
     }
 
+    // --- The branch the addressed agent is on, as a standing badge ---
+    //
+    // The rules above answer "when did this change"; this answers "where am I now", which is the
+    // question a reader has with their thumb over the composer. Per *agent* and not per view: a
+    // conversation's members can be in different checkouts on different branches, so this follows
+    // whoever the composer is addressing rather than the conversation as a whole.
+    //
+    // The branch rides on the snapshot, filled by the relay's turn-end probe — so a pane that has
+    // not ended a turn since this relay started has none, and the badge is simply not there.
+
+    function branchOf(pane) {
+      return (pane && pane.branch) || '';
+    }
+
+    function syncBranchBadge(id, pane) {
+      const box = document.getElementById(id);
+      if (!box) return;
+      const branch = branchOf(pane);
+      // innerHTML only when it changed: this runs on every snapshot, and rewriting a node under a
+      // finger is how a tap lands on nothing.
+      if (box.dataset.branch !== branch) {
+        box.dataset.branch = branch;
+        box.innerHTML = branch ? `⎇ ${escapeHtml(branch)}` : '';
+        box.title = branch ? `${branch} — the branch this agent's work is landing on` : '';
+      }
+      box.hidden = !branch;
+    }
+
+    // Both badges from wherever the caller is. The pane view addresses the pane it has open; the
+    // conversation addresses whichever member the dock is pointed at.
+    function syncBranchBadges() {
+      const of = id => (typeof paneOf === 'function' && id) ? paneOf(id) : null;
+      syncBranchBadge('paneBranch', of(typeof activePane === 'undefined' ? '' : activePane));
+      syncBranchBadge('convBranch', of(typeof dockAddressed === 'function' ? dockAddressed() : ''));
+    }
+
     const convGitRule = (cls, body) => `<div class="conv-rule git ${cls}">${body}</div>`;
 
     // What goes above and below one entry, and the running state that makes it possible to tell.
     // `seen` is per member key: a joint thread is several panes in several directories, and one of
     // them moving to another branch says nothing about the others.
-    function convGitRules(e, seen) {
+    //
+    // The two halves are not the same kind of thing, and they are drawn differently on purpose.
+    // `before` is a rule across the thread: it announces the state the *next* bubble is in, which
+    // is what a divider is for. `after` belongs to the bubble above it — the turn said it was
+    // finished and these are what it finished — so it takes that bubble's width and side and hangs
+    // under it as badges. `side` is the bubble's own alignment class, passed in because the view
+    // owns the layout and this file owns the record's shape.
+    function convGitRules(e, seen, side) {
       const none = {before: '', after: ''};
       if (!e || (!e.branch && !e.commit)) return none;
       const key = e.key || '';
@@ -396,10 +439,10 @@
       if (convCommitsOn()) {
         const commits = convCommitsFor(e, was.commit);
         if (commits && commits.length) {
-          after = convGitRule('commits', commits.map(c =>
+          after = `<div class="conv-commits${side || ''}">` + commits.map(c =>
             `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
-            `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code> ` +
-            `${escapeHtml(c.subject || '')}</span>`).join(''));
+            `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code>` +
+            `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;
         }
       }
       // The branch is carried forward when a later turn has none: a pane that stepped out of the

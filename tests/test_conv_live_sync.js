@@ -27,8 +27,21 @@ const src = f => fs.readFileSync(path.join(__dirname, '..', 'web', 'src', f), 'u
 const sent = [];
 const store = {herdr_conv_live: 'on'};
 
+// The two badge nodes, as the app's `document` would hand them over. Kept out here so a test can
+// read what the sync wrote into them.
+const nodes = {};
+const fakeNode = () => ({dataset: {}, innerHTML: '', title: '', hidden: false});
+
+// The roster the badge resolves a pane id against, and who the composer is pointed at.
+const panes = {};
+let addressed = '';
+
 const ctx = vm.createContext({
   console,
+  document: {getElementById: id => (nodes[id] || (nodes[id] = fakeNode()))},
+  paneOf: id => panes[id] || null,
+  dockAddressed: () => addressed,
+  activePane: '',
   localStorage: {getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }},
   ws: {readyState: 1, send: s => sent.push(JSON.parse(s))},
   renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => {}, showToast: () => {},
@@ -42,11 +55,13 @@ const ctx = vm.createContext({
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
                'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
+               'syncBranchBadge', 'syncBranchBadges',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
        convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
+       syncBranchBadge, syncBranchBadges,
        CONV_LIVE_ROWS, CONV_LIVE_EVERY} = ctx.__out;
 
 const KEY_A = JSON.stringify(['local', '%1', 'claude', '/work/a']);
@@ -339,7 +354,10 @@ test('a stored list is drawn without asking the relay for it', () => {
     branch: 'main', commit: 'b'.repeat(40),
     commits: [{sha: 'c'.repeat(40), subject: 'split the tokenizer out'}],
   }), seen).after;
-  assert.match(after, /conv-rule git commits/);
+  // A strip attached to the bubble, not a rule across the thread: these belong to the turn above
+  // them rather than dividing it from the next one.
+  assert.match(after, /class="conv-commits/);
+  assert.ok(!/conv-rule/.test(after), 'a divider would claim these sit between two messages');
   assert.match(after, /<code>cccccccc<\/code>/);
   assert.match(after, /split the tokenizer out/);
   assert.match(after, new RegExp(`title="${'c'.repeat(40)}"`));
@@ -414,4 +432,77 @@ test('the toggle is remembered', () => {
   assert.equal(convCommitsOn(), true);
   toggleConvCommits();
   assert.equal(store.herdr_conv_commits, 'off');
+});
+
+
+// --- The standing branch badge ---
+//
+// It answers "where is this agent working now", which is not the question the thread's branch
+// rules answer, and it is per agent rather than per view: a conversation's members can be in two
+// checkouts on two branches, so a badge that followed the conversation would be wrong for one of
+// them half the time.
+
+test('the badge shows the branch and disappears when there is none', () => {
+  syncBranchBadge('paneBranch', {pane_id: '%1', branch: 'feat/state-sync'});
+  assert.match(nodes.paneBranch.innerHTML, /feat\/state-sync/);
+  assert.equal(nodes.paneBranch.hidden, false);
+
+  // A pane outside a checkout, and a pane the relay has not probed since it started, are the same
+  // thing to a reader: nothing to say, so nothing on screen.
+  syncBranchBadge('paneBranch', {pane_id: '%1'});
+  assert.equal(nodes.paneBranch.hidden, true);
+  assert.equal(nodes.paneBranch.innerHTML, '');
+
+  syncBranchBadge('paneBranch', null);
+  assert.equal(nodes.paneBranch.hidden, true);
+});
+
+test('an unchanged branch does not rewrite the node', () => {
+  syncBranchBadge('paneBranch', {pane_id: '%1', branch: 'main'});
+  const written = nodes.paneBranch.innerHTML;
+  nodes.paneBranch.innerHTML = 'TOUCHED';        // stands in for the DOM node being replaced
+  syncBranchBadge('paneBranch', {pane_id: '%1', branch: 'main'});
+  assert.equal(nodes.paneBranch.innerHTML, 'TOUCHED',
+               'this runs on every snapshot; rewriting an unchanged badge is churn under a finger');
+  nodes.paneBranch.innerHTML = written;
+});
+
+test('the conversation badge follows the addressed member, not the conversation', () => {
+  panes['%1'] = {pane_id: '%1', branch: 'feat/one'};
+  panes['%2'] = {pane_id: '%2', branch: 'feat/two'};
+  ctx.activePane = '%1';
+
+  addressed = '%2';
+  syncBranchBadges();
+  assert.match(nodes.convBranch.innerHTML, /feat\/two/);
+  // The two views are answering about two different agents at the same time, which is the whole
+  // reason this is per agent.
+  assert.match(nodes.paneBranch.innerHTML, /feat\/one/);
+
+  addressed = '%1';
+  syncBranchBadges();
+  assert.match(nodes.convBranch.innerHTML, /feat\/one/);
+
+  // Nobody addressed — a conversation whose members have all ended.
+  addressed = '';
+  syncBranchBadges();
+  assert.equal(nodes.convBranch.hidden, true);
+});
+
+test('the commit strip takes the bubble\'s column', () => {
+  // Hung under the bubble, so a two-column thread has to put it under the right one — a strip that
+  // ignored the side would sit under the wrong agent's messages in every pair.
+  store.herdr_conv_commits = 'on';
+  const commits = [{sha: 'e'.repeat(40), subject: 'move the parser'}];
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const right = convGitRules(entry({branch: 'main', commit: 'b'.repeat(40), commits}),
+                             seen, ' conv-right').after;
+  assert.match(right, /class="conv-commits conv-right"/);
+
+  const left = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), left);
+  assert.match(convGitRules(entry({branch: 'main', commit: 'b'.repeat(40), commits}), left).after,
+               /class="conv-commits"/, 'no side is the left column, as the bubble has it');
+  store.herdr_conv_commits = 'off';
 });

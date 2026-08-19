@@ -1055,6 +1055,9 @@
       // The mic button is hidden over a terminal, and a live recogniser with no way to stop it
       // would keep writing into the composer.
       if (shell && dictation) dictation.stop();
+      // Which branch this pane's work is landing on — the snapshot carries it, and this is the
+      // one path every snapshot and every pane switch goes through.
+      if (typeof syncBranchBadges === 'function') syncBranchBadges();
     }
 
     function openTerminal(paneId) {

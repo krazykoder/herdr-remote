@@ -256,7 +256,7 @@ test('commits are hidden until the toggle asks for them, and then they are fetch
     {seq: 9001, text: 'Before.', branch: 'main', commit: 'a'.repeat(40)},
     {seq: 9002, text: 'After.', branch: 'main', commit: 'b'.repeat(40)},
   ]);
-  await expect(page.locator('#convThread .conv-rule.git.commits')).toHaveCount(0);
+  await expect(page.locator('#convThread .conv-commits')).toHaveCount(0);
 
   // The relay is asked for the range, because HERDR_GIT_COMMITS is off and the list was never
   // stored. The fake herdr's panes are not in a repository, so what comes back is empty — the
@@ -297,8 +297,39 @@ test('a commit list wraps instead of widening the thread', async ({page}) => {
                          'including the bits nobody remembers writing'}]},
   ]);
   const thread = page.locator('#convThread');
-  await expect(thread.locator('.conv-rule.git.commits')).toBeVisible();
+  await expect(thread.locator('.conv-commits')).toBeVisible();
   await expect(thread.locator('.conv-commit code').first()).toHaveText('c'.repeat(8));
   const overflow = await thread.evaluate(el => el.scrollWidth - el.clientWidth);
   expect(overflow, 'the thread must not scroll sideways on a phone').toBeLessThanOrEqual(1);
+});
+
+test('the branch badge floats over the pane, centred, and follows the pane it is open on',
+     async ({page}) => {
+  // The relay fills this from its turn-end probe; the fake herdr's panes are in no checkout, so
+  // the branch is put on the snapshot's pane here instead. What is being asserted is the drawing:
+  // a vm slice can say the badge was written, only a browser can say it landed on screen.
+  await open(page);
+  await page.evaluate(() => {
+    paneOf(activePane).branch = 'feat/state-sync';
+    syncBranchBadges();
+  });
+  const badge = page.locator('#paneBranch');
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText('feat/state-sync');
+
+  // Centred over the pane and inside it — a badge half off the edge of a phone is not a badge.
+  const box = await badge.boundingBox();
+  const wrap = await page.locator('#termWrap').boundingBox();
+  const off = Math.abs((box.x + box.width / 2) - (wrap.x + wrap.width / 2));
+  expect(off, 'centred over the pane it belongs to').toBeLessThanOrEqual(2);
+  expect(box.y + box.height).toBeLessThanOrEqual(wrap.y + wrap.height + 1);
+  // Over the thread rather than beside it: the composer below must keep its full height.
+  expect(box.y).toBeGreaterThan(wrap.y);
+
+  // A pane outside a checkout says nothing rather than saying something empty.
+  await page.evaluate(() => {
+    delete paneOf(activePane).branch;
+    syncBranchBadges();
+  });
+  await expect(badge).toBeHidden();
 });

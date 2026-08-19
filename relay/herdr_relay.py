@@ -274,6 +274,14 @@ def conv_log_window(msg):
     return since, until
 
 
+# The branch each pane was last seen on, so a snapshot can carry it. Filled by the probe below and
+# by nothing else: the branch is read at turn end and never per poll, which is the whole reason
+# this feature costs nothing to leave on. So a pane that switches branch between two turns shows
+# the old one until the next turn ends.
+# ponytail: read at turn end only; probe on read_pane too if a stale badge ever misleads someone.
+pane_branch = {}
+
+
 async def probe_git(pane):
     """The branch, the commit, and what was committed since this directory's last turn.
 
@@ -288,11 +296,16 @@ async def probe_git(pane):
         return None
     try:
         since = await asyncio.to_thread(conv_log.last_commit, pane.get("host") or "local", cwd)
-        return await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since,
-                                       GIT_COMMITS)
+        got = await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since,
+                                      GIT_COMMITS)
     except (sqlite3.Error, OSError) as e:
         log.debug("git probe failed for %s: %s", cwd, e)
         return None
+    # Both callers reach the probe, so remembering it here is the one place that catches a turn
+    # ending and a prompt being delivered alike.
+    if got and got.get("branch") and pane.get("pane_id"):
+        pane_branch[pane["pane_id"]] = got["branch"]
+    return got
 
 
 # Shared user state: the four documents that are facts about the work rather than about one
@@ -1204,6 +1217,12 @@ async def _poll_once():
             known_panes.add(p["pane_id"])
         for a in agents:
             agent_cache[a["pane_id"]] = a
+            # Where this pane's work is landing, carried on the snapshot so the app can say so
+            # without a thread being open. herdr does not report it and this relay does not ask
+            # git for it here — it is whatever the last turn's probe saw.
+            branch = pane_branch.get(a["pane_id"])
+            if branch:
+                a["branch"] = branch
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -1278,6 +1297,7 @@ async def _poll_once():
                 pane_remote_map.pop(pid, None)
                 last_statuses.pop(pid, None)
                 agent_cache.pop(pid, None)
+                pane_branch.pop(pid, None)
 
 
 def annotate_pane(pane):

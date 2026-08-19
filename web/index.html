@@ -3220,6 +3220,54 @@
     /* Where the work landed, drawn as events between the messages — the same furniture as the
        rule that marks a break in the recording, because it is the same kind of fact: something
        that happened in the gap between two things that were said. */
+    /* Which branch the addressed agent is on, floating over the bottom of whatever is being read.
+       The thread's branch rules say when it *changed*; this says what is true now, which is a
+       different question and the one a reader has while writing the next message. Centred and
+       over the content rather than in a row of its own: a permanent strip would cost the thread
+       a line of height for a fact that rarely changes.
+
+       Per agent, not per view: in a conversation two members can be on two branches, so this
+       follows whoever the composer is addressing. */
+    .branch-badge {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 4;
+      max-width: 70%;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--blue) 45%, var(--border));
+      background: color-mix(in srgb, var(--blue) 12%, var(--surface));
+      color: var(--blue);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+      /* It hangs over the thread, and the thread is what the finger is for. */
+      pointer-events: none;
+    }
+
+    .branch-badge[hidden] {
+      display: none;
+    }
+
+    /* Inside the pane's box, which clips — so it sits just above its own bottom edge. */
+    #paneBranch {
+      bottom: 8px;
+    }
+
+    /* Above the dock rather than inside it: the dock is the composer, and this is not part of what
+       is being written. */
+    #convBranch {
+      bottom: 100%;
+      margin-bottom: 6px;
+      /* `.conv-dock > *` hands every child its taps back; this one wants none of them. */
+      pointer-events: none;
+    }
+
     .conv-rule.git.branch {
       color: var(--blue);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -3233,26 +3281,56 @@
 
     /* A list, so the dashes either side of a one-line rule would have nothing to sit beside. A
        left rule instead: it reads as a run of things that happened, in order, at this point. */
-    .conv-rule.git.commits {
+    /* What this turn committed, hung under the bubble that did it rather than drawn as a rule
+       across the thread. A rule is a divider — it says the thread moved on — and these are not
+       between two messages, they belong to the one above them: the agent said it finished and
+       these are what it finished. So they take the bubble's width and its side and sit tight
+       against its underside, the way a caption belongs to its picture. */
+    .conv-commits {
+      width: 86%;
+      box-sizing: border-box;
+      align-self: flex-start;
       display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 0.2em;
-      margin: 6px 0 6px 12px;
-      padding-left: 8px;
-      border-left: 2px solid var(--border);
-      /* A commit subject is a line of prose that may be long, and the thread's width is the
-         reader's line length — wrapping beats a thread that scrolls sideways on a phone. */
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 3px 0 8px;
+      padding: 0 4px;
+    }
+
+    .conv-thread.conv-solo .conv-commits {
+      width: 100%;
+    }
+
+    /* Under the right-hand column's bubbles, and packed from the right so the strip ends where the
+       bubble does. */
+    .conv-commits.conv-right {
+      align-self: flex-end;
+      justify-content: flex-end;
+    }
+
+    /* One commit. A badge and not a line: they arrive in twos and threes, and three lines of prose
+       under every turn is a thread nobody can skim. */
+    .conv-commit {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 5px;
+      max-width: 100%;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--green) 35%, var(--border));
+      background: color-mix(in srgb, var(--green) 9%, transparent);
+      color: var(--muted);
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.72));
+      line-height: 1.5;
+      /* A subject is a line of prose that may be long, and the thread's width is the reader's line
+         length. One badge wraps its own text rather than making the thread scroll sideways. */
       overflow-wrap: anywhere;
     }
 
-    .conv-rule.git.commits::before,
-    .conv-rule.git.commits::after {
-      content: none;
-    }
-
     .conv-commit code {
-      opacity: 0.85;
+      flex: none;
+      color: var(--green);
+      opacity: 0.9;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
@@ -5227,6 +5305,9 @@
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
          modifies. Sits statically at the bottom of the conversation view. -->
     <div class="conv-dock" id="convDock">
+      <!-- The addressed member's branch, hanging above the dock. Its members can be on different
+           branches, so it follows the target chip rather than the conversation. -->
+      <div class="branch-badge" id="convBranch" hidden></div>
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
       <!-- How the composer behaves: standing switches, not a mode of the moment. -->
@@ -5455,6 +5536,8 @@
       <!-- A pane opened a moment ago still holds the last one's text until its own first read
            lands, so this hangs over the middle of the pane rather than replacing it. -->
       <div class="term-loading" id="termLoading" hidden>Loading…</div>
+      <!-- Which branch this pane's work is landing on. See .branch-badge. -->
+      <div class="branch-badge" id="paneBranch" hidden></div>
       <div class="sel-band" id="selBand" hidden></div>
       <div class="ruler" id="ruler" hidden aria-hidden="true">
         <div class="ruler-handle" id="rulerTop" hidden></div>

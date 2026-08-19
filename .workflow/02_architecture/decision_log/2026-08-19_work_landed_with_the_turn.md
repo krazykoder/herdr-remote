@@ -72,3 +72,34 @@ repository the user never pointed it at.
 
 Commit *contents*: no diffs, no file lists, no stats. A subject and a sha are what a person needs to
 find the change in their own tools, and a diff in the record is a second copy of the repository.
+
+
+## The standing badge, and what it is not
+
+Drawn as events answers *when did this change*. It does not answer *where am I now*, which is the
+question a reader has with their thumb over the composer — and the first is only readable at all
+because the second is not repeated on every bubble.
+
+So there is a second drawing of the same fact: a badge floating over the bottom of the thread,
+just above the composer, carrying the branch of **the agent the composer is addressing**. Per
+agent and not per view, because a conversation's members can be in different checkouts on
+different branches; a badge that followed the conversation would be wrong for one of them half the
+time. In the pane view that is the open pane, in the conversation view it follows the target chip.
+
+It rides on the `agents` snapshot, filled from the turn-end probe the record already runs — no new
+git call, and none per poll. The cost is that it is stale between turns: a pane that switches
+branch and says nothing shows the old one until its next turn ends. Probing on `read_pane` would
+close that and is the upgrade if a stale badge ever misleads anyone; it was not worth a subprocess
+per pane read to close it in advance.
+
+## Rules divide, badges belong
+
+The two halves of what a turn carries are not the same kind of thing, and drawing them alike was
+wrong. A rule across the thread is a divider: it says the thread moved on, and what it announces
+is the state of the message *below* it — which is exactly right for a branch change. Commits are
+not between two messages. The agent said it had finished and those are what it finished, so they
+belong to the bubble above them: they take that bubble's width and its column and hang under it as
+badges, the way a caption belongs to its picture.
+
+Badges rather than lines for a second reason. Commits arrive in twos and threes, and three lines
+of prose under every turn is a thread nobody skims.

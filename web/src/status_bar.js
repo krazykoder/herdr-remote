@@ -669,6 +669,9 @@
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
         syncConvBadge();
+        // The branch rides on the snapshot, so the badge over the dock follows one. The pane's own
+        // badge is done by syncOpenPaneChrome below, which is the path a pane switch also takes.
+        if (typeof syncBranchBadges === 'function') syncBranchBadges();
         if (activePane) {
           // herdr reuses a pane_id once its pane closes, so an open pane that has left both lists
           // is not retargeted or polled on — it is let go.
@@ -712,6 +715,7 @@
         renderBandwidth();
         renderQuickActions();
         syncConvBadge();
+        if (typeof syncBranchBadges === 'function') syncBranchBadges();
       }
       else if (msg.type === 'blocked') {
         const a = agents.find(x => x.pane_id === msg.pane_id);
