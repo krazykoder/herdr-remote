@@ -482,10 +482,11 @@
       let wsUrl = url;
       if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       ws = new WebSocket(wsUrl);
+      const socket = ws;
       // Central wire accounting. Every caller goes through this socket, so instrumenting it here
       // catches polls, sends, pushes and commands without duplicating counters at each call site.
-      const send = ws.send.bind(ws);
-      ws.send = data => {
+      const send = socket.send.bind(socket);
+      socket.send = data => {
         noteBandwidth('sent', data);
         try { const msg = JSON.parse(data); if (msg.type === 'read_pane') notePaneBandwidth(msg.pane_id, 'sent', data); }
         catch (e) { /* non-JSON wire payloads have no pane identity */ }
@@ -493,14 +494,16 @@
       };
       // Re-announcing the push subscription here rather than only at subscribe time is what makes
       // it survive the socket being down at the wrong moment — on a phone that is most of the time.
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (ws !== socket) return;
         setStatus('connected');
         if (window.cue) cue('ready');
         announceSubscription();
-        stateSyncOpen();
+        stateSyncOpen(socket);
       };
-      ws.onclose = () => {
-        stateSyncClose();
+      socket.onclose = () => {
+        if (ws !== socket) return;
+        stateSyncClose(socket);
         // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
@@ -508,8 +511,9 @@
         setStatus('disconnected');
         setTimeout(connect, 3000);
       };
-      ws.onerror = () => setStatus('disconnected');
-      ws.onmessage = (e) => {
+      socket.onerror = () => { if (ws === socket) setStatus('disconnected'); };
+      socket.onmessage = (e) => {
+        if (ws !== socket) return;
         noteBandwidth('received', e.data);
         const msg = JSON.parse(e.data);
         if (msg.type === 'pane_content') notePaneBandwidth(msg.pane_id, 'received', e.data);

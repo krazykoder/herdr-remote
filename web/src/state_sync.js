@@ -28,6 +28,7 @@
     // idle: no socket. pulling: state_get sent, nothing back yet. live: the relay answered.
     // off: the relay is older than this client, or never answered — the app runs as it always did.
     let stateMode = 'idle';
+    let stateSocket = null;
     // name -> the revision the relay last told us. Memory only, and cleared on every connect: a
     // reconnect re-learns them from state_get, which is cheaper than persisting a number whose
     // only correct source is the relay we just reconnected to.
@@ -88,20 +89,29 @@
       });
     }
 
-    function stateSyncOpen() {
+    function stateSyncOpen(socket = ws) {
       stateBindUnload();
+      stateSocket = socket;
       stateMode = 'pulling';
       stateSeeded = false;
       stateRev = {};
       stateInFlight.clear();
-      try { ws.send(JSON.stringify({ type: 'state_get' })); }
+      try { stateSocket.send(JSON.stringify({ type: 'state_get' })); }
       catch (e) { stateMode = 'off'; }
     }
 
-    function stateSyncClose() {
+    function stateSyncClose(socket) {
+      // Closing socket A after socket B has opened must not take B's sync offline. WebSocket
+      // events are asynchronous, and `connect()` replaces the global before A's close arrives.
+      if (socket && socket !== stateSocket) return;
       stateMode = 'idle';
       for (const name in stateTimers) { clearTimeout(stateTimers[name]); delete stateTimers[name]; }
+      // `send()` accepting a frame is not an ack: the socket may close after the browser handed
+      // it off but before the relay replied. Keep those documents dirty, so the next state_get
+      // learns its revision and retries rather than silently dropping the local edit.
+      for (const name of stateInFlight) stateDirty.add(name);
       stateInFlight.clear();
+      stateSocket = null;
     }
 
     // Called by the four save paths. Records the intent; the send happens after the burst.
@@ -122,12 +132,18 @@
       stateDirty.delete(name);
       stateInFlight.add(name);
       try {
-        ws.send(JSON.stringify({ type: 'state_put', name: name,
-                                 rev: stateRev[name] || 0, body: body }));
+        // The socket this module learned its revisions from, never the global `ws`. `connect()`
+        // assigns the new socket before it opens, so a timer firing inside that gap would hand a
+        // CONNECTING socket a frame it cannot take — and the revision we are quoting belongs to
+        // the old socket's conversation anyway.
+        stateSocket.send(JSON.stringify({ type: 'state_put', name: name,
+                                          rev: stateRev[name] || 0, body: body }));
       } catch (e) {
-        // The socket went while we were deciding. The local copy is untouched, and the reconnect's
-        // state_get settles who is ahead.
+        // The socket went while we were deciding. Still dirty, so the reconnect's state_get learns
+        // the revision and this edit goes out then — dropping it here is the silent loss the
+        // in-flight retry in stateSyncClose exists to prevent, reached by the other door.
         stateInFlight.delete(name);
+        stateDirty.add(name);
       }
     }
 
@@ -192,6 +208,12 @@
           // flight when the user acted, so adopting it here would revert an edit made a moment
           // ago with nothing said about why. Take the revision — which is what the write needs —
           // and let the flush below push our body on top of it.
+          //
+          // Unless the relay already has exactly what we were going to send. That is the ordinary
+          // shape of a retry after a dropped socket: the write did reach the relay and only the
+          // ack was lost, so re-sending it would bump the revision and broadcast an identical
+          // document to every other browser — once per reconnect, which on a phone is often.
+          if (doc.body != null && doc.body === stateRead(name)) stateDirty.delete(name);
           continue;
         }
         if (first) {

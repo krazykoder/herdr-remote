@@ -408,5 +408,9 @@ Shipped on `feat/state-sync`. Where it differs from the plan above, and why.
 | `fixtures.js`: clear the `docs` rows before every test | The relay is per worker and this store is durable, so without it one spec's pairs and conversations leak into every spec that runs after it — which is what broke `tab_pairs`, `sections`, `summary_detect` and `hang_controls` on the first full run. |
 | `fixtures.js`: `HERDR_ARBITER_DB` and `HERDR_STATE_DB` named per worker | Pre-existing bug, fixed in passing. `HERDR_STATE_DIR` stood there and is read by nothing in the relay, so the browser suite's conversation log was writing to `<repo>/.herdr-remote/arbitration.sqlite3` — one file shared by every worker, and on a developer's machine the record their own relay is keeping. |
 
-Test counts after: 402 Python (`unittest discover`), 415 Node (`node --test tests/*.js`),
+| **Sync is bound to one socket** (spec §3.1) | Two races found in review after the first green run. `connect()` assigns the new socket to the global before it opens, so a debounce timer firing in that gap handed a `CONNECTING` socket a frame — a throw, and a dropped edit. The module now sends on the socket it learned its revisions from, and `status_bar.js` captures `const socket = ws` and guards every handler with `if (ws !== socket) return`, so a stale socket's close cannot take the replacement's sync offline. |
+| **In-flight and thrown writes go back to dirty** (spec §3.4) | `send()` returning is not an ack. On close, everything in flight is re-marked so the reconnect's `state_get` learns the revision and retries; the `catch` around `send` does the same. Without it both paths lost the edit silently. |
+| **A retry the relay already has is dropped** (spec §3.2) | The retry above, uncorrected, re-sent a body the relay already held whenever the write landed and only the ack was lost — advancing the revision and broadcasting an unchanged document to every browser, once per reconnect. On a phone that is often. |
+
+Test counts after: 402 Python (`unittest discover`), 422 Node (`node --test tests/*.js`),
 369 Playwright. All green.

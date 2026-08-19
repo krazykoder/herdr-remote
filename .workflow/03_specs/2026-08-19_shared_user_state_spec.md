@@ -117,6 +117,12 @@ received), `off` (relay said unknown type, or 10 s elapsed with no answer).
   except the mirrored bodies themselves and the backup keys of §3.3.
 - In `pulling`, local writes are recorded as dirty but **not** sent. They flush on entering `live`.
 - In `off`, the app behaves exactly as it does today.
+- **Sync is bound to one socket, not to "the connection".** The module remembers the socket it sent
+  `state_get` on and sends every later frame on that same object. A revision is a fact about one
+  socket's conversation, and `connect()` assigns the new socket to the global before it has opened —
+  so a debounce timer firing in that gap would otherwise quote an old revision at a `CONNECTING`
+  socket, which throws. For the same reason a close event for a socket that is no longer the current
+  one is ignored: it must not take the replacement's sync offline.
 
 ### 3.2 Applying an incoming `state`
 
@@ -127,6 +133,10 @@ Per document in `docs`:
    `state_get` went out, so the answer was already in flight when the user acted; adopting it would
    revert an edit made a moment ago with nothing said about why. The flush in §3.4 then pushes the
    local body on top of the revision just learned. This rule outranks 3–5 and the whole of §3.3.
+  Exception: if the incoming `body` is byte-identical to what the flush would send, the document is
+  cleared of dirty instead. That is the ordinary shape of a retry after a dropped socket — the write
+  did reach the relay and only the ack was lost — and re-sending it would advance the revision and
+  broadcast an unchanged document to every other browser, once per reconnect.
 3. `rev == 0` → §3.3 (seeding).
 4. `rev > 0` and `body` equals the current local string → nothing.
 5. `rev > 0` and `body` differs → §3.3 backup, write `body` to the mirrored `localStorage` key,
@@ -175,6 +185,13 @@ final state.
   and **discard** the pending local write. Do not retry — retrying is what turns a guard back into
   unguarded last-write-wins.
 - On `error` naming one of the four documents: log, drop the write, leave the local copy alone.
+
+**A handed-off frame is not an ack.** `send()` returning only means the browser took the bytes; the
+socket may close before the relay replies. So on close, every document still in flight goes back to
+dirty, and the next `state_get` learns its revision and retries. A `send()` that throws — a socket
+that closed between the timer firing and the frame leaving — is the same case reached by the other
+door, and re-marks dirty too. Neither path may drop the edit silently; that is the loss this whole
+section exists to prevent.
 
 **Flush on the way out.** The debounce is a window in which an edit exists in one browser and
 nowhere else. A page that goes away inside it loses the edit and then adopts the relay's older

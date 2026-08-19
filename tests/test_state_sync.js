@@ -32,6 +32,13 @@ function boot(stored = {}, opts = {}) {
   const sent = [];          // every message it put on the wire
   const timers = [];
 
+  const socket = opts.deadSocket ? null : {
+    send: d => {
+      // A real WebSocket throws InvalidStateError when it is CONNECTING or already closed.
+      if (socket.refuse) throw new Error('InvalidStateError');
+      sent.push(JSON.parse(d));
+    },
+  };
   const ctx = vm.createContext({
     window: {},
     setTimeout: (fn, ms) => { timers.push({fn, ms, live: true}); return timers.length - 1; },
@@ -41,7 +48,7 @@ function boot(stored = {}, opts = {}) {
       setItem: (k, v) => { wrote.push(k); store[k] = String(v); },
       removeItem: k => { wrote.push(k); delete store[k]; },
     },
-    ws: opts.deadSocket ? null : {send: d => sent.push(JSON.parse(d))},
+    ws: socket,
   });
   vm.runInContext(SRC + EXPORT, ctx);
 
@@ -50,7 +57,11 @@ function boot(stored = {}, opts = {}) {
     const due = timers.filter(t => t.live);
     due.forEach(t => { t.live = false; t.fn(); });
   };
-  return Object.assign({}, ctx.__out, {store, read, wrote, sent, tick});
+  return Object.assign({}, ctx.__out, {
+    store, read, wrote, sent, socket, tick,
+    // What connect() does to the global before the replacement has opened.
+    replaceGlobalSocket: next => { ctx.ws = next; },
+  });
 }
 
 // The relay's answer to state_get, as the relay builds it.
@@ -289,6 +300,85 @@ test('closing drops the pending timers rather than firing them at a dead socket'
   s.stateSyncClose();
   s.tick();
   assert.ok(!s.sent.some(m => m.type === 'state_put'));
+});
+
+test('a stale socket close cannot stop a replacement socket syncing', () => {
+  const s = boot({herdr_pairs: 'v0'});
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.stateSyncClose({});              // old socket closes after this one opened
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();
+  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'),
+                   [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
+});
+
+test('a close before an ack retries the in-flight edit after reconnecting', () => {
+  const s = boot({herdr_pairs: 'v0'});
+  s.stateSyncOpen();
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();
+  s.stateSyncClose();                 // send may have reached relay; ack did not reach browser
+  s.stateSyncOpen();
+  s.stateSyncReceive(answer({pairs: doc(2, 'v0')}));
+  const puts = s.sent.filter(m => m.type === 'state_put');
+  assert.deepEqual(puts.map(p => [p.rev, p.body]), [[1, 'v1'], [2, 'v1']]);
+});
+
+test('a write goes to the socket it learned its revision from, not the global one', () => {
+  // connect() assigns the new socket before it opens, so between those two moments the global is
+  // a CONNECTING socket that cannot take a frame — and the revision being quoted belongs to the
+  // old socket's conversation regardless.
+  const s = boot({herdr_pairs: 'v0'});
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.replaceGlobalSocket({send: () => { throw new Error('InvalidStateError'); }});
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();
+  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'),
+                   [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
+});
+
+test('a send the socket refuses leaves the edit dirty rather than dropping it', () => {
+  const s = boot({herdr_pairs: 'v0'});
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.socket.refuse = true;
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();
+  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'), [], 'the frame never left');
+
+  // The next connect must carry it. Silently dropping it here is the same lost edit the
+  // in-flight retry in stateSyncClose prevents, reached by the other door.
+  s.socket.refuse = false;
+  s.stateSyncClose();
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'),
+                   [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
+});
+
+test('a retry the relay already has is dropped instead of re-sent', () => {
+  // The ordinary shape of a lost ack: the write reached the relay, only the reply did not. Sending
+  // it again would bump the revision and broadcast an identical document to every other browser,
+  // once per reconnect.
+  const s = boot({herdr_pairs: 'v0'});
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
+  s.store.herdr_pairs = 'v1';
+  s.stateSyncMark('pairs');
+  s.tick();
+  s.stateSyncClose();
+  s.stateSyncOpen(s.socket);
+  s.stateSyncReceive(answer({pairs: doc(2, 'v1')}));   // it landed after all
+  assert.equal(s.sent.filter(m => m.type === 'state_put').length, 1,
+               'the relay already agrees; a second identical write is noise');
+  assert.equal(s.store.herdr_pairs, 'v1');
 });
 
 test('a page going away sends what is still sitting on its timer', () => {

@@ -98,6 +98,25 @@ test('a rename in one browser lands in another that is already open',
   await other.context.close();
 });
 
+test('replacing a browser socket keeps state sync live', async ({page}) => {
+  await connected(page);
+  await synced(page);
+  await page.evaluate(async () => {
+    const old = ws;
+    connect();
+    await new Promise((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (ws !== old && ws.readyState === 1 && stateMode === 'live') return resolve();
+        if (Date.now() > deadline) return reject(new Error('replacement socket did not sync'));
+        setTimeout(check, 25);
+      };
+      check();
+    });
+  });
+  await saveAndLand(page, 'after-reconnect');
+});
+
 test('the browser that adopts keeps a recoverable copy of what it had',
      async ({page, browser, relayURL}) => {
   const other = await otherBrowser(browser, relayURL);
