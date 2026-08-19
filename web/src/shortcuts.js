@@ -762,6 +762,8 @@
           {head: 'Recorded', rows: past.map(r => ({
             id: r.key,
             name: r.label || 'Former pane',
+            agent: (r.spawn || {}).agent || '',
+            project: r.project || (r.spawn || {}).project || (r.spawn || {}).project_id || '',
             meta: agentBadge((r.spawn || {}).agent || ''),
             note: convSpan(now - (r.touched || now)),
             color: 'var(--muted)',

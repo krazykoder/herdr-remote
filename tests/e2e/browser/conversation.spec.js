@@ -1953,14 +1953,25 @@ test('the picker filters its rows by what they say', async ({page}) => {
   await page.evaluate(async () => {
     for (let i = 0; i < 6; i++) {
       await convPut({key: `ghost${i}`, label: `former ${i}`, touched: Date.now() - 7200000,
-        spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+        spawn: {agent: 'codex', project: 'charts'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
     }
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
   await expect(page.locator('.pick-search')).toBeVisible();
+  // Name match
   await page.locator('#pickSearch').fill('former 3');
   await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
+  // Fuzzy abbreviation match
+  await page.locator('#pickSearch').fill('frm 3');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
+  // Agent type match
+  await page.locator('#pickSearch').fill('codex');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(7);
+  // Project match
+  await page.locator('#pickSearch').fill('charts');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(7);
   // A group with nothing left in it takes its heading with it.
+  await page.locator('#pickSearch').fill('former 3');
   await expect(page.locator('#pickList .pair-head')).toHaveText(['Recorded']);
   await page.locator('#pickSearch').fill('nothing here at all');
   await expect(page.locator('#pickList .pair-empty')).toContainText('Nothing here matches');

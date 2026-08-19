@@ -53,11 +53,26 @@
       el.style.display = text ? 'block' : 'none';
     }
 
-    // Name, harness and path, which is everything a row shows — so what is searched is what is
-    // read. Tags are stripped rather than excluded: `meta` arrives as html and its badge holds the
-    // agent's name, which is exactly the word someone types to find "the codex one".
+    // Subsequence and multi-word fuzzy matching across name, harness, project and note.
+    function fuzzyMatch(hay, query) {
+      if (!query) return true;
+      if (hay.includes(query)) return true;
+      const words = query.split(/\s+/).filter(Boolean);
+      if (words.length > 1) return words.every(w => fuzzyMatch(hay, w));
+      let hIdx = 0, qIdx = 0;
+      const qLen = query.length, hLen = hay.length;
+      while (hIdx < hLen && qIdx < qLen) {
+        if (hay[hIdx] === query[qIdx]) qIdx++;
+        hIdx++;
+      }
+      return qIdx === qLen;
+    }
+
+    // Name, harness, project and path, which is everything a row shows or represents.
+    // Tags are stripped rather than excluded: `meta` arrives as html and its badge holds the
+    // agent's name/type, which is exactly what someone types to find "the codex one".
     function pickHay(row) {
-      return `${row.name || ''} ${String(row.meta || '').replace(/<[^>]*>/g, ' ')} ${row.note || ''}`
+      return `${row.name || ''} ${row.agent || ''} ${row.project || ''} ${String(row.meta || '').replace(/<[^>]*>/g, ' ')} ${row.note || ''}`
         .toLowerCase();
     }
 
@@ -79,7 +94,7 @@
       const q = document.getElementById('pickSearch').value.trim().toLowerCase();
       let shown = 0, all = 0;
       const html = picker.groups().map(g => {
-        const rows = q ? g.rows.filter(r => pickHay(r).includes(q)) : g.rows;
+        const rows = q ? g.rows.filter(r => fuzzyMatch(pickHay(r), q)) : g.rows;
         all += g.rows.length;
         shown += rows.length;
         // A heading over nothing reads as a group that has emptied rather than one that was
@@ -124,6 +139,8 @@
       return Object.assign({
         id: a.pane_id,
         name: paneLabel(a),
+        agent: a.agent || '',
+        project: a.project || a.project_id || '',
         meta: a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd,
         color: a.agent ? statusColor(a) : shellColor(a.pane_id),
         glyph: a.agent ? agentGlyph() : '⬛',
