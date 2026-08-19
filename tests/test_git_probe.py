@@ -405,7 +405,59 @@ class RelayWiringTest(unittest.TestCase):
             # A miss is remembered as a miss, or the same directory is read once per poll forever.
             self.assertEqual(self.relay.pane_branch[("local", "/elsewhere")], "")
             self.assertEqual(self.relay.pane_branch[("local", "")], "")
-            self.assertEqual(self.calls, [], "the record is read, git is not run")
+            self.assertEqual(self.calls, [], "a directory the record answers costs no subprocess")
+
+    def test_a_checkout_the_record_has_never_seen_is_asked_once(self):
+        # A fresh agent in a fresh checkout has recorded nothing, and waiting for its first turn
+        # leaves the badge blank for exactly as long as the reader is deciding what to ask it.
+        import asyncio
+        asked = []
+        self.addCleanup(setattr, self.relay.git_probe, "head", self.relay.git_probe.head)
+        self.relay.git_probe.head = lambda cwd, remote=None: (
+            asked.append((cwd, remote)) or ("main", "a" * 40))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = ConversationLog(os.path.join(tmp, "seed.sqlite3"))
+            self.addCleanup(log.close)
+            self.relay.conv_log = log
+            self.relay.pane_branch.clear()
+            self.addCleanup(self.relay.pane_branch.clear)
+
+            panes = [{"host": "box", "cwd": "/srv/new", "remote": "box"}]
+            asyncio.run(self.relay.seed_branches(panes))
+            self.assertEqual(self.relay.pane_branch[("box", "/srv/new")], "main")
+            self.assertEqual(asked, [("/srv/new", "box")], "the remote is how the host is reached")
+
+            # Once. It runs every poll, and a rev-parse per poll per pane is what this whole
+            # feature was shaped to avoid.
+            asyncio.run(self.relay.seed_branches(panes))
+            self.assertEqual(len(asked), 1)
+
+    def test_a_directory_that_is_no_repository_is_asked_about_once(self):
+        import asyncio
+        asked = []
+        self.addCleanup(setattr, self.relay.git_probe, "head", self.relay.git_probe.head)
+        self.relay.git_probe.head = lambda cwd, remote=None: (asked.append(cwd) or ("", ""))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = ConversationLog(os.path.join(tmp, "seed.sqlite3"))
+            self.addCleanup(log.close)
+            self.relay.conv_log = log
+            self.relay.pane_branch.clear()
+            self.addCleanup(self.relay.pane_branch.clear)
+            panes = [{"host": "local", "cwd": "/not/a/repo"}]
+            asyncio.run(self.relay.seed_branches(panes))
+            asyncio.run(self.relay.seed_branches(panes))
+            self.assertEqual(self.relay.pane_branch[("local", "/not/a/repo")], "")
+            self.assertEqual(len(asked), 1, "a miss is remembered as a miss")
+
+    def test_the_seed_runs_nothing_when_the_feature_is_off(self):
+        import asyncio
+        self.relay.GIT_TRACK = False
+        self.relay.pane_branch.clear()
+        self.addCleanup(self.relay.pane_branch.clear)
+        asyncio.run(self.relay.seed_branches([{"host": "local", "cwd": "/work"}]))
+        self.assertEqual(self.relay.pane_branch, {})
 
     def test_the_seed_never_overwrites_what_the_probe_saw(self):
         # It runs every poll and the probe is the fresher answer; a seed that wrote over it would

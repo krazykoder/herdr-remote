@@ -94,10 +94,14 @@ Remembered per **checkout**, not per pane: a branch is a fact about a working di
 agents in one repository are on one branch by definition. Keyed by pane, the second of them would
 have run a second subprocess to learn the same thing and shown nothing until its own first turn.
 
-A restart empties that memory, and the badge would then be blank until every pane had ended
-another turn. The answer is already on disk — the record stores the branch on every turn — so it
-is read back once per directory on first sight, and a miss is remembered as a miss so a pane
-outside a checkout is asked about once rather than once per poll.
+Two ways to arrive at a directory with nothing known about it, and they want different answers.
+A **restart** empties that memory, but the record is not memory: every directory an agent has ever
+ended a turn in is already answered on disk, for one indexed read and no subprocess. A **new agent
+in a new checkout** has recorded nothing, and waiting for its first turn leaves the badge blank for
+exactly as long as the reader is deciding what to ask it — which is when knowing you are on `main`
+matters most. So git is asked there, once, with the same single `rev-parse` the turn-end probe
+uses. Both are per directory and happen once; a miss is remembered as a miss, so a pane outside a
+checkout costs one question rather than one per poll for as long as it is open.
 
 An earlier attempt closed the same gap with a `branch_get` round trip that probed git whenever a
 reader addressed a pane. It was removed: the record already holds the answer, reading it costs one

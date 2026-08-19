@@ -289,26 +289,39 @@ def branch_key(pane):
 
 
 async def seed_branches(panes):
-    """Fill in any directory this relay has not probed yet from the record on disk.
+    """Fill in any directory this relay has not seen yet, so the app's badge is never blank.
 
-    A restart empties the map above, and the app's badge would then say nothing until every pane
-    had ended another turn — which for a quiet agent is a long time to look at a blank. The record
-    already stores the branch on every turn, so the answer is on disk and costs one indexed read
-    per directory, once. Never a git subprocess: this is the cheap half of the same fact.
+    Two ways to arrive at one with nothing known about it, and they want different answers:
 
-    A miss is remembered as '' so a pane outside a checkout is asked about once and not once per
-    poll for as long as it is open.
+      - a **restart**. The map above is memory and the record is not, so every directory an agent
+        has ever ended a turn in is already answered on disk. One indexed read, no subprocess.
+      - a **new agent in a new checkout**. Nothing has been recorded there yet, and waiting for its
+        first turn means the badge is blank for exactly as long as the reader is deciding what to
+        ask it — which is when they most want to know they are on `main`. So git is asked, once,
+        with the same single `rev-parse` the turn-end probe uses.
+
+    Both are per directory and happen once. A miss is remembered as a miss, so a pane outside a
+    checkout costs one question rather than one per poll for as long as it is open.
     """
-    if conv_log is None:
+    if not GIT_TRACK:
         return
-    unseen = {branch_key(p) for p in panes} - set(pane_branch)
-    for host, cwd in unseen:
+    # Any pane in the directory will do for the remote: it is how the *host* is reached, and the
+    # key already names the host.
+    unseen = {}
+    for p in panes:
+        key = branch_key(p)
+        if key not in pane_branch:
+            unseen.setdefault(key, p.get("remote"))
+    for (host, cwd), remote in unseen.items():
         if not cwd:
             pane_branch[(host, cwd)] = ""
             continue
         try:
-            pane_branch[(host, cwd)] = await asyncio.to_thread(conv_log.last_branch, host, cwd)
-        except sqlite3.Error as e:
+            branch = await asyncio.to_thread(conv_log.last_branch, host, cwd)
+            if not branch:
+                branch = (await asyncio.to_thread(git_probe.head, cwd, remote))[0]
+            pane_branch[(host, cwd)] = branch
+        except (sqlite3.Error, OSError) as e:
             log.debug("branch seed failed for %s: %s", cwd, e)
 
 
