@@ -8,16 +8,15 @@ Design: [proposal](../.workflow/02_architecture/2026-08-18_telegram_ops_server_p
 [spec](../.workflow/03_specs/2026-08-18_telegram_ops_spec.md) ·
 [deferred work](../.workflow/03_specs/2026-08-18_telegram_ops_deferred.md)
 
-> **Status: unit-tested, never run against a real bot.** The 31 tests in
-> `tests/test_ops_allowlist.py` cover the allowlist, the argv boundary and the process-group stop;
-> the read-only surfaces are smoke-tested. The Telegram round trip below is the end-to-end test, and
-> running it is what makes this "working" rather than "written".
+> **Status: setup and the read-only commands confirmed working against a real bot (2026-08-18).**
+> Not yet exercised end to end: `/relay_restart` against a live tunnel, and `/tail` over a long
+> stream. §6 is that test.
 
-Run everything from this branch's worktree until it is merged — `main`'s `start.sh` does not yet
-record `tunnel.url`, which is what `/relay url` reads.
+Run from a checkout that has this branch — `main`'s `start.sh` does not record `tunnel.url`, which
+is what `/relay_url` reads.
 
 ```bash
-cd /Users/towshif/code/python/herdr-remote/.claude/worktrees/feat+telegram-ops
+cd /Users/towshif/code/python/herdr-remote     # on feat/telegram-ops
 ```
 
 ---
@@ -66,7 +65,7 @@ In Telegram, message `@BotFather`:
 It replies with a token shaped `8123456789:AA…`. Treat it as a credential: it is full control of
 the bot.
 
-Use a **private one-on-one chat**, never a group. `/relay url` prints a link containing
+Use a **private one-on-one chat**, never a group. `/relay_url` prints a link containing
 `HERDR_RELAY_TOKEN`.
 
 ## 2. Install the registry
@@ -161,7 +160,7 @@ HERDR_OPS_TG_TOKEN="<token>" uv run relay/herdr_ops.py
 ```
 
 Sourcing `secrets.env` is what puts `HERDR_RELAY_TOKEN` in the bot's environment. Without it,
-`/relay url` still gives the `wss://` address but omits the one-tap `Open:` link — that link
+`/relay_url` still gives the `wss://` address but omits the one-tap `Open:` link — that link
 carries the token, so it can only be built where the token is known.
 
 ## 5. Verify
@@ -175,7 +174,7 @@ In order. Each row is pass/fail.
 | `/df` | Same as `/run df`. Registry entries are commands in their own right |
 | `/whoami` | Your id, `allowlisted` |
 | `/health` | `up   relay      tcp 8375 open`, a tunnel line, disk free, load average |
-| `/relay url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6) |
+| `/relay_url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6) |
 | `/run uptime` | Load averages, `[exit 0]` |
 | `/git_log ~/code/python/herdr-remote 5` | Five commits — the hyphen in `git-log` becomes an underscore, because Telegram command names cannot contain one |
 | `/run git-log ~/code/python/herdr-remote 5` | The same thing, the long way |
@@ -192,22 +191,23 @@ In order. Each row is pass/fail.
 This is the feature. Two things to know **before** pressing Confirm:
 
 - **The current relay is not owned by ops.** It was started from a terminal, so ops has no state
-  file for it. The first `/relay restart` takes ownership: `start.sh`'s own `reclaim_relay_port`
+  file for it. The first `/relay_restart` takes ownership: `start.sh`'s own `reclaim_relay_port`
   stops the previous relay and `stop_stale_tunnel` stops the previous `cloudflared`. Your existing
   tunnel URL dies and the terminal running it exits. That is the designed path, not a surprise —
   but do it when you are not mid-session on the phone.
-- **`tunnel.url` needs this branch.** `/relay restart` runs `start.sh` from
-  `~/code/python/herdr-remote`, which is still on `main`. Merge first, or the reply will restart the
-  stack correctly and then say `No tunnel URL recorded`:
+- **`tunnel.url` needs this branch.** `/relay_restart` runs `start.sh` out of the `root` in
+  `ops.json` — whatever branch that checkout happens to be on. On `main` the restart succeeds and
+  the reply then says `No tunnel URL recorded`, because only this branch's `start.sh` writes the
+  file. Check before you press Confirm:
 
   ```bash
-  cd /Users/towshif/code/python/herdr-remote && git merge feat/telegram-ops
+  git -C ~/code/python/herdr-remote branch --show-current
   ```
 
 Then, from Telegram:
 
 ```
-/relay restart      → Confirm
+/relay_restart      → Confirm
 ```
 
 Expect, within ~30s: `relay stopped (SIGTERM).`, `relay started (pid N).`, `health: tcp 8375 open`,
@@ -252,6 +252,6 @@ reboot the recovery channel is only there once you start it. Revisit when that a
 | `409 Conflict` in the log | The same token is polled elsewhere — the other bot, or a second copy of this one |
 | Every command answers `Not authorized` | `chat_ids` is empty or holds the wrong id. `/whoami` still works; use it |
 | `/health` shows the tunnel `DOWN` while it is up | The `pgrep` pattern does not match the running argv. Check `pgrep -fl cloudflared` and edit the pattern |
-| `/relay restart` says `started but health probe still failing` | `start.sh` exited early — bad relay config. `/logs relay 50` |
+| `/relay_restart` says `started but health probe still failing` | `start.sh` exited early — bad relay config. `/logs relay 50` |
 | `Config error — …` on boot | The path and the rule are named in the message. `--check` gives the same answer without a token |
 | `/run` says `not found or not executable` at boot | A `commands.*.argv[0]` binary is missing on this machine; the registry is validated at load, not at use |

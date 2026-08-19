@@ -168,8 +168,9 @@ unchanged. Absent → detached `start.sh` path, which is the default and the tes
 | `/svc start <name>` | W | §4.1 |
 | `/svc stop <name>` | W | §4.2 |
 | `/svc restart <name>` | W | §4.4 |
-| `/relay restart` | W | `/svc restart relay`, then §7's link block. |
-| `/relay url` | R | §7's link block, no restart. |
+| `/relay_restart` | W | `/svc restart relay`, then §7's link block. **Its own menu item**, placed second so it is reachable in a hurry — a subcommand cannot be one, and this is the command the bot exists for. Still confirms: it is one tap, and it now sits in a scrollable list where a mis-tap drops the tunnel and any session on it. |
+| `/relay_url` | R | §7's link block, no restart. Its own menu item for the same reason. |
+| `/relay restart` / `/relay url` | W / R | The long form, kept for the docs and for muscle memory. Routes to the two above, and guards **once** — dispatching through their handlers would spend two rate-limit tokens on one command. |
 | `/logs <name> [n]` | R | Last *n* lines of the entry's `log`, default 50, max 500. Missing/unreadable file is named as such. |
 | `/tail <name>` | R | Live follow of the log (§6). Registry entry must have `stream: true`. |
 | `/run <cmd> [args…]` | per entry | §5.1 |

@@ -335,10 +335,14 @@ TG_COMMAND = re.compile(r"^[a-z0-9_]{1,32}$")
 TG_MENU_MAX = 100        # Telegram's cap on commands per scope
 TG_DESC_MAX = 256
 
+# Order is the order Telegram shows them in, so the two commands worth reaching for in a hurry sit
+# at the top: what is wrong, and the thing that fixes it.
 BUILTIN_MENU = [
     ("health", "Services, tunnel, disk, load"),
+    ("relay_restart", "Restart relay + tunnel, reply with the new link"),
+    ("relay_url", "Current wss:// link and app link"),
     ("svc", "[status|start|stop|restart] <name>"),
-    ("relay", "restart | url — new wss:// link"),
+    ("relay", "restart | url — the long form"),
     ("logs", "<name> [n] — last log lines"),
     ("tail", "<name> — follow a log live"),
     ("run", "<cmd> [args…] — an allowlisted utility"),
@@ -411,8 +415,9 @@ def help_text() -> str:
         "herdr-ops",
         "",
         "/health — everything at a glance",
+        "/relay_restart — restart the stack, reply with the new wss:// link",
+        "/relay_url — the current link, no restart",
         "/svc — list services; /svc status|start|stop|restart <name>",
-        "/relay restart | /relay url — restart the stack, get the new wss:// link",
         "/logs <name> [n] — last n lines (default 50, max 500)",
         "/tail <name> — follow a log live; /stop ends it",
         "/ps — processes this bot started",
@@ -535,16 +540,16 @@ async def service_action(svc, action: str) -> str:
         return await loop.run_in_executor(None, sup.restart, svc)
 
 
-async def cmd_relay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update, ctx):
-        return
-    action = (ctx.args or ["url"])[0]
-    if action == "url":
-        await send(update, ctx, tunnel_block(), mono=True)
-        return
-    if action != "restart":
-        await send(update, ctx, "usage: /relay restart | /relay url")
-        return
+async def relay_url_reply(update: Update, ctx):
+    await send(update, ctx, tunnel_block(), mono=True)
+
+
+async def relay_restart_flow(update: Update, ctx):
+    """The shortcut this whole bot exists for: one menu item, one Confirm, a working link back.
+
+    The Confirm stays even though the point is speed. It is one tap, and it now guards a command
+    that sits in a scrollable menu — a mis-tap here drops the tunnel and any session on it.
+    """
     try:
         svc = known("service", CFG.services, "relay")
     except ValueError as exc:
@@ -561,7 +566,38 @@ async def cmd_relay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(1)
         return f"{result}\n\n{tunnel_block()}"
 
-    await ask_confirm(update, ctx, "/relay restart", action_then_link)
+    await ask_confirm(update, ctx, "restart the relay + tunnel", action_then_link)
+
+
+async def cmd_relay_restart(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    await relay_restart_flow(update, ctx)
+
+
+async def cmd_relay_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    await relay_url_reply(update, ctx)
+
+
+async def cmd_relay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """`/relay restart|url`. Kept because it is what the docs say and what fingers remember; the
+    menu offers `/relay_restart` and `/relay_url`, because a subcommand cannot be a menu item.
+
+    Guards once, here — routing through the two handlers above would spend two rate-limit tokens
+    for one command.
+    """
+    if not await guard(update, ctx):
+        return
+    action = (ctx.args or ["url"])[0]
+    if action == "url":
+        await relay_url_reply(update, ctx)
+        return
+    if action == "restart":
+        await relay_restart_flow(update, ctx)
+        return
+    await send(update, ctx, "usage: /relay restart | /relay url")
 
 
 def tail_file(path: str, count: int) -> list[str]:
@@ -737,6 +773,18 @@ async def health_watcher(app: Application):
 
 # --- Entry point ---
 
+# The handlers, next to the menu they have to satisfy. `/start` is here and not in BUILTIN_MENU:
+# Telegram calls it on first contact, but it is an alias for /help and does not need a menu row.
+# tests/test_ops_menu.py asserts the two agree — a menu row with no handler is a command the phone
+# offers and the bot ignores.
+BUILTIN_HANDLERS = (
+    ("start", cmd_help), ("help", cmd_help), ("whoami", cmd_whoami), ("health", cmd_health),
+    ("svc", cmd_svc), ("relay", cmd_relay), ("relay_restart", cmd_relay_restart),
+    ("relay_url", cmd_relay_url), ("logs", cmd_logs), ("tail", cmd_tail), ("run", cmd_run),
+    ("stop", cmd_stop), ("ps", cmd_ps),
+)
+
+
 def load_config_or_die() -> ops_config.OpsConfig:
     try:
         return ops_config.load()
@@ -777,10 +825,7 @@ def main():
         log.warning("no chat_ids configured — every command will be refused until one is added")
 
     app = Application.builder().token(TOKEN).build()
-    for name, handler in (("start", cmd_help), ("help", cmd_help), ("whoami", cmd_whoami),
-                          ("health", cmd_health), ("svc", cmd_svc), ("relay", cmd_relay),
-                          ("logs", cmd_logs), ("tail", cmd_tail), ("run", cmd_run),
-                          ("stop", cmd_stop), ("ps", cmd_ps)):
+    for name, handler in BUILTIN_HANDLERS:
         app.add_handler(CommandHandler(name, handler))
 
     # Every registry entry also gets its own command, so the phone offers `/df` rather than

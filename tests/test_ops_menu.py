@@ -73,6 +73,28 @@ class MenuNames(unittest.TestCase):
         self.assertIn("<n>", description)
 
 
+class BuiltinsMatchHandlers(unittest.TestCase):
+    """A menu row with no handler is a command the phone offers and the bot silently ignores."""
+
+    def test_every_builtin_menu_row_has_a_handler(self):
+        handled = {name for name, _ in ops.BUILTIN_HANDLERS}
+        for name, _ in ops.BUILTIN_MENU:
+            with self.subTest(command=name):
+                self.assertIn(name, handled)
+
+    def test_the_shortcut_pair_is_present_and_ordered_for_a_hurry(self):
+        # /relay_restart is the command this bot exists for; Telegram renders the menu in the order
+        # it is given, so it belongs above the general-purpose ones.
+        names = [name for name, _ in ops.BUILTIN_MENU]
+        self.assertIn("relay_restart", names)
+        self.assertIn("relay_url", names)
+        self.assertLess(names.index("relay_restart"), names.index("svc"))
+
+    def test_start_is_handled_without_taking_a_menu_row(self):
+        self.assertIn("start", {name for name, _ in ops.BUILTIN_HANDLERS})
+        self.assertNotIn("start", {name for name, _ in ops.BUILTIN_MENU})
+
+
 class MenuMatchesHandlers(unittest.TestCase):
     """`main()` resolves every non-builtin entry back to a registry command. If that lookup ever
     found nothing it would raise StopIteration at boot, before a single update is served."""
