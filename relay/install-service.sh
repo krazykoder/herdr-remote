@@ -801,6 +801,9 @@ SECRETS_TMP="$SECRETS_FILE.tmp"
 HERDR_RELAY_TOKEN=${HERDR_RELAY_TOKEN:-}
 HERDR_TG_TOKEN=${HERDR_TG_TOKEN:-}
 HERDR_TG_CHAT_ID=${HERDR_TG_CHAT_ID:-}
+# Written by relay/ops-setup.sh, not by this script — carried through because this file is
+# rewritten wholesale and would otherwise drop it on the next install.
+HERDR_OPS_TG_TOKEN=${HERDR_OPS_TG_TOKEN:-}
 HERDR_RELAY=$HERDR_RELAY
 EOF
 )
