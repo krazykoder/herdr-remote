@@ -847,11 +847,26 @@ def main():
     async def run():
         async with app:
             await app.start()
-            await publish_menu(app, entries)
-            await app.updater.start_polling()
-            await health_watcher(app)
+            try:
+                await publish_menu(app, entries)
+                await app.updater.start_polling()
+                await health_watcher(app)
+            finally:
+                # Ctrl-C reaches here as CancelledError, and `async with app` on its way out calls
+                # only shutdown() — which refuses while the Application is still running. So the
+                # last thing a kill printed was `RuntimeError: This Application is still running!`
+                # stacked on top of the cancellation, as if something had gone wrong. Wind the
+                # two halves down in order first, and the exit is quiet.
+                if app.updater.running:
+                    await app.updater.stop()
+                if app.running:
+                    await app.stop()
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+    log.info("herdr-ops stopped")
 
 
 if __name__ == "__main__":
