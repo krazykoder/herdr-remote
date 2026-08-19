@@ -114,6 +114,10 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/conversation_log.py` | Durable record of what agents said — SQLite, one global `turns` table | Python (stdlib) |
 | `relay/conv_query.py` | Read-only query over that record. Also a CLI, so an agent can read it from its own shell | Python (stdlib) |
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
+| `relay/herdr_ops.py` | Second Telegram bot, for the machine rather than the agents. Holds **no** relay connection, so it still answers when the relay or the tunnel is down: restarts the stack through `start.sh` and replies with the new `wss://` link, tails logs, runs allowlisted CLI | Python (python-telegram-bot) |
+| `relay/ops_config.py` | The `ops.json` contract — the allowlist of services and commands, and the argv builder that is the ops bot's security boundary | Python (stdlib) |
+| `relay/ops_supervisor.py` | Detached start/stop/probe for those services. Own session, signalled by process group | Python (stdlib) |
+| `relay/tg_util.py` | The little both bots share: `scrub()`, chunking, confirmations, rate limit | Python (stdlib) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
 | `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 29 script modules) | HTML/CSS/JS |
 | `scripts/build.py` | Inlines the modules into the single-file `web/dist/index.html` | Python (stdlib) |
@@ -133,6 +137,12 @@ relay/start.sh
 
 # Telegram bot
 HERDI_TG_TOKEN="..." HERDI_TG_CHAT_ID="..." uv run relay/herdr_telegram.py
+
+# Ops bot — a *second* @BotFather bot. Two pollers on one token get 409 Conflict, and machine
+# control does not belong in the chat where agents are approved.
+cp relay/ops.example.json ~/.config/herdr-remote/ops.json   # then add your chat id
+uv run relay/herdr_ops.py --check                            # validate the registry, no token needed
+HERDR_OPS_TG_TOKEN="..." uv run relay/herdr_ops.py
 
 # Terminal TUI
 uv run relay/herdr_tui.py
@@ -164,6 +174,10 @@ cd herdi-ios && xcodegen generate
 | `HERDR_CONV_LOG` | `1` keeps a durable record of what agents said: one row per turn end, plus every prompt this relay delivered. Off by default — it puts agent output on disk, which is the user's call. Read back with `conv_log` or `relay/conv_query.py` |
 | `HERDR_ARBITER_DB` | Where the durable conversation record lives (default: `.herdr-remote/arbitration.sqlite3`) |
 | `HERDR_CONV_LOG_MAX` | Rows kept before the oldest are pruned (default: 50000). Arbitrated sends and decisions are never pruned |
+| `HERDR_OPS_TG_TOKEN` | Ops bot's own @BotFather token. Unset = the ops bot does not run. Never the same token as `HERDI_TG_TOKEN` — two long-pollers on one token get `409 Conflict` |
+| `HERDR_OPS_TG_CHAT_ID` | Extra allowlisted chat, merged with `chat_ids` in `ops.json`. An empty allowlist refuses **every** command; there is no discovery mode, because this bot executes binaries |
+| `HERDR_OPS_CONFIG` | Registry path (default `~/.config/herdr-remote/ops.json`). Lives outside the repo — it names what may be executed |
+| `HERDR_OPS_STATE_DIR` | Where pid/pgid state for ops-started services is kept (default `~/.config/herdr-remote/run`). Reconciled at boot, so a restarted ops bot adopts what is running instead of starting a second copy |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
 | `HERDR_TUNNEL_MODE` | Whether `start.sh` launches a tunnel: `temp` (trycloudflare), `named`, `none` (you run cloudflared yourself) |

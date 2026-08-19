@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Example registry for relay/herdr_ops.py. The live copy belongs at",
+    "~/.config/herdr-remote/ops.json (or HERDR_OPS_CONFIG) — NOT in this repo, because it names",
+    "the binaries the bot is allowed to execute.",
+    "",
+    "Everything herdr-ops can do to this machine is a row in 'services' or 'commands'.",
+    "There is no other path: no shell, no /exec, no free-form binary.",
+    "",
+    "chat_ids: empty means every command is refused. Message the bot and it tells you your id.",
+    "",
+    "A {placeholder} must be a WHOLE argv element. \"-C{repo}\" is rejected at load time.",
+    "Each param declares exactly one of enum / int / re; unvalidated input never reaches argv.",
+    "",
+    "health: exactly one of tcp / pgrep / http / unit.",
+    "A service with neither 'start' nor 'unit' is monitor-only — visible to /health, not startable."
+  ],
+
+  "chat_ids": [],
+
+  "services": {
+    "relay": {
+      "start": ["relay/start.sh"],
+      "root": "~/code/python/herdr-remote",
+      "health": { "tcp": 8375 },
+      "log": "~/Library/Logs/herdr-remote/relay.log",
+      "stream": true
+    },
+    "tunnel": {
+      "health": { "pgrep": "cloudflared .*--url http://127.0.0.1:8375" }
+    }
+  },
+
+  "commands": {
+    "df": {
+      "argv": ["df", "-h"],
+      "tier": "R"
+    },
+    "uptime": {
+      "argv": ["uptime"],
+      "tier": "R"
+    },
+    "git-log": {
+      "argv": ["git", "-C", "{repo}", "log", "--oneline", "-n", "{n}"],
+      "params": {
+        "repo": { "enum": ["~/code/python/herdr-remote"] },
+        "n": { "int": [1, 50] }
+      },
+      "tier": "R"
+    },
+    "git-fetch": {
+      "argv": ["git", "-C", "{repo}", "fetch", "--all", "--prune"],
+      "params": { "repo": { "enum": ["~/code/python/herdr-remote"] } },
+      "tier": "W",
+      "timeout": 300,
+      "stream": true
+    }
+  },
+
+  "limits": { "stream_seconds": 600, "stream_bytes": 262144, "rate_per_min": 20 }
+}

@@ -17,6 +17,9 @@ cleanup() {
     trap - INT TERM EXIT
     echo ""
     echo "Shutting down..."
+    # The ops bot reads this to answer /relay url. A stale file outlives the tunnel and would have
+    # it hand out a hostname that no longer resolves to anything.
+    rm -f "$CONFIG_DIR/tunnel.url"
     [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null && wait "$TUNNEL_PID" 2>/dev/null
     [ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null && wait "$RELAY_PID" 2>/dev/null
     echo "Done."
@@ -129,6 +132,11 @@ if command -v cloudflared >/dev/null 2>&1; then
             echo "Warning: tunnel is up but printed no URL within 20s. Watch: tail -f $TUNNEL_LOG"
         else
             WSS_URL="${TUNNEL_URL/https:\/\//wss://}"
+            # Record it. A temp tunnel mints a new hostname on every start, so until now the only
+            # ways to learn the new one were this terminal and the webhook — both of which assume
+            # someone is watching. The ops bot answers /relay url out of this file, which is what
+            # makes recovery possible from a phone with the tunnel already down.
+            mkdir -p "$CONFIG_DIR" && printf '%s\n' "$TUNNEL_URL" > "$CONFIG_DIR/tunnel.url"
             ENC_URL="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$WSS_URL")"
             APP_URL="${HERDR_APP_URL:-https://eagerkoder.github.io/mini/}"
             echo ""

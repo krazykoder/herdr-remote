@@ -61,7 +61,7 @@ Missing `HERDR_OPS_TG_TOKEN` → exit 1 with `Set HERDR_OPS_TG_TOKEN (from @BotF
 | Rule | Violation |
 |---|---|
 | `chat_ids` is a list of ints. May be empty. | type error → exit 1 |
-| Service `start` is a non-empty argv list of strings, or `unit` is present. | error |
+| Service `start` is a list of strings. Neither `start` nor `unit` is legal — a **monitor-only** entry, visible to `/health` and not startable. `cloudflared` is exactly that: `start.sh` owns its lifecycle. | error only on a malformed list |
 | `health` has exactly one of `tcp` (int 1–65535), `pgrep` (string), `http` (http/https URL), `unit` (bool true). | error |
 | Command `argv` non-empty; `argv[0]` resolves via `shutil.which` or is an existing executable path. | error naming the binary |
 | Every `{name}` placeholder **is an entire argv element**. `"-C{repo}"` and `"{a}{b}"` are rejected. | error |
@@ -80,9 +80,11 @@ Missing `HERDR_OPS_TG_TOKEN` → exit 1 with `Set HERDR_OPS_TG_TOKEN (from @BotF
 - Empty allowlist → **every command is refused**, including `/help`, with:
   `Not authorized. This chat id is <id>. Add it to chat_ids in ops.json and restart.`
   There is no discovery mode. (Differs deliberately from `herdr_telegram.py`.)
-- Unauthorized chat → the same refusal, and one `log.warning` per chat per minute, no more.
-- Handlers are additionally registered behind `filters.Chat(chat_id=…)` when the allowlist is
-  non-empty, so the check exists in two places and neither is the only one.
+- Unauthorized chat → the same refusal, and a `log.warning`.
+- **One check, in one place.** `filters.Chat(chat_id=…)` was considered as a second layer and
+  dropped: it makes an unauthorized chat get silence, which contradicts the refusal text above and
+  would hide `/whoami` — the command whose whole job is to tell a new chat its id. Every handler
+  calls the same `guard()` first, and the callback handler re-checks before redeeming a token.
 - **Rate limit**: token bucket, `limits.rate_per_min` per chat. Over budget → `Rate limited, try
   again in Ns.` W-tier confirmations count against it too.
 
@@ -116,7 +118,13 @@ stdout=<log fd, append>, stderr=STDOUT, start_new_session=True)`.
 ### 4.3 Liveness and reconciliation
 
 A service is **alive** iff its state file exists, `os.kill(pid, 0)` succeeds, and the identity
-re-check of §4.2.2 passes. On boot and before every status read, a state file failing that is
+re-check of §4.2.2 passes. Liveness first **reaps** that pid (`Popen.poll`, falling back to
+`waitpid(pid, WNOHANG)` for a service adopted across a bot restart): a service is our direct child
+even though it leads its own session, and an unreaped zombie still answers `kill(pid, 0)` — so
+without the reap the bot reports a dead service as running. The reap is targeted at one pid, never
+`waitpid(-1)`, which would steal exit statuses from the `subprocess.run` calls the probes use. It
+happens **after** the group-liveness check, not before: a group whose only member is an unreaped
+zombie leader already answers `ESRCH`, so reaping first can leave the child unwaited forever. On boot and before every status read, a state file failing that is
 deleted (adopting what is real rather than starting a duplicate).
 
 Liveness is about *our process*; the **health probe** is about the service working:

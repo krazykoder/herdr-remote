@@ -1,0 +1,694 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["python-telegram-bot>=21.0"]
+# ///
+"""herdr-ops — operate this machine from Telegram, without the relay.
+
+The relay and the tunnel are how everything else reaches this host, which means they are also what
+fails when nothing can reach it. The other bot (herdr_telegram.py) is a WebSocket client of the
+relay, so a relay crash silences it too. This one holds no relay connection at all: Telegram long
+polling is an outbound HTTPS call, so it works with the tunnel down, the port firewalled and no
+public hostname — and it can restart the stack and hand back the new wss:// link.
+
+What it may do is entirely described by ops.json (see ops_config). Process control is
+ops_supervisor. This file is handlers, streaming, and the health watcher.
+
+    HERDR_OPS_TG_TOKEN    @BotFather token — its own bot, because two pollers on one token get
+                          409 Conflict, and because restarting the box does not belong in the
+                          chat where agents are approved
+    HERDR_OPS_TG_CHAT_ID  extra allowlisted chat, merged with ops.json's chat_ids
+    HERDR_OPS_CONFIG      registry path (default ~/.config/herdr-remote/ops.json)
+"""
+import asyncio
+import html
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import ops_config
+import ops_supervisor as sup
+import tg_util
+from ops_config import ConfigError
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.error import RetryAfter, TelegramError
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+
+logging.basicConfig(level=logging.INFO)
+# httpx logs every request URL at INFO, and that URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+log = logging.getLogger("herdr-ops")
+
+TOKEN = os.environ.get("HERDR_OPS_TG_TOKEN", "")
+CONFIG_DIR = Path(os.path.expanduser("~/.config/herdr-remote"))
+TUNNEL_URL_FILE = CONFIG_DIR / "tunnel.url"
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\r")
+EDIT_INTERVAL = 3.0     # Telegram tolerates an edit every few seconds; below that it 429s
+TAIL_LINES = 30
+WATCH_INTERVAL = 60.0
+
+CFG: ops_config.OpsConfig
+ALLOWED: set[int] = set()
+CONFIRM = tg_util.Confirmations()
+LIMITER: tg_util.RateLimiter
+LOCKS: dict[str, asyncio.Lock] = {}
+STREAMS: dict[int, "Stream"] = {}
+
+
+def secrets_to_hide() -> tuple:
+    """Everything scrub() must never let through: the bot token and any relay/API token around."""
+    return (TOKEN, *(v for k, v in os.environ.items()
+                     if k.startswith("HERDR_") and k.endswith("TOKEN") and v))
+
+
+def scrub(value) -> str:
+    return tg_util.scrub(value, *secrets_to_hide())
+
+
+# --- Replying ---
+
+async def send(update_or_chat, ctx, text: str, mono: bool = False, **kwargs):
+    """Every outbound message goes through here: scrubbed, then split to Telegram's limit."""
+    chat_id = (update_or_chat.effective_chat.id if isinstance(update_or_chat, Update)
+               else update_or_chat)
+    for part in tg_util.chunks(scrub(text)):
+        await ctx.bot.send_message(
+            chat_id=chat_id,
+            text=tg_util.pre(part) if mono else html.escape(part),
+            parse_mode=ParseMode.HTML, **kwargs)
+
+
+def authorized(update: Update) -> bool:
+    return bool(ALLOWED) and update.effective_chat.id in ALLOWED
+
+
+async def guard(update: Update, ctx) -> bool:
+    """Allowlist then rate limit. An empty allowlist refuses everything — there is no discovery
+    mode here, unlike the agent bot: a process that runs binaries must not boot into an open
+    state."""
+    chat_id = update.effective_chat.id
+    if not authorized(update):
+        await send(update, ctx,
+                   f"Not authorized. This chat id is {chat_id}.\n"
+                   f"Add it to chat_ids in {CFG.path} and restart the bot.")
+        log.warning("refused command from chat %s", chat_id)
+        return False
+    wait = LIMITER.check(chat_id)
+    if wait:
+        await send(update, ctx, f"Rate limited, try again in {wait}s.")
+        return False
+    return True
+
+
+def lock_for(name: str) -> asyncio.Lock:
+    return LOCKS.setdefault(name, asyncio.Lock())
+
+
+# --- Confirmation for state-changing commands ---
+
+def confirm_keyboard(token: str, label: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"Confirm {label}", callback_data=f"y:{token}"),
+        InlineKeyboardButton("Cancel", callback_data=f"n:{token}"),
+    ]])
+
+
+async def ask_confirm(update: Update, ctx, label: str, action):
+    token = CONFIRM.issue((action, label))
+    await ctx.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"Confirm: <b>{html.escape(label)}</b>\nThis expires in 60s.",
+        parse_mode=ParseMode.HTML, reply_markup=confirm_keyboard(token, label))
+
+
+async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not authorized(update):
+        return
+    verdict, _, token = query.data.partition(":")
+    payload = CONFIRM.redeem(token)
+    if not payload:
+        await query.edit_message_text("That confirmation expired.")
+        return
+    action, label = payload
+    if verdict != "y":
+        await query.edit_message_text(f"Cancelled: {label}")
+        return
+    await query.edit_message_text(f"Running: {label}")
+    try:
+        result = await action()
+    except Exception as exc:                                  # noqa: BLE001 — reported, not raised
+        result = f"failed: {type(exc).__name__}: {exc}"
+        log.warning("action %s failed: %s", label, scrub(exc))
+    await send(update.effective_chat.id, ctx, result, mono=True)
+
+
+# --- Tunnel link ---
+
+def tunnel_block() -> str:
+    """What /relay url and a finished /relay restart answer with. Carries the relay token, which
+    is exactly why this bot's chat is allowlisted."""
+    if not TUNNEL_URL_FILE.exists():
+        return "No tunnel URL recorded (named mode, or the tunnel is not up)."
+    url = TUNNEL_URL_FILE.read_text(encoding="utf-8").strip()
+    if not url:
+        return "No tunnel URL recorded."
+    wss = url.replace("https://", "wss://", 1)
+    reach = "reachable"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.status >= 500:
+                reach = f"http {response.status}"
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        reach = f"not answering ({type(exc).__name__})"
+
+    lines = [f"Tunnel:  {wss}   ({reach})"]
+    relay_token = os.environ.get("HERDR_RELAY_TOKEN", "")
+    if relay_token:
+        from urllib.parse import quote
+        app = os.environ.get("HERDR_APP_URL", "https://eagerkoder.github.io/mini/")
+        lines.append(f"Open:    {app}?relay={quote(wss, safe='')}&token={relay_token}")
+    age = int(time.time() - TUNNEL_URL_FILE.stat().st_mtime)
+    lines.append(f"Recorded {sup.uptime({'started_at': TUNNEL_URL_FILE.stat().st_mtime})} ago"
+                 if age > 5 else "Recorded just now")
+    return "\n".join(lines)
+
+
+# --- Streaming ---
+
+class Stream:
+    """One live view per chat: a single message edited every few seconds, or appended chunks.
+
+    Editing beats appending for a tail — the chat stays one screen instead of scrolling away. When
+    Telegram pushes back with a 429 the missed frame is dropped rather than queued: the point of a
+    tail is the newest lines, and a backlog of stale frames would arrive late and out of order.
+    """
+
+    def __init__(self, chat_id: int, ctx, title: str, limits: dict):
+        self.chat_id = chat_id
+        self.ctx = ctx
+        self.title = title
+        self.limits = limits
+        self.buffer: list[str] = []
+        self.bytes = 0
+        self.message = None
+        self.task: asyncio.Task | None = None
+        self.proc: subprocess.Popen | None = None
+        self.stop_reason: str | None = None
+        self.last_render = ""
+
+    def feed(self, text: str) -> bool:
+        """Returns False once the byte cap is hit."""
+        self.bytes += len(text)
+        for line in ANSI.sub("", text).splitlines():
+            self.buffer.append(line)
+        del self.buffer[:-TAIL_LINES]
+        if self.bytes >= self.limits["stream_bytes"]:
+            self.stop_reason = "byte limit"
+            return False
+        return True
+
+    def render(self) -> str:
+        return "\n".join(self.buffer) or "(no output yet)"
+
+    async def paint(self, force: bool = False):
+        body = self.render()
+        if body == self.last_render and not force:
+            return
+        self.last_render = body
+        text = f"<b>{html.escape(self.title)}</b>\n{tg_util.pre(scrub(body)[-3500:])}"
+        try:
+            if self.message is None:
+                self.message = await self.ctx.bot.send_message(
+                    chat_id=self.chat_id, text=text, parse_mode=ParseMode.HTML)
+            else:
+                await self.message.edit_text(text, parse_mode=ParseMode.HTML)
+        except RetryAfter as exc:
+            await asyncio.sleep(float(exc.retry_after))   # drop this frame; the next one is fresher
+        except TelegramError as exc:
+            log.debug("paint failed: %s", scrub(exc))
+
+    async def finish(self, reason: str):
+        self.stop_reason = self.stop_reason or reason
+        await self.paint(force=True)
+        await self.ctx.bot.send_message(chat_id=self.chat_id,
+                                        text=f"— ended: {self.stop_reason}")
+        STREAMS.pop(self.chat_id, None)
+
+    def cancel(self):
+        self.stop_reason = "/stop"
+        if self.proc and self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, 15)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        if self.task:
+            self.task.cancel()
+
+
+async def run_file_tail(stream: Stream, path: str):
+    """Follow a log from its current end. Reopens on rotation — an inode swap otherwise leaves the
+    tail silently reading a file nothing writes to any more."""
+    deadline = time.time() + stream.limits["stream_seconds"]
+    handle = open(path, "r", encoding="utf-8", errors="replace")
+    handle.seek(0, os.SEEK_END)
+    inode = os.fstat(handle.fileno()).st_ino
+    try:
+        while time.time() < deadline:
+            data = handle.read()
+            if data and not stream.feed(data):
+                break
+            await stream.paint()
+            try:
+                if os.stat(path).st_ino != inode:
+                    handle.close()
+                    handle = open(path, "r", encoding="utf-8", errors="replace")
+                    inode = os.fstat(handle.fileno()).st_ino
+            except FileNotFoundError:
+                pass
+            await asyncio.sleep(EDIT_INTERVAL)
+        else:
+            stream.stop_reason = stream.stop_reason or "time limit"
+    finally:
+        handle.close()
+    await stream.finish(stream.stop_reason or "time limit")
+
+
+async def run_process_stream(stream: Stream, argv: list[str], cwd: str | None, timeout: int):
+    """Run a `stream: true` command and tail its output as it goes."""
+    stream.proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                   start_new_session=True)
+    deadline = time.time() + timeout
+    loop = asyncio.get_running_loop()
+    last_paint = 0.0
+    while True:
+        line = await loop.run_in_executor(None, stream.proc.stdout.readline)
+        if not line:
+            break
+        if not stream.feed(line):
+            break
+        if time.time() - last_paint >= EDIT_INTERVAL:
+            await stream.paint()
+            last_paint = time.time()
+        if time.time() > deadline:
+            stream.stop_reason = f"timed out after {timeout}s (killed)"
+            break
+    if stream.proc.poll() is None:
+        try:
+            os.killpg(stream.proc.pid, 15)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    code = stream.proc.wait()
+    await stream.finish(stream.stop_reason or f"process exited {code}")
+
+
+async def begin_stream(update: Update, ctx, title: str, runner):
+    chat_id = update.effective_chat.id
+    existing = STREAMS.get(chat_id)
+    if existing:
+        existing.cancel()
+        await send(update, ctx, "Replaced the stream that was already running here.")
+    stream = Stream(chat_id, ctx, title, CFG.limits)
+    STREAMS[chat_id] = stream
+    stream.task = asyncio.create_task(runner(stream))
+
+
+# --- Commands ---
+
+def help_text() -> str:
+    services = ", ".join(CFG.services) or "(none)"
+    lines = [
+        "herdr-ops",
+        "",
+        "/health — everything at a glance",
+        "/svc — list services; /svc status|start|stop|restart <name>",
+        "/relay restart | /relay url — restart the stack, get the new wss:// link",
+        "/logs <name> [n] — last n lines (default 50, max 500)",
+        "/tail <name> — follow a log live; /stop ends it",
+        "/ps — processes this bot started",
+        "/run <cmd> [args…] — an allowlisted utility",
+        "/whoami — this chat's id",
+        "",
+        f"services: {services}",
+        "commands:",
+    ]
+    for name, cmd in CFG.commands.items():
+        params = " ".join(f"<{p}>" for p in cmd.params)
+        tier = " [confirms]" if cmd.tier == "W" else ""
+        lines.append(f"  /run {name} {params}".rstrip() + tier)
+    if not CFG.commands:
+        lines.append("  (none)")
+    return "\n".join(lines)
+
+
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    await send(update, ctx, help_text(), mono=True)
+
+
+async def cmd_whoami(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    state = "allowlisted" if chat_id in ALLOWED else "NOT allowlisted"
+    await send(update, ctx, f"chat id: {chat_id}\n{state}\nconfig: {CFG.path}")
+
+
+def service_line(name: str) -> str:
+    svc = CFG.services[name]
+    state = sup.read_state(name)
+    alive = sup.running(state)
+    ok, why = sup.probe(svc)
+    mark = "up  " if ok else ("?   " if alive else "DOWN")
+    pid = f"pid {state['pid']} up {sup.uptime(state)}" if alive else "not started by ops"
+    return f"{mark} {name:<10} {why:<22} {pid}"
+
+
+async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    lines = [service_line(name) for name in CFG.services] or ["(no services configured)"]
+    lines.append("")
+    lines.append(tunnel_block())
+    lines.append("")
+    try:
+        disk = subprocess.run(["df", "-h", "/"], capture_output=True, text=True, timeout=3)
+        lines.append(disk.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, IndexError):
+        pass
+    load = ", ".join(f"{v:.2f}" for v in os.getloadavg())
+    lines.append(f"load: {load}")
+    await send(update, ctx, "\n".join(lines), mono=True)
+
+
+def known(kind: str, table: dict, name: str):
+    if name not in table:
+        raise ValueError(f"unknown {kind} '{name}'. Known: {', '.join(table) or 'none'}")
+    return table[name]
+
+
+async def cmd_svc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    args = ctx.args or []
+    if not args:
+        lines = [service_line(name) for name in CFG.services] or ["(no services configured)"]
+        await send(update, ctx, "\n".join(lines), mono=True)
+        return
+
+    action, name = args[0], (args[1] if len(args) > 1 else "")
+    if action not in ("status", "start", "stop", "restart"):
+        await send(update, ctx, "usage: /svc [status|start|stop|restart] <name>")
+        return
+    try:
+        svc = known("service", CFG.services, name)
+    except ValueError as exc:
+        await send(update, ctx, str(exc))
+        return
+
+    if action == "status":
+        state = sup.read_state(name)
+        ok, why = sup.probe(svc)
+        lines = [f"{name}: {'up' if ok else 'down'} ({why})"]
+        if state:
+            lines.append(f"pid {state['pid']} pgid {state.get('pgid')} up {sup.uptime(state)}")
+            lines.append("argv: " + " ".join(state.get("argv") or []))
+        else:
+            lines.append("not started by ops (no state file)")
+        if svc.log and Path(svc.log).exists():
+            lines.append("")
+            lines.extend(tail_file(svc.log, 5))
+        await send(update, ctx, "\n".join(lines), mono=True)
+        return
+
+    await ask_confirm(update, ctx, f"/svc {action} {name}",
+                      lambda: service_action(svc, action))
+
+
+async def service_action(svc, action: str) -> str:
+    """Serialised per service: two chats racing a restart is the one way to end up with two
+    relays fighting over a port."""
+    async with lock_for(svc.name):
+        loop = asyncio.get_running_loop()
+        if svc.unit and sup.unit_name(svc):
+            return await loop.run_in_executor(None, sup.unit_action, svc, action)
+        if action == "start":
+            state = await loop.run_in_executor(None, sup.start, svc)
+            return f"{svc.name} started (pid {state['pid']})."
+        if action == "stop":
+            return await loop.run_in_executor(None, sup.stop, svc)
+        return await loop.run_in_executor(None, sup.restart, svc)
+
+
+async def cmd_relay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    action = (ctx.args or ["url"])[0]
+    if action == "url":
+        await send(update, ctx, tunnel_block(), mono=True)
+        return
+    if action != "restart":
+        await send(update, ctx, "usage: /relay restart | /relay url")
+        return
+    try:
+        svc = known("service", CFG.services, "relay")
+    except ValueError as exc:
+        await send(update, ctx, str(exc))
+        return
+
+    async def action_then_link():
+        result = await service_action(svc, "restart")
+        # The tunnel needs a moment to mint its hostname and start.sh a moment to record it. The
+        # whole feature is this reply, so it is worth waiting for rather than answering "unknown".
+        for _ in range(30):
+            if TUNNEL_URL_FILE.exists() and TUNNEL_URL_FILE.stat().st_mtime > time.time() - 120:
+                break
+            await asyncio.sleep(1)
+        return f"{result}\n\n{tunnel_block()}"
+
+    await ask_confirm(update, ctx, "/relay restart", action_then_link)
+
+
+def tail_file(path: str, count: int) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return [ANSI.sub("", line.rstrip("\n"))
+                    for line in handle.readlines()[-count:]]
+    except FileNotFoundError:
+        return [f"log not found: {path}"]
+    except OSError as exc:
+        return [f"cannot read {path}: {exc}"]
+
+
+async def cmd_logs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    args = ctx.args or []
+    if not args:
+        await send(update, ctx, "usage: /logs <name> [n]")
+        return
+    try:
+        svc = known("service", CFG.services, args[0])
+    except ValueError as exc:
+        await send(update, ctx, str(exc))
+        return
+    count = 50
+    if len(args) > 1:
+        if not args[1].isdigit():
+            await send(update, ctx, "n must be a whole number in 1..500")
+            return
+        count = max(1, min(500, int(args[1])))
+    if not svc.log:
+        await send(update, ctx, f"{svc.name} has no log configured.")
+        return
+    await send(update, ctx, "\n".join(tail_file(svc.log, count)), mono=True)
+
+
+async def cmd_tail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    args = ctx.args or []
+    if not args:
+        await send(update, ctx, "usage: /tail <name>")
+        return
+    try:
+        svc = known("service", CFG.services, args[0])
+    except ValueError as exc:
+        await send(update, ctx, str(exc))
+        return
+    if not svc.stream or not svc.log:
+        await send(update, ctx, f"{svc.name} is not streamable (needs a log and stream: true).")
+        return
+    if not Path(svc.log).exists():
+        await send(update, ctx, f"log not found: {svc.log}")
+        return
+    await begin_stream(update, ctx, f"tail {svc.name}",
+                       lambda stream: run_file_tail(stream, svc.log))
+
+
+async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    args = ctx.args or []
+    if not args:
+        await send(update, ctx, "usage: /run <cmd> [args…]  — /help lists what is allowed")
+        return
+    name = args[0]
+    if name not in CFG.commands:
+        await send(update, ctx, f"'{name}' is not in the allowlist. "
+                                f"/help lists what is: {', '.join(CFG.commands) or 'none'}")
+        return
+    cmd = CFG.commands[name]
+    try:
+        argv = ops_config.build_argv(cmd, args[1:])
+    except ValueError as exc:
+        await send(update, ctx, str(exc))
+        return
+
+    async def execute() -> str:
+        if cmd.stream:
+            await begin_stream(update, ctx, f"run {name}",
+                               lambda stream: run_process_stream(stream, argv, cmd.cwd,
+                                                                 cmd.timeout))
+            return f"streaming {name}…"
+        return await asyncio.get_running_loop().run_in_executor(None, run_once, cmd, argv)
+
+    if cmd.tier == "W":
+        await ask_confirm(update, ctx, f"/run {' '.join(args)}", execute)
+        return
+    await send(update, ctx, await execute(), mono=True)
+
+
+def run_once(cmd, argv: list[str]) -> str:
+    """One-shot execution. shell=False, always: argv came from a template, never from a string."""
+    try:
+        done = subprocess.run(argv, cwd=cmd.cwd, capture_output=True, text=True,
+                              timeout=cmd.timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return f"{cmd.name}: timed out after {cmd.timeout}s (killed)"
+    except OSError as exc:
+        return f"{cmd.name}: {exc}"
+    output = ANSI.sub("", (done.stdout or "") + (done.stderr or "")).strip()
+    cap = CFG.limits["stream_bytes"]
+    if len(output) > cap:
+        output = output[:cap] + f"\n… truncated at {cap} bytes"
+    return f"$ {' '.join(argv)}\n{output or '(no output)'}\n[exit {done.returncode}]"
+
+
+async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    stream = STREAMS.get(update.effective_chat.id)
+    if not stream:
+        await send(update, ctx, "No active stream.")
+        return
+    stream.cancel()
+    await stream.finish("/stop")
+
+
+async def cmd_ps(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    lines = []
+    for name in CFG.services:
+        state = sup.read_state(name)
+        if sup.running(state):
+            lines.append(f"{name:<10} pid {state['pid']:<7} pgid {state.get('pgid'):<7} "
+                         f"up {sup.uptime(state)}  {' '.join(state.get('argv') or [])}")
+    await send(update, ctx, "\n".join(lines) or "Nothing started by ops is running.", mono=True)
+
+
+# --- Health watcher ---
+
+async def health_watcher(app: Application):
+    """Report up→down and down→up, nothing else. No auto-restart: the bot tells you, you decide.
+
+    Transition-only because a heartbeat in a chat is noise you learn to ignore, and the one message
+    that matters then arrives among a hundred that did not.
+    """
+    was: dict[str, bool] = {}
+    while True:
+        await asyncio.sleep(WATCH_INTERVAL)
+        for name, svc in CFG.services.items():
+            ok, why = await asyncio.get_running_loop().run_in_executor(None, sup.probe, svc)
+            previous = was.get(name)
+            was[name] = ok
+            if previous is None or previous == ok:
+                continue
+            text = (f"{name} is back up ({why})" if ok
+                    else f"⚠️ {name} is down ({why})\n/svc restart {name}")
+            for chat_id in ALLOWED:
+                try:
+                    await app.bot.send_message(chat_id=chat_id, text=text)
+                except TelegramError as exc:
+                    log.warning("alert to %s failed: %s", chat_id, scrub(exc))
+
+
+# --- Entry point ---
+
+def load_config_or_die() -> ops_config.OpsConfig:
+    try:
+        return ops_config.load()
+    except ConfigError as exc:
+        print(f"Config error — {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    global CFG, ALLOWED, LIMITER
+    CFG = load_config_or_die()
+    ALLOWED = set(CFG.chat_ids)
+    extra = os.environ.get("HERDR_OPS_TG_CHAT_ID", "").strip()
+    if extra:
+        ALLOWED |= {int(part) for part in extra.split(",") if part.strip()}
+    LIMITER = tg_util.RateLimiter(CFG.limits["rate_per_min"])
+
+    cleared = sup.reconcile(CFG.services)
+    summary = (f"{len(CFG.services)} service(s), {len(CFG.commands)} command(s), "
+               f"{len(ALLOWED)} allowlisted chat(s)")
+
+    if "--check" in sys.argv:
+        print(f"ok: {CFG.path} — {summary}")
+        if cleared:
+            print(f"cleared stale state: {', '.join(cleared)}")
+        if not ALLOWED:
+            print("warning: no chat_ids — every command would be refused")
+        return
+
+    if not TOKEN:
+        print("Set HERDR_OPS_TG_TOKEN (from @BotFather)", file=sys.stderr)
+        sys.exit(1)
+    if not ALLOWED:
+        log.warning("no chat_ids configured — every command will be refused until one is added")
+
+    app = Application.builder().token(TOKEN).build()
+    for name, handler in (("start", cmd_help), ("help", cmd_help), ("whoami", cmd_whoami),
+                          ("health", cmd_health), ("svc", cmd_svc), ("relay", cmd_relay),
+                          ("logs", cmd_logs), ("tail", cmd_tail), ("run", cmd_run),
+                          ("stop", cmd_stop), ("ps", cmd_ps)):
+        app.add_handler(CommandHandler(name, handler))
+    app.add_handler(CallbackQueryHandler(on_callback))
+
+    log.info("herdr-ops ready — %s", summary)
+
+    async def run():
+        async with app:
+            await app.start()
+            await app.updater.start_polling()
+            await health_watcher(app)
+
+    asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()
