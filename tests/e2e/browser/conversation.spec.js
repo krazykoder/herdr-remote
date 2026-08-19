@@ -3536,7 +3536,9 @@ test('a note typed after a token goes out after the message it names', async ({p
 
 // Picking is done while reading, halfway up a long thread. The composer takes the caret so a note
 // can follow the token straight away — and that is exactly what drags the thread to the bottom if
-// the focus is allowed to scroll, putting the reader somewhere they were not.
+// the focus is allowed to scroll, putting the reader somewhere they were not. It takes it only
+// once there is a sentence in progress: on a phone the caret is the on-screen keyboard, and a
+// reader picking three bubbles is not writing yet.
 test('selecting a bubble preserves the thread scroll position rather than scrolling to bottom', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3561,7 +3563,14 @@ test('selecting a bubble preserves the thread scroll position rather than scroll
   await page.locator('#convViewThread .conv-msg', {hasText: 'line 3'}).first()
     .locator('.conv-pick').click();
   expect(await scroll()).toBe(120);
-  // And the note can be typed without going looking for the box.
+  // Nothing written yet, so the keyboard stays down and the thread stays readable.
+  expect(await page.evaluate(() => document.activeElement.id)).not.toBe('convInput');
+
+  // Written into, and the next pick puts the caret back where the sentence left off.
+  await page.locator('#convInput').fill('compare these');
+  await page.locator('#convViewThread .conv-msg', {hasText: 'line 5'}).first()
+    .locator('.conv-pick').click();
+  expect(await scroll()).toBe(120);
   expect(await page.evaluate(() => document.activeElement.id)).toBe('convInput');
 });
 

@@ -375,12 +375,16 @@
       autoGrow(input);
       syncConvCursor();
       syncDockTokens();
-      // The box takes the caret, because a note is what usually follows a pick — but `preventScroll`,
-      // or the browser brings the composer into view and the reader loses the place they were
-      // reading. The thread is put back where it was as well: `autoGrow` changes the composer's
-      // height, and a taller composer moves the thread under a scrollTop that no longer means the
-      // same line.
-      input.focus({preventScroll: true});
+      // The box takes the caret only once something has been written into it. Picking bubbles is
+      // reading, and on a phone every focus() is the on-screen keyboard rising over the thread
+      // being read — three picks up a long thread meant three keyboards. A box holding nothing but
+      // tokens is not a sentence in progress, so the reader is left alone and taps it when they
+      // have something to say; once they have, the caret follows the pick so the note carries on
+      // where it was. `preventScroll` either way, or the browser brings the composer into view and
+      // the reader loses their place. The thread is put back where it was as well: `autoGrow`
+      // changes the composer's height, and a taller composer moves the thread under a scrollTop
+      // that no longer means the same line.
+      if (input.value.replace(DOCK_TOKEN, '').trim()) input.focus({preventScroll: true});
       if (thread) thread.scrollTop = wasAt;
     }
 
