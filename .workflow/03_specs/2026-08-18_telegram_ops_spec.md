@@ -178,6 +178,27 @@ unchanged. Absent → detached `start.sh` path, which is the default and the tes
 
 Unknown service or command name → `unknown service '<x>'. Known: a, b, c.` Never a shell error.
 
+### 5.0 The native command menu
+
+Every command above, **and every registry entry**, is published to Telegram with `setMyCommands`,
+so the client offers autocomplete and a `/` button instead of requiring typed text. A registry entry
+called `df` becomes `/df`; `/run df` keeps working and is no longer the only way.
+
+- **Names.** Telegram allows `[a-z0-9_]{1,32}`; `ops.json` also allows `-`. A registry name is
+  mapped by replacing `-` with `_` (`git-log` → `/git_log`). A name that cannot be mapped, that
+  shadows a built-in, or that collides with another entry's mapped name, is **skipped with a
+  reason** — reported by `--check`, logged at boot, and listed at the end of `/help`. It stays
+  reachable as `/run <name>`.
+- **One source.** The menu and the handlers are built from the same `menu_entries()` call. A menu
+  entry nothing answers is a worse failure than a missing entry, so the two cannot be derived
+  separately.
+- **Scope.** Published per allowlisted chat (`BotCommandScopeChat`), and the default scope is
+  explicitly cleared. A stranger who finds the bot gets no menu: they would be refused anyway, but
+  the list itself describes this machine's controls and is not theirs to read.
+- **Cap.** Telegram allows 100 commands per scope; beyond that, entries are skipped with a reason.
+- **Failure is not fatal.** If `setMyCommands` fails, the bot logs it and runs on — every command
+  still works as typed text; only autocomplete is lost.
+
 ### 5.1 `/run`
 
 1. Look up `<cmd>` in `commands`. Absent → `'<cmd>' is not in the allowlist. /help lists what is.`

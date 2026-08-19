@@ -170,12 +170,15 @@ In order. Each row is pass/fail.
 
 | Send | Expect |
 |---|---|
-| `/help` | The command list, generated from *your* registry — five `/run` entries |
+| Type `/` in the chat | The native menu: `/health`, `/svc`, `/relay`… **and your registry entries** as real commands — `/df`, `/git_log`. Autocomplete, no typing |
+| `/help` | The command list, generated from *your* registry |
+| `/df` | Same as `/run df`. Registry entries are commands in their own right |
 | `/whoami` | Your id, `allowlisted` |
 | `/health` | `up   relay      tcp 8375 open`, a tunnel line, disk free, load average |
 | `/relay url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6) |
 | `/run uptime` | Load averages, `[exit 0]` |
-| `/run git-log ~/code/python/herdr-remote 5` | Five commits |
+| `/git_log ~/code/python/herdr-remote 5` | Five commits — the hyphen in `git-log` becomes an underscore, because Telegram command names cannot contain one |
+| `/run git-log ~/code/python/herdr-remote 5` | The same thing, the long way |
 | `/run git-log /etc 5` | `repo: must be one of ~/code/python/herdr-remote` |
 | `/run git-log ~/code/python/herdr-remote 500` | `n: must be a whole number in 1..50` |
 | `/run rm -rf ~` | `'rm' is not in the allowlist.` |

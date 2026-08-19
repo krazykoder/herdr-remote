@@ -37,7 +37,8 @@ import ops_supervisor as sup
 import tg_util
 from ops_config import ConfigError
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (BotCommand, BotCommandScopeChat, BotCommandScopeDefault,
+                      InlineKeyboardButton, InlineKeyboardMarkup, Update)
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
@@ -326,6 +327,84 @@ async def begin_stream(update: Update, ctx, title: str, runner):
 
 # --- Commands ---
 
+# --- The native command menu ---
+
+# Telegram's own rules for a command name: lowercase letters, digits and underscores, 1–32 chars.
+# A registry name may contain a hyphen (`git-log`), which is legal in ops.json and illegal here.
+TG_COMMAND = re.compile(r"^[a-z0-9_]{1,32}$")
+TG_MENU_MAX = 100        # Telegram's cap on commands per scope
+TG_DESC_MAX = 256
+
+BUILTIN_MENU = [
+    ("health", "Services, tunnel, disk, load"),
+    ("svc", "[status|start|stop|restart] <name>"),
+    ("relay", "restart | url — new wss:// link"),
+    ("logs", "<name> [n] — last log lines"),
+    ("tail", "<name> — follow a log live"),
+    ("run", "<cmd> [args…] — an allowlisted utility"),
+    ("stop", "End the active stream"),
+    ("ps", "Processes this bot started"),
+    ("whoami", "This chat's id"),
+    ("help", "Everything this bot allows here"),
+]
+
+
+def menu_name(name: str) -> str:
+    """`git-log` in the registry is `/git_log` in Telegram. Hyphens are not allowed in a command."""
+    return name.replace("-", "_")
+
+
+def menu_entries(cfg) -> tuple[list[tuple[str, str]], list[str]]:
+    """Build the native command list. Returns (entries, skipped reasons).
+
+    Registry commands become real commands — `/df`, `/git_log` — so the phone's autocomplete offers
+    them and `/run` becomes the long way round rather than the only way. Anything Telegram would
+    reject, or that would shadow a built-in, is skipped with a reason rather than silently dropped:
+    a menu that disagrees with the handlers is worse than a shorter menu.
+    """
+    entries = list(BUILTIN_MENU)
+    taken = {name for name, _ in entries}
+    skipped = []
+
+    for name, cmd in cfg.commands.items():
+        tg_name = menu_name(name)
+        if not TG_COMMAND.match(tg_name):
+            skipped.append(f"{name}: not a legal Telegram command name")
+            continue
+        if tg_name in taken:
+            skipped.append(f"{name}: /{tg_name} is already taken")
+            continue
+        if len(entries) >= TG_MENU_MAX:
+            skipped.append(f"{name}: menu is full at {TG_MENU_MAX}")
+            continue
+        params = " ".join(f"<{p}>" for p in cmd.params)
+        confirms = " (confirms)" if cmd.tier == "W" else ""
+        description = f"{params} {' '.join(cmd.argv[:2])}{confirms}".strip()[:TG_DESC_MAX]
+        entries.append((tg_name, description or name))
+        taken.add(tg_name)
+
+    return entries, skipped
+
+
+async def publish_menu(app: Application, entries: list[tuple[str, str]]):
+    """Register the menu with Telegram, per allowlisted chat.
+
+    Scoped rather than global: the default scope is what a stranger who finds the bot sees, and
+    handing them a menu of this machine's controls tells them what to try. They would be refused,
+    but the list itself is information the bot has no reason to publish.
+    """
+    commands = [BotCommand(name, description) for name, description in entries]
+    try:
+        await app.bot.delete_my_commands(scope=BotCommandScopeDefault())
+        for chat_id in ALLOWED:
+            await app.bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=chat_id))
+    except TelegramError as exc:
+        # Not fatal: every command still works as typed text. Only autocomplete is lost.
+        log.warning("could not publish the command menu: %s", scrub(exc))
+        return
+    log.info("published %d commands to %d chat(s)", len(commands), len(ALLOWED))
+
+
 def help_text() -> str:
     services = ", ".join(CFG.services) or "(none)"
     lines = [
@@ -343,12 +422,18 @@ def help_text() -> str:
         f"services: {services}",
         "commands:",
     ]
+    _, skipped = menu_entries(CFG)
+    unlisted = {reason.split(":", 1)[0] for reason in skipped}
     for name, cmd in CFG.commands.items():
         params = " ".join(f"<{p}>" for p in cmd.params)
         tier = " [confirms]" if cmd.tier == "W" else ""
-        lines.append(f"  /run {name} {params}".rstrip() + tier)
+        native = f"/{menu_name(name)}" if name not in unlisted else f"/run {name}"
+        lines.append(f"  {native} {params}".rstrip() + tier)
     if not CFG.commands:
         lines.append("  (none)")
+    if skipped:
+        lines.append("")
+        lines.append("not in the menu: " + "; ".join(skipped))
     return "\n".join(lines)
 
 
@@ -536,21 +621,11 @@ async def cmd_tail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                        lambda stream: run_file_tail(stream, svc.log))
 
 
-async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update, ctx):
-        return
-    args = ctx.args or []
-    if not args:
-        await send(update, ctx, "usage: /run <cmd> [args…]  — /help lists what is allowed")
-        return
-    name = args[0]
-    if name not in CFG.commands:
-        await send(update, ctx, f"'{name}' is not in the allowlist. "
-                                f"/help lists what is: {', '.join(CFG.commands) or 'none'}")
-        return
+async def execute_registry(update: Update, ctx, name: str, args: list[str], label: str):
+    """Run one allowlisted command. Reached from `/run <name>` and from its own native command."""
     cmd = CFG.commands[name]
     try:
-        argv = ops_config.build_argv(cmd, args[1:])
+        argv = ops_config.build_argv(cmd, args)
     except ValueError as exc:
         await send(update, ctx, str(exc))
         return
@@ -564,9 +639,35 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await asyncio.get_running_loop().run_in_executor(None, run_once, cmd, argv)
 
     if cmd.tier == "W":
-        await ask_confirm(update, ctx, f"/run {' '.join(args)}", execute)
+        await ask_confirm(update, ctx, label, execute)
         return
     await send(update, ctx, await execute(), mono=True)
+
+
+async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update, ctx):
+        return
+    args = ctx.args or []
+    if not args:
+        await send(update, ctx, "usage: /run <cmd> [args…]  — /help lists what is allowed")
+        return
+    name = args[0]
+    if name not in CFG.commands:
+        await send(update, ctx, f"'{name}' is not in the allowlist. "
+                                f"/help lists what is: {', '.join(CFG.commands) or 'none'}")
+        return
+    await execute_registry(update, ctx, name, args[1:], f"/run {' '.join(args)}")
+
+
+def registry_handler(name: str):
+    """A native `/df`-style command for a registry entry. `/run df` keeps working either way."""
+    async def handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not await guard(update, ctx):
+            return
+        args = ctx.args or []
+        await execute_registry(update, ctx, name, args,
+                               f"/{menu_name(name)} {' '.join(args)}".rstrip())
+    return handler
 
 
 def run_once(cmd, argv: list[str]) -> str:
@@ -659,6 +760,10 @@ def main():
 
     if "--check" in sys.argv:
         print(f"ok: {CFG.path} — {summary}")
+        entries, skipped = menu_entries(CFG)
+        print(f"menu: {' '.join('/' + name for name, _ in entries)}")
+        for reason in skipped:
+            print(f"  not offered as a command — {reason} (still reachable as /run)")
         if cleared:
             print(f"cleared stale state: {', '.join(cleared)}")
         if not ALLOWED:
@@ -677,6 +782,19 @@ def main():
                           ("logs", cmd_logs), ("tail", cmd_tail), ("run", cmd_run),
                           ("stop", cmd_stop), ("ps", cmd_ps)):
         app.add_handler(CommandHandler(name, handler))
+
+    # Every registry entry also gets its own command, so the phone offers `/df` rather than
+    # `/run df`. Built from the same menu_entries() the menu is, so the two cannot disagree.
+    entries, skipped = menu_entries(CFG)
+    builtin = {name for name, _ in BUILTIN_MENU}
+    for tg_name, _ in entries:
+        if tg_name in builtin:
+            continue
+        origin = next(n for n in CFG.commands if menu_name(n) == tg_name)
+        app.add_handler(CommandHandler(tg_name, registry_handler(origin)))
+    for reason in skipped:
+        log.warning("not offered as a command — %s (still reachable as /run)", reason)
+
     app.add_handler(CallbackQueryHandler(on_callback))
 
     log.info("herdr-ops ready — %s", summary)
@@ -684,6 +802,7 @@ def main():
     async def run():
         async with app:
             await app.start()
+            await publish_menu(app, entries)
             await app.updater.start_polling()
             await health_watcher(app)
 
