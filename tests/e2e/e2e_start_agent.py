@@ -40,7 +40,12 @@ def relay_env(**extra):
         "HERDR_REMOTES": "box",
         "HERDR_PROJECTS_FILE": f"{HERE}/projects.json",
         "HERDR_RELAY_PORT": PORT,
-        "HERDR_STATE_DIR": f"{HERE}/logs",
+        # Both databases named explicitly, into this script's own log directory. Left unset
+        # they default under the repo root, which on a developer's machine is the record
+        # their own relay is keeping. HERDR_STATE_DIR stood here and is read by nothing in
+        # the relay, so it never moved anything.
+        "HERDR_ARBITER_DB": f"{HERE}/logs/arbitration.sqlite3",
+        "HERDR_STATE_DB": f"{HERE}/logs/state.sqlite3",
     })
     env.pop("HERDR_ENABLE_WRITE_EXT", None)
     env.pop("HERDR_ENABLE_TERMINAL", None)

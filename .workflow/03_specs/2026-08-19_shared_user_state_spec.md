@@ -123,10 +123,16 @@ received), `off` (relay said unknown type, or 10 s elapsed with no answer).
 Per document in `docs`:
 
 1. Remember `rev`.
-2. `rev == 0` → §3.3 (seeding).
-3. `rev > 0` and `body` equals the current local string → nothing.
-4. `rev > 0` and `body` differs → §3.3 backup, write `body` to the mirrored `localStorage` key,
-   reload the owning module's in-memory copy, re-render.
+2. **The document is dirty** → remember `rev` and stop. It was edited in this browser after
+   `state_get` went out, so the answer was already in flight when the user acted; adopting it would
+   revert an edit made a moment ago with nothing said about why. The flush in §3.4 then pushes the
+   local body on top of the revision just learned. This rule outranks 3–5 and the whole of §3.3.
+3. `rev == 0` → §3.3 (seeding).
+4. `rev > 0` and `body` equals the current local string → nothing.
+5. `rev > 0` and `body` differs → §3.3 backup, write `body` to the mirrored `localStorage` key,
+   reload the owning module's in-memory copy, re-render. Except while a `state_put` for that
+   document is **in flight**: the ack settles it, and applying an older body underneath a write we
+   are still waiting to hear about would undo it.
 
 Re-render per document:
 
@@ -141,7 +147,8 @@ An adopted document must not be immediately pushed back. Applying is not editing
 
 ### 3.3 Seeding and backup
 
-On the first `state` after connect, for each document:
+On the first `state` after connect, for each document — except a document already dirty, which
+§3.2 rule 2 has taken out of this table:
 
 | Server | Local | Action |
 |---|---|---|
@@ -168,6 +175,13 @@ final state.
   and **discard** the pending local write. Do not retry — retrying is what turns a guard back into
   unguarded last-write-wins.
 - On `error` naming one of the four documents: log, drop the write, leave the local copy alone.
+
+**Flush on the way out.** The debounce is a window in which an edit exists in one browser and
+nowhere else. A page that goes away inside it loses the edit and then adopts the relay's older
+document on the way back in — a deleted conversation returns, a rename undoes itself. Every dirty
+document is therefore sent immediately on `pagehide` and on `visibilitychange` to `hidden`, timers
+cancelled. The second matters more than the first: on a phone the page is not unloaded when the
+user switches away, it is backgrounded, and it may be discarded later without another event.
 
 ### 3.5 What does not sync
 

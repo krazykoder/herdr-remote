@@ -3,6 +3,9 @@
     function loadPairs() { pairs = parsePairs(localStorage.getItem(PAIRS_KEY) || ''); }
     function savePairs() {
       localStorage.setItem(PAIRS_KEY, JSON.stringify({ version: PAIRS_VERSION, pairs: pairs }));
+      // Outside any catch a quota error would land in: a browser that cannot store the pairs
+      // locally is still a browser whose pairs the rest of the fleet should see.
+      if (typeof stateSyncMark === 'function') stateSyncMark('pairs');
     }
 
     // A restart is the same colleague in a new pane, so the pair that named the dead one follows it

@@ -497,8 +497,10 @@
         setStatus('connected');
         if (window.cue) cue('ready');
         announceSubscription();
+        stateSyncOpen();
       };
       ws.onclose = () => {
+        stateSyncClose();
         // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
@@ -541,9 +543,15 @@
     }
     function handleMessage(msg) {
       if (msg.type === 'error') {
+        // A relay older than this client answers state_get with "unknown message type". That is a
+        // fact about the relay, not a failure to put in front of the user.
+        if (stateSyncNoteError(msg.message)) return;
         convLiveNoteError(msg.message);
         showToast(msg.message || 'The relay refused that.');
       }
+      else if (msg.type === 'state') { stateSyncReceive(msg); }
+      else if (msg.type === 'state_ack') { stateSyncAck(msg); }
+      else if (msg.type === 'state_conflict') { stateSyncConflict(msg); }
       else if (msg.type === 'conv_log') {
         convLiveReceive(msg);
       }

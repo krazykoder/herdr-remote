@@ -32,6 +32,17 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+// The <script src> order in index.html is the program: nothing enforces it, and a module that
+// reads another's binding at load time breaks at boot if the tags move. state_sync.js is loaded
+// before every module that calls into it, so a reorder shows up here.
+test('shared state is wired into the socket by the time it is open', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  expect(await page.evaluate(() => typeof stateSyncMark)).toBe('function');
+  expect(await page.evaluate(() => typeof savePairs)).toBe('function');
+  // Answered, not merely asked: `pulling` here would mean the relay never replied to state_get.
+  await expect.poll(() => page.evaluate(() => stateMode)).toBe('live');
+});
+
 test('agent filters live on the existing card separator', async ({page}) => {
   await expect.poll(() => page.evaluate(() => agents.length)).toBeGreaterThan(0);
   const kinds = await page.evaluate(() => [...new Set(agents.map(a => a.agent).filter(Boolean))]);

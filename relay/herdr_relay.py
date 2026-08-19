@@ -11,6 +11,7 @@ from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
 from pane_summary import ends_turn, summary_body
+from user_state import UserState, Conflict as StateConflict, DOC_NAMES as STATE_DOCS
 from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
@@ -174,6 +175,21 @@ if os.environ.get("HERDR_CONV_LOG", "") == "1":
         # works without it, and a relay that will not start because a log file is unwritable is a
         # worse failure than one that says so and carries on.
         print(f"herdr-remote: conversation log disabled: {e}", file=sys.stderr)
+
+# Shared user state: the four documents that are facts about the work rather than about one
+# browser. Unconditional, unlike the conversation log above — that one is off by default because a
+# transcript puts what agents *said* on disk, which is the user's call to make. A pair's name is a
+# label the user typed into this app and cannot be anything else, and a feature that is off by
+# default is a feature that silently does not work.
+STATE_DB = os.environ.get("HERDR_STATE_DB") or os.path.join(
+    PROJECT_ROOT, ".herdr-remote", "state.sqlite3")
+user_state = None
+try:
+    user_state = UserState(STATE_DB)
+except (sqlite3.Error, OSError) as e:
+    # Same posture as the record above: a relay that will not start because a file is unwritable is
+    # a worse failure than one that says so and leaves every browser on its own state.
+    print(f"herdr-remote: shared state disabled: {e}", file=sys.stderr)
 
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -647,10 +663,15 @@ def detect_options(text):
     return None
 
 
-async def broadcast(msg):
+async def broadcast(msg, except_ws=None):
+    # `except_ws` exists for the client that caused the message. A browser that has just written a
+    # document must not receive its own body back: the echo lands after the next local edit and
+    # reverts it. Every other caller broadcasts to everyone and leaves this unset.
     data = json.dumps(msg)
     dead = set()
     for ws in list(clients):
+        if ws is except_ws:
+            continue
         try:
             await ws.send(data)
         except (ConnectionClosedError, ConnectionClosedOK):
@@ -1704,6 +1725,42 @@ async def handle_client(ws, listener="lan"):
                     push_subscriptions.remove(sub)
                     _save_push_subs()
                 await ws.send(json.dumps({"type": "push_unsubscribed", "ok": True}))
+            elif msg_type == "state_get":
+                # An empty map rather than an error when there is no store: a client whose state is
+                # local-only behaves exactly as it did before this existed, which is the whole
+                # reason localStorage is still the working copy.
+                if user_state is None:
+                    await ws.send(json.dumps({"type": "state", "docs": {}}))
+                    continue
+                names = msg.get("names") or list(STATE_DOCS)
+                docs = await asyncio.to_thread(user_state.get, names)
+                await ws.send(json.dumps({"type": "state", "docs": docs}))
+            elif msg_type == "state_put":
+                # Not behind HERDR_ENABLE_WRITE_EXT, for the same reason rename_pane is not: that
+                # gate exists for spawning processes, and this writes a label the user typed. It is
+                # strictly weaker than send_text, which is already open.
+                if user_state is None:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "state store unavailable"}))
+                    continue
+                name, body = msg.get("name", ""), msg.get("body")
+                try:
+                    new_rev = await asyncio.to_thread(
+                        user_state.put, name, msg.get("rev"), body)
+                except StateConflict as c:
+                    # The current document rides along, so the loser of the race needs no second
+                    # round trip to find out what it lost to.
+                    await ws.send(json.dumps({"type": "state_conflict", "name": name,
+                                              "rev": c.rev, "body": c.body}))
+                    continue
+                except ValueError as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"state_put: {e}"}))
+                    continue
+                audit("state_put", ip, device, "", f"doc={name} rev={new_rev} bytes={len(body)}")
+                await ws.send(json.dumps({"type": "state_ack", "name": name, "rev": new_rev}))
+                await broadcast({"type": "state",
+                                 "docs": {name: {"rev": new_rev, "body": body}}},
+                                except_ws=ws)
             else:
                 # Say so instead of dropping it. A client newer than the relay used to get
                 # silence here, which reads as a bug in the feature rather than a stale relay.

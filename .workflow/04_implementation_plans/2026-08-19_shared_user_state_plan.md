@@ -390,3 +390,23 @@ The spec's §6 list, plus:
   turns out to be a thing users actually hit.
 - A `_local` backup the UI can offer to restore. Today it is a key you recover by hand, which is
   the right amount of machinery for a case that should be rare.
+
+
+---
+
+## 11. As built
+
+Shipped on `feat/state-sync`. Where it differs from the plan above, and why.
+
+| Change | Why |
+|---|---|
+| Seven `stateSyncMark` sites, not six | `shortcuts.js:814` writes `herdr_conv_view` directly in `deleteConversation`, so `conv_view` has two write paths and not one. |
+| Each mark guarded `if (typeof stateSyncMark === 'function')` | The house pattern from `saveConvIndex`'s `forgetConvComposers` guard. Without it every vm slice that loads `pairs_ui.js` or `conversation_store.js` throws — `tests/test_pairs.js` caught it. |
+| **Dirty wins over adopt** on the first answer (spec §3.2 rule 2) | Found by `tests/test_state_sync.js`: an edit made between `state_get` and its answer was reverted by the seeding rule, because the answer was already in flight when the user acted. |
+| **`stateSyncFlushAll` on `pagehide` / `visibilitychange`** (spec §3.4) | Found by `conversation.spec.js:493`: a delete followed by a reload inside the 500 ms debounce was lost, and the deleted conversation came back. On a phone every switch away from the browser is this case. |
+| `tests/e2e/browser/state_sync.spec.js` [NEW], 7 tests | The plan only added a line to `app_smoke`. A vm slice fakes every message that matters here, so the round trip needs a real relay. Note the trap the file documents: `context.newPage()` is a second *tab* sharing one `localStorage`, so the second browser has to be its own `BrowserContext` or every assertion passes against a relay that stored nothing. |
+| `fixtures.js`: clear the `docs` rows before every test | The relay is per worker and this store is durable, so without it one spec's pairs and conversations leak into every spec that runs after it — which is what broke `tab_pairs`, `sections`, `summary_detect` and `hang_controls` on the first full run. |
+| `fixtures.js`: `HERDR_ARBITER_DB` and `HERDR_STATE_DB` named per worker | Pre-existing bug, fixed in passing. `HERDR_STATE_DIR` stood there and is read by nothing in the relay, so the browser suite's conversation log was writing to `<repo>/.herdr-remote/arbitration.sqlite3` — one file shared by every worker, and on a developer's machine the record their own relay is keeping. |
+
+Test counts after: 402 Python (`unittest discover`), 415 Node (`node --test tests/*.js`),
+369 Playwright. All green.

@@ -882,6 +882,7 @@
       // and every writer of the index comes through this function. Guarded because the dock's
       // script may not have loaded yet — at boot there is nothing held to forget.
       if (typeof forgetConvComposers === 'function') forgetConvComposers(kept);
+      if (typeof stateSyncMark === 'function') stateSyncMark('conversations');
     }
 
     // --- Conversation membership ---

@@ -73,6 +73,7 @@
       if (id) views[key] = id; else delete views[key];
       try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_view');
     }
 
     // Carry the thread across a pair switch. A pair is two panes on one job, so stepping between
