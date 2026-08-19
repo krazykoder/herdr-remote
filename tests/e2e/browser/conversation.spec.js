@@ -424,11 +424,14 @@ test('a live pane can be added to a conversation from the conversation', async (
   await openCard(page);
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await page.locator('#convView .conv-roster-add .conv-chip', {hasText: 'scratch'}).click();
+  await page.locator('#pickList .pair-pick', {hasText: 'scratch'}).click();
+  // The tick is the choice; the action at the foot is what commits it, and it names how many.
+  await expect(page.locator('#pickSubmit')).toHaveText('Add pane');
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
   await expect(page.locator('#convView .conv-roster-row').nth(1)).toContainText('recording');
   // The picker closes behind the pick, and the roster is what changed on disk.
-  await expect(page.locator('#convView .conv-roster-add')).toHaveCount(0);
+  await expect(page.locator('#pickSheet')).toBeHidden();
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(2);
 });
 
@@ -1889,10 +1892,11 @@ test('a session that has already ended can be added from its recording', async (
         at_src: 'state'}]});
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  const chip = page.locator('#convView .conv-chip.past');
-  await expect(chip).toHaveText(/yesterday's codex/);
-  await expect(page.locator('#convView .conv-pick-head').last()).toHaveText('Recorded');
-  await chip.click();
+  const row = page.locator('#pickList .pair-pick.past');
+  await expect(row).toContainText("yesterday's codex");
+  await expect(page.locator('#pickList .pair-head').last()).toHaveText('Recorded');
+  await row.click();
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
   // Its words are in the thread, merged into the chronology rather than copied anywhere.
   await expect(page.locator('#convViewThread')).toContainText('Shipped the migration.');
@@ -1901,22 +1905,65 @@ test('a session that has already ended can be added from its recording', async (
 });
 
 // "Add pane" has to cover the pane that does not exist yet, or the answer to it is a trip out to
-// Projects and back. The chip opens the same sheet the composer's membership list does.
+// Projects and back. The row opens the same sheet the composer's membership list does.
 test('a pane that is not running yet is added by starting it', async ({page}) => {
   await openCard(page);
   await startable(page);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  const fresh = page.locator('#convView .conv-chip.fresh');
-  await expect(fresh).toHaveText('+ New agent');
+  const fresh = page.locator('#pickList .pair-add');
+  await expect(fresh).toContainText('Start a session and add it');
   await fresh.click();
+  await expect(page.locator('#pickSheet')).toBeHidden();
   await expect(page.locator('#newAgentModal')).toBeVisible();
 });
 
-// A relay that will not start sessions gets no chip, rather than one that refuses after the tap.
+// A relay that will not start sessions gets no row, rather than one that refuses after the tap.
 test('the picker offers no new agent where the relay will not start one', async ({page}) => {
   await openCard(page);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await expect(page.locator('#convView .conv-chip.fresh')).toHaveCount(0);
+  await expect(page.locator('#pickList .pair-add')).toHaveCount(0);
+});
+
+// Several panes on one trip. Joining used to close the sheet after each pick, so a conversation of
+// four was three more trips through the same list.
+test('several panes are added in one go, and the action counts them', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: "yesterday's codex", touched: Date.now() - 7200000,
+      spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('#pickSubmit')).toBeDisabled();
+  await page.locator('#pickList .pair-pick', {hasText: 'scratch'}).click();
+  await page.locator('#pickList .pair-pick.past').click();
+  await expect(page.locator('#pickSubmit')).toHaveText('Add 2 panes');
+  // Ticked twice is unticked: the row is a switch, not a one-way choice.
+  await page.locator('#pickList .pair-pick.past').click();
+  await expect(page.locator('#pickSubmit')).toHaveText('Add pane');
+  await page.locator('#pickList .pair-pick.past').click();
+  await page.locator('#pickSubmit').click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(3);
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
+});
+
+// A roster long enough to scroll is searched rather than scrolled. What is searched is what a row
+// shows — its name, its harness, its path — so the badge's word finds it too.
+test('the picker filters its rows by what they say', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    for (let i = 0; i < 6; i++) {
+      await convPut({key: `ghost${i}`, label: `former ${i}`, touched: Date.now() - 7200000,
+        spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+    }
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('.pick-search')).toBeVisible();
+  await page.locator('#pickSearch').fill('former 3');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
+  // A group with nothing left in it takes its heading with it.
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Recorded']);
+  await page.locator('#pickSearch').fill('nothing here at all');
+  await expect(page.locator('#pickList .pair-empty')).toContainText('Nothing here matches');
 });
 
 test('the picker names every session the same way, running or recorded', async ({page}) => {
@@ -1926,14 +1973,14 @@ test('the picker names every session the same way, running or recorded', async (
       spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await expect(page.locator('#convView .conv-pick-head')).toHaveText(['Running', 'Recorded']);
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running', 'Recorded']);
   // A live session is the same kind of choice as an ended one, so it is named the same way: the
   // pane's label and the harness it runs, in the badge every other surface uses.
-  const live = page.locator('#convView .conv-chip:not(.past)', {hasText: 'scratch'});
+  const live = page.locator('#pickList .pair-pick:not(.past)', {hasText: 'scratch'});
   await expect(live.locator('.badge')).toHaveText('codex');
-  await expect(page.locator('#convView .conv-chip.past .badge')).toHaveText('codex');
-  // Same chip, so the badge sits the same way in both.
-  for (const el of [live, page.locator('#convView .conv-chip.past')]) {
+  await expect(page.locator('#pickList .pair-pick.past .badge')).toHaveText('codex');
+  // Same row, so the badge sits the same way in both.
+  for (const el of [live, page.locator('#pickList .pair-pick.past')]) {
     await expect(el).toHaveCSS('display', 'flex');
     await expect(el).toHaveCSS('align-items', 'center');
   }
@@ -1943,9 +1990,9 @@ test('the picker does not offer a pane the conversation already holds', async ({
   await openCard(page);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
   // The open pane is already a member and its transcript is in the store, so it must appear in
-  // neither group — the live chips or the recorded ones.
-  const keys = await page.locator('#convView .conv-chip').evaluateAll(
-    els => els.map(e => e.dataset.key));
+  // neither group — the live rows or the recorded ones.
+  const keys = await page.locator('#pickList .pair-pick').evaluateAll(
+    els => els.map(e => e.dataset.id));
   const mine = await page.evaluate(() => convMemberKey(paneOf(activePane)));
   expect(keys).not.toContain(mine);
 });
@@ -4688,6 +4735,34 @@ test('a conversation of one is never offered a solo to be in', async ({page}) =>
   await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'})).toHaveCount(0);
 });
 
+test('the composer settings pair the addressed pane, then offer to edit or undo it', async ({page}) => {
+  // The pair strip is on the pane screen and the composer is not, so without this the only way to
+  // pair from a conversation was to leave it.
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+
+  const addressed = await page.evaluate(() => paneLabel(agents.find(a => a.pane_id === dockAddressed())));
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  await page.locator('#optMenu .menu-item', {hasText: `Pair ${addressed} with…`}).click();
+
+  await expect(page.locator('#pickTitle')).toHaveText(new RegExp(`^Pair · .*${addressed}$`));
+  await page.locator('#pickList .pair-pick').first().click();
+  await page.locator('#pickSubmit').click();
+  await expect(page.locator('#pickSheet')).toBeHidden();
+
+  // Reopened, the menu reads back the pair rather than offering to make one.
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const name = await page.evaluate(() => pairs[0].name);
+  await expect(page.locator('#optMenu .menu-item', {hasText: `Edit pair · ${name}`})).toBeVisible();
+  const off = page.locator('#optMenu .menu-item', {hasText: 'Unpair'});
+  await off.click();
+  await expect(off).toHaveText('Unpair?');   // asked twice, like every other ending action
+  await off.click();
+  expect(await page.evaluate(() => pairs.length)).toBe(0);
+});
+
 // --- Starting one from the landing page ---
 // Every other way into a conversation begins at a pane: open it, name a conversation, and the
 // pane is the first member. This is the other direction — an empty one first, members after —
@@ -4703,11 +4778,12 @@ test('the Conversations header starts an empty one and opens it on its picker', 
   await page.locator('#conversations .conv-new').click();
   await expect(page.locator('#convViewTitle')).toHaveText('New conversation');
   await expect(page.locator('#convViewWho')).toHaveText(/0 panes/);
-  // Landed on the one thing there is to do: the roster open, with the picker already down.
+  // Landed on the one thing there is to do: the roster open, with the picker already up.
   await expect(page.locator('#convViewRoster')).toBeVisible();
-  await expect(page.locator('.conv-roster-add')).toBeVisible();
+  await expect(page.locator('#pickSheet')).toBeVisible();
 
-  await page.locator('.conv-roster-add .conv-chip').first().click();
+  await page.locator('#pickList .pair-pick').first().click();
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convViewWho')).toHaveText(/1 pane\b/);
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
@@ -4716,9 +4792,12 @@ test('the Conversations header starts an empty one and opens it on its picker', 
 test('a second one is numbered rather than named the same thing twice', async ({page}) => {
   await page.goto('/');
   await expect(page.locator('#agents .agent').first()).toBeVisible();
+  // A new conversation lands on the picker, so leaving without adding anyone means closing it.
   await page.locator('#conversations .conv-new').click();
+  await page.locator('#pickSheet .pick-x').click();
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conv-new').click();
+  await page.locator('#pickSheet .pick-x').click();
   await expect(page.locator('#convViewTitle')).toHaveText('New conversation 2');
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);

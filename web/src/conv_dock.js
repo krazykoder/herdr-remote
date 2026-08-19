@@ -232,11 +232,34 @@
         `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
         `onclick="${call}" title="${escapeHtml(why)}">` +
         `<span class="tick">${on ? '✓' : ''}</span>${escapeHtml(label)}</button>`).join('') +
+        dockPairItems() +
         `<button class="menu-item" role="menuitem" onclick="closeDockMenu('optMenu')">Done</button>`;
       closeDockMenu('chipMenu');
       closeDockMenu('whoMenu');
       box.hidden = false;
       syncDockHeight();
+    }
+
+    // The addressed agent's pair, managed from the box that talks to it. It used to be reachable
+    // only from that pane's own gear menu, which meant leaving the conversation to answer a question
+    // about one of its members — and a pair is what draws two of them as two columns here, so it is
+    // a question this window raises.
+    function dockPairItems() {
+      const to = paneOf(dockAddressed());
+      if (!to) return '';
+      const name = escapeHtml(paneLabel(to));
+      const pair = pairFor(pairs, to.pane_id);
+      const open = `closeDockMenu('optMenu'); openPairDialog('${escapeHtml(to.pane_id)}')`;
+      if (!pair) {
+        return `<button class="menu-item" role="menuitem" onclick="${open}" ` +
+          `aria-label="Pair ${name} with another pane">Pair ${name} with…</button>`;
+      }
+      return `<button class="menu-item" role="menuitem" onclick="${open}" ` +
+        `aria-label="Edit the pair ${escapeHtml(pair.name)}">Edit pair · ${escapeHtml(pair.name)}</button>` +
+        `<button class="menu-item danger arm-btn" role="menuitem" ` +
+        `data-pane="${escapeHtml(to.pane_id)}" ` +
+        `onclick="armButton(this, 'Unpair?', () => unpair(this.dataset.pane))" ` +
+        `aria-label="Unpair ${name}">Unpair…</button>`;
     }
 
     function optMenuOpen() {

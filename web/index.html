@@ -1859,6 +1859,110 @@
       font-size: 0.75rem;
     }
 
+    /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
+       is a real choice, not a disabled one. */
+    .pair-pick.past {
+      opacity: 0.85;
+    }
+
+    /* The pane picker's frame. Three bands: the heading and its search stay put, the rows scroll
+       between them, and the action sits at the foot where a thumb is and where the keyboard cannot
+       cover it. The panel is what has the height, so only the list is given the overflow. */
+    .pick-panel {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 420px;
+      max-height: 80dvh;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: env(safe-area-inset-bottom, 8px);
+    }
+
+    .pick-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .pick-title {
+      flex: 1;
+      font-size: 0.8rem;
+      font-weight: 600;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .pick-x {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+
+    .pick-search {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .pick-search[hidden] {
+      display: none;
+    }
+
+    .pick-search input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      /* 16px, like every other field here: anything smaller and iOS zooms the page on focus. */
+      font-size: 16px;
+    }
+
+    #pickList {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .pick-foot {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    #pickSubmit {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--blue);
+      color: var(--bg);
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    #pickSubmit:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
     .agent .project {
       font-size: 0.9rem;
       font-weight: 500;
@@ -2898,8 +3002,7 @@
     .conv-roster .conv-drop,
     .conv-roster .conv-again,
     .conv-roster .conv-open,
-    .conv-roster-actions button,
-    .conv-roster-add .conv-chip {
+    .conv-roster-actions button {
       font-size: 0.65rem;
       /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
          buttons and no thread. 32px is a thumb, and every one of these is either reversible or
@@ -2935,14 +3038,6 @@
       color: var(--blue);
     }
 
-    .conv-roster-add {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding-top: 6px;
-    }
-
-    .conv-roster-add .conv-chip,
     .conv-roster .conv-open,
     .conv-roster .conv-again {
       color: var(--blue);
@@ -3026,49 +3121,6 @@
        is a reading state, and nothing about it is a deletion. */
     .conv-roster-row.hidden-member .who {
       opacity: 0.55;
-    }
-
-    .conv-roster-add .conv-none {
-      font-size: 0.65rem;
-      color: var(--muted);
-    }
-
-    /* The ended sessions in the picker, under their own heading — "which pane is running" and
-       "which recording exists" are different questions, and a flat list of chips would ask them as
-       one. */
-    .conv-roster-add .conv-pick-head {
-      flex-basis: 100%;
-      margin: 4px 0 0;
-      font-size: 0.6rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    .conv-roster-add .conv-chip {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    /* Every other chip in this row names something that already exists; this one makes one. Dashed
-       and in the same blue every other "+ Start" wears, so it is not read as a pane that happens to
-       be called "New". */
-    .conv-roster-add .conv-chip.fresh {
-      border-style: dashed;
-      border-color: var(--blue);
-      color: var(--blue);
-    }
-
-    .conv-roster-add .conv-chip.past {
-      /* Dimmer than a live pane, and it has to stay legible: this is a real choice, not a disabled
-         one. */
-      opacity: 0.85;
-    }
-
-    .conv-roster-add .conv-chip .ago {
-      font-size: 0.6rem;
-      color: var(--muted);
     }
 
     .conv-roster .conv-tier-note {
@@ -5827,29 +5879,37 @@
     style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
-  <!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
-  <div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
-    <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-    <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Pair · <span id="pairSource"></span></span>
-        <button onclick="closePair()" aria-label="Close"
-          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+  <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
+       question — which other pane — so they are one sheet, and only the words on the button at the
+       bottom and what it does with the answer differ. Frontend only; the relay knows nothing of
+       pairs or of conversations. -->
+  <div id="pickSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closePicker()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div class="pick-panel">
+      <div class="pick-head">
+        <span class="pick-title" id="pickTitle"></span>
+        <button class="pick-x" onclick="closePicker()" aria-label="Close">✕</button>
+      </div>
+      <!-- Hidden until there is enough to search; renderPicker owns that. -->
+      <div class="pick-search" hidden>
+        <input id="pickSearch" type="search" placeholder="Search panes…" aria-label="Search panes"
+          autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+          oninput="renderPicker()" />
       </div>
       <!-- Edge to edge and outside the padding, the same as the reorder sheet's rows: a list of
-           panes reads as a list when the rows run the full width of the sheet. -->
-      <div id="pairCandidates"></div>
-      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+           panes reads as a list when the rows run the full width of the sheet. It is also the only
+           part that scrolls, so the search box and the action stay put while it does. -->
+      <div id="pickList"></div>
+      <div class="pick-foot">
+        <!-- What a pair still needs once its partner is chosen. Nothing else the sheet is used for
+             asks anything more than "which one", so nothing else puts anything here. -->
         <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
           <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
           <label class="start-field">This pane's name<input id="pairRoleA" maxlength="32" type="text" /></label>
           <label class="start-field">Partner's name<input id="pairRoleB" maxlength="32" type="text" /></label>
         </div>
-        <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
-        <button id="pairSubmit" onclick="savePair()"
-          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Save
-          pair</button>
+        <p id="pickError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="pickSubmit" onclick="pickSubmit()"></button>
       </div>
     </div>
   </div>
@@ -6010,6 +6070,7 @@
   <script src="src/conv_live.js"></script>
   <script src="src/terminal.js"></script>
   <script src="src/reorder.js"></script>
+  <script src="src/pane_picker.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
   <script src="src/conv_dock.js"></script>
