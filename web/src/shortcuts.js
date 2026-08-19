@@ -555,6 +555,12 @@
         `Duplicate</button>` +
         `<button onclick="renameConversation()">Rename</button>` +
         `<button onclick="convToggleAdd()">Add pane</button>` +
+        // Starting one is offered next to adding one, not only inside the picker: from a pane's
+        // roster the picker is two taps away, and "there is nobody to add yet" is exactly the
+        // moment the answer is a new agent.
+        (canStartFromConv()
+          ? `<button onclick="openNewAgent()" aria-label="Start a new agent in this conversation">` +
+            `New agent</button>` : '') +
         `</div>${tier}</div>`;
     }
 

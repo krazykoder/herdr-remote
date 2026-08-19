@@ -53,27 +53,32 @@
       el.style.display = text ? 'block' : 'none';
     }
 
-    // Subsequence and multi-word fuzzy matching across name, harness, project and note.
-    function fuzzyMatch(hay, query) {
-      if (!query) return true;
-      if (hay.includes(query)) return true;
-      const words = query.split(/\s+/).filter(Boolean);
-      if (words.length > 1) return words.every(w => fuzzyMatch(hay, w));
-      let hIdx = 0, qIdx = 0;
-      const qLen = query.length, hLen = hay.length;
-      while (hIdx < hLen && qIdx < qLen) {
-        if (hay[hIdx] === query[qIdx]) qIdx++;
-        hIdx++;
-      }
-      return qIdx === qLen;
+    // Every word typed has to be found, and each one inside a single field: as a substring, or
+    // failing that as a subsequence, so "cdx" reaches codex and "arch 1" reaches Architect 1.
+    // Per field rather than over the row's whole text, because a subsequence allowed to wander
+    // across fields matches almost everything at two or three characters — "sc" picking up the
+    // s in charts and the c in claude is not a search, it is a list that never shrinks.
+    function pickMatch(fields, query) {
+      return query.split(/\s+/).filter(Boolean)
+        .every(w => fields.some(f => f.includes(w) || subsequence(f, w)));
     }
 
-    // Name, harness, project and path, which is everything a row shows or represents.
-    // Tags are stripped rather than excluded: `meta` arrives as html and its badge holds the
-    // agent's name/type, which is exactly what someone types to find "the codex one".
+    function subsequence(hay, word) {
+      let at = 0;
+      for (const ch of word) {
+        at = hay.indexOf(ch, at) + 1;
+        if (!at) return false;
+      }
+      return true;
+    }
+
+    // What a row shows, plus what it *is*: its name, its harness, its project, and the path in its
+    // meta. Tags are stripped rather than the field excluded — `meta` arrives as html and its badge
+    // holds the agent's name, which is exactly the word someone types to find "the codex one".
     function pickHay(row) {
-      return `${row.name || ''} ${row.agent || ''} ${row.project || ''} ${String(row.meta || '').replace(/<[^>]*>/g, ' ')} ${row.note || ''}`
-        .toLowerCase();
+      return [row.name, row.agent, row.project,
+        String(row.meta || '').replace(/<[^>]*>/g, ' '), row.note]
+        .map(f => String(f || '').toLowerCase()).filter(Boolean);
     }
 
     function pickRowHtml(row) {
@@ -94,7 +99,7 @@
       const q = document.getElementById('pickSearch').value.trim().toLowerCase();
       let shown = 0, all = 0;
       const html = picker.groups().map(g => {
-        const rows = q ? g.rows.filter(r => fuzzyMatch(pickHay(r), q)) : g.rows;
+        const rows = q ? g.rows.filter(r => pickMatch(pickHay(r), q)) : g.rows;
         all += g.rows.length;
         shown += rows.length;
         // A heading over nothing reads as a group that has emptied rather than one that was

@@ -1924,6 +1924,31 @@ test('the picker offers no new agent where the relay will not start one', async 
   await expect(page.locator('#pickList .pair-add')).toHaveCount(0);
 });
 
+// Starting one is not only a row at the bottom of the picker. The roster is where a conversation
+// is managed, and a relay that will start a session says so there.
+test('the roster starts an agent next to where it adds one, and dims the harnesses not picked',
+  async ({page}) => {
+  await openCard(page);
+  await expect(page.locator('#convView .conv-roster-actions button', {hasText: 'New agent'}))
+    .toHaveCount(0);
+  await page.evaluate(async () => {
+    projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+    startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect']};
+    await renderConvStandalone(false);
+  });
+
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'New agent'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+
+  // One harness is picked from the start, so the others have to look unpicked at a glance — the
+  // badge already wears its own colour, and bolder text alone does not carry across four of them.
+  const dim = () => page.evaluate(() => [...document.querySelectorAll('#newAgentKinds .badge.pick')]
+    .map(b => [b.classList.contains('on'), getComputedStyle(b).opacity]));
+  expect(await dim()).toEqual([[true, '1'], [false, '0.4']]);
+  await page.locator('#newAgentKinds .badge.pick').nth(1).click();
+  expect(await dim()).toEqual([[false, '0.4'], [true, '1']]);
+});
+
 // Several panes on one trip. Joining used to close the sheet after each pick, so a conversation of
 // four was three more trips through the same list.
 test('several panes are added in one go, and the action counts them', async ({page}) => {
@@ -1958,18 +1983,17 @@ test('the picker filters its rows by what they say', async ({page}) => {
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
   await expect(page.locator('.pick-search')).toBeVisible();
-  // Name match
   await page.locator('#pickSearch').fill('former 3');
   await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
-  // Fuzzy abbreviation match
+  // Typed the way a name is abbreviated, not spelled: the letters in order, inside one field.
   await page.locator('#pickSearch').fill('frm 3');
   await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
-  // Agent type match
-  await page.locator('#pickSearch').fill('codex');
-  await expect(page.locator('#pickList .pair-pick')).toHaveCount(7);
-  // Project match
-  await page.locator('#pickSearch').fill('charts');
-  await expect(page.locator('#pickList .pair-pick')).toHaveCount(7);
+  // The harness, which only the badge shows. It crosses the groups — the live scratch pane is a
+  // codex too — and it discriminates: naming the live one drops all six recordings.
+  await page.locator('#pickSearch').fill('cdx');
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running', 'Recorded']);
+  await page.locator('#pickSearch').fill('scratch');
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running']);
   // A group with nothing left in it takes its heading with it.
   await page.locator('#pickSearch').fill('former 3');
   await expect(page.locator('#pickList .pair-head')).toHaveText(['Recorded']);

@@ -1434,6 +1434,15 @@
       font-weight: 700;
     }
 
+    /* Every agent badge wears its own harness colour, so a picked one is only bolder than the rest
+       — four lit pills where one is chosen. Once there is a choice the others step back, the way
+       the composer's chips do. Only while something is picked: a row of dimmed badges with nothing
+       chosen would read as disabled. */
+    #startAgents:has(.badge.pick.on) .badge.pick:not(.on),
+    #newAgentKinds:has(.badge.pick.on) .badge.pick:not(.on) {
+      opacity: 0.4;
+    }
+
     .workspace-card {
       border-color: color-mix(in srgb, var(--text) 10%, transparent);
     }
