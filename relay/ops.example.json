@@ -13,7 +13,11 @@
     "Each param declares exactly one of enum / int / re; unvalidated input never reaches argv.",
     "",
     "health: exactly one of tcp / pgrep / http / unit.",
-    "A service with neither 'start' nor 'unit' is monitor-only — visible to /health, not startable."
+    "A service with neither 'start' nor 'unit' is monitor-only — visible to /health, not startable.",
+    "",
+    "menu: groups entries behind one '/<menu>' command with a button per member, and takes them",
+    "off the top-level menu. They still work typed. label: the button text, defaults to the name.",
+    "A member with params cannot run from a button — there is nowhere to type them."
   ],
 
   "chat_ids": [],
@@ -40,19 +44,36 @@
       "argv": ["uptime"],
       "tier": "R"
     },
+    "git-status": {
+      "argv": ["git", "-C", "~/code/python/herdr-remote", "status", "--short", "--branch"],
+      "tier": "R",
+      "menu": "git",
+      "label": "Working tree"
+    },
     "git-log": {
       "argv": ["git", "-C", "{repo}", "log", "--oneline", "-n", "{n}"],
       "params": {
         "repo": { "enum": ["~/code/python/herdr-remote"] },
         "n": { "int": [1, 50] }
       },
-      "tier": "R"
+      "tier": "R",
+      "menu": "git",
+      "label": "Recent commits (takes args)"
     },
     "git-fetch": {
       "argv": ["git", "-C", "{repo}", "fetch", "--all", "--prune"],
       "params": { "repo": { "enum": ["~/code/python/herdr-remote"] } },
       "tier": "W",
       "timeout": 300,
+      "stream": true,
+      "menu": "git",
+      "label": "Fetch + prune (takes args)"
+    },
+    "deploy-web": {
+      "argv": ["web/deploy.sh"],
+      "cwd": "~/code/python/herdr-remote",
+      "tier": "W",
+      "timeout": 600,
       "stream": true
     }
   },

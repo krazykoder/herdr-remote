@@ -200,6 +200,47 @@ called `df` becomes `/df`; `/run df` keeps working and is no longer the only way
 - **Failure is not fatal.** If `setMyCommands` fails, the bot logs it and runs on — every command
   still works as typed text; only autocomplete is lost.
 
+### 5.0.1 Submenus
+
+Telegram has no nested slash commands: `/git log` cannot be a menu item, which is why registry
+names map to flat commands. A **group** is how related entries get one menu item instead of five,
+without inventing a syntax Telegram will not autocomplete.
+
+A registry entry opts in with two optional fields:
+
+```jsonc
+"git-log":    { "argv": [...], "menu": "git", "label": "Recent commits" },
+"git-status": { "argv": [...], "menu": "git", "label": "Working tree" }
+```
+
+- `menu` — group name, same `[a-z0-9][a-z0-9_-]{0,31}` rule as a command name.
+- `label` — button text, 1–40 characters. Defaults to the entry's own name.
+
+What that produces:
+
+- **`/git` is a generated command** in the menu, described as `N commands`. Tapping it replies with
+  an inline keyboard, one button per member, in registry order.
+- **Members leave the top-level menu.** That is the entire point — a submenu that also lists every
+  member has decluttered nothing. They keep their handlers, so `/git_log …` typed still works, and
+  `/help` still lists them, grouped under their menu name. Nothing becomes unreachable.
+- **A button carries `m:<registry name>`** in `callback_data`. Registry names are ≤32 characters,
+  so this fits Telegram's 64-byte cap without the token table that `W` confirmations need — and
+  unlike a confirmation it must stay redeemable, because scrolling back to an old submenu and
+  tapping it again is normal use, not a replay.
+- **A tap is a command.** It re-checks the allowlist and spends a rate-limit token, exactly as the
+  typed form does. A `W`-tier member still gets its Confirm; the two prompts stack, and that is
+  correct — the group menu is navigation, the Confirm is consent.
+- **A member with parameters cannot run from a button** — there is nowhere to type them. Its button
+  replies with the usage line (`/git_log <repo> <n>`) instead of guessing arguments.
+- **Unknown or stale `callback_data`** — a name no longer in the registry after a config change —
+  is answered `That command is no longer in the registry.` and nothing runs. The payload is only
+  ever used as a dictionary key.
+
+Group names share the command namespace and are reserved **first**: a group called `git` and an
+entry called `git` collide, and the entry is skipped with a reason like any other collision. A
+group whose name is not a legal Telegram command, or that shadows a built-in, is dropped and its
+members stay at the top level rather than becoming unreachable.
+
 ### 5.1 `/run`
 
 1. Look up `<cmd>` in `commands`. Absent → `'<cmd>' is not in the allowlist. /help lists what is.`

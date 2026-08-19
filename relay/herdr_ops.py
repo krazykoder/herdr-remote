@@ -31,6 +31,7 @@ import time
 import urllib.error
 from urllib.parse import quote
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 import ops_config
@@ -159,6 +160,9 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not authorized(update):
+        return
+    if query.data.startswith(MENU_TAP):
+        await on_menu_tap(update, ctx, query.data[len(MENU_TAP):])
         return
     verdict, _, token = query.data.partition(":")
     payload = CONFIRM.redeem(token)
@@ -409,8 +413,29 @@ def menu_name(name: str) -> str:
     return name.replace("-", "_")
 
 
-def menu_entries(cfg) -> tuple[list[tuple[str, str]], list[str]]:
-    """Build the native command list. Returns (entries, skipped reasons).
+@dataclass(frozen=True)
+class MenuPlan:
+    """One pass over the registry, and everything derived from it.
+
+    The menu, the handlers and the submenus have to agree or the phone offers commands nothing
+    answers, so they are not computed separately. `handlers` is deliberately wider than `entries`:
+    a grouped entry leaves the top-level menu but keeps working when typed, and so does one the
+    100-command cap pushed out.
+    """
+    entries: list[tuple[str, str]]          # what setMyCommands publishes, in order
+    handlers: dict[str, str]                # telegram command name -> registry name
+    groups: dict[str, tuple[str, ...]]      # telegram group name -> member registry names
+    skipped: list[str]
+
+
+def describe(name: str, cmd) -> str:
+    params = " ".join(f"<{p}>" for p in cmd.params)
+    confirms = " (confirms)" if cmd.tier == "W" else ""
+    return (f"{params} {' '.join(cmd.argv[:2])}{confirms}".strip() or name)[:TG_DESC_MAX]
+
+
+def menu_plan(cfg) -> MenuPlan:
+    """Build the native command list, the handler table and the submenus together.
 
     Registry commands become real commands — `/df`, `/git_log` — so the phone's autocomplete offers
     them and `/run` becomes the long way round rather than the only way. Anything Telegram would
@@ -419,7 +444,32 @@ def menu_entries(cfg) -> tuple[list[tuple[str, str]], list[str]]:
     """
     entries = list(BUILTIN_MENU)
     taken = {name for name, _ in entries}
-    skipped = []
+    handlers: dict[str, str] = {}
+    skipped: list[str] = []
+
+    # Groups claim their names first. A group and an entry that want the same command name is a
+    # collision like any other, and the group has to win: dropping it would strand every member
+    # inside a submenu that no longer exists.
+    groups: dict[str, list[str]] = {}
+    for name, cmd in cfg.commands.items():
+        if not cmd.menu:
+            continue
+        tg_group = menu_name(cmd.menu)
+        if tg_group in groups:
+            groups[tg_group].append(name)
+            continue
+        if not TG_COMMAND.match(tg_group):
+            skipped.append(f"menu '{cmd.menu}': not a legal Telegram command name, "
+                           f"members stay at the top level")
+            continue
+        if tg_group in taken:
+            skipped.append(f"menu '{cmd.menu}': /{tg_group} is already taken, "
+                           f"members stay at the top level")
+            continue
+        groups[tg_group] = [name]
+        taken.add(tg_group)
+
+    grouped = {name: tg_group for tg_group, names in groups.items() for name in names}
 
     for name, cmd in cfg.commands.items():
         tg_name = menu_name(name)
@@ -429,16 +479,37 @@ def menu_entries(cfg) -> tuple[list[tuple[str, str]], list[str]]:
         if tg_name in taken:
             skipped.append(f"{name}: /{tg_name} is already taken")
             continue
+        # Registered whether or not it reaches the menu. The menu is autocomplete; the handler is
+        # whether typing it does anything.
+        handlers[tg_name] = name
+        taken.add(tg_name)
+        if name in grouped:
+            continue
         if len(entries) >= TG_MENU_MAX:
             skipped.append(f"{name}: menu is full at {TG_MENU_MAX}")
             continue
-        params = " ".join(f"<{p}>" for p in cmd.params)
-        confirms = " (confirms)" if cmd.tier == "W" else ""
-        description = f"{params} {' '.join(cmd.argv[:2])}{confirms}".strip()[:TG_DESC_MAX]
-        entries.append((tg_name, description or name))
-        taken.add(tg_name)
+        entries.append((tg_name, describe(name, cmd)))
 
-    return entries, skipped
+    # A group whose members all collided would be a menu item opening an empty keyboard.
+    live = {tg_group: tuple(n for n in names if menu_name(n) in handlers)
+            for tg_group, names in groups.items()}
+    live = {tg_group: names for tg_group, names in live.items() if names}
+    for tg_group in groups:
+        if tg_group not in live:
+            skipped.append(f"menu '{tg_group}': no members survived, not offered")
+
+    position = len(BUILTIN_MENU)
+    for tg_group, names in live.items():
+        entries.insert(position, (tg_group, f"{len(names)} command(s)"))
+        position += 1
+
+    return MenuPlan(entries=entries, handlers=handlers, groups=live, skipped=skipped)
+
+
+def menu_entries(cfg) -> tuple[list[tuple[str, str]], list[str]]:
+    """What setMyCommands needs, and why anything was left out."""
+    plan = menu_plan(cfg)
+    return plan.entries, plan.skipped
 
 
 async def publish_menu(app: Application, entries: list[tuple[str, str]]):
@@ -478,18 +549,21 @@ def help_text() -> str:
         f"services: {services}",
         "commands:",
     ]
-    _, skipped = menu_entries(CFG)
-    unlisted = {reason.split(":", 1)[0] for reason in skipped}
+    plan = menu_plan(CFG)
+    in_group = {name: tg_group for tg_group, members in plan.groups.items() for name in members}
     for name, cmd in CFG.commands.items():
         params = " ".join(f"<{p}>" for p in cmd.params)
         tier = " [confirms]" if cmd.tier == "W" else ""
-        native = f"/{menu_name(name)}" if name not in unlisted else f"/run {name}"
-        lines.append(f"  {native} {params}".rstrip() + tier)
+        native = f"/{menu_name(name)}" if menu_name(name) in plan.handlers else f"/run {name}"
+        # Grouped entries are off the top-level menu on purpose, so say where they went — typing
+        # them still works, and nothing here should look like it disappeared.
+        where = f"  (in /{in_group[name]})" if name in in_group else ""
+        lines.append(f"  {native} {params}".rstrip() + tier + where)
     if not CFG.commands:
         lines.append("  (none)")
-    if skipped:
+    if plan.skipped:
         lines.append("")
-        lines.append("not in the menu: " + "; ".join(skipped))
+        lines.append("not in the menu: " + "; ".join(plan.skipped))
     return "\n".join(lines)
 
 
@@ -746,6 +820,52 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await execute_registry(update, ctx, name, args[1:], f"/run {' '.join(args)}")
 
 
+MENU_TAP = "m:"
+
+
+def group_keyboard(members: tuple[str, ...]) -> InlineKeyboardMarkup:
+    """One button per member, one per row — a phone reads a column, not a grid.
+
+    `callback_data` is the registry name itself. It fits Telegram's 64 bytes (a name is at most 32
+    characters), and unlike a confirmation token it has to stay redeemable: scrolling back to an
+    older submenu and tapping it again is ordinary use, not a replay. The payload is only ever used
+    as a dictionary key, so a stale or forged one finds nothing and runs nothing.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(CFG.commands[name].label or name, callback_data=f"{MENU_TAP}{name}")]
+        for name in members])
+
+
+def group_handler(tg_group: str, members: tuple[str, ...]):
+    """`/git` — the submenu Telegram will not give us as `/git log`."""
+    async def handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not await guard(update, ctx):
+            return
+        await send_html(update, ctx, Html(f"<b>/{html.escape(tg_group)}</b>"),
+                        reply_markup=group_keyboard(members))
+    return handler
+
+
+async def on_menu_tap(update: Update, ctx, name: str):
+    """A button press is a command: same allowlist, same rate limit, same Confirm for a W tier."""
+    chat_id = update.effective_chat.id
+    cmd = CFG.commands.get(name)
+    if cmd is None:
+        await send(chat_id, ctx, "That command is no longer in the registry.")
+        return
+    wait = LIMITER.check(chat_id)
+    if wait:
+        await send(chat_id, ctx, f"Rate limited, try again in {wait}s.")
+        return
+    if cmd.params:
+        # No text field behind a button, so there is nowhere for arguments to come from. Guessing
+        # them would be worse than saying so.
+        usage = " ".join(f"<{p}>" for p in cmd.params)
+        await send(chat_id, ctx, f"/{menu_name(name)} {usage}\nThis one takes arguments — type it.")
+        return
+    await execute_registry(update, ctx, name, [], f"/{menu_name(name)}")
+
+
 def registry_handler(name: str):
     """A native `/df`-style command for a registry entry. `/run df` keeps working either way."""
     async def handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -859,9 +979,11 @@ def main():
 
     if "--check" in sys.argv:
         print(f"ok: {CFG.path} — {summary}")
-        entries, skipped = menu_entries(CFG)
-        print(f"menu: {' '.join('/' + name for name, _ in entries)}")
-        for reason in skipped:
+        plan = menu_plan(CFG)
+        print(f"menu: {' '.join('/' + name for name, _ in plan.entries)}")
+        for tg_group, members in plan.groups.items():
+            print(f"  /{tg_group} — {', '.join(members)}")
+        for reason in plan.skipped:
             print(f"  not offered as a command — {reason} (still reachable as /run)")
         if cleared:
             print(f"cleared stale state: {', '.join(cleared)}")
@@ -880,16 +1002,16 @@ def main():
         app.add_handler(CommandHandler(name, handler))
 
     # Every registry entry also gets its own command, so the phone offers `/df` rather than
-    # `/run df`. Built from the same menu_entries() the menu is, so the two cannot disagree.
-    entries, skipped = menu_entries(CFG)
-    builtin = {name for name, _ in BUILTIN_MENU}
-    for tg_name, _ in entries:
-        if tg_name in builtin:
-            continue
-        origin = next(n for n in CFG.commands if menu_name(n) == tg_name)
+    # `/run df`, and every group gets the `/git`-style submenu Telegram will not nest for us. One
+    # plan builds the menu and these handlers, so the two cannot disagree.
+    plan = menu_plan(CFG)
+    for tg_name, origin in plan.handlers.items():
         app.add_handler(CommandHandler(tg_name, registry_handler(origin)))
-    for reason in skipped:
+    for tg_group, members in plan.groups.items():
+        app.add_handler(CommandHandler(tg_group, group_handler(tg_group, members)))
+    for reason in plan.skipped:
         log.warning("not offered as a command — %s (still reachable as /run)", reason)
+    entries = plan.entries
 
     app.add_handler(CallbackQueryHandler(on_callback))
 

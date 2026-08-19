@@ -55,6 +55,8 @@ class Command:
     timeout: int = 60
     tier: str = "R"
     stream: bool = False
+    menu: str | None = None      # group this entry into a `/<menu>` submenu instead of the top level
+    label: str | None = None     # button text inside that submenu; defaults to `name`
 
 
 @dataclass(frozen=True)
@@ -171,9 +173,20 @@ def _load_command(name, raw, path: str) -> Command:
     cwd = raw.get("cwd")
     _require(cwd is None or isinstance(cwd, str), f"{path}.cwd", "must be a string")
 
+    # Grouping is a presentation choice, so only its *shape* is checked here. Whether `/git` is a
+    # legal Telegram command, shadows a built-in or collides with another name is the menu
+    # builder's problem — it can skip one entry with a reason, where this loader can only refuse
+    # the whole file.
+    menu = raw.get("menu")
+    if menu is not None:
+        _check_name(menu, f"{path}.menu")
+    label = raw.get("label")
+    _require(label is None or (isinstance(label, str) and 1 <= len(label) <= 40),
+             f"{path}.label", "must be a string of 1..40 characters")
+
     return Command(name=name, argv=list(argv), params=params,
                    cwd=resolve(cwd) if cwd else None, timeout=timeout, tier=tier,
-                   stream=bool(raw.get("stream", False)))
+                   stream=bool(raw.get("stream", False)), menu=menu, label=label)
 
 
 def _load_health(raw, path: str) -> dict:

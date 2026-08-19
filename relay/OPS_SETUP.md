@@ -130,6 +130,24 @@ warning: no chat_ids — every command would be refused
 
 `--check` validates and exits. It needs no bot token, so config errors are diagnosable on their own.
 
+### Grouping entries into a submenu
+
+Telegram has no nested slash commands, so five git entries would be five top-level menu items. Two
+optional fields collapse them into one:
+
+```jsonc
+"git-log":    { "argv": [...], "menu": "git", "label": "Recent commits" },
+"git-status": { "argv": [...], "menu": "git", "label": "Working tree" }
+```
+
+`/git` becomes a menu item that replies with a button per member. The members leave the top-level
+menu — the point of a submenu — but keep their handlers, so `/git_log ~/code/python/herdr-remote 5`
+typed still works and `/help` still lists them, marked `(in /git)`.
+
+A button runs the command with no arguments, which means an entry with `params` answers with its
+usage line instead. `W`-tier members still show their Confirm: the submenu is navigation, the
+Confirm is consent.
+
 ## 3. Find your chat id
 
 The allowlist is empty, so every command is refused — except `/whoami`, whose entire job is to tell
@@ -172,6 +190,9 @@ In order. Each row is pass/fail.
 | Type `/` in the chat | The native menu: `/health`, `/svc`, `/relay`… **and your registry entries** as real commands — `/df`, `/git_log`. Autocomplete, no typing |
 | `/help` | The command list, generated from *your* registry |
 | `/df` | Same as `/run df`. Registry entries are commands in their own right |
+| `/git` | A submenu: one button per grouped entry. Members are off the top-level menu on purpose — `/git_log …` typed still works |
+| Tap **Recent commits** in `/git` | The usage line, not a run: that entry takes `<repo> <n>` and a button has nowhere to type them |
+| Tap **Working tree** in `/git` | `git status --short --branch` output. A parameterless member runs straight from the button |
 | `/whoami` | Your id, `allowlisted` |
 | `/health` | `up   relay      tcp 8375 open`, a tunnel line, disk free, load average |
 | `/relay_url` | `No tunnel URL recorded` until a restart under the new `start.sh` (§6). After one: a card with the `wss://` address as tap-to-copy text and an **Open in the app** link — no token in it |
@@ -184,6 +205,7 @@ In order. Each row is pass/fail.
 | `/ps` | `Nothing started by ops is running.` — correct until §6 |
 | `/logs relay 20` | Last 20 lines, or `log not found` if ops has not started the relay yet |
 | `/tail relay` then `/stop` | A message that updates every 3s, ending `— ended: /stop` |
+| `/deploy_web` | Confirm, then a live stream of `web/deploy.sh` publishing to GitHub Pages. `/stop` ends the view; it does **not** stop the deploy |
 | Message the bot from another Telegram account | `Not authorized. This chat id is …`, nothing runs |
 
 ## 6. The real test — restart from the phone
