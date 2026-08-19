@@ -147,11 +147,19 @@ class Cache:
         self._at = {}
 
     def probe(self, cwd, remote=None, since_sha=None, with_commits=False):
-        key = (remote or "", cwd or "")
-        hit = self._at.get(key)
+        # The range is part of the key. A cached answer is only reusable for the same one: after a
+        # turn is recorded `since_sha` has advanced, and reusing the old entry would attach the
+        # previous turn's commits to the next turn as well.
+        key = (remote or "", cwd or "", since_sha or "", bool(with_commits))
         now = time.monotonic()
+        hit = self._at.get(key)
         if hit and now - hit[0] < self.ttl:
             return hit[1]
+        # Which is also why the expired entries have to go. Keyed by directory alone this held one
+        # entry per pane forever; keyed by the range it gains one per turn, and a relay runs for
+        # weeks. The window is two seconds, so there is never anything here worth keeping.
+        for stale in [k for k, (at, _) in self._at.items() if now - at >= self.ttl]:
+            del self._at[stale]
         got = probe(cwd, remote, since_sha, with_commits)
         self._at[key] = (now, got)
         return got

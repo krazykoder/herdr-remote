@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
 from contextlib import closing
@@ -135,6 +136,26 @@ class GitProbeTest(unittest.TestCase):
             other.commit("theirs")
             self.assertEqual(cache.probe(self.dir.name)["branch"], "work")
             self.assertEqual(cache.probe(other_dir)["branch"], "elsewhere")
+
+    def test_the_cache_does_not_grow_one_entry_per_turn(self):
+        # Keyed by directory alone it held one entry per pane forever; keyed by the range it gains
+        # one per turn, and a relay runs for weeks.
+        self.repo.commit("first")
+        cache = git_probe.Cache(ttl=0.01)
+        for i in range(30):
+            cache.probe(self.dir.name, since_sha="%040x" % i, with_commits=False)
+            time.sleep(0.02)
+        self.assertLessEqual(len(cache._at), 2, "expired entries are dropped as they are passed")
+
+    def test_the_cache_does_not_reuse_a_previous_commit_range(self):
+        first = self.repo.commit("first")
+        second = self.repo.commit("second", "2")
+        cache = git_probe.Cache(ttl=60)
+        first_range = cache.probe(self.dir.name, since_sha=first, with_commits=True)
+        # The previous turn now ends at `second`; an unchanged HEAD has no new commits to report.
+        next_range = cache.probe(self.dir.name, since_sha=second, with_commits=True)
+        self.assertEqual([c["subject"] for c in first_range["commits"]], ["second"])
+        self.assertEqual(next_range["commits"], [])
 
 
 class RecordedGitTest(unittest.TestCase):
@@ -402,6 +423,9 @@ class CommitRangeTest(unittest.TestCase):
         self.addCleanup(self.dir.cleanup)
         self.repo = GitRepo(self.dir.name)
         self.addCleanup(self.relay.agent_cache.clear)
+        self.relay.agent_cache["w1:p1"] = {
+            "cwd": self.dir.name, "host": "local", "remote": None,
+        }
 
     def test_a_commit_range_becomes_a_time_window(self):
         first = self.repo.commit("first")
@@ -431,17 +455,56 @@ class CommitRangeTest(unittest.TestCase):
             self.relay.conv_log_window({"since_commit": "abc"})
         self.assertIn("cwd", str(caught.exception))
 
+    def test_a_directory_the_record_knows_is_readable_after_its_pane_is_gone(self):
+        # A record outlives its panes — that is why turns are kept by fingerprint — and a
+        # conversation read a week later is one whose panes are all gone. Live panes only would
+        # refuse exactly the historical question this feature exists to answer.
+        sha = self.repo.commit("first")
+        db = os.path.join(self.dir.name, "known.sqlite3")
+        log = ConversationLog(db)
+        self.addCleanup(log.close)
+        log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                   at_src="poll", host="local", cwd=self.dir.name, text="done")
+        self.addCleanup(setattr, self.relay, "conv_log", self.relay.conv_log)
+        self.relay.conv_log = log
+        self.relay.agent_cache.clear()
+
+        since, _ = self.relay.conv_log_window({"cwd": self.dir.name, "since_commit": sha})
+        self.assertIsNotNone(since)
+        # And a directory it has neither a pane in nor a row for is still refused.
+        with self.assertRaises(ValueError) as caught:
+            self.relay.conv_log_window({"cwd": "/somewhere/else", "since_commit": sha})
+        self.assertIn("not watching", str(caught.exception))
+
+    def test_a_remote_directory_with_no_pane_left_cannot_be_read(self):
+        # Nothing in the snapshot says how that host is reached, and running the question here
+        # instead would answer it against this machine's filesystem under another host's name.
+        sha = self.repo.commit("first")
+        db = os.path.join(self.dir.name, "remote.sqlite3")
+        log = ConversationLog(db)
+        self.addCleanup(log.close)
+        log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                   at_src="poll", host="box", cwd=self.dir.name, text="done")
+        self.addCleanup(setattr, self.relay, "conv_log", self.relay.conv_log)
+        self.relay.conv_log = log
+        self.relay.agent_cache.clear()
+        with self.assertRaises(ValueError) as caught:
+            self.relay.conv_log_window({"cwd": self.dir.name, "host": "box", "since_commit": sha})
+        self.assertIn("no pane is open on box", str(caught.exception))
+
+    def test_a_commit_range_is_limited_to_watched_checkout_shas(self):
+        sha = self.repo.commit("first")
+        with self.assertRaises(ValueError):
+            self.relay.conv_log_window({"cwd": "/private/repo", "since_commit": sha})
+        with self.assertRaises(ValueError) as caught:
+            self.relay.conv_log_window({"cwd": self.dir.name, "since_commit": "HEAD~1"})
+        self.assertIn("commit sha", str(caught.exception))
+
     def test_a_commit_from_another_checkout_says_so(self):
         # The ordinary mistake, and a silent empty answer would read as "nothing was said then".
         with self.assertRaises(ValueError) as caught:
             self.relay.conv_log_window({"cwd": self.dir.name, "since_commit": "0" * 40})
         self.assertIn("not a commit", str(caught.exception))
-
-    def test_a_host_is_resolved_to_the_ssh_target_its_panes_are_reached_through(self):
-        self.relay.agent_cache["w1:p1"] = {"host": "box", "remote": "user@box"}
-        self.assertEqual(self.relay.remote_for_host("box"), "user@box")
-        self.assertIsNone(self.relay.remote_for_host("local"))
-        self.assertIsNone(self.relay.remote_for_host("unknown-host"))
 
     def test_the_cli_answers_the_same_question(self):
         import io

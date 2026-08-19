@@ -167,6 +167,18 @@ class ConversationLog:
     def close(self):
         self.conn.close()
 
+    def knows_directory(self, host, cwd):
+        """Has this relay ever recorded a turn in this directory on this host?
+
+        The set of directories the relay has watched, which outlives the panes that were open in
+        them — a conversation read a week later is a record whose panes are all gone. It is the
+        only claim git should be run on: it is this relay's own history and never a path a client
+        named.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM turns WHERE host=? AND cwd=? LIMIT 1",
+            (host or "local", cwd or "")).fetchone() is not None
+
     def last_commit(self, host, cwd):
         """The commit the last recorded turn for this directory was at, or ''.
 

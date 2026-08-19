@@ -190,21 +190,6 @@ GIT_COMMITS = os.environ.get("HERDR_GIT_COMMITS", "") == "1"
 git_cache = git_probe.Cache()
 
 
-def remote_for_host(host):
-    """The ssh target a host label is reached through, or None for this machine.
-
-    The record stores a host *label* — what a turn was read on — and git has to be run where the
-    directory is. Every polled pane carries both, so the map is read off the panes rather than
-    rebuilt from HERDR_REMOTES, which would guess at the label herdr chose.
-    """
-    if not host or host == "local":
-        return None
-    for pane in agent_cache.values():
-        if pane.get("host") == host:
-            return pane.get("remote")
-    return None
-
-
 # A commit as a client may name one. Hex only, and never a ref: `main`, `HEAD~3` and `--output=x`
 # all reach git's argument parser, and the last of those is an option rather than a revision. The
 # app only ever has shas — they came out of the record — so nothing is lost by refusing the rest.
@@ -218,15 +203,43 @@ def git_range_target(msg):
     relay would read a repository the user never pointed it at, which is a different capability
     from reading the panes it was asked to poll.
     """
-    cwd = msg.get("cwd") or ""
-    host = msg.get("host") or "local"
+    cwd, remote = git_cwd_target(msg)
     first, last = str(msg.get("from") or ""), str(msg.get("to") or "")
     if not GIT_SHA_RE.match(first) or not GIT_SHA_RE.match(last):
         raise ValueError("from and to must be commit shas")
+    return cwd, remote, first, last
+
+
+def git_cwd_target(msg):
+    """A watched checkout and its ssh target, or a refusal.
+
+    Both range endpoints and commit-window selectors run git. Letting either accept a caller's cwd
+    turns a read of this relay's record into a read of arbitrary local or remote repositories.
+
+    Watched means "a pane is open there now, or this relay has recorded a turn there" — the second
+    half matters as much as the first. A record outlives its panes, which is the whole reason turns
+    are kept by fingerprint, and a conversation read a week later is one whose panes are all gone.
+    Live panes only would refuse exactly the historical questions this feature exists to answer,
+    while still letting a client name any path it liked in a fresh session.
+    """
+    cwd = msg.get("cwd") or ""
+    host = msg.get("host") or "local"
+    if not cwd:
+        raise ValueError("a commit range needs a cwd to resolve it in")
     for pane in agent_cache.values():
         if (pane.get("cwd") or "") == cwd and (pane.get("host") or "local") == host:
-            return cwd, pane.get("remote"), first, last
-    raise ValueError("no pane is open in that directory")
+            return cwd, pane.get("remote")
+    if conv_log is not None and conv_log.knows_directory(host, cwd):
+        if host == "local":
+            return cwd, None
+        # The host is named in the record but has no pane open right now, so the ssh target it was
+        # reached through is not in this snapshot. Nothing can be run there, and saying so beats
+        # running the question against this machine's own filesystem under a remote host's name.
+        for pane in agent_cache.values():
+            if (pane.get("host") or "local") == host:
+                return cwd, pane.get("remote")
+        raise ValueError(f"no pane is open on {host}, so its checkout cannot be read")
+    raise ValueError("this relay is not watching that directory")
 
 
 def conv_log_window(msg):
@@ -244,13 +257,13 @@ def conv_log_window(msg):
     first, last = msg.get("since_commit"), msg.get("until_commit")
     if not first and not last:
         return since, until
-    cwd = msg.get("cwd")
-    if not cwd:
-        raise ValueError("a commit range needs a cwd to resolve it in")
-    remote = remote_for_host(msg.get("host"))
+    cwd, remote = git_cwd_target(msg)
     for sha, name in ((first, "since_commit"), (last, "until_commit")):
         if not sha:
             continue
+        sha = str(sha)
+        if not GIT_SHA_RE.match(sha):
+            raise ValueError(f"{name} must be a commit sha")
         when = git_probe.commit_time(cwd, sha, remote)
         if when is None:
             raise ValueError(f"{name}: {sha} is not a commit in {cwd}")
