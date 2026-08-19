@@ -1,0 +1,113 @@
+# Deferred — herdr-ops, what was left out and when to build it
+
+**Date:** 2026-08-18 · **Status:** open · **Class:** B (all items additive)
+**Built:** [spec](2026-08-18_telegram_ops_spec.md) ·
+[plan](../04_implementation_plans/2026-08-18_telegram_ops_plan.md) ·
+[setup](../../relay/OPS_SETUP.md)
+
+Each item below was a deliberate omission, not an oversight. The order is the order to build them
+in: item 1 is the one that stands between "works when I run it" and "works when I need it".
+
+---
+
+## 1. A service unit for the ops bot itself — `com.herdr-remote.ops`
+
+**What is missing.** `install-service.sh` writes launchd plists / systemd units for the relay, the
+tunnel and the agent bot. It writes nothing for the ops bot, so today it runs from a terminal and
+nothing restarts it after a crash or a reboot.
+
+**Why deferred.** Supervising a process is a separate, separately-testable change from writing it,
+and shipping the bot runnable by hand first meant the manual E2E could run without touching an
+installer that already works for three other services. It also keeps the risky edit — a script that
+installs launchd units on the user's machine — out of the commit that introduces 1,000 lines of new
+code.
+
+**Build it when:** you rely on the bot. Which is the first time the relay dies while you are away
+from the machine — precisely the case the bot exists for, and precisely the case where "it was
+running in a terminal I closed" makes it useless.
+
+**Shape.** A fourth label alongside `LABEL_RELAY` / `LABEL_TUNNEL` / `LABEL_TELEGRAM`, with
+`KeepAlive` true and `RunAtLoad` true, the token read from `secrets.env` like the others. One
+wrinkle worth thinking about before writing it: the ops bot must **not** be a child of, or share a
+process group with, anything it restarts, and launchd already gives each label its own session, so
+this is a property to assert in the plist rather than engineer.
+
+---
+
+## 2. Auto-restart in the health watcher
+
+**What is missing.** `health_watcher()` reports an up→down transition to the allowlisted chats and
+stops there. It never restarts anything on its own.
+
+**Why deferred.** A supervisor that acts on a probe needs a backoff, a cap, and a definition of
+"down" that a flapping port cannot trigger — otherwise the first false negative turns into a
+restart loop that takes down a working relay. Reporting has none of that risk, and in practice the
+message plus a `/relay restart` tap is a few seconds slower than an automatic restart while being
+impossible to get catastrophically wrong.
+
+**Build it when:** the same alert arrives repeatedly and the answer is always the same tap. Not
+before — the value is only in the cases where a human would have said yes anyway.
+
+**Shape.** Opt-in per service (`"auto_restart": true` in the registry), exponential backoff, a hard
+cap of N restarts per hour, and every automatic action announced in the chat with the same text a
+manual one produces. Never automatic for a service whose probe has failed since the bot booted:
+that is a configuration problem, not an outage.
+
+---
+
+## 3. The `unit` backend, exercised for real
+
+**What is missing.** `ops_supervisor.unit_action()` and the `unit` health probe are implemented —
+`launchctl kickstart -k` / `systemctl --user restart` — but nothing on this machine has a unit for
+them to drive, so the code path has never run outside its own reading.
+
+**Why deferred.** The registry's schema is the frozen contract, so the probe type had to exist in
+the loader from day one; making it *work* needs a service that is actually installed under launchd.
+Writing it against nothing would have produced code shaped by a guess about `launchctl print`'s
+output.
+
+**Build it when:** item 1 lands, since that creates the first unit on this machine, or when the
+relay is moved back under `install-service.sh` supervision.
+
+**Watch for:** `launchctl print` output format differs across macOS versions, and the current
+implementation greps for `state = running`. That is the fragile line. `systemctl --user is-active`
+is a clean exit code and is not the concern.
+
+---
+
+## 4. Other local servers in the registry
+
+**What is missing.** Nothing but rows. Confirmed 2026-08-18 that no other long-running services
+exist on this host worth managing.
+
+**Why deferred.** There was nothing to name. This is the item that requires no code at all — the
+registry is config, so adding a service is an entry with a `start`, a `health` probe and a `log`.
+
+**Build it when:** a second server appears. The four probe types (`tcp`, `pgrep`, `http`, `unit`)
+are already implemented, so most services need no new code.
+
+---
+
+## 5. SSH fan-out to a second machine
+
+**What is missing.** The bot manages the host it runs on. It has no equivalent of the relay's
+`HERDR_REMOTES`.
+
+**Why deferred.** Same-machine is the case that exists. Remote control also changes the security
+model — an allowlist that reaches another box needs its own credentials, its own registry, and a
+much clearer answer to "which machine did that command run on".
+
+**Build it when:** there is a second machine. The lazy version is probably a second ops bot on that
+machine with its own token and chat, not an SSH layer in this one — one process per host keeps the
+blast radius and the allowlist local to what they control.
+
+---
+
+## Not deferred — deliberately out of scope, permanently
+
+- **Reading panes or approving agents.** That is `herdr_telegram.py`'s job, and the ops bot's
+  independence from the relay is exactly what makes it survive a relay outage. Adding a relay
+  connection here would reintroduce the coupling the whole design exists to avoid.
+- **A general remote shell.** `/exec`, free-form arguments, or "run anything if the chat id
+  matches". The allowlist is the feature.
+- **Doing anything when the machine is offline or asleep.** Inherent to running on the box.

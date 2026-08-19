@@ -269,6 +269,9 @@ Run against a real bot and a real chat. Each step is a pass/fail:
 
 ## Follow-ups (not this plan)
 
-1. `com.herdr-remote.ops` unit in `install-service.sh` with `KeepAlive`.
-2. Opt-in auto-restart in the health watcher, with a backoff and a cap.
-3. `unit` backend exercised for real, once a launchd unit exists to exercise it against.
+Written up with their reasoning and their build-it-when triggers in
+[2026-08-18_telegram_ops_deferred.md](../03_specs/2026-08-18_telegram_ops_deferred.md): the
+`com.herdr-remote.ops` service unit, opt-in auto-restart, exercising the `unit` backend, more
+services in the registry, and SSH fan-out.
+
+Operator instructions for the manual E2E this plan describes: [`relay/OPS_SETUP.md`](../../relay/OPS_SETUP.md).
