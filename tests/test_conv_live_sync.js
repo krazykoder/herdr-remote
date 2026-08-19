@@ -30,7 +30,10 @@ const store = {herdr_conv_live: 'on'};
 // The two badge nodes, as the app's `document` would hand them over. Kept out here so a test can
 // read what the sync wrote into them.
 const nodes = {};
-const fakeNode = () => ({dataset: {}, innerHTML: '', title: '', hidden: false});
+const fakeNode = () => ({
+  dataset: {}, innerHTML: '', title: '', hidden: false,
+  style: {setProperty(name, value) { this[name] = value; }},
+});
 
 // The roster the badge resolves a pane id against, and who the composer is pointed at.
 const panes = {};
@@ -46,6 +49,7 @@ const ctx = vm.createContext({
   ws: {readyState: 1, send: s => sent.push(JSON.parse(s))},
   renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => {}, showToast: () => {},
   escapeHtml: s => String(s),
+  agentColor: agent => `var(--${agent || 'muted'})`,
   // The roster key builder, in the one spelling the rest of the app uses.
   convMemberKey: a => JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']),
   // The live roster. A row is scoped to a pane by who is on it, so the tests below set it.
@@ -487,6 +491,22 @@ test('the conversation badge follows the addressed member, not the conversation'
   addressed = '';
   syncBranchBadges();
   assert.equal(nodes.convBranch.hidden, true);
+});
+
+test('the badge is painted in the addressed agent\'s own colour, and asks for nothing', () => {
+  // The branch belongs to an agent, so it reads in that agent's colour rather than in one generic
+  // git blue — in a joint thread the badge and the bubbles below it then say the same thing twice.
+  sent.length = 0;
+  ctx.activePane = '';
+  panes['%2'] = {pane_id: '%2', agent: 'codex', branch: 'feat/current'};
+  addressed = '%2';
+  syncBranchBadges();
+  assert.match(nodes.convBranch.innerHTML, /feat\/current/);
+  assert.equal(nodes.convBranch.style['--branch-color'], 'var(--codex)');
+  assert.equal(nodes.convBranch.hidden, false);
+  // Drawing a badge is not a question. The relay has already put this on the snapshot, and a round
+  // trip per selection would buy only the minutes between a branch switch and the next turn.
+  assert.deepEqual(sent, []);
 });
 
 test('the commit strip takes the bubble\'s column', () => {

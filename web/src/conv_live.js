@@ -381,8 +381,10 @@
     // conversation's members can be in different checkouts on different branches, so this follows
     // whoever the composer is addressing rather than the conversation as a whole.
     //
-    // The branch rides on the snapshot, filled by the relay's turn-end probe — so a pane that has
-    // not ended a turn since this relay started has none, and the badge is simply not there.
+    // It rides on the snapshot and is asked for by nothing. The relay probes git at turn end and
+    // reads the rest back out of its own record, so by the time a pane is on screen the answer is
+    // already in the state this browser holds — one more round trip per selection would buy only
+    // the minutes between a branch switch and the next turn that mentions it.
 
     function branchOf(pane) {
       return (pane && pane.branch) || '';
@@ -399,6 +401,10 @@
         box.innerHTML = branch ? `⎇ ${escapeHtml(branch)}` : '';
         box.title = branch ? `${branch} — the branch this agent's work is landing on` : '';
       }
+      // The branch belongs to an agent, so use that agent's existing theme colour rather than a
+      // generic git colour. A Claude target reads orange; a Codex target reads blue.
+      box.style.setProperty('--branch-color',
+                            typeof agentColor === 'function' ? agentColor((pane || {}).agent) : 'var(--blue)');
       box.hidden = !branch;
     }
 

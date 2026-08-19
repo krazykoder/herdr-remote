@@ -274,12 +274,42 @@ def conv_log_window(msg):
     return since, until
 
 
-# The branch each pane was last seen on, so a snapshot can carry it. Filled by the probe below and
-# by nothing else: the branch is read at turn end and never per poll, which is the whole reason
-# this feature costs nothing to leave on. So a pane that switches branch between two turns shows
-# the old one until the next turn ends.
-# ponytail: read at turn end only; probe on read_pane too if a stale badge ever misleads someone.
+# The branch last seen in each checkout, keyed by (host, cwd) — a branch is a fact about a working
+# directory and not about a pane. Two agents in one repository are on one branch by definition, so
+# keying this by pane would answer the same question twice, run two subprocesses to do it, and
+# leave whichever pane had not ended a turn yet showing nothing.
+#
+# Filled by the probe below and by nothing else: read at turn end, or once when a reader addresses
+# a pane. Never per poll, which is the whole reason this feature costs nothing to leave on.
 pane_branch = {}
+
+
+def branch_key(pane):
+    return (pane.get("host") or "local", pane.get("cwd") or "")
+
+
+async def seed_branches(panes):
+    """Fill in any directory this relay has not probed yet from the record on disk.
+
+    A restart empties the map above, and the app's badge would then say nothing until every pane
+    had ended another turn — which for a quiet agent is a long time to look at a blank. The record
+    already stores the branch on every turn, so the answer is on disk and costs one indexed read
+    per directory, once. Never a git subprocess: this is the cheap half of the same fact.
+
+    A miss is remembered as '' so a pane outside a checkout is asked about once and not once per
+    poll for as long as it is open.
+    """
+    if conv_log is None:
+        return
+    unseen = {branch_key(p) for p in panes} - set(pane_branch)
+    for host, cwd in unseen:
+        if not cwd:
+            pane_branch[(host, cwd)] = ""
+            continue
+        try:
+            pane_branch[(host, cwd)] = await asyncio.to_thread(conv_log.last_branch, host, cwd)
+        except sqlite3.Error as e:
+            log.debug("branch seed failed for %s: %s", cwd, e)
 
 
 async def probe_git(pane):
@@ -301,10 +331,10 @@ async def probe_git(pane):
     except (sqlite3.Error, OSError) as e:
         log.debug("git probe failed for %s: %s", cwd, e)
         return None
-    # Both callers reach the probe, so remembering it here is the one place that catches a turn
-    # ending and a prompt being delivered alike.
-    if got and got.get("branch") and pane.get("pane_id"):
-        pane_branch[pane["pane_id"]] = got["branch"]
+    # Every caller reaches the probe, so remembering it here is the one place that catches a turn
+    # ending, a prompt being delivered, and a reader addressing a pane alike.
+    if got and got.get("branch"):
+        pane_branch[branch_key(pane)] = got["branch"]
     return got
 
 
@@ -1215,12 +1245,15 @@ async def _poll_once():
         for p in agents + shells:
             pane_remote_map[p["pane_id"]] = p.get("remote")
             known_panes.add(p["pane_id"])
+        # Before the snapshot goes out, so a pane's first appearance after a restart carries the
+        # branch the record already knows rather than nothing.
+        await seed_branches(agents)
         for a in agents:
             agent_cache[a["pane_id"]] = a
             # Where this pane's work is landing, carried on the snapshot so the app can say so
             # without a thread being open. herdr does not report it and this relay does not ask
-            # git for it here — it is whatever the last turn's probe saw.
-            branch = pane_branch.get(a["pane_id"])
+            # git for it here — it is whatever the last probe of that directory saw.
+            branch = pane_branch.get(branch_key(a))
             if branch:
                 a["branch"] = branch
         await broadcast(snapshot_message())
@@ -1297,7 +1330,11 @@ async def _poll_once():
                 pane_remote_map.pop(pid, None)
                 last_statuses.pop(pid, None)
                 agent_cache.pop(pid, None)
-                pane_branch.pop(pid, None)
+            # Keyed by directory, so it is dropped when the last pane in that directory goes rather
+            # than with any one of them.
+            live = {branch_key(p) for p in agents + shells}
+            for key in [k for k in pane_branch if k not in live]:
+                del pane_branch[key]
 
 
 def annotate_pane(pane):

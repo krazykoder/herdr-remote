@@ -192,6 +192,19 @@ class ConversationLog:
             " ORDER BY at DESC, id DESC LIMIT 1", (host or "local", cwd or "")).fetchone()
         return row["commit_sha"] if row else ""
 
+    def last_branch(self, host, cwd):
+        """The branch the last recorded turn for this directory was on, or ''.
+
+        Same reasoning as last_commit above, for the other half of the same fact: a relay restart
+        is not a break in the record. The app shows the addressed agent's branch beside its
+        composer, and reading it back from here is what fills that in on the first snapshot after a
+        restart rather than leaving it blank until every pane has ended another turn.
+        """
+        row = self.conn.execute(
+            "SELECT branch FROM turns WHERE host=? AND cwd=? AND branch<>''"
+            " ORDER BY at DESC, id DESC LIMIT 1", (host or "local", cwd or "")).fetchone()
+        return row["branch"] if row else ""
+
     # --- writing ---
 
     def record(self, *, agent, pane_id, kind, origin, at_src, host="local", cwd="", label="",

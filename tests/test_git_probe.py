@@ -356,14 +356,18 @@ class RelayWiringTest(unittest.TestCase):
         self.assertIsNone(self.probe({"cwd": "/work", "host": "local"}))
         self.assertEqual(self.calls, [], "a switched-off feature runs no subprocesses")
 
-    def test_the_branch_is_remembered_so_a_snapshot_can_carry_it(self):
+    def test_the_branch_is_remembered_per_checkout_and_not_per_pane(self):
         # The app shows the addressed agent's branch beside its composer, and herdr does not report
-        # one. This is where it comes from: what the probe already saw, kept per pane. Asking git
-        # per poll instead is the cost this whole feature was designed to avoid.
+        # one. This is where it comes from. Keyed by directory because that is what a branch is a
+        # fact about: two agents in one repository are on one branch by definition, and keying it
+        # by pane would run a second subprocess to learn the same thing.
         self.addCleanup(self.relay.pane_branch.clear)
         self.relay.pane_branch.clear()
         self.probe({"pane_id": "%1", "cwd": "/work", "host": "local"})
-        self.assertEqual(self.relay.pane_branch, {"%1": "work"})
+        self.assertEqual(self.relay.pane_branch, {("local", "/work"): "work"})
+
+        self.probe({"pane_id": "%2", "cwd": "/work", "host": "local"})
+        self.assertEqual(len(self.relay.pane_branch), 1, "one entry for one checkout")
 
     def test_a_pane_outside_a_checkout_is_not_remembered_as_being_on_a_branch(self):
         self.addCleanup(self.relay.pane_branch.clear)
@@ -376,6 +380,49 @@ class RelayWiringTest(unittest.TestCase):
         self.relay.git_cache = NoRepo()
         self.probe({"pane_id": "%1", "cwd": "/work", "host": "local"})
         self.assertEqual(self.relay.pane_branch, {})
+
+    def test_a_restart_reads_the_branch_back_out_of_the_record(self):
+        # The map above is memory, and a restart empties it. Without this the badge says nothing
+        # until every pane has ended another turn, which for a quiet agent is a long blank — and
+        # the answer is already on disk, because the record stores the branch on every turn.
+        import asyncio
+        with tempfile.TemporaryDirectory() as tmp:
+            log = ConversationLog(os.path.join(tmp, "seed.sqlite3"))
+            self.addCleanup(log.close)
+            log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                       at_src="poll", host="local", cwd="/work", text="done",
+                       git={"branch": "feat/seeded", "commit": "a" * 40})
+            self.relay.conv_log = log
+            self.relay.pane_branch.clear()
+            self.addCleanup(self.relay.pane_branch.clear)
+
+            asyncio.run(self.relay.seed_branches([
+                {"host": "local", "cwd": "/work"},
+                {"host": "local", "cwd": "/elsewhere"},
+                {"host": "local", "cwd": ""},
+            ]))
+            self.assertEqual(self.relay.pane_branch[("local", "/work")], "feat/seeded")
+            # A miss is remembered as a miss, or the same directory is read once per poll forever.
+            self.assertEqual(self.relay.pane_branch[("local", "/elsewhere")], "")
+            self.assertEqual(self.relay.pane_branch[("local", "")], "")
+            self.assertEqual(self.calls, [], "the record is read, git is not run")
+
+    def test_the_seed_never_overwrites_what_the_probe_saw(self):
+        # It runs every poll and the probe is the fresher answer; a seed that wrote over it would
+        # walk the badge back to whatever the last recorded turn said.
+        import asyncio
+        with tempfile.TemporaryDirectory() as tmp:
+            log = ConversationLog(os.path.join(tmp, "seed.sqlite3"))
+            self.addCleanup(log.close)
+            log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                       at_src="poll", host="local", cwd="/work", text="done",
+                       git={"branch": "old", "commit": "a" * 40})
+            self.relay.conv_log = log
+            self.relay.pane_branch.clear()
+            self.addCleanup(self.relay.pane_branch.clear)
+            self.relay.pane_branch[("local", "/work")] = "fresh"
+            asyncio.run(self.relay.seed_branches([{"host": "local", "cwd": "/work"}]))
+            self.assertEqual(self.relay.pane_branch[("local", "/work")], "fresh")
 
 
 class TextOutputTest(unittest.TestCase):

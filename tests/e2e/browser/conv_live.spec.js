@@ -333,3 +333,19 @@ test('the branch badge floats over the pane, centred, and follows the pane it is
   });
   await expect(badge).toBeHidden();
 });
+
+test('the badge is painted in the addressed agent\u2019s own colour', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    paneOf(activePane).branch = 'feat/current';
+    syncBranchBadges();
+  });
+  const badge = page.locator('#paneBranch');
+  await expect(badge).toContainText('feat/current');
+  expect(await badge.evaluate(el => el.style.getPropertyValue('--branch-color')))
+    .toBe('var(--agent-claude)');
+  // Painted, not merely set: a var that resolves to nothing would leave the pill unreadable.
+  const painted = await badge.evaluate(el => getComputedStyle(el).color);
+  expect(painted).not.toBe('');
+  expect(painted).not.toBe('rgba(0, 0, 0, 0)');
+});

@@ -87,10 +87,24 @@ different branches; a badge that followed the conversation would be wrong for on
 time. In the pane view that is the open pane, in the conversation view it follows the target chip.
 
 It rides on the `agents` snapshot, filled from the turn-end probe the record already runs — no new
-git call, and none per poll. The cost is that it is stale between turns: a pane that switches
-branch and says nothing shows the old one until its next turn ends. Probing on `read_pane` would
-close that and is the upgrade if a stale badge ever misleads anyone; it was not worth a subprocess
-per pane read to close it in advance.
+git call, and none per poll. It is painted in the addressed agent's own colour rather than in a
+generic git blue, so in a joint thread the badge and the bubbles under it say the same thing twice.
+
+Remembered per **checkout**, not per pane: a branch is a fact about a working directory, and two
+agents in one repository are on one branch by definition. Keyed by pane, the second of them would
+have run a second subprocess to learn the same thing and shown nothing until its own first turn.
+
+A restart empties that memory, and the badge would then be blank until every pane had ended
+another turn. The answer is already on disk — the record stores the branch on every turn — so it
+is read back once per directory on first sight, and a miss is remembered as a miss so a pane
+outside a checkout is asked about once rather than once per poll.
+
+An earlier attempt closed the same gap with a `branch_get` round trip that probed git whenever a
+reader addressed a pane. It was removed: the record already holds the answer, reading it costs one
+indexed SELECT instead of a subprocess, and what the round trip bought over it was only the
+minutes between a branch switch and the next turn that mentions it. The rest of this feature is
+"as of a turn" throughout — the rules, the bubbles, the commit ranges — and a badge alone being
+live was an inconsistency paid for per selection.
 
 ## Rules divide, badges belong
 
