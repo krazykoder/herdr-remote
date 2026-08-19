@@ -202,3 +202,180 @@ test('the conversation window streams its working members too', async ({page}) =
   await expect(slot).toContainText('Still writing this one');
   await expect(page.locator('#convViewThread .conv-msg.draft')).toHaveCount(0);
 });
+
+// --- Where the work landed ---
+//
+// The relay records the branch a pane's cwd was on and the commits that appeared since its last
+// turn. The vm slice proves the string; only a browser proves it is drawn, styled, and does not
+// push the bubble off the screen — which is what a forty-character sha does to a phone.
+
+// A row in the shape the relay sends, addressed to this pane's fingerprint so the thread claims
+// it. Pushed through the same receiver the socket feeds, because a fake herdr's panes sit in
+// directories that are not repositories and never will be.
+const receiveTurns = (page, key, rows) => page.evaluate(([k, list]) => {
+  const fp = convKeyFingerprint(k);
+  const at = Date.now();
+  convLiveReceive({
+    fingerprints: [fp],
+    turns: list.map((row, i) => Object.assign({
+      host: fp[0], agent: fp[1], cwd: fp[2], pane_id: JSON.parse(k)[1],
+      at: at + i, at_src: 'poll', kind: 'agent_final',
+    }, row)),
+  });
+  renderConvView();
+}, [key, rows]);
+
+test('a branch change is an entry in the thread, not a stamp on every message',
+     async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  await receiveTurns(page, key, [
+    {seq: 9001, text: 'Started on the parser.', branch: 'main', commit: 'a'.repeat(40)},
+    {seq: 9002, text: 'Still on the parser.', branch: 'main', commit: 'b'.repeat(40)},
+    {seq: 9003, text: 'Moved it to a branch.', branch: 'feat/parser', commit: 'c'.repeat(40)},
+  ]);
+
+  const rules = page.locator('#convThread .conv-rule.git.branch');
+  await expect(rules).toHaveCount(2, 'arriving, then moving — the middle turn is not an event');
+  await expect(rules.first()).toContainText('main');
+  await expect(rules.last()).toContainText('Branch changed to');
+  await expect(rules.last()).toContainText('feat/parser');
+  // The event sits above the message it belongs to, not inside it.
+  await expect(page.locator('#convThread .conv-msg .conv-rule')).toHaveCount(0);
+});
+
+test('commits are hidden until the toggle asks for them, and then they are fetched',
+     async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await receiveTurns(page, key, [
+    {seq: 9001, text: 'Before.', branch: 'main', commit: 'a'.repeat(40)},
+    {seq: 9002, text: 'After.', branch: 'main', commit: 'b'.repeat(40)},
+  ]);
+  await expect(page.locator('#convThread .conv-commits')).toHaveCount(0);
+
+  // The relay is asked for the range, because HERDR_GIT_COMMITS is off and the list was never
+  // stored. The fake herdr's panes are not in a repository, so what comes back is empty — the
+  // question going out at all is what this asserts, and the answer is asserted in the vm slice.
+  const asked = page.evaluate(() => new Promise(resolve => {
+    const real = ws.send.bind(ws);
+    ws.send = d => { if (d.includes('git_commits')) resolve(JSON.parse(d)); return real(d); };
+    setTimeout(() => resolve(null), 3000);
+  }));
+  await page.locator('#paneCommits').click();
+  const msg = await asked;
+  expect(msg, 'the toggle asks the relay for the range it can see both ends of').not.toBeNull();
+  expect(msg.from).toBe('a'.repeat(40));
+  expect(msg.to).toBe('b'.repeat(40));
+});
+
+test('the commits toggle is only offered over the relay\u2019s record', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  // This browser's own transcript has no commits in it, so a toggle here would change nothing.
+  await expect(page.locator('#paneCommits')).not.toHaveClass(/\bon\b/);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#paneCommits')).toHaveClass(/\bon\b/);
+});
+
+test('a commit list wraps instead of widening the thread', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 780});
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await page.evaluate(() => localStorage.setItem('herdr_conv_commits', 'on'));
+  await receiveTurns(page, key, [
+    {seq: 9001, text: 'Before.', branch: 'main', commit: 'a'.repeat(40)},
+    {seq: 9002, text: 'After.', branch: 'feat/a-branch-name-somebody-really-did-type-out-in-full',
+     commit: 'b'.repeat(40),
+     commits: [{sha: 'c'.repeat(40),
+                subject: 'refactor the whole of the parser and everything that ever called it, ' +
+                         'including the bits nobody remembers writing'}]},
+  ]);
+  const thread = page.locator('#convThread');
+  await expect(thread.locator('.conv-commits')).toBeVisible();
+  await expect(thread.locator('.conv-commit code').first()).toHaveText('c'.repeat(8));
+  const overflow = await thread.evaluate(el => el.scrollWidth - el.clientWidth);
+  expect(overflow, 'the thread must not scroll sideways on a phone').toBeLessThanOrEqual(1);
+});
+
+test('the branch badge floats over the pane, centred, and follows the pane it is open on',
+     async ({page}) => {
+  // The relay fills this from its turn-end probe; the fake herdr's panes are in no checkout, so
+  // the branch is put on the snapshot's pane here instead. What is being asserted is the drawing:
+  // a vm slice can say the badge was written, only a browser can say it landed on screen.
+  await open(page);
+  await page.evaluate(() => {
+    paneOf(activePane).branch = 'feat/state-sync';
+    syncBranchBadges();
+  });
+  const badge = page.locator('#paneBranch');
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText('feat/state-sync');
+
+  // Centred over the pane and inside it — a badge half off the edge of a phone is not a badge.
+  const box = await badge.boundingBox();
+  const wrap = await page.locator('#termWrap').boundingBox();
+  const off = Math.abs((box.x + box.width / 2) - (wrap.x + wrap.width / 2));
+  expect(off, 'centred over the pane it belongs to').toBeLessThanOrEqual(2);
+  expect(box.y + box.height).toBeLessThanOrEqual(wrap.y + wrap.height + 1);
+  // Over the thread rather than beside it: the composer below must keep its full height.
+  expect(box.y).toBeGreaterThan(wrap.y);
+
+  // A pane outside a checkout says nothing rather than saying something empty.
+  await page.evaluate(() => {
+    delete paneOf(activePane).branch;
+    syncBranchBadges();
+  });
+  await expect(badge).toBeHidden();
+});
+
+test('the badge is painted in the addressed agent\u2019s own colour', async ({page}) => {
+  await open(page);
+  await page.evaluate(() => {
+    paneOf(activePane).branch = 'feat/current';
+    syncBranchBadges();
+  });
+  const badge = page.locator('#paneBranch');
+  await expect(badge).toContainText('feat/current');
+  expect(await badge.evaluate(el => el.style.getPropertyValue('--branch-color')))
+    .toBe('var(--agent-claude)');
+  // Painted, not merely set: a var that resolves to nothing would leave the pill unreadable.
+  const painted = await badge.evaluate(el => getComputedStyle(el).color);
+  expect(painted).not.toBe('');
+  expect(painted).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+test('a commit badge is painted in its agent\u2019s colour on a neutral fill', async ({page}) => {
+  // The strip is a sibling of the bubble and inherits nothing from it, which a vm slice cannot
+  // see: it can say the variable was written, only a browser can say it resolved to a colour.
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await page.evaluate(() => localStorage.setItem('herdr_conv_commits', 'on'));
+  await receiveTurns(page, key, [
+    {seq: 9001, text: 'Before.', branch: 'main', commit: 'a'.repeat(40)},
+    {seq: 9002, text: 'After.', branch: 'main', commit: 'b'.repeat(40),
+     commits: [{sha: 'c'.repeat(40), subject: 'the one commit'}]},
+  ]);
+  const sha = page.locator('#convThread .conv-commit code').first();
+  await expect(sha).toBeVisible();
+  const paint = await sha.evaluate(el => {
+    const badge = el.closest('.conv-commit');
+    return {sha: getComputedStyle(el).color, fill: getComputedStyle(badge).backgroundColor};
+  });
+  // Claude's own colour, resolved — not the muted fallback the variable falls back to unset.
+  const claude = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--agent-claude').trim());
+  const muted = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim());
+  expect(paint.sha).not.toBe('');
+  expect(paint.sha, 'the sha must not fall back to the muted default').not.toBe(muted);
+  expect(claude, 'the theme has to define the colour for this to mean anything').not.toBe('');
+  // And the fill stays out of the way rather than washing with the same colour.
+  expect(paint.fill).not.toBe(paint.sha);
+});

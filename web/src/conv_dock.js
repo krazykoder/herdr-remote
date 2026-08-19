@@ -502,6 +502,10 @@
       const dock = document.getElementById('convDock');
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
+      // The addressed member's branch. Here rather than beside the snapshot handler because the
+      // target changes without a snapshot — picking another member is the commonest way this
+      // badge changes at all.
+      if (typeof syncBranchBadges === 'function') syncBranchBadges();
       const load = document.getElementById('xferLoad');
       if (load) {
         const html = dockLoadHtml();

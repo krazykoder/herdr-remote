@@ -45,6 +45,23 @@
       const thread = document.getElementById('convThread');
       hangSyncLive(document.getElementById('paneLive'), !!thread && !thread.hidden);
       hangSyncLive(document.getElementById('convLive'), !!convViewId);
+      // What was committed between the messages. Offered only where the relay's record is being
+      // read: this browser's own transcript has no commits in it, and a toggle that changes
+      // nothing is worse than one that is not there.
+      const live = typeof convLiveOn === 'function' && convLiveOn();
+      hangSyncCommits(document.getElementById('paneCommits'),
+                      live && !!thread && !thread.hidden);
+      hangSyncCommits(document.getElementById('convCommits'), live && !!convViewId);
+    }
+
+    function hangSyncCommits(btn, offered) {
+      if (!btn) return;
+      const on = typeof convCommitsOn === 'function' && convCommitsOn();
+      btn.classList.toggle('on', offered);
+      btn.classList.toggle('live', on);
+      btn.setAttribute('aria-pressed', String(on));
+      btn.title = on ? 'Showing commits between messages — tap to hide them'
+        : 'Show what was committed between messages';
     }
 
     function hangSyncLive(btn, offered) {

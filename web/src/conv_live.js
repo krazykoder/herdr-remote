@@ -287,9 +287,195 @@
           at_src: CONV_LIVE_AT_SRC[t.at_src] || 'read',
           key: key, member: at.has(key) ? at.get(key) : 0,
           label: t.label || '', agent: t.agent || '',
+          // Where the work landed. The record's own columns, carried through untouched — a turn
+          // that says what an agent did is worth much more next to the branch it did it on. The
+          // host and directory come with them because they are what a commit range is asked for
+          // in: the fingerprint has them, but the entry is what the thread renders from.
+          branch: t.branch || '', commit: t.commit || '',
+          commits: Array.isArray(t.commits) ? t.commits : [],
+          host: t.host || 'local', cwd: t.cwd || '',
           kind: t.kind, live: true,
         };
       }).filter(e => e.text);
+    }
+
+    // --- Where the work landed, as events in the thread ---
+    //
+    // Not as a footer on every bubble. A branch is the same for twenty messages in a row and
+    // stamping each of them says nothing; what a reader is looking for is the *moment it changed*,
+    // which is one line between two messages. Commits are the same shape of fact — something that
+    // happened between two things that were said — so they are drawn where they happened rather
+    // than hung off whichever message came after them.
+    //
+    // Both are the same rule the thread already uses for a gap in the recording.
+
+    // A commit is looked up by its first characters and read by its subject; the other 32 are noise
+    // in a thread. The whole sha stays in the title, because a sha nobody can copy is a lookup
+    // nobody can do.
+    const CONV_SHA_SHOWN = 8;
+
+    // Showing the commits is a per-device reading preference, like the record toggle beside it —
+    // not a fact about the work, so it is not one of the documents that follow the user between
+    // browsers.
+    const CONV_COMMITS_KEY = 'herdr_conv_commits';
+
+    function convCommitsOn() {
+      try { return localStorage.getItem(CONV_COMMITS_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvCommits() {
+      const on = !convCommitsOn();
+      try { localStorage.setItem(CONV_COMMITS_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+      renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+      if (typeof hangSync === 'function') hangSync();
+      showToast(on ? 'Showing commits in the thread' : 'Hiding commits');
+    }
+
+    // 'cwd|host|from|to' -> a list of commits, or 'asked' while the question is in the air. The
+    // relay stores the list only when HERDR_GIT_COMMITS is on, because it is the one part of this
+    // that can be recomputed from the two shas the record already keeps — so the ordinary case is
+    // that the thread asks for it, once per range, the first time a reader wants to see it.
+    const convCommitsCache = new Map();
+    const convCommitsKey = (host, cwd, from, to) => `${host}|${cwd}|${from}|${to}`;
+
+    function convCommitsAsk(host, cwd, from, to) {
+      const key = convCommitsKey(host, cwd, from, to);
+      if (convCommitsCache.has(key)) return;
+      convCommitsCache.set(key, 'asked');
+      try {
+        ws.send(JSON.stringify({type: 'git_commits', host: host, cwd: cwd, from: from, to: to}));
+      } catch (e) {
+        convCommitsCache.delete(key);   // no socket; the next render asks again
+      }
+    }
+
+    function convCommitsReceive(msg) {
+      if (!msg) return;
+      const key = convCommitsKey(msg.host || 'local', msg.cwd || '', msg.from || '', msg.to || '');
+      convCommitsCache.set(key, Array.isArray(msg.commits) ? msg.commits : []);
+      renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+    }
+
+    // The list for one range: stored on the turn if the relay was told to keep it, otherwise
+    // whatever the answer to our question was. `null` means "not known yet" — the question has just
+    // gone out and the next render draws it.
+    function convCommitsFor(e, fromSha) {
+      if ((e.commits || []).length) return e.commits;
+      if (!fromSha || !e.commit || fromSha === e.commit || !e.cwd) return [];
+      const host = e.host || 'local';
+      const key = convCommitsKey(host, e.cwd, fromSha, e.commit);
+      const hit = convCommitsCache.get(key);
+      if (Array.isArray(hit)) return hit;
+      convCommitsAsk(host, e.cwd, fromSha, e.commit);
+      return null;
+    }
+
+    // --- The branch the addressed agent is on, as a standing badge ---
+    //
+    // The rules above answer "when did this change"; this answers "where am I now", which is the
+    // question a reader has with their thumb over the composer. Per *agent* and not per view: a
+    // conversation's members can be in different checkouts on different branches, so this follows
+    // whoever the composer is addressing rather than the conversation as a whole.
+    //
+    // It rides on the snapshot and is asked for by nothing. The relay probes git at turn end and
+    // reads the rest back out of its own record, so by the time a pane is on screen the answer is
+    // already in the state this browser holds — one more round trip per selection would buy only
+    // the minutes between a branch switch and the next turn that mentions it.
+
+    function branchOf(pane) {
+      return (pane && pane.branch) || '';
+    }
+
+    function syncBranchBadge(id, pane) {
+      const box = document.getElementById(id);
+      if (!box) return;
+      const branch = branchOf(pane);
+      // innerHTML only when it changed: this runs on every snapshot, and rewriting a node under a
+      // finger is how a tap lands on nothing.
+      if (box.dataset.branch !== branch) {
+        box.dataset.branch = branch;
+        box.innerHTML = branch ? `⎇ ${escapeHtml(branch)}` : '';
+        box.title = branch ? `${branch} — the branch this agent's work is landing on` : '';
+      }
+      // The branch belongs to an agent, so use that agent's existing theme colour rather than a
+      // generic git colour. A Claude target reads orange; a Codex target reads blue.
+      box.style.setProperty('--branch-color',
+                            typeof agentColor === 'function' ? agentColor((pane || {}).agent) : 'var(--blue)');
+      box.hidden = !branch;
+    }
+
+    // Both badges from wherever the caller is. The pane view addresses the pane it has open; the
+    // conversation addresses whichever member the dock is pointed at.
+    function syncBranchBadges() {
+      const of = id => (typeof paneOf === 'function' && id) ? paneOf(id) : null;
+      syncBranchBadge('paneBranch', of(typeof activePane === 'undefined' ? '' : activePane));
+      syncBranchBadge('convBranch', of(typeof dockAddressed === 'function' ? dockAddressed() : ''));
+    }
+
+    const convGitRule = (cls, body) => `<div class="conv-rule git ${cls}">${body}</div>`;
+
+    // What goes above and below one entry, and the running state that makes it possible to tell.
+    //
+    // The two halves are not the same kind of thing, and they are drawn differently on purpose.
+    // `before` is a rule across the thread: it announces the state the *next* bubble is in, which
+    // is what a divider is for. `after` belongs to the bubble above it — the turn said it was
+    // finished and these are what it finished — so it takes that bubble's width and side and hangs
+    // under it as badges. `side` is the bubble's own alignment class, passed in because the view
+    // owns the layout and this file owns the record's shape.
+    //
+    // They are also counted differently, and this is the part that is easy to get wrong. A branch
+    // is tracked **per member**: a joint thread is several panes, and each of them deserves to be
+    // introduced once. A commit range is tracked **per checkout**, because a commit belongs to a
+    // repository's history and not to whoever happened to speak next. Two agents pairing in one
+    // directory, counted per member, would each carry the previous sha *they* last ended on — so
+    // the same commit would appear under a bubble from each of them, twice, once misattributed.
+    // Per checkout it appears exactly once, under the first turn to end after it was made. It is
+    // also the rule the relay already uses when it stores a list (last_commit is keyed by host and
+    // cwd), so the fetched range and the stored one now describe the same window.
+    const convGitWhere = e => `${e.host || 'local'}|${e.cwd || ''}`;
+
+    function convGitRules(e, seen, side, color) {
+      const none = {before: '', after: ''};
+      if (!e || (!e.branch && !e.commit)) return none;
+      const key = e.key || '';
+      const was = seen.get(key) || {};
+      // One map, two kinds of key. A member key is `[host, pane, agent, cwd]` and a checkout key is
+      // `host|cwd`, so neither can be mistaken for the other.
+      const where = convGitWhere(e);
+      const there = seen.get(where) || {};
+      let before = '';
+      if (e.branch && e.branch !== was.branch) {
+        // A first sighting is context and a change is an event, and they read differently: the
+        // first says where this is happening, the second says something happened.
+        before = convGitRule('branch', was.branch
+          ? `⎇ Branch changed to ${escapeHtml(e.branch)}`
+          : `⎇ ${escapeHtml(e.branch)}`);
+      }
+      let after = '';
+      if (convCommitsOn()) {
+        const commits = convCommitsFor(e, there.commit);
+        if (commits && commits.length) {
+          // The agent's own colour, carried on the strip rather than on each badge: the strip is a
+          // sibling of the bubble and not a child of it, so it inherits nothing from the bubble's
+          // own `--conv-agent`. The fill stays neutral — a wall of washed pills under every turn
+          // competes with the bubbles, and the colour has already been said by the bubble above.
+          after = `<div class="conv-commits${side || ''}"` +
+            `${color ? ` style="--conv-agent:${color}"` : ''}>` + commits.map(c =>
+            `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
+            `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code>` +
+            `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;
+        }
+      }
+      // Both are carried forward when a later turn has neither: a pane that stepped out of the
+      // checkout for one turn has not changed branch, and announcing the same branch again when it
+      // steps back in would be an event that did not happen.
+      seen.set(key, {branch: e.branch || was.branch});
+      seen.set(where, {commit: e.commit || there.commit});
+      return {before: before, after: after};
     }
 
     // What the thread says when the relay's record is on screen and empty. Three different facts,

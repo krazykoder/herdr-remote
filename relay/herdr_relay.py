@@ -7,10 +7,12 @@
 import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
+import git_probe
 from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
 from pane_summary import ends_turn, summary_body
+from user_state import UserState, Conflict as StateConflict, DOC_NAMES as STATE_DOCS
 from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
@@ -174,6 +176,195 @@ if os.environ.get("HERDR_CONV_LOG", "") == "1":
         # works without it, and a relay that will not start because a log file is unwritable is a
         # worse failure than one that says so and carries on.
         print(f"herdr-remote: conversation log disabled: {e}", file=sys.stderr)
+
+# Where the work landed. On with the record and switched off with HERDR_GIT_TRACK=0: a turn that
+# says what an agent did is worth much more next to the branch and the commits it did it in, and
+# the cost is `git rev-parse` in the pane's cwd at the moments the record is already being written
+# — never per poll. Read-only commands, and nothing at all for a pane outside a checkout.
+GIT_TRACK = conv_log is not None and os.environ.get("HERDR_GIT_TRACK", "1") != "0"
+# The commit *list* is the one part of this that can be recomputed — the sha on a turn and the sha
+# on the turn before it are the two ends of `git log` — and it is also the largest part, several
+# megabytes of a full record against one for the shas. So it is off unless asked for. On, it buys
+# durability: subjects written down survive the rebase that makes the range unresolvable.
+GIT_COMMITS = os.environ.get("HERDR_GIT_COMMITS", "") == "1"
+git_cache = git_probe.Cache()
+
+
+# A commit as a client may name one. Hex only, and never a ref: `main`, `HEAD~3` and `--output=x`
+# all reach git's argument parser, and the last of those is an option rather than a revision. The
+# app only ever has shas — they came out of the record — so nothing is lost by refusing the rest.
+GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def git_range_target(msg):
+    """(cwd, remote, from, to) for a git_commits question, or a refusal.
+
+    The directory has to be one this relay is already watching. A client may not name a path: the
+    relay would read a repository the user never pointed it at, which is a different capability
+    from reading the panes it was asked to poll.
+    """
+    cwd, remote = git_cwd_target(msg)
+    first, last = str(msg.get("from") or ""), str(msg.get("to") or "")
+    if not GIT_SHA_RE.match(first) or not GIT_SHA_RE.match(last):
+        raise ValueError("from and to must be commit shas")
+    return cwd, remote, first, last
+
+
+def git_cwd_target(msg):
+    """A watched checkout and its ssh target, or a refusal.
+
+    Both range endpoints and commit-window selectors run git. Letting either accept a caller's cwd
+    turns a read of this relay's record into a read of arbitrary local or remote repositories.
+
+    Watched means "a pane is open there now, or this relay has recorded a turn there" — the second
+    half matters as much as the first. A record outlives its panes, which is the whole reason turns
+    are kept by fingerprint, and a conversation read a week later is one whose panes are all gone.
+    Live panes only would refuse exactly the historical questions this feature exists to answer,
+    while still letting a client name any path it liked in a fresh session.
+    """
+    cwd = msg.get("cwd") or ""
+    host = msg.get("host") or "local"
+    if not cwd:
+        raise ValueError("a commit range needs a cwd to resolve it in")
+    for pane in agent_cache.values():
+        if (pane.get("cwd") or "") == cwd and (pane.get("host") or "local") == host:
+            return cwd, pane.get("remote")
+    if conv_log is not None and conv_log.knows_directory(host, cwd):
+        if host == "local":
+            return cwd, None
+        # The host is named in the record but has no pane open right now, so the ssh target it was
+        # reached through is not in this snapshot. Nothing can be run there, and saying so beats
+        # running the question against this machine's own filesystem under a remote host's name.
+        for pane in agent_cache.values():
+            if (pane.get("host") or "local") == host:
+                return cwd, pane.get("remote")
+        raise ValueError(f"no pane is open on {host}, so its checkout cannot be read")
+    raise ValueError("this relay is not watching that directory")
+
+
+def conv_log_window(msg):
+    """(since, until) in milliseconds, with a commit range resolved into one.
+
+    "Every conversation between these two commits" needs nothing stored per turn: a turn already
+    knows when it happened, and git knows when a commit did. So the range is resolved to a time
+    window at question time and the ordinary query answers it — which is why the record does not
+    have to keep a list of commits to be searchable by one.
+
+    Raises ValueError with something a person can act on: a commit that cannot be resolved is
+    usually a sha from another checkout, and a silent empty answer would read as "nothing happened".
+    """
+    since, until = msg.get("since"), msg.get("until")
+    first, last = msg.get("since_commit"), msg.get("until_commit")
+    if not first and not last:
+        return since, until
+    cwd, remote = git_cwd_target(msg)
+    for sha, name in ((first, "since_commit"), (last, "until_commit")):
+        if not sha:
+            continue
+        sha = str(sha)
+        if not GIT_SHA_RE.match(sha):
+            raise ValueError(f"{name} must be a commit sha")
+        when = git_probe.commit_time(cwd, sha, remote)
+        if when is None:
+            raise ValueError(f"{name}: {sha} is not a commit in {cwd}")
+        if name == "since_commit":
+            since = when if since is None else max(int(since), when)
+        else:
+            until = when if until is None else min(int(until), when)
+    return since, until
+
+
+# The branch last seen in each checkout, keyed by (host, cwd) — a branch is a fact about a working
+# directory and not about a pane. Two agents in one repository are on one branch by definition, so
+# keying this by pane would answer the same question twice, run two subprocesses to do it, and
+# leave whichever pane had not ended a turn yet showing nothing.
+#
+# Filled by the probe below and by nothing else: read at turn end, or once when a reader addresses
+# a pane. Never per poll, which is the whole reason this feature costs nothing to leave on.
+pane_branch = {}
+
+
+def branch_key(pane):
+    return (pane.get("host") or "local", pane.get("cwd") or "")
+
+
+async def seed_branches(panes):
+    """Fill in any directory this relay has not seen yet, so the app's badge is never blank.
+
+    Two ways to arrive at one with nothing known about it, and they want different answers:
+
+      - a **restart**. The map above is memory and the record is not, so every directory an agent
+        has ever ended a turn in is already answered on disk. One indexed read, no subprocess.
+      - a **new agent in a new checkout**. Nothing has been recorded there yet, and waiting for its
+        first turn means the badge is blank for exactly as long as the reader is deciding what to
+        ask it — which is when they most want to know they are on `main`. So git is asked, once,
+        with the same single `rev-parse` the turn-end probe uses.
+
+    Both are per directory and happen once. A miss is remembered as a miss, so a pane outside a
+    checkout costs one question rather than one per poll for as long as it is open.
+    """
+    if not GIT_TRACK:
+        return
+    # Any pane in the directory will do for the remote: it is how the *host* is reached, and the
+    # key already names the host.
+    unseen = {}
+    for p in panes:
+        key = branch_key(p)
+        if key not in pane_branch:
+            unseen.setdefault(key, p.get("remote"))
+    for (host, cwd), remote in unseen.items():
+        if not cwd:
+            pane_branch[(host, cwd)] = ""
+            continue
+        try:
+            branch = await asyncio.to_thread(conv_log.last_branch, host, cwd)
+            if not branch:
+                branch = (await asyncio.to_thread(git_probe.head, cwd, remote))[0]
+            pane_branch[(host, cwd)] = branch
+        except (sqlite3.Error, OSError) as e:
+            log.debug("branch seed failed for %s: %s", cwd, e)
+
+
+async def probe_git(pane):
+    """The branch, the commit, and what was committed since this directory's last turn.
+
+    Off the event loop: this is a subprocess, and an ssh round trip for a remote pane. `None` for
+    anything that is not a checkout, which `record` stores as no repository rather than as an
+    empty one.
+    """
+    if not GIT_TRACK:
+        return None
+    cwd = pane.get("cwd") or ""
+    if not cwd:
+        return None
+    try:
+        since = await asyncio.to_thread(conv_log.last_commit, pane.get("host") or "local", cwd)
+        got = await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since,
+                                      GIT_COMMITS)
+    except (sqlite3.Error, OSError) as e:
+        log.debug("git probe failed for %s: %s", cwd, e)
+        return None
+    # Every caller reaches the probe, so remembering it here is the one place that catches a turn
+    # ending, a prompt being delivered, and a reader addressing a pane alike.
+    if got and got.get("branch"):
+        pane_branch[branch_key(pane)] = got["branch"]
+    return got
+
+
+# Shared user state: the four documents that are facts about the work rather than about one
+# browser. Unconditional, unlike the conversation log above — that one is off by default because a
+# transcript puts what agents *said* on disk, which is the user's call to make. A pair's name is a
+# label the user typed into this app and cannot be anything else, and a feature that is off by
+# default is a feature that silently does not work.
+STATE_DB = os.environ.get("HERDR_STATE_DB") or os.path.join(
+    PROJECT_ROOT, ".herdr-remote", "state.sqlite3")
+user_state = None
+try:
+    user_state = UserState(STATE_DB)
+except (sqlite3.Error, OSError) as e:
+    # Same posture as the record above: a relay that will not start because a file is unwritable is
+    # a worse failure than one that says so and leaves every browser on its own state.
+    print(f"herdr-remote: shared state disabled: {e}", file=sys.stderr)
 
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -647,10 +838,15 @@ def detect_options(text):
     return None
 
 
-async def broadcast(msg):
+async def broadcast(msg, except_ws=None):
+    # `except_ws` exists for the client that caused the message. A browser that has just written a
+    # document must not receive its own body back: the echo lands after the next local edit and
+    # reverts it. Every other caller broadcasts to everyone and leaves this unset.
     data = json.dumps(msg)
     dead = set()
     for ws in list(clients):
+        if ws is except_ws:
+            continue
         try:
             await ws.send(data)
         except (ConnectionClosedError, ConnectionClosedOK):
@@ -681,7 +877,8 @@ async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
             conv_log.record, agent=pane.get("agent") or "", pane_id=pane_id,
             host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
             label=pane.get("label") or "", project=pane.get("project") or "",
-            kind=kind, origin=origin, at_src="sent", text=text)
+            kind=kind, origin=origin, at_src="sent", text=text,
+            git=await probe_git(pane))
     except (sqlite3.Error, OSError) as e:
         log.warning("conversation log write failed for %s: %s", pane_id, e)
 
@@ -1061,8 +1258,17 @@ async def _poll_once():
         for p in agents + shells:
             pane_remote_map[p["pane_id"]] = p.get("remote")
             known_panes.add(p["pane_id"])
+        # Before the snapshot goes out, so a pane's first appearance after a restart carries the
+        # branch the record already knows rather than nothing.
+        await seed_branches(agents)
         for a in agents:
             agent_cache[a["pane_id"]] = a
+            # Where this pane's work is landing, carried on the snapshot so the app can say so
+            # without a thread being open. herdr does not report it and this relay does not ask
+            # git for it here — it is whatever the last probe of that directory saw.
+            branch = pane_branch.get(branch_key(a))
+            if branch:
+                a["branch"] = branch
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -1122,7 +1328,9 @@ async def _poll_once():
                 try:
                     captured = await asyncio.to_thread(
                         read_pane_for_record, pid, remote=a.get("remote"))
-                    await asyncio.to_thread(conv_log.record_turn_end, a, captured, was, status)
+                    git = await probe_git(a)
+                    await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
             last_statuses[pid] = status
@@ -1135,6 +1343,11 @@ async def _poll_once():
                 pane_remote_map.pop(pid, None)
                 last_statuses.pop(pid, None)
                 agent_cache.pop(pid, None)
+            # Keyed by directory, so it is dropped when the last pane in that directory goes rather
+            # than with any one of them.
+            live = {branch_key(p) for p in agents + shells}
+            for key in [k for k in pane_branch if k not in live]:
+                del pane_branch[key]
 
 
 def annotate_pane(pane):
@@ -1443,6 +1656,24 @@ async def handle_client(ws, listener="lan"):
                 await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
+            elif msg_type == "git_commits":
+                # What was committed between two turns, asked for rather than stored. The record
+                # keeps the sha each turn was read at, which is both ends of this question, so the
+                # list itself is worth a git call at the moment a reader wants to see it and not
+                # several megabytes of every record on the chance that they will.
+                if not GIT_TRACK:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "git_commits: git tracking is off"}))
+                    continue
+                try:
+                    cwd, remote, first, last = git_range_target(msg)
+                except ValueError as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"git_commits: {e}"}))
+                    continue
+                found = await asyncio.to_thread(git_probe.commits, cwd, first, last, remote)
+                await ws.send(json.dumps({
+                    "type": "git_commits", "cwd": cwd, "host": msg.get("host") or "local",
+                    "from": first, "to": last, "commits": found}))
             elif msg_type == "conv_log":
                 # Answered to the asking client and never broadcast: this is the one message that
                 # carries what an agent actually said, and a client that did not ask for a
@@ -1452,11 +1683,14 @@ async def handle_client(ws, listener="lan"):
                         "type": "error", "message": "conversation log is off"}))
                     continue
                 try:
+                    # Off the event loop: resolving a commit is a subprocess, and an ssh round trip
+                    # for a directory on another host.
+                    since, until = await asyncio.to_thread(conv_log_window, msg)
                     rows, truncated = await asyncio.to_thread(
                         conv_log.query,
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
-                        since=msg.get("since"), until=msg.get("until"),
+                        since=since, until=until,
                         since_id=msg.get("since_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
@@ -1704,6 +1938,42 @@ async def handle_client(ws, listener="lan"):
                     push_subscriptions.remove(sub)
                     _save_push_subs()
                 await ws.send(json.dumps({"type": "push_unsubscribed", "ok": True}))
+            elif msg_type == "state_get":
+                # An empty map rather than an error when there is no store: a client whose state is
+                # local-only behaves exactly as it did before this existed, which is the whole
+                # reason localStorage is still the working copy.
+                if user_state is None:
+                    await ws.send(json.dumps({"type": "state", "docs": {}}))
+                    continue
+                names = msg.get("names") or list(STATE_DOCS)
+                docs = await asyncio.to_thread(user_state.get, names)
+                await ws.send(json.dumps({"type": "state", "docs": docs}))
+            elif msg_type == "state_put":
+                # Not behind HERDR_ENABLE_WRITE_EXT, for the same reason rename_pane is not: that
+                # gate exists for spawning processes, and this writes a label the user typed. It is
+                # strictly weaker than send_text, which is already open.
+                if user_state is None:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "state store unavailable"}))
+                    continue
+                name, body = msg.get("name", ""), msg.get("body")
+                try:
+                    new_rev = await asyncio.to_thread(
+                        user_state.put, name, msg.get("rev"), body)
+                except StateConflict as c:
+                    # The current document rides along, so the loser of the race needs no second
+                    # round trip to find out what it lost to.
+                    await ws.send(json.dumps({"type": "state_conflict", "name": name,
+                                              "rev": c.rev, "body": c.body}))
+                    continue
+                except ValueError as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"state_put: {e}"}))
+                    continue
+                audit("state_put", ip, device, "", f"doc={name} rev={new_rev} bytes={len(body)}")
+                await ws.send(json.dumps({"type": "state_ack", "name": name, "rev": new_rev}))
+                await broadcast({"type": "state",
+                                 "docs": {name: {"rev": new_rev, "body": body}}},
+                                except_ws=ws)
             else:
                 # Say so instead of dropping it. A client newer than the relay used to get
                 # silence here, which reads as a bug in the feature rather than a stale relay.

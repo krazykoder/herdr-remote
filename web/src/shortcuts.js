@@ -398,6 +398,7 @@
       if (have.size) all[convViewId] = Array.from(have); else delete all[convViewId];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       convStandaloneHtml = '';
       renderConvManage();
     }
@@ -426,6 +427,7 @@
       if (key && rest.length) all[id] = rest; else delete all[id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       convStandaloneHtml = '';
       renderConvManage();
     }
@@ -804,10 +806,12 @@
       delete hidden[conv.id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(hidden)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       const views = convViews();
       for (const key in views) if (views[key] === conv.id) delete views[key];
       try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_view');
       convStandaloneHtml = '';
       renderConversations();
       if (document.body.classList.contains('conversation-open')) {
@@ -1051,6 +1055,9 @@
       // The mic button is hidden over a terminal, and a live recogniser with no way to stop it
       // would keep writing into the composer.
       if (shell && dictation) dictation.stop();
+      // Which branch this pane's work is landing on — the snapshot carries it, and this is the
+      // one path every snapshot and every pane switch goes through.
+      if (typeof syncBranchBadges === 'function') syncBranchBadges();
     }
 
     function openTerminal(paneId) {
