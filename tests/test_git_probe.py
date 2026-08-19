@@ -294,8 +294,8 @@ class RelayWiringTest(unittest.TestCase):
         self.addCleanup(setattr, herdr_relay, "git_cache", herdr_relay.git_cache)
 
         class FakeCache:
-            def probe(inner, cwd, remote=None, since_sha=None):   # noqa: N805
-                self.calls.append((cwd, remote, since_sha))
+            def probe(inner, cwd, remote=None, since_sha=None, with_commits=False):  # noqa: N805
+                self.calls.append((cwd, remote, since_sha, with_commits))
                 return {"branch": "work", "commit": "a" * 40, "commits": []}
 
         class FakeLog:
@@ -312,16 +312,23 @@ class RelayWiringTest(unittest.TestCase):
 
     def test_the_probe_is_given_the_pane_cwd_and_its_host(self):
         got = self.probe({"cwd": "/srv/relay", "host": "box", "remote": "box"})
-        self.assertEqual(self.calls, [("/srv/relay", "box", "prev")])
+        self.assertEqual(self.calls, [("/srv/relay", "box", "prev", False)])
         self.assertEqual(got["branch"], "work")
 
     def test_a_local_pane_is_probed_with_no_remote(self):
         self.probe({"cwd": "/work", "host": "local"})
-        self.assertEqual(self.calls, [("/work", None, "")])
+        self.assertEqual(self.calls, [("/work", None, "", False)])
 
     def test_a_pane_with_no_cwd_is_never_probed(self):
         self.assertIsNone(self.probe({"host": "local"}))
         self.assertEqual(self.calls, [])
+
+    def test_the_commit_list_is_asked_for_only_when_it_is_switched_on(self):
+        # It is the one part of this that can be recomputed and the largest part of what it stores.
+        self.addCleanup(setattr, self.relay, "GIT_COMMITS", self.relay.GIT_COMMITS)
+        self.relay.GIT_COMMITS = True
+        self.probe({"cwd": "/work", "host": "local"})
+        self.assertEqual(self.calls, [("/work", None, "", True)])
 
     def test_the_switch_turns_it_off_entirely(self):
         self.relay.GIT_TRACK = False
@@ -358,3 +365,97 @@ class TextOutputTest(unittest.TestCase):
         self.log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
                         at_src="poll", text="done")
         self.assertNotIn("branch:", self.text())
+
+
+class CommitRangeTest(unittest.TestCase):
+    """Conversations between two commits, resolved rather than stored.
+
+    This is the query the record is meant to answer from the other end, and the reason a turn needs
+    to keep no list of commits to be searchable by one: git knows when a commit happened, the record
+    knows when a turn did.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "relay"))
+        import herdr_relay
+        self.relay = herdr_relay
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.repo = GitRepo(self.dir.name)
+        self.addCleanup(self.relay.agent_cache.clear)
+
+    def test_a_commit_range_becomes_a_time_window(self):
+        first = self.repo.commit("first")
+        last = self.repo.commit("second", "2")
+        since, until = self.relay.conv_log_window(
+            {"cwd": self.dir.name, "since_commit": first, "until_commit": last})
+        self.assertIsNotNone(since)
+        self.assertLessEqual(since, until)
+        # Milliseconds, like every other stamp in the record — a window in seconds would silently
+        # drop every turn recorded in the same second as the commit.
+        self.assertGreater(since, 1_000_000_000_000)
+
+    def test_a_question_with_no_commits_in_it_is_left_alone(self):
+        self.assertEqual(self.relay.conv_log_window({"since": 5, "until": 9}), (5, 9))
+        self.assertEqual(self.relay.conv_log_window({}), (None, None))
+
+    def test_a_commit_range_narrows_a_time_window_rather_than_replacing_it(self):
+        # Both are selectors and selectors are AND-ed. A client asking for "today, between these
+        # two commits" must not be handed everything since the first of them.
+        first = self.repo.commit("first")
+        got_since, _ = self.relay.conv_log_window(
+            {"cwd": self.dir.name, "since_commit": first, "since": 9_000_000_000_000})
+        self.assertEqual(got_since, 9_000_000_000_000, "the later of the two bounds wins")
+
+    def test_a_commit_range_needs_somewhere_to_resolve_it(self):
+        with self.assertRaises(ValueError) as caught:
+            self.relay.conv_log_window({"since_commit": "abc"})
+        self.assertIn("cwd", str(caught.exception))
+
+    def test_a_commit_from_another_checkout_says_so(self):
+        # The ordinary mistake, and a silent empty answer would read as "nothing was said then".
+        with self.assertRaises(ValueError) as caught:
+            self.relay.conv_log_window({"cwd": self.dir.name, "since_commit": "0" * 40})
+        self.assertIn("not a commit", str(caught.exception))
+
+    def test_a_host_is_resolved_to_the_ssh_target_its_panes_are_reached_through(self):
+        self.relay.agent_cache["w1:p1"] = {"host": "box", "remote": "user@box"}
+        self.assertEqual(self.relay.remote_for_host("box"), "user@box")
+        self.assertIsNone(self.relay.remote_for_host("local"))
+        self.assertIsNone(self.relay.remote_for_host("unknown-host"))
+
+    def test_the_cli_answers_the_same_question(self):
+        import io
+        import contextlib
+        from conv_query import main
+
+        db = os.path.join(self.dir.name, "rec.sqlite3")
+        log = ConversationLog(db)
+        self.addCleanup(log.close)
+        first = self.repo.commit("first")
+        first_at = git_probe.commit_time(self.dir.name, first)
+        log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                   at_src="poll", text="said before the commit", at=first_at - 60_000)
+        log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
+                   at_src="poll", text="said after the commit", at=first_at + 60_000)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--db", db, "--repo", self.dir.name, "--since-commit", first])
+        self.assertEqual(code, 0)
+        self.assertIn("said after the commit", out.getvalue())
+        self.assertNotIn("said before the commit", out.getvalue())
+
+    def test_the_cli_refuses_a_commit_it_cannot_find(self):
+        import io
+        import contextlib
+        from conv_query import main
+
+        db = os.path.join(self.dir.name, "rec.sqlite3")
+        empty = ConversationLog(db)          # the file has to exist for the CLI to open it
+        empty.close()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = main(["--db", db, "--repo", self.dir.name, "--until-commit", "0" * 40])
+        self.assertEqual(code, 2)
+        self.assertIn("not a commit", err.getvalue())

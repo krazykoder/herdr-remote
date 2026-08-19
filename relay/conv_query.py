@@ -22,6 +22,7 @@ import os
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 # Bounds, applied together: whichever runs out first ends the answer.
@@ -233,20 +234,47 @@ def main(argv=None):
     p.add_argument("--since", type=int, help="epoch ms; turns at or after this")
     p.add_argument("--until", type=int, help="epoch ms; turns at or before this")
     p.add_argument("--since-id", type=int, help="turn id; turns strictly after this id")
+    # The question this record was built to answer from the other end: not "what was said at half
+    # past three" but "what was said between the commit that broke it and the one that fixed it".
+    # Resolved here rather than stored per turn — git knows when a commit happened and the record
+    # knows when a turn did, so nothing has to be kept to make a commit searchable.
+    p.add_argument("--since-commit", help="commit sha or ref; turns from when it was committed")
+    p.add_argument("--until-commit", help="commit sha or ref; turns up to when it was committed")
+    p.add_argument("--repo", default=".",
+                   help="where to resolve --since-commit/--until-commit (default: here)")
     p.add_argument("--last", type=int, default=QUERY_ROWS_DEFAULT,
                    help=f"how many, newest kept (max {QUERY_ROWS_MAX})")
     p.add_argument("--format", choices=("text", "json"), default="text")
     args = p.parse_args(argv)
+
+    since, until = args.since, args.until
+    if args.since_commit or args.until_commit:
+        import git_probe
+        for sha, name in ((args.since_commit, "--since-commit"),
+                          (args.until_commit, "--until-commit")):
+            if not sha:
+                continue
+            when = git_probe.commit_time(args.repo, sha)
+            if when is None:
+                print(f"{name}: {sha} is not a commit in {args.repo}", file=sys.stderr)
+                return 2
+            if name == "--since-commit":
+                since = when if since is None else max(since, when)
+            else:
+                until = when if until is None else min(until, when)
 
     try:
         conn = open_ro(args.db or db_path())
     except (FileNotFoundError, sqlite3.Error) as e:
         print(f"no conversation record to read: {e}", file=sys.stderr)
         return 2
-    with conn:
+    # `with conn:` on a sqlite3 connection commits a transaction; it does not close the handle.
+    # This is a short-lived CLI either way, but a read-only handle left open holds the file's WAL
+    # readers open with it.
+    with closing(conn):
         rows, truncated = query(
             conn, pane=args.pane, host=args.host, agent=args.agent, cwd=args.cwd,
-            kind=args.kind, grep=args.grep, since=args.since, until=args.until,
+            kind=args.kind, grep=args.grep, since=since, until=until,
             since_id=args.since_id, last=args.last)
     if args.format == "json":
         print(json.dumps({"turns": [as_wire(r) for r in rows], "truncated": truncated},

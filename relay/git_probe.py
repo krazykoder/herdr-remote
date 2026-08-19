@@ -92,17 +92,45 @@ def commits(cwd, since_sha, until_sha, remote=None):
     return rows
 
 
-def probe(cwd, remote=None, since_sha=None):
+def commit_time(cwd, sha, remote=None):
+    """When `sha` was committed, in milliseconds, or None.
+
+    The bridge between a commit and a conversation. Turns are stored against wall-clock time and
+    commits are not, so "the turns between these two commits" is answered by asking git when each
+    of them happened and then reading the record over that window — which needs nothing stored per
+    turn but the time it already has.
+
+    Committer date, not author date: a rebased or cherry-picked commit keeps the author date it
+    was first written at, which can be weeks before the work this record holds.
+    """
+    if not cwd or not sha:
+        return None
+    out = _git(cwd, remote, "show", "-s", "--format=%ct", str(sha))
+    line = out.splitlines()[0].strip() if out else ""
+    try:
+        return int(line) * 1000
+    except ValueError:
+        return None
+
+
+def probe(cwd, remote=None, since_sha=None, with_commits=False):
     """Everything one turn needs, in the shape conversation_log.record takes.
 
     Returns None when `cwd` is not a repository, so a caller can pass the result straight through
     and a pane that is not in a checkout costs nothing but the one failed call.
+
+    `with_commits` is off by default, and that is a size decision rather than a taste one: the list
+    is the largest part of what this feature stores and the only part that can be recomputed, since
+    the sha on each turn and the sha on the one before it are the two ends of `git log`. Storing it
+    buys durability — a rebase cannot take away subjects already written down — and one less git
+    call at read time. Both are worth having sometimes and neither is worth four megabytes of every
+    record by default.
     """
     branch, sha = head(cwd, remote)
     if not sha:
         return None
     return {"branch": branch, "commit": sha,
-            "commits": commits(cwd, since_sha, sha, remote) if since_sha else []}
+            "commits": commits(cwd, since_sha, sha, remote) if (with_commits and since_sha) else []}
 
 
 class Cache:
@@ -118,13 +146,13 @@ class Cache:
         self.ttl = ttl
         self._at = {}
 
-    def probe(self, cwd, remote=None, since_sha=None):
+    def probe(self, cwd, remote=None, since_sha=None, with_commits=False):
         key = (remote or "", cwd or "")
         hit = self._at.get(key)
         now = time.monotonic()
         if hit and now - hit[0] < self.ttl:
             return hit[1]
-        got = probe(cwd, remote, since_sha)
+        got = probe(cwd, remote, since_sha, with_commits)
         self._at[key] = (now, got)
         return got
 
@@ -148,10 +176,12 @@ def _demo():
 
         open(os.path.join(d, "f"), "w").write("2")
         run("git", "commit", "-qam", "second")
-        got = probe(d, since_sha=first)
+        got = probe(d, since_sha=first, with_commits=True)
         assert got["branch"] == "work"
         assert [c["subject"] for c in got["commits"]] == ["second"], got
         assert got["commit"] != first
+        assert probe(d, since_sha=first)["commits"] == [], "the list is opt-in"
+        assert commit_time(d, first) is not None
 
         assert commits(d, first, first) == []
         assert commits(d, "0" * 40, got["commit"]) == [], "a sha git disowns is not a range"

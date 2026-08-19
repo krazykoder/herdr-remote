@@ -182,7 +182,59 @@ if os.environ.get("HERDR_CONV_LOG", "") == "1":
 # the cost is `git rev-parse` in the pane's cwd at the moments the record is already being written
 # — never per poll. Read-only commands, and nothing at all for a pane outside a checkout.
 GIT_TRACK = conv_log is not None and os.environ.get("HERDR_GIT_TRACK", "1") != "0"
+# The commit *list* is the one part of this that can be recomputed — the sha on a turn and the sha
+# on the turn before it are the two ends of `git log` — and it is also the largest part, several
+# megabytes of a full record against one for the shas. So it is off unless asked for. On, it buys
+# durability: subjects written down survive the rebase that makes the range unresolvable.
+GIT_COMMITS = os.environ.get("HERDR_GIT_COMMITS", "") == "1"
 git_cache = git_probe.Cache()
+
+
+def remote_for_host(host):
+    """The ssh target a host label is reached through, or None for this machine.
+
+    The record stores a host *label* — what a turn was read on — and git has to be run where the
+    directory is. Every polled pane carries both, so the map is read off the panes rather than
+    rebuilt from HERDR_REMOTES, which would guess at the label herdr chose.
+    """
+    if not host or host == "local":
+        return None
+    for pane in agent_cache.values():
+        if pane.get("host") == host:
+            return pane.get("remote")
+    return None
+
+
+def conv_log_window(msg):
+    """(since, until) in milliseconds, with a commit range resolved into one.
+
+    "Every conversation between these two commits" needs nothing stored per turn: a turn already
+    knows when it happened, and git knows when a commit did. So the range is resolved to a time
+    window at question time and the ordinary query answers it — which is why the record does not
+    have to keep a list of commits to be searchable by one.
+
+    Raises ValueError with something a person can act on: a commit that cannot be resolved is
+    usually a sha from another checkout, and a silent empty answer would read as "nothing happened".
+    """
+    since, until = msg.get("since"), msg.get("until")
+    first, last = msg.get("since_commit"), msg.get("until_commit")
+    if not first and not last:
+        return since, until
+    cwd = msg.get("cwd")
+    if not cwd:
+        raise ValueError("a commit range needs a cwd to resolve it in")
+    remote = remote_for_host(msg.get("host"))
+    for sha, name in ((first, "since_commit"), (last, "until_commit")):
+        if not sha:
+            continue
+        when = git_probe.commit_time(cwd, sha, remote)
+        if when is None:
+            raise ValueError(f"{name}: {sha} is not a commit in {cwd}")
+        if name == "since_commit":
+            since = when if since is None else max(int(since), when)
+        else:
+            until = when if until is None else min(int(until), when)
+    return since, until
 
 
 async def probe_git(pane):
@@ -199,7 +251,8 @@ async def probe_git(pane):
         return None
     try:
         since = await asyncio.to_thread(conv_log.last_commit, pane.get("host") or "local", cwd)
-        return await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since)
+        return await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since,
+                                       GIT_COMMITS)
     except (sqlite3.Error, OSError) as e:
         log.debug("git probe failed for %s: %s", cwd, e)
         return None
@@ -1505,11 +1558,14 @@ async def handle_client(ws, listener="lan"):
                         "type": "error", "message": "conversation log is off"}))
                     continue
                 try:
+                    # Off the event loop: resolving a commit is a subprocess, and an ssh round trip
+                    # for a directory on another host.
+                    since, until = await asyncio.to_thread(conv_log_window, msg)
                     rows, truncated = await asyncio.to_thread(
                         conv_log.query,
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
-                        since=msg.get("since"), until=msg.get("until"),
+                        since=since, until=until,
                         since_id=msg.get("since_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
