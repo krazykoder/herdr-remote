@@ -287,9 +287,35 @@
           at_src: CONV_LIVE_AT_SRC[t.at_src] || 'read',
           key: key, member: at.has(key) ? at.get(key) : 0,
           label: t.label || '', agent: t.agent || '',
+          // Where the work landed. The record's own columns, carried through untouched — a turn
+          // that says what an agent did is worth much more next to the branch it did it on.
+          branch: t.branch || '', commit: t.commit || '',
+          commits: Array.isArray(t.commits) ? t.commits : [],
           kind: t.kind, live: true,
         };
       }).filter(e => e.text);
+    }
+
+    // A commit is looked up by its first characters and read by its subject; the other 33 are
+    // noise in a chat bubble.
+    const CONV_SHA_SHOWN = 8;
+
+    // The branch and the commits under one bubble, or ''. Pure — the string it returns is the whole
+    // of what the view draws, so what a message is attached to is decided once and in one place.
+    //
+    // A turn with a branch and no commits still draws: "nothing was committed while this was said"
+    // is an answer, and an empty footer under a turn that moved three files is a question. A turn
+    // with neither — an agent working outside a checkout — draws nothing at all.
+    function convGitHtml(e) {
+      if (!e || (!e.branch && !(e.commits || []).length)) return '';
+      const commits = (e.commits || []).map(c =>
+        `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
+        `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code> ` +
+        `${escapeHtml(c.subject || '')}</span>`).join('');
+      const branch = e.branch
+        ? `<span class="conv-branch" title="${escapeHtml(e.commit || '')}">${escapeHtml(e.branch)}</span>`
+        : '';
+      return `<div class="conv-git">${branch}${commits}</div>`;
     }
 
     // What the thread says when the relay's record is on screen and empty. Three different facts,

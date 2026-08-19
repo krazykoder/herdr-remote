@@ -202,3 +202,75 @@ test('the conversation window streams its working members too', async ({page}) =
   await expect(slot).toContainText('Still writing this one');
   await expect(page.locator('#convViewThread .conv-msg.draft')).toHaveCount(0);
 });
+
+// --- Where the work landed ---
+//
+// The relay records the branch a pane's cwd was on and the commits that appeared since its last
+// turn. The vm slice proves the string; only a browser proves it is drawn, styled, and does not
+// push the bubble off the screen — which is what a forty-character sha does to a phone.
+
+// A row in the shape the relay sends, addressed to this pane's fingerprint so the thread claims
+// it. Pushed through the same receiver the socket feeds, because a fake herdr's panes sit in
+// directories that are not repositories and never will be.
+const receiveTurn = (page, key, extra) => page.evaluate(([k, more]) => {
+  const fp = convKeyFingerprint(k);
+  convLiveReceive({
+    fingerprints: [fp],
+    turns: [Object.assign({
+      seq: 9001, host: fp[0], agent: fp[1], cwd: fp[2], pane_id: JSON.parse(k)[1],
+      at: Date.now(), at_src: 'poll', kind: 'agent_final', text: 'Refactored the parser.',
+    }, more)],
+  });
+  renderConvView();
+}, [key, extra]);
+
+test('a message carries the branch and the commits it was said over', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  await receiveTurn(page, key, {
+    branch: 'feat/parser',
+    commit: 'a'.repeat(40),
+    commits: [{sha: 'b'.repeat(40), subject: 'split the tokenizer out'},
+              {sha: 'c'.repeat(40), subject: 'delete the old lexer'}],
+  });
+
+  const bubble = page.locator('#convThread .conv-msg', {hasText: 'Refactored the parser.'});
+  await expect(bubble.locator('.conv-branch')).toHaveText('feat/parser');
+  await expect(bubble.locator('.conv-commit')).toHaveCount(2);
+  await expect(bubble.locator('.conv-commit').first()).toContainText('split the tokenizer out');
+  // Short in the bubble, whole in the title: one is read at a glance, the other is pasted into a
+  // terminal.
+  await expect(bubble.locator('.conv-commit code').first()).toHaveText('b'.repeat(8));
+  await expect(bubble.locator('.conv-commit').first()).toHaveAttribute('title', 'b'.repeat(40));
+});
+
+test('a message with no repository behind it grows no footer', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await receiveTurn(page, key, {});
+  const bubble = page.locator('#convThread .conv-msg', {hasText: 'Refactored the parser.'});
+  await expect(bubble).toBeVisible();
+  await expect(bubble.locator('.conv-git')).toHaveCount(0);
+});
+
+test('a long commit subject wraps instead of widening the thread', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 780});
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await receiveTurn(page, key, {
+    branch: 'feat/a-branch-name-that-somebody-really-did-type-out-in-full',
+    commit: 'a'.repeat(40),
+    commits: [{sha: 'b'.repeat(40),
+               subject: 'refactor the whole of the parser and everything that ever called it, ' +
+                        'including the bits nobody remembers writing'}],
+  });
+  const thread = page.locator('#convThread');
+  await expect(thread.locator('.conv-branch')).toBeVisible();
+  const overflow = await thread.evaluate(el => el.scrollWidth - el.clientWidth);
+  expect(overflow, 'the thread must not scroll sideways on a phone').toBeLessThanOrEqual(1);
+});

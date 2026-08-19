@@ -7,6 +7,7 @@
 import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, socket, sqlite3, subprocess, sys, tempfile, time
 
 from agent_state import complete_agent_update_message
+import git_probe
 from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
@@ -175,6 +176,34 @@ if os.environ.get("HERDR_CONV_LOG", "") == "1":
         # works without it, and a relay that will not start because a log file is unwritable is a
         # worse failure than one that says so and carries on.
         print(f"herdr-remote: conversation log disabled: {e}", file=sys.stderr)
+
+# Where the work landed. On with the record and switched off with HERDR_GIT_TRACK=0: a turn that
+# says what an agent did is worth much more next to the branch and the commits it did it in, and
+# the cost is `git rev-parse` in the pane's cwd at the moments the record is already being written
+# — never per poll. Read-only commands, and nothing at all for a pane outside a checkout.
+GIT_TRACK = conv_log is not None and os.environ.get("HERDR_GIT_TRACK", "1") != "0"
+git_cache = git_probe.Cache()
+
+
+async def probe_git(pane):
+    """The branch, the commit, and what was committed since this directory's last turn.
+
+    Off the event loop: this is a subprocess, and an ssh round trip for a remote pane. `None` for
+    anything that is not a checkout, which `record` stores as no repository rather than as an
+    empty one.
+    """
+    if not GIT_TRACK:
+        return None
+    cwd = pane.get("cwd") or ""
+    if not cwd:
+        return None
+    try:
+        since = await asyncio.to_thread(conv_log.last_commit, pane.get("host") or "local", cwd)
+        return await asyncio.to_thread(git_cache.probe, cwd, pane.get("remote"), since)
+    except (sqlite3.Error, OSError) as e:
+        log.debug("git probe failed for %s: %s", cwd, e)
+        return None
+
 
 # Shared user state: the four documents that are facts about the work rather than about one
 # browser. Unconditional, unlike the conversation log above — that one is off by default because a
@@ -702,7 +731,8 @@ async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
             conv_log.record, agent=pane.get("agent") or "", pane_id=pane_id,
             host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
             label=pane.get("label") or "", project=pane.get("project") or "",
-            kind=kind, origin=origin, at_src="sent", text=text)
+            kind=kind, origin=origin, at_src="sent", text=text,
+            git=await probe_git(pane))
     except (sqlite3.Error, OSError) as e:
         log.warning("conversation log write failed for %s: %s", pane_id, e)
 
@@ -1143,7 +1173,9 @@ async def _poll_once():
                 try:
                     captured = await asyncio.to_thread(
                         read_pane_for_record, pid, remote=a.get("remote"))
-                    await asyncio.to_thread(conv_log.record_turn_end, a, captured, was, status)
+                    git = await probe_git(a)
+                    await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
             last_statuses[pid] = status

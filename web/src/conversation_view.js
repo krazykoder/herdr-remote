@@ -826,12 +826,16 @@
           `<button class="conv-pick" onclick="${pick === true || !pick ? 'toggleConvPick' : pick}(${i})" ` +
           `aria-pressed="false" aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
+        // Where the work landed, under the message that describes it. Built by conv_live, which
+        // owns the record's shape; a thread of drafts and pane reads has no branch on it and the
+        // guard is what keeps this file working in a slice that never loaded that one.
+        const git = typeof convGitHtml === 'function' ? convGitHtml(e) : '';
         // Who said it, for the composer's token to name: two bubbles of the same length from two
         // members read alike once they are cut to `[#1 …]`, and a quote is worth nothing if the
         // reader cannot tell whose it is without scrolling back to it.
         return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
           ` data-i="${i}" data-text="${text}" data-who="${name}"` +
-          ` style="--conv-agent:${color}">${tick}${head}${text}</div>`;
+          ` style="--conv-agent:${color}">${tick}${head}${text}${git}</div>`;
       }).join('');
     }
 

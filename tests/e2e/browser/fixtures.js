@@ -123,6 +123,12 @@ const test = base.test.extend({
   freshState: [async ({relayURL, stateDB}, use) => {
     clearSharedState(stateDB);
     await use();
+    // And again on the way out. A page flushes its dirty documents on `pagehide`, so the last
+    // write of a test is in flight while its context is closing — after the next test's clear has
+    // already run if the clearing only happened up front. That is how one spec's conversations
+    // arrived in another spec's browser: not through storage, through the relay. This fixture
+    // takes no page or context, so its teardown runs after both are gone and the write has landed.
+    clearSharedState(stateDB);
   }, {auto: true}],
 
   baseURL: async ({relayURL}, use) => { await use(relayURL); },

@@ -3217,6 +3217,39 @@
       opacity: 0.75;
     }
 
+    /* Where the work landed, under the message. Quiet on purpose: this is provenance, and a
+       reader scanning a thread is reading the messages — the branch is what they drop to when one
+       of them says something they need to find in the repository. */
+    .conv-git {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15em;
+      margin-top: 0.4em;
+      padding-top: 0.35em;
+      border-top: 1px solid var(--border);
+      font-size: 0.78em;
+      opacity: 0.8;
+      /* A commit subject is one line of prose that may be long, and the bubble's width is the
+         reader's line length — wrapping it beats a bubble that grows sideways off the screen. */
+      overflow-wrap: anywhere;
+    }
+
+    .conv-branch {
+      align-self: flex-start;
+      max-width: 100%;
+      padding: 0 0.4em;
+      border-radius: 0.5em;
+      background: color-mix(in srgb, var(--conv-agent, var(--blue)) 18%, transparent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conv-commit code {
+      opacity: 0.85;
+    }
+
     .conv-who .dot {
       width: 0.75em;
       height: 0.75em;

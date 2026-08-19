@@ -40,10 +40,12 @@ const ctx = vm.createContext({
 });
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
-               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
+               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitHtml',
+               'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
-       convLiveEmptyHtml, convLiveCache, convFpKey, CONV_LIVE_ROWS, CONV_LIVE_EVERY} = ctx.__out;
+       convLiveEmptyHtml, convLiveCache, convFpKey, convGitHtml,
+       CONV_LIVE_ROWS, CONV_LIVE_EVERY} = ctx.__out;
 
 const KEY_A = JSON.stringify(['local', '%1', 'claude', '/work/a']);
 const KEY_B = JSON.stringify(['local', '%2', 'codex', '/work/b']);
@@ -227,4 +229,80 @@ test('a pane that has exited leaves its history to whoever holds the fingerprint
     paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
   assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
                    ['before the restart', 'after it']);
+});
+
+// --- Where the work landed ---
+//
+// The record carries a branch, the commit a turn was read at, and the commits that appeared since
+// the previous turn in that directory. None of it is worth anything if the thread drops it between
+// the wire and the bubble, which is the whole of what these check.
+
+test('a turn carries its branch and its commits into the thread', () => {
+  reset([KEY_A]);
+  const t = turn(1, FP_A, 100, 'refactored the parser');
+  t.branch = 'feat/parser';
+  t.commit = 'a'.repeat(40);
+  t.commits = [{sha: 'b'.repeat(40), subject: 'split the tokenizer out'}];
+  convLiveReceive({turns: [t], fingerprints: [FP_A]});
+  const [entry] = convLiveEntries([KEY_A]);
+  assert.equal(entry.branch, 'feat/parser');
+  assert.equal(entry.commit, 'a'.repeat(40));
+  assert.deepEqual(entry.commits, [{sha: 'b'.repeat(40), subject: 'split the tokenizer out'}]);
+});
+
+test('a turn recorded outside a checkout carries nothing rather than undefined', () => {
+  // The thread reads these on every bubble. `undefined` here is a footer that says "undefined".
+  reset([KEY_A]);
+  convLiveReceive({turns: [turn(1, FP_A, 100, 'said something')], fingerprints: [FP_A]});
+  const [entry] = convLiveEntries([KEY_A]);
+  assert.equal(entry.branch, '');
+  assert.equal(entry.commit, '');
+  assert.deepEqual(entry.commits, []);
+});
+
+test('a commits field that is not a list is not trusted', () => {
+  // It comes off a wire. A string here would be rendered one character per commit.
+  reset([KEY_A]);
+  const t = turn(1, FP_A, 100, 'said something');
+  t.commits = 'not a list';
+  convLiveReceive({turns: [t], fingerprints: [FP_A]});
+  assert.deepEqual(convLiveEntries([KEY_A])[0].commits, []);
+});
+
+test('the footer names the branch and shortens the sha', () => {
+  const html = convGitHtml({branch: 'feat/parser', commit: 'a'.repeat(40),
+                            commits: [{sha: 'b'.repeat(40), subject: 'split the tokenizer out'}]});
+  assert.match(html, /conv-branch/);
+  assert.match(html, /feat\/parser/);
+  assert.match(html, /<code>bbbbbbbb<\/code>/, 'eight characters is what a person looks one up by');
+  // The whole sha is in the title and nowhere the eye lands: forty characters of hex in a bubble
+  // is a wall, and a sha nobody can copy is a lookup nobody can do.
+  assert.ok(!/>b{12}/.test(html), 'the long form must not be drawn as text');
+  assert.match(html, /split the tokenizer out/);
+});
+
+test('the whole sha is still there to be copied', () => {
+  const html = convGitHtml({branch: 'work', commits: [{sha: 'c'.repeat(40), subject: 'one'}]});
+  assert.match(html, new RegExp(`title="${'c'.repeat(40)}"`));
+});
+
+test('a branch with nothing committed under it still draws', () => {
+  // "Nothing was committed while this was said" is an answer. An empty footer under a turn that
+  // moved three files is a question.
+  const html = convGitHtml({branch: 'work', commit: 'a'.repeat(40), commits: []});
+  assert.match(html, /conv-branch/);
+  assert.match(html, /work/);
+});
+
+test('a turn with no repository behind it draws no footer at all', () => {
+  assert.equal(convGitHtml({branch: '', commit: '', commits: []}), '');
+  assert.equal(convGitHtml({}), '');
+  assert.equal(convGitHtml(null), '');
+});
+
+test('a detached head has commits and no branch, and says so', () => {
+  const html = convGitHtml({branch: '', commit: 'a'.repeat(40),
+                            commits: [{sha: 'd'.repeat(40), subject: 'one'}]});
+  assert.ok(!html.includes('conv-branch'), 'a detached HEAD is a commit, not a branch');
+  assert.match(html, /conv-commit/);
 });

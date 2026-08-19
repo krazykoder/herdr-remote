@@ -33,7 +33,19 @@ COLUMNS = (
     "id", "pane_id", "host", "agent", "cwd", "label", "project",
     "kind", "origin", "text", "tail", "range_start", "range_end",
     "status_from", "status_to", "at", "at_src", "decision_id",
+    "branch", "commit_sha", "commits",
 )
+
+
+def _selectable(conn):
+    """The columns this file actually has.
+
+    Reads are read-only and never migrate — the writer owns the schema. A record written before a
+    column existed is a record without it, and naming it in the SELECT would turn every read of an
+    older file into an error instead of an answer with one field missing.
+    """
+    have = {row[1] for row in conn.execute("PRAGMA table_info(turns)")}
+    return [c for c in COLUMNS if c in have]
 
 
 # How many members one question may name. A conversation's roster is what asks, and the app stops
@@ -125,7 +137,7 @@ def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
             args.extend([fp[0] or "local", fp[1] or "", fp[2] or ""])
 
     limit = max(1, min(int(last or QUERY_ROWS_DEFAULT), QUERY_ROWS_MAX))
-    sql = "SELECT " + ", ".join(COLUMNS) + " FROM turns"
+    sql = "SELECT " + ", ".join(_selectable(conn)) + " FROM turns"
     if where:
         sql += " WHERE " + " AND ".join(where)
     # Newest first to apply the limit, then reversed: ORDER BY at DESC with the tie broken by id
@@ -149,12 +161,33 @@ def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
     return list(reversed(kept)), truncated
 
 
+def _col(row, name, default=""):
+    """One column, or the default when this database predates it.
+
+    conv_query opens the file read-only and never migrates it — the writer owns the schema. So a
+    record written before a column existed is read here as a record without it, which is what it is.
+    """
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
+
+
 def as_wire(row):
     """One turn in the shape the WebSocket answer uses."""
     out = {k: row[k] for k in
            ("pane_id", "host", "agent", "cwd", "label", "project",
             "kind", "origin", "text", "tail", "at", "at_src", "decision_id")}
     out["seq"] = row["id"]
+    # Where the work landed. Absent columns rather than empty ones on a record written by a relay
+    # older than this: a client that has them draws a branch, and one that does not is unchanged.
+    out["branch"] = _col(row, "branch")
+    out["commit"] = _col(row, "commit_sha")
+    try:
+        out["commits"] = json.loads(_col(row, "commits") or "[]")
+    except ValueError:
+        out["commits"] = []
     out["range"] = ([row["range_start"], row["range_end"]]
                     if row["range_start"] is not None else None)
     return out
@@ -169,6 +202,18 @@ def format_text(rows, truncated):
         out.append(f"[{row['id']:04d}] {when}  {who}  {row['kind']}  ({row['at_src']})")
         out.append(row["text"] or (row["tail"] and "(no message detected; pane tail)\n" + row["tail"])
                    or "(nothing recorded)")
+        # Where the work landed, for the agent reading its own record in a terminal. Only when
+        # there is something to say: a line reading "branch:" under every turn of a pane that is
+        # not in a checkout is noise in the one place this file exists to keep readable.
+        branch = _col(row, "branch")
+        if branch:
+            out.append(f"  branch: {branch}")
+        try:
+            commits = json.loads(_col(row, "commits") or "[]")
+        except ValueError:
+            commits = []
+        for commit in commits:
+            out.append(f"  {str(commit.get('sha') or '')[:8]}  {commit.get('subject') or ''}")
         out.append("")
     if truncated:
         out.append(f"— truncated at {QUERY_ROWS_MAX} turns or {QUERY_BYTES_MAX // 1024} KB. "
