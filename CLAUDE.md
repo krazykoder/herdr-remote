@@ -116,6 +116,7 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/herdr_telegram.py` | Telegram bot client | Python (python-telegram-bot) |
 | `relay/herdr_ops.py` | Second Telegram bot, for the machine rather than the agents. Holds **no** relay connection, so it still answers when the relay or the tunnel is down: restarts the stack through `start.sh` and replies with the new `wss://` link, tails logs, runs allowlisted CLI | Python (python-telegram-bot) |
 | `relay/ops_config.py` | The `ops.json` contract — the allowlist of services and commands, and the argv builder that is the ops bot's security boundary | Python (stdlib) |
+| `relay/OPS_COMMANDS.md` | Slash command reference: how to put a script behind a Telegram command, and which of Telegram's three UI mechanisms to use | Markdown |
 | `relay/ops_supervisor.py` | Detached start/stop/probe for those services. Own session, signalled by process group | Python (stdlib) |
 | `relay/tg_util.py` | The little both bots share: `scrub()`, chunking, confirmations, rate limit | Python (stdlib) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |

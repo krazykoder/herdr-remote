@@ -4,6 +4,9 @@ Operator instructions for `relay/herdr_ops.py`: a second Telegram bot that contr
 services and a fixed allowlist of CLI utilities, with **no relay connection**, so it still answers
 when the relay or the tunnel is down.
 
+**Adding your own commands: [OPS_COMMANDS.md](OPS_COMMANDS.md)** — the slash command reference,
+with worked recipes for scripts, daemons and arguments.
+
 Design: [proposal](../.workflow/02_architecture/2026-08-18_telegram_ops_server_proposal.md) ·
 [spec](../.workflow/03_specs/2026-08-18_telegram_ops_spec.md) ·
 [deferred work](../.workflow/03_specs/2026-08-18_telegram_ops_deferred.md)
@@ -144,9 +147,13 @@ optional fields collapse them into one:
 menu — the point of a submenu — but keep their handlers, so `/git_log ~/code/python/herdr-remote 5`
 typed still works and `/help` still lists them, marked `(in /git)`.
 
-A button runs the command with no arguments, which means an entry with `params` answers with its
-usage line instead. `W`-tier members still show their Confirm: the submenu is navigation, the
+A button runs the command with no arguments. When every parameter is an `enum` or an `int`, it
+instead asks for them one at a time with a button per allowed value — `/git_log` → **herdr-remote**
+→ **10**, no typing. A parameter declared as `re` has nothing to enumerate, so that command is typed
+as before. `W`-tier members still show their Confirm at the end: the buttons are navigation, the
 Confirm is consent.
+
+Full reference and recipes: [OPS_COMMANDS.md](OPS_COMMANDS.md).
 
 ## 3. Find your chat id
 

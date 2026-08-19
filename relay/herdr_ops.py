@@ -25,6 +25,7 @@ import html
 import logging
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -160,6 +161,9 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not authorized(update):
+        return
+    if query.data.startswith(PICK_TAP):
+        await on_pick_tap(update, ctx, query.data[len(PICK_TAP):])
         return
     if query.data.startswith(MENU_TAP):
         await on_menu_tap(update, ctx, query.data[len(MENU_TAP):])
@@ -785,6 +789,10 @@ async def cmd_tail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def execute_registry(update: Update, ctx, name: str, args: list[str], label: str):
     """Run one allowlisted command. Reached from `/run <name>` and from its own native command."""
     cmd = CFG.commands[name]
+    if not args and cmd.params and pickable(cmd):
+        # Zero arguments is the one case where none were meant. A wrong *count* is still an error.
+        await ask_pick(update, ctx, name, [])
+        return
     try:
         argv = ops_config.build_argv(cmd, args)
     except ValueError as exc:
@@ -821,6 +829,138 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 MENU_TAP = "m:"
+PICK_TAP = "p:"
+PICK_TTL = 300.0
+MAX_PICK_OPTIONS = 8
+PICK_ROUND = (1, 5, 10, 25, 100)
+
+
+class Picks:
+    """Argument lists being assembled one tap at a time.
+
+    Deliberately not `Confirmations`: that is single-use consent with a 60 s window, this is
+    navigation with a longer one, redeemed and immediately reissued at every step. Popped on
+    redemption all the same, so no token is ever valid twice.
+    """
+
+    def __init__(self, ttl: float = PICK_TTL):
+        self.ttl = ttl
+        self._pending: dict[str, tuple[float, str, list[str]]] = {}
+
+    def issue(self, name: str, args: list[str]) -> str:
+        self._sweep()
+        token = secrets.token_hex(6)
+        self._pending[token] = (time.time() + self.ttl, name, list(args))
+        return token
+
+    def redeem(self, token: str) -> tuple[str, list[str]] | None:
+        self._sweep()
+        found = self._pending.pop(token, None)
+        return (found[1], found[2]) if found else None
+
+    def _sweep(self):
+        now = time.time()
+        for token in [t for t, (expiry, _, _) in self._pending.items() if expiry <= now]:
+            del self._pending[token]
+
+
+PICKS = Picks()
+
+
+def param_options(spec: dict) -> list[str] | None:
+    """The buttons for one parameter, or None if it cannot be offered as a list."""
+    if "enum" in spec:
+        values = list(spec["enum"])
+        # A list longer than a phone screen is a scroll, not a menu. Type it instead.
+        return values if len(values) <= MAX_PICK_OPTIONS else None
+    if "int" in spec:
+        lo, hi = spec["int"]
+        if hi - lo < MAX_PICK_OPTIONS:
+            return [str(n) for n in range(lo, hi + 1)]
+        wanted = [lo, hi] + [n for n in PICK_ROUND if lo < n < hi]
+        return [str(n) for n in sorted(dict.fromkeys(wanted))][:MAX_PICK_OPTIONS]
+    # A regex describes a shape, not a set. There is nothing to enumerate.
+    return None
+
+
+def pickable(cmd) -> list[list[str]] | None:
+    """Every parameter's options, or None if any one of them has none.
+
+    All or nothing on purpose: a wizard that reaches step 3 and then asks the user to start over
+    and type the whole thing is worse than saying so at the start.
+    """
+    lists = []
+    for spec in cmd.params.values():
+        options = param_options(spec)
+        if options is None:
+            return None
+        lists.append(options)
+    return lists
+
+
+def pick_keyboard(token: str, options: list[str]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(value, callback_data=f"{PICK_TAP}{token}:{index}")]
+            for index, value in enumerate(options)]
+    rows.append([InlineKeyboardButton("Cancel", callback_data=f"{PICK_TAP}{token}:x")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def ask_pick(update: Update, ctx, name: str, args: list[str], query=None):
+    """Prompt for the next unbound parameter. Edits the message when a tap got us here, so the
+    whole exchange stays one message instead of a column of dead keyboards."""
+    cmd = CFG.commands[name]
+    options = pickable(cmd)[len(args)]
+    pname = list(cmd.params)[len(args)]
+    token = PICKS.issue(name, args)
+    bound = " ".join(args)
+    text = (f"<b>/{menu_name(name)}</b> {html.escape(bound)}\n"
+            f"Pick <b>{html.escape(pname)}</b> ({len(args) + 1} of {len(cmd.params)})")
+    if query is not None:
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML,
+                                      reply_markup=pick_keyboard(token, options))
+        return
+    await send_html(update, ctx, Html(text), reply_markup=pick_keyboard(token, options))
+
+
+async def spend(chat_id: int, ctx) -> bool:
+    """A tap that runs something costs a rate-limit token; a tap that only navigates does not."""
+    wait = LIMITER.check(chat_id)
+    if wait:
+        await send(chat_id, ctx, f"Rate limited, try again in {wait}s.")
+        return False
+    return True
+
+
+async def on_pick_tap(update: Update, ctx, payload: str):
+    query = update.callback_query
+    token, _, choice = payload.rpartition(":")
+    found = PICKS.redeem(token)
+    if not found:
+        await query.edit_message_text("That picker expired. Run the command again.")
+        return
+    name, args = found
+    if choice == "x":
+        await query.edit_message_text(f"Cancelled: /{menu_name(name)}")
+        return
+    cmd = CFG.commands.get(name)
+    options = pickable(cmd) if cmd else None
+    if options is None or len(args) >= len(options):
+        await query.edit_message_text("That command is no longer in the registry.")
+        return
+    # The index selects from the list this bot just built; it is never used as a value. A forged or
+    # stale one therefore picks nothing rather than smuggling an argument past §5.1's validation.
+    current = options[len(args)]
+    if not choice.isdigit() or int(choice) >= len(current):
+        return
+    args = args + [current[int(choice)]]
+    if len(args) < len(cmd.params):
+        await ask_pick(update, ctx, name, args, query=query)
+        return
+    label = f"/{menu_name(name)} {' '.join(args)}"
+    await query.edit_message_text(label)
+    if await spend(update.effective_chat.id, ctx):
+        await execute_registry(update, ctx, name, args, label)
+
 
 
 def group_keyboard(members: tuple[str, ...]) -> InlineKeyboardMarkup:
@@ -853,17 +993,17 @@ async def on_menu_tap(update: Update, ctx, name: str):
     if cmd is None:
         await send(chat_id, ctx, "That command is no longer in the registry.")
         return
-    wait = LIMITER.check(chat_id)
-    if wait:
-        await send(chat_id, ctx, f"Rate limited, try again in {wait}s.")
-        return
-    if cmd.params:
-        # No text field behind a button, so there is nowhere for arguments to come from. Guessing
-        # them would be worse than saying so.
+    if cmd.params and pickable(cmd) is None:
+        # No text field behind a button, and nothing enumerable to offer instead. Say so rather
+        # than guess arguments.
         usage = " ".join(f"<{p}>" for p in cmd.params)
         await send(chat_id, ctx, f"/{menu_name(name)} {usage}\nThis one takes arguments — type it.")
         return
-    await execute_registry(update, ctx, name, [], f"/{menu_name(name)}")
+    if cmd.params:
+        await ask_pick(update, ctx, name, [])
+        return
+    if await spend(chat_id, ctx):
+        await execute_registry(update, ctx, name, [], f"/{menu_name(name)}")
 
 
 def registry_handler(name: str):

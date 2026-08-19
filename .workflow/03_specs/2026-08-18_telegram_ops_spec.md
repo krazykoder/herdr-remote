@@ -241,6 +241,52 @@ entry called `git` collide, and the entry is skipped with a reason like any othe
 group whose name is not a legal Telegram command, or that shadows a built-in, is dropped and its
 members stay at the top level rather than becoming unreachable.
 
+### 5.0.2 Argument pickers
+
+A button has no text field behind it, so a parameterised entry used to be a dead end: the submenu
+offered `/git_log` and the tap answered "type it". But `params` already declares what each argument
+may be — `enum` **is** a list of options, and `int [lo, hi]` is a range. Those become buttons.
+
+**When a picker opens.** Any path that reaches a command with parameters and **no** arguments:
+a submenu button, `/git_log` typed bare, `/run git-log` with nothing after it. A wrong *count* of
+arguments is still an error — only zero triggers the picker, because zero is the one case where
+nothing was meant.
+
+**Options per parameter kind:**
+
+| Kind | Buttons |
+|---|---|
+| `enum` | One per value, in declared order. More than 8 values → no picker (the list is a menu, not a scroll) |
+| `int [lo, hi]` | `lo`, `hi`, and whichever of 1, 5, 10, 25, 100 fall strictly between. Deduplicated, ordered, capped at 8 |
+| `re` | None. A regex describes a shape, not a set — there is nothing to enumerate |
+
+**All or nothing.** If any parameter has no options, no picker opens and the usage line is the
+answer, as before. A wizard that gets to step 3 and asks the user to start over by typing is worse
+than asking up front.
+
+**One parameter at a time**, in declaration order. The message is *edited* in place, so the whole
+exchange stays one message: the prompt names the parameter and its position (`Pick n (2 of 2)`) and
+shows what is already bound. Every step carries a **Cancel**.
+
+**State.** `callback_data` is 64 bytes, which will not hold an accumulating argument list, so
+`Picks` holds it: a 12-hex token → `(command name, args bound so far)`, TTL **300 s**. Reissued
+each step, and popped on redemption so a token is never valid twice. Deliberately not
+`Confirmations`: that is single-use consent with a 60 s window, this is navigation with a longer
+one. An expired token answers `That picker expired. Run the command again.` and binds nothing.
+
+**Payload.** `p:<token>:<index>` where the index selects from the current parameter's option list,
+or `p:<token>:x` for Cancel. The index is resolved **against the list this bot just built**, never
+used as a value — so a forged or stale index selects nothing rather than injecting an argument.
+Every chosen value still goes through §5.1's validation before it reaches argv; the picker is a
+convenience over that boundary, never a way around it.
+
+**Rate limit.** A tap that *runs* something spends a token; a tap that only navigates does not.
+Opening a submenu already spent one on the command that opened it, and charging again per step
+would let a four-parameter command exhaust the bucket by itself.
+
+**Confirmation still applies.** A `W`-tier entry picked entirely through buttons still gets its
+Confirm at the end, with the fully bound argv in the label.
+
 ### 5.1 `/run`
 
 1. Look up `<cmd>` in `commands`. Absent → `'<cmd>' is not in the allowlist. /help lists what is.`

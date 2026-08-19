@@ -182,5 +182,66 @@ class Submenus(unittest.TestCase):
         self.assertIn("deploy_web", [name for name, _ in plan.entries])
 
 
+class ArgumentPickers(unittest.TestCase):
+    """`params` already declares what an argument may be, so a button list falls out of it."""
+
+    def test_an_enum_becomes_one_button_per_value(self):
+        self.assertEqual(["a", "b"], ops.param_options({"enum": ["a", "b"]}))
+
+    def test_a_long_enum_is_not_offered(self):
+        many = [f"v{i}" for i in range(ops.MAX_PICK_OPTIONS + 1)]
+        self.assertIsNone(ops.param_options({"enum": many}))
+
+    def test_an_int_range_offers_its_bounds_and_round_numbers_between(self):
+        self.assertEqual(["1", "5", "10", "25", "50"], ops.param_options({"int": [1, 50]}))
+
+    def test_a_short_int_range_offers_every_value(self):
+        self.assertEqual(["2", "3", "4"], ops.param_options({"int": [2, 4]}))
+
+    def test_a_regex_has_nothing_to_enumerate(self):
+        self.assertIsNone(ops.param_options({"re": r"https://\S+"}))
+
+    def test_one_unpickable_parameter_cancels_the_whole_picker(self):
+        # Better to say so up front than to reach step 3 and ask the user to start over.
+        cmd = ops_config.Command(name="x", argv=["/bin/echo"],
+                                 params={"a": {"enum": ["1"]}, "b": {"re": "."}})
+        self.assertIsNone(ops.pickable(cmd))
+
+    def test_every_parameter_pickable_gives_a_list_per_parameter(self):
+        cmd = ops_config.Command(name="x", argv=["/bin/echo"],
+                                 params={"a": {"enum": ["1"]}, "b": {"int": [1, 3]}})
+        self.assertEqual([["1"], ["1", "2", "3"]], ops.pickable(cmd))
+
+    def test_a_pick_token_is_single_use(self):
+        picks = ops.Picks()
+        token = picks.issue("git-log", ["/repo"])
+        self.assertEqual(("git-log", ["/repo"]), picks.redeem(token))
+        self.assertIsNone(picks.redeem(token))
+
+    def test_an_expired_pick_binds_nothing(self):
+        picks = ops.Picks(ttl=-1)
+        self.assertIsNone(picks.redeem(picks.issue("git-log", [])))
+
+    def test_callback_data_fits_telegrams_64_bytes(self):
+        picks = ops.Picks()
+        token = picks.issue("c" * 32, ["a" * 128])
+        keyboard = ops.pick_keyboard(token, [str(i) for i in range(ops.MAX_PICK_OPTIONS)])
+        for row in keyboard.inline_keyboard:
+            for button in row:
+                self.assertLessEqual(len(button.callback_data.encode()), 64)
+
+    def test_cancel_is_always_offered(self):
+        keyboard = ops.pick_keyboard("tok", ["a"])
+        self.assertEqual("Cancel", keyboard.inline_keyboard[-1][0].text)
+        self.assertTrue(keyboard.inline_keyboard[-1][0].callback_data.endswith(":x"))
+
+    def test_the_two_callback_prefixes_do_not_overlap(self):
+        # on_callback dispatches on prefix, and a confirmation token is bare hex — a picker payload
+        # must not be mistaken for one, or a tap would redeem the wrong table.
+        self.assertNotEqual(ops.PICK_TAP, ops.MENU_TAP)
+        self.assertFalse(ops.PICK_TAP.startswith(ops.MENU_TAP))
+        self.assertFalse(ops.MENU_TAP.startswith(ops.PICK_TAP))
+
+
 if __name__ == "__main__":
     unittest.main()
