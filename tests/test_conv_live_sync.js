@@ -526,3 +526,43 @@ test('the commit strip takes the bubble\'s column', () => {
                /class="conv-commits"/, 'no side is the left column, as the bubble has it');
   store.herdr_conv_commits = 'off';
 });
+
+test('two agents in one checkout do not each claim the same commits', () => {
+  // A pair working in one directory. Counted per member, each would carry the previous sha *it*
+  // last ended on, so the same commit would be drawn under a bubble from each of them — twice, and
+  // once under the agent that did not make it. A commit belongs to a repository's history.
+  store.herdr_conv_commits = 'on';
+  sent.length = 0;
+  convCommitsCache.clear();
+  const seen = new Map();
+  const shared = {host: 'local', cwd: '/work/shared'};
+
+  // Both end a turn at the same sha: nothing was committed between them.
+  convGitRules({...shared, key: KEY_A, branch: 'main', commit: 'a'.repeat(40)}, seen);
+  convGitRules({...shared, key: KEY_B, branch: 'main', commit: 'a'.repeat(40)}, seen);
+
+  // Now one of them commits, and both end another turn at the new sha.
+  const second = {...shared, key: KEY_B, branch: 'main', commit: 'b'.repeat(40)};
+  convGitRules(second, seen);
+  const asks = sent.filter(m => m.type === 'git_commits');
+  assert.equal(asks.length, 1);
+  assert.equal(asks[0].from, 'a'.repeat(40), 'the range starts where the checkout was, not the member');
+
+  convCommitsReceive({host: 'local', cwd: '/work/shared', from: 'a'.repeat(40), to: 'b'.repeat(40),
+                      commits: [{sha: 'c'.repeat(40), subject: 'the one commit'}]});
+  const third = convGitRules({...shared, key: KEY_A, branch: 'main', commit: 'b'.repeat(40)}, seen);
+  assert.equal(third.after, '',
+               'the other member must not claim a commit already drawn under this checkout');
+  store.herdr_conv_commits = 'off';
+});
+
+test('each member is still introduced by its own branch', () => {
+  // The other half of the same split: a branch is per member, so a joint thread says where each
+  // pane is working rather than announcing the directory once and leaving the rest unexplained.
+  const seen = new Map();
+  const shared = {host: 'local', cwd: '/work/shared'};
+  const first = convGitRules({...shared, key: KEY_A, branch: 'main', commit: 'a'.repeat(40)}, seen);
+  const other = convGitRules({...shared, key: KEY_B, branch: 'main', commit: 'a'.repeat(40)}, seen);
+  assert.match(first.before, /main/);
+  assert.match(other.before, /main/, 'the second member has not been introduced yet');
+});

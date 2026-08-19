@@ -419,8 +419,6 @@
     const convGitRule = (cls, body) => `<div class="conv-rule git ${cls}">${body}</div>`;
 
     // What goes above and below one entry, and the running state that makes it possible to tell.
-    // `seen` is per member key: a joint thread is several panes in several directories, and one of
-    // them moving to another branch says nothing about the others.
     //
     // The two halves are not the same kind of thing, and they are drawn differently on purpose.
     // `before` is a rule across the thread: it announces the state the *next* bubble is in, which
@@ -428,11 +426,27 @@
     // finished and these are what it finished — so it takes that bubble's width and side and hangs
     // under it as badges. `side` is the bubble's own alignment class, passed in because the view
     // owns the layout and this file owns the record's shape.
+    //
+    // They are also counted differently, and this is the part that is easy to get wrong. A branch
+    // is tracked **per member**: a joint thread is several panes, and each of them deserves to be
+    // introduced once. A commit range is tracked **per checkout**, because a commit belongs to a
+    // repository's history and not to whoever happened to speak next. Two agents pairing in one
+    // directory, counted per member, would each carry the previous sha *they* last ended on — so
+    // the same commit would appear under a bubble from each of them, twice, once misattributed.
+    // Per checkout it appears exactly once, under the first turn to end after it was made. It is
+    // also the rule the relay already uses when it stores a list (last_commit is keyed by host and
+    // cwd), so the fetched range and the stored one now describe the same window.
+    const convGitWhere = e => `${e.host || 'local'}|${e.cwd || ''}`;
+
     function convGitRules(e, seen, side) {
       const none = {before: '', after: ''};
       if (!e || (!e.branch && !e.commit)) return none;
       const key = e.key || '';
       const was = seen.get(key) || {};
+      // One map, two kinds of key. A member key is `[host, pane, agent, cwd]` and a checkout key is
+      // `host|cwd`, so neither can be mistaken for the other.
+      const where = convGitWhere(e);
+      const there = seen.get(where) || {};
       let before = '';
       if (e.branch && e.branch !== was.branch) {
         // A first sighting is context and a change is an event, and they read differently: the
@@ -443,7 +457,7 @@
       }
       let after = '';
       if (convCommitsOn()) {
-        const commits = convCommitsFor(e, was.commit);
+        const commits = convCommitsFor(e, there.commit);
         if (commits && commits.length) {
           after = `<div class="conv-commits${side || ''}">` + commits.map(c =>
             `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
@@ -451,10 +465,11 @@
             `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;
         }
       }
-      // The branch is carried forward when a later turn has none: a pane that stepped out of the
+      // Both are carried forward when a later turn has neither: a pane that stepped out of the
       // checkout for one turn has not changed branch, and announcing the same branch again when it
       // steps back in would be an event that did not happen.
-      seen.set(key, {branch: e.branch || was.branch, commit: e.commit || was.commit});
+      seen.set(key, {branch: e.branch || was.branch});
+      seen.set(where, {commit: e.commit || there.commit});
       return {before: before, after: after};
     }
 

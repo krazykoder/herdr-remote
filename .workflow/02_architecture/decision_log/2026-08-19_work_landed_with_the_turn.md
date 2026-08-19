@@ -121,3 +121,26 @@ badges, the way a caption belongs to its picture.
 
 Badges rather than lines for a second reason. Commits arrive in twos and threes, and three lines
 of prose under every turn is a thread nobody skims.
+
+
+## What a commit badge is attached to
+
+Not a time. The badges under a bubble are the commits in `(previous HEAD, this turn's HEAD]` for
+that **checkout** — everything committed between the last turn to end there and this one. They
+attach backwards: the bubbles *below* a badge are later turns and have nothing to do with those
+commits.
+
+Per checkout and not per member, which is the part that is easy to get wrong. A commit belongs to a
+repository's history, not to whoever happened to speak next. Two agents pairing in one directory,
+counted per member, each carry the previous sha *they* last ended on — so one commit is drawn under
+a bubble from each of them, twice, once under the agent that did not make it. Per checkout it
+appears exactly once, under the first turn to end after it was made. It is also the rule the relay
+already uses when it stores a list: `last_commit` is keyed by host and cwd, so the fetched range
+and the stored one now describe the same window.
+
+The branch stays per member. A joint thread is several panes, and each deserves to be introduced
+once — announcing the directory once would leave the rest unexplained.
+
+Which leaves one thing the badge cannot say: *who* made the commit. The first turn to end after a
+commit is not always the agent that made it. Git knows the author and the record does not ask; if
+that attribution ever matters, `%an` is one more field on the same `git log`.

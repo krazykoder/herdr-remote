@@ -381,6 +381,28 @@ class RelayWiringTest(unittest.TestCase):
         self.probe({"pane_id": "%1", "cwd": "/work", "host": "local"})
         self.assertEqual(self.relay.pane_branch, {})
 
+    def test_the_per_checkout_lookups_are_indexed(self):
+        # These run on the poll path, once per directory, against a table that holds fifty thousand
+        # rows by default. turns_fp leads with `agent`, so it cannot serve a (host, cwd) question —
+        # without an index of their own these are full scans, and an index nothing uses is silent.
+        with tempfile.TemporaryDirectory() as tmp:
+            log = ConversationLog(os.path.join(tmp, "plan.sqlite3"))
+            self.addCleanup(log.close)
+            for sql in (
+                "SELECT branch FROM turns WHERE host=? AND cwd=? AND branch<>''"
+                " ORDER BY at DESC, id DESC LIMIT 1",
+                "SELECT commit_sha FROM turns WHERE host=? AND cwd=? AND commit_sha<>''"
+                " ORDER BY at DESC, id DESC LIMIT 1",
+                "SELECT 1 FROM turns WHERE host=? AND cwd=? LIMIT 1",
+            ):
+                plan = " ".join(r[-1] for r in
+                                log.conn.execute("EXPLAIN QUERY PLAN " + sql, ("local", "/w")))
+                self.assertIn("USING", plan, sql)
+                self.assertNotIn("SCAN", plan, sql)
+                # The index carries (at, id) too, so the newest row is the first one read rather
+                # than the last one left after sorting every match.
+                self.assertNotIn("TEMP B-TREE", plan, sql)
+
     def test_a_restart_reads_the_branch_back_out_of_the_record(self):
         # The map above is memory, and a restart empties it. Without this the badge says nothing
         # until every pane has ended another turn, which for a quiet agent is a long blank — and
