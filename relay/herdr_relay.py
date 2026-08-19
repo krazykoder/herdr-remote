@@ -205,6 +205,30 @@ def remote_for_host(host):
     return None
 
 
+# A commit as a client may name one. Hex only, and never a ref: `main`, `HEAD~3` and `--output=x`
+# all reach git's argument parser, and the last of those is an option rather than a revision. The
+# app only ever has shas — they came out of the record — so nothing is lost by refusing the rest.
+GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def git_range_target(msg):
+    """(cwd, remote, from, to) for a git_commits question, or a refusal.
+
+    The directory has to be one this relay is already watching. A client may not name a path: the
+    relay would read a repository the user never pointed it at, which is a different capability
+    from reading the panes it was asked to poll.
+    """
+    cwd = msg.get("cwd") or ""
+    host = msg.get("host") or "local"
+    first, last = str(msg.get("from") or ""), str(msg.get("to") or "")
+    if not GIT_SHA_RE.match(first) or not GIT_SHA_RE.match(last):
+        raise ValueError("from and to must be commit shas")
+    for pane in agent_cache.values():
+        if (pane.get("cwd") or "") == cwd and (pane.get("host") or "local") == host:
+            return cwd, pane.get("remote"), first, last
+    raise ValueError("no pane is open in that directory")
+
+
 def conv_log_window(msg):
     """(since, until) in milliseconds, with a commit range resolved into one.
 
@@ -1549,6 +1573,24 @@ async def handle_client(ws, listener="lan"):
                 await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
+            elif msg_type == "git_commits":
+                # What was committed between two turns, asked for rather than stored. The record
+                # keeps the sha each turn was read at, which is both ends of this question, so the
+                # list itself is worth a git call at the moment a reader wants to see it and not
+                # several megabytes of every record on the chance that they will.
+                if not GIT_TRACK:
+                    await ws.send(json.dumps({
+                        "type": "error", "message": "git_commits: git tracking is off"}))
+                    continue
+                try:
+                    cwd, remote, first, last = git_range_target(msg)
+                except ValueError as e:
+                    await ws.send(json.dumps({"type": "error", "message": f"git_commits: {e}"}))
+                    continue
+                found = await asyncio.to_thread(git_probe.commits, cwd, first, last, remote)
+                await ws.send(json.dumps({
+                    "type": "git_commits", "cwd": cwd, "host": msg.get("host") or "local",
+                    "from": first, "to": last, "commits": found}))
             elif msg_type == "conv_log":
                 # Answered to the asking client and never broadcast: this is the one message that
                 # carries what an agent actually said, and a client that did not ask for a

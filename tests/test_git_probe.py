@@ -351,15 +351,34 @@ class TextOutputTest(unittest.TestCase):
         rows, truncated = self.log.query()
         return format_text(rows, truncated)
 
-    def test_the_branch_and_the_commits_are_printed(self):
+    def turn(self, text, at, **git):
         self.log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
-                        at_src="poll", text="done",
-                        git={"branch": "feat/parser", "commit": "a" * 40,
-                             "commits": [{"sha": "b" * 40, "subject": "split the tokenizer out"}]})
+                        at_src="poll", cwd="/work", text=text, at=at, git=git or None)
+
+    def test_the_branch_and_the_commits_are_printed(self):
+        self.turn("done", 1, branch="feat/parser", commit="a" * 40,
+                  commits=[{"sha": "b" * 40, "subject": "split the tokenizer out"}])
         out = self.text()
         self.assertIn("branch: feat/parser", out)
         self.assertIn("bbbbbbbb  split the tokenizer out", out)
         self.assertNotIn("b" * 12, out, "the whole sha belongs in the record, not on the screen")
+
+    def test_a_branch_is_printed_when_it_changes_and_not_on_every_turn(self):
+        # The same shape the thread draws: an orchestrator reading this is reading for changes, and
+        # twenty turns each labelled `main` say nothing.
+        self.turn("one", 1, branch="main", commit="a" * 40)
+        self.turn("two", 2, branch="main", commit="b" * 40)
+        self.turn("three", 3, branch="feat/x", commit="c" * 40)
+        out = self.text()
+        self.assertEqual(out.count("branch"), 2, out)
+        self.assertIn("branch: main", out)
+        self.assertIn("branch changed to feat/x", out)
+
+    def test_a_turn_outside_the_checkout_does_not_repeat_the_branch_afterwards(self):
+        self.turn("one", 1, branch="main", commit="a" * 40)
+        self.turn("two", 2)
+        self.turn("three", 3, branch="main", commit="b" * 40)
+        self.assertEqual(self.text().count("branch"), 1)
 
     def test_a_turn_outside_a_checkout_prints_no_git_lines(self):
         self.log.record(agent="claude", pane_id="%1", kind="agent_final", origin="agent",
@@ -459,3 +478,51 @@ class CommitRangeTest(unittest.TestCase):
             code = main(["--db", db, "--repo", self.dir.name, "--until-commit", "0" * 40])
         self.assertEqual(code, 2)
         self.assertIn("not a commit", err.getvalue())
+
+
+class GitCommitsRequestTest(unittest.TestCase):
+    """The on-demand list: what a client may ask for, and what it may not.
+
+    `from`, `to` and `cwd` come off a socket and end up in a git argv — and in an ssh command line
+    for a remote pane. This is the boundary that keeps them data.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "relay"))
+        import herdr_relay
+        self.relay = herdr_relay
+        self.addCleanup(self.relay.agent_cache.clear)
+        self.relay.agent_cache.clear()
+        self.relay.agent_cache["w1:p1"] = {"cwd": "/work", "host": "local", "remote": None}
+        self.relay.agent_cache["w2:p1"] = {"cwd": "/srv", "host": "box", "remote": "user@box"}
+
+    def target(self, **msg):
+        return self.relay.git_range_target(msg)
+
+    def test_a_directory_a_pane_is_open_in_resolves(self):
+        self.assertEqual(self.target(cwd="/work", **{"from": "a" * 40, "to": "b" * 40}),
+                         ("/work", None, "a" * 40, "b" * 40))
+
+    def test_a_remote_directory_carries_the_ssh_target(self):
+        got = self.target(cwd="/srv", host="box", **{"from": "a" * 40, "to": "b" * 40})
+        self.assertEqual(got[1], "user@box")
+
+    def test_a_path_no_pane_is_open_in_is_refused(self):
+        # Otherwise a client names any directory and the relay reads a repository the user never
+        # pointed it at.
+        with self.assertRaises(ValueError):
+            self.target(cwd="/etc", **{"from": "a" * 40, "to": "b" * 40})
+        with self.assertRaises(ValueError):
+            self.target(cwd="/work", host="box", **{"from": "a" * 40, "to": "b" * 40})
+
+    def test_only_shas_are_accepted_as_ends(self):
+        # `--output=x` and `HEAD~3` both reach git's argument parser, and the first is an option.
+        for bad in ("--output=/tmp/x", "HEAD~3", "main", "", "a" * 41, "zzzz123", "a" * 6):
+            with self.assertRaises(ValueError, msg=bad):
+                self.target(cwd="/work", **{"from": bad, "to": "b" * 40})
+            with self.assertRaises(ValueError, msg=bad):
+                self.target(cwd="/work", **{"from": "a" * 40, "to": bad})
+
+    def test_a_short_sha_is_still_a_sha(self):
+        self.assertEqual(self.target(cwd="/work", **{"from": "abc1234", "to": "b" * 40})[2],
+                         "abc1234")

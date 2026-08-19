@@ -559,6 +559,11 @@
       else if (msg.type === 'conv_log') {
         convLiveReceive(msg);
       }
+      else if (msg.type === 'git_commits') {
+        // The answer to a range the thread asked about. Only the ranges it asked for come back, so
+        // there is nothing to filter here.
+        convCommitsReceive(msg);
+      }
       else if (msg.type === 'projects') {
         projects = msg.projects || [];
         render();

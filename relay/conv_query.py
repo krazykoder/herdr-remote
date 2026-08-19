@@ -195,20 +195,30 @@ def as_wire(row):
 
 
 def format_text(rows, truncated):
-    """What an agent reads in its own terminal."""
+    """What an agent reads in its own terminal.
+
+    Branches are printed as events and not as a stamp on every turn, which is the same shape the
+    thread draws in the browser — one record, read the same way on both sides. An orchestrator
+    deciding what to do next is reading for *changes*: twenty turns each labelled `main` say
+    nothing, and the one line where it became `feat/x` is the whole of what happened.
+    """
     out = []
+    branches = {}
     for row in rows:
         when = time.strftime("%H:%M:%S", time.localtime((row["at"] or 0) / 1000))
         who = " ".join(x for x in (row["agent"], row["cwd"], row["label"]) if x)
         out.append(f"[{row['id']:04d}] {when}  {who}  {row['kind']}  ({row['at_src']})")
         out.append(row["text"] or (row["tail"] and "(no message detected; pane tail)\n" + row["tail"])
                    or "(nothing recorded)")
-        # Where the work landed, for the agent reading its own record in a terminal. Only when
-        # there is something to say: a line reading "branch:" under every turn of a pane that is
-        # not in a checkout is noise in the one place this file exists to keep readable.
+        # Where the work landed. Only when it moved: a line under every turn of a pane that never
+        # left `main` is noise in the one place this file exists to keep readable.
         branch = _col(row, "branch")
+        where = (row["host"], row["agent"], row["cwd"])
+        if branch and branches.get(where) != branch:
+            out.append(f"  branch: {branch}" if where not in branches
+                       else f"  branch changed to {branch}")
         if branch:
-            out.append(f"  branch: {branch}")
+            branches[where] = branch
         try:
             commits = json.loads(_col(row, "commits") or "[]")
         except ValueError:

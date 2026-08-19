@@ -759,6 +759,10 @@
     function convEntriesHtml(entries, self, paired, pick) {
       const me = self || {};
       let last = 0;
+      // Where each member's work stood at the last entry drawn for it — the branch it was on and
+      // the commit it was at. A branch is the same for twenty messages in a row, so what is drawn
+      // is the moment it changes, which cannot be decided from one entry alone.
+      const gitSeen = new Map();
       return entries.map((e, i) => {
         const at = convAt(e);
         // How long the thread was not being recorded for, when both ends of the break are known —
@@ -826,16 +830,20 @@
           `<button class="conv-pick" onclick="${pick === true || !pick ? 'toggleConvPick' : pick}(${i})" ` +
           `aria-pressed="false" aria-label="Select this message">✓</button>`;
         const text = escapeHtml(e.text || '');
-        // Where the work landed, under the message that describes it. Built by conv_live, which
-        // owns the record's shape; a thread of drafts and pane reads has no branch on it and the
-        // guard is what keeps this file working in a slice that never loaded that one.
-        const git = typeof convGitHtml === 'function' ? convGitHtml(e) : '';
+        // Where the work landed, as lines between the messages rather than as a stamp on each of
+        // them: the branch when it changes, and the commits that happened between this entry and
+        // the last one from the same member. Built by conv_live, which owns the record's shape; a
+        // thread of drafts and pane reads has neither, and the guard is what keeps this file
+        // working in a slice that never loaded that one.
+        const git = typeof convGitRules === 'function' ? convGitRules(e, gitSeen)
+          : {before: '', after: ''};
         // Who said it, for the composer's token to name: two bubbles of the same length from two
         // members read alike once they are cut to `[#1 …]`, and a quote is worth nothing if the
         // reader cannot tell whose it is without scrolling back to it.
-        return rule + `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
+        return rule + git.before +
+          `<div class="conv-msg${user ? ' user' : ''}${side}${state}" data-key="${escapeHtml(key)}"` +
           ` data-i="${i}" data-text="${text}" data-who="${name}"` +
-          ` style="--conv-agent:${color}">${tick}${head}${text}${git}</div>`;
+          ` style="--conv-agent:${color}">${tick}${head}${text}</div>` + git.after;
       }).join('');
     }
 

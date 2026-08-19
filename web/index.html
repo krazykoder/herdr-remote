@@ -3217,37 +3217,43 @@
       opacity: 0.75;
     }
 
-    /* Where the work landed, under the message. Quiet on purpose: this is provenance, and a
-       reader scanning a thread is reading the messages — the branch is what they drop to when one
-       of them says something they need to find in the repository. */
-    .conv-git {
+    /* Where the work landed, drawn as events between the messages — the same furniture as the
+       rule that marks a break in the recording, because it is the same kind of fact: something
+       that happened in the gap between two things that were said. */
+    .conv-rule.git.branch {
+      color: var(--blue);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .conv-rule.git.branch::before,
+    .conv-rule.git.branch::after {
+      border-top-color: var(--blue);
+      opacity: 0.4;
+    }
+
+    /* A list, so the dashes either side of a one-line rule would have nothing to sit beside. A
+       left rule instead: it reads as a run of things that happened, in order, at this point. */
+    .conv-rule.git.commits {
       display: flex;
       flex-direction: column;
-      gap: 0.15em;
-      margin-top: 0.4em;
-      padding-top: 0.35em;
-      border-top: 1px solid var(--border);
-      font-size: 0.78em;
-      opacity: 0.8;
-      /* A commit subject is one line of prose that may be long, and the bubble's width is the
-         reader's line length — wrapping it beats a bubble that grows sideways off the screen. */
+      align-items: stretch;
+      gap: 0.2em;
+      margin: 6px 0 6px 12px;
+      padding-left: 8px;
+      border-left: 2px solid var(--border);
+      /* A commit subject is a line of prose that may be long, and the thread's width is the
+         reader's line length — wrapping beats a thread that scrolls sideways on a phone. */
       overflow-wrap: anywhere;
     }
 
-    .conv-branch {
-      align-self: flex-start;
-      max-width: 100%;
-      padding: 0 0.4em;
-      border-radius: 0.5em;
-      background: color-mix(in srgb, var(--conv-agent, var(--blue)) 18%, transparent);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .conv-rule.git.commits::before,
+    .conv-rule.git.commits::after {
+      content: none;
     }
 
     .conv-commit code {
       opacity: 0.85;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     .conv-who .dot {
@@ -3734,6 +3740,7 @@
        macOS gives a chunky arrow at 13px, iOS a hairline one about half the size, which is why the
        same button read as tiny on a phone and fine on a desktop. Same reasoning as convGlyph. */
     .hang-live svg,
+    .hang-commits svg,
     .hang-tidy svg,
     .conv-analytics-refresh svg {
       display: block;
@@ -3742,6 +3749,13 @@
     .hang-live.live {
       color: var(--green);
       border-color: var(--green);
+    }
+
+    /* Lit in the branch colour rather than the record's green: two buttons side by side in the
+       same green would read as one state with two switches. */
+    .hang-commits.live {
+      color: var(--blue);
+      border-color: var(--blue);
     }
 
     /* The jump to the end, in the corner the end is in. The pane is not a scroller itself — its
@@ -5189,6 +5203,12 @@
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
         </svg></button>
+      <button class="hang-btn hang-commits" id="convCommits" onclick="toggleConvCommits()"
+        aria-pressed="false" aria-label="Show commits in the thread">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.5" /><path d="M12 2v6.5M12 15.5V22" />
+        </svg></button>
       <button class="hang-btn hang-live" id="convLive" onclick="toggleConvLive()"
         aria-pressed="false" aria-label="Read the relay’s record">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
@@ -5470,6 +5490,16 @@
             <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
             <path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13" />
             <path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
+          </svg></button>
+        <!-- Whether the thread shows what was committed between the messages. Beside the record
+             toggle because it is only ever true of the relay's record — this browser's transcript
+             has no commits in it — and because the two are one question: how much of what happened
+             do you want to see. -->
+        <button class="hang-btn hang-commits" id="paneCommits" onclick="toggleConvCommits()"
+          aria-pressed="false" aria-label="Show commits in the thread">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5" /><path d="M12 2v6.5M12 15.5V22" />
           </svg></button>
         <div class="block-nav" id="blockNav" hidden>
           <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>

@@ -40,11 +40,13 @@ const ctx = vm.createContext({
 });
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
-               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitHtml',
+               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules',
+               'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
-       convLiveEmptyHtml, convLiveCache, convFpKey, convGitHtml,
+       convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules,
+       convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        CONV_LIVE_ROWS, CONV_LIVE_EVERY} = ctx.__out;
 
 const KEY_A = JSON.stringify(['local', '%1', 'claude', '/work/a']);
@@ -269,40 +271,147 @@ test('a commits field that is not a list is not trusted', () => {
   assert.deepEqual(convLiveEntries([KEY_A])[0].commits, []);
 });
 
-test('the footer names the branch and shortens the sha', () => {
-  const html = convGitHtml({branch: 'feat/parser', commit: 'a'.repeat(40),
-                            commits: [{sha: 'b'.repeat(40), subject: 'split the tokenizer out'}]});
-  assert.match(html, /conv-branch/);
-  assert.match(html, /feat\/parser/);
-  assert.match(html, /<code>bbbbbbbb<\/code>/, 'eight characters is what a person looks one up by');
-  // The whole sha is in the title and nowhere the eye lands: forty characters of hex in a bubble
-  // is a wall, and a sha nobody can copy is a lookup nobody can do.
-  assert.ok(!/>b{12}/.test(html), 'the long form must not be drawn as text');
-  assert.match(html, /split the tokenizer out/);
+
+// --- Branch changes and commits, as events in the thread ---
+//
+// A branch is the same for twenty messages in a row, so what the thread draws is the moment it
+// changed. Commits are the same shape of fact and they are optional, because the relay stores them
+// only when asked to — the ordinary case is the thread asking for a range it can see the two ends
+// of.
+
+const entry = (over) => Object.assign(
+  {key: KEY_A, branch: '', commit: '', commits: [], host: 'local', cwd: '/work/a'}, over);
+
+test('the first sighting of a branch names it, and only a change is an event', () => {
+  const seen = new Map();
+  const first = convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  assert.match(first.before, /conv-rule git branch/);
+  assert.match(first.before, /main/);
+  assert.ok(!/changed/.test(first.before), 'arriving somewhere is not moving');
+
+  const same = convGitRules(entry({branch: 'main', commit: 'b'.repeat(40)}), seen);
+  assert.equal(same.before, '', 'the same branch twice is not an event');
+
+  const moved = convGitRules(entry({branch: 'feat/x', commit: 'c'.repeat(40)}), seen);
+  assert.match(moved.before, /Branch changed to/);
+  assert.match(moved.before, /feat\/x/);
 });
 
-test('the whole sha is still there to be copied', () => {
-  const html = convGitHtml({branch: 'work', commits: [{sha: 'c'.repeat(40), subject: 'one'}]});
-  assert.match(html, new RegExp(`title="${'c'.repeat(40)}"`));
+test('a branch is per member, not per thread', () => {
+  // A joint thread is several panes in several directories. One of them moving says nothing about
+  // the others, and a shared marker would claim it did.
+  const seen = new Map();
+  convGitRules(entry({key: KEY_A, branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const other = convGitRules(entry({key: KEY_B, branch: 'main', commit: 'b'.repeat(40)}), seen);
+  assert.match(other.before, /main/, 'the second member has not been introduced yet');
+  const back = convGitRules(entry({key: KEY_A, branch: 'main', commit: 'c'.repeat(40)}), seen);
+  assert.equal(back.before, '');
 });
 
-test('a branch with nothing committed under it still draws', () => {
-  // "Nothing was committed while this was said" is an answer. An empty footer under a turn that
-  // moved three files is a question.
-  const html = convGitHtml({branch: 'work', commit: 'a'.repeat(40), commits: []});
-  assert.match(html, /conv-branch/);
-  assert.match(html, /work/);
+test('a turn recorded outside the checkout does not undo the branch', () => {
+  // Stepping out of a repository for one turn is not a branch change, and announcing the same
+  // branch again on the way back in would be an event that did not happen.
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const nothing = convGitRules(entry({}), seen);
+  assert.deepEqual(nothing, {before: '', after: ''});
+  const back = convGitRules(entry({branch: 'main', commit: 'b'.repeat(40)}), seen);
+  assert.equal(back.before, '');
 });
 
-test('a turn with no repository behind it draws no footer at all', () => {
-  assert.equal(convGitHtml({branch: '', commit: '', commits: []}), '');
-  assert.equal(convGitHtml({}), '');
-  assert.equal(convGitHtml(null), '');
+test('commits are off until they are switched on', () => {
+  store.herdr_conv_commits = 'off';
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const after = convGitRules(entry({
+    branch: 'main', commit: 'b'.repeat(40),
+    commits: [{sha: 'c'.repeat(40), subject: 'one'}],
+  }), seen).after;
+  assert.equal(after, '', 'the reader did not ask for these');
 });
 
-test('a detached head has commits and no branch, and says so', () => {
-  const html = convGitHtml({branch: '', commit: 'a'.repeat(40),
-                            commits: [{sha: 'd'.repeat(40), subject: 'one'}]});
-  assert.ok(!html.includes('conv-branch'), 'a detached HEAD is a commit, not a branch');
-  assert.match(html, /conv-commit/);
+test('a stored list is drawn without asking the relay for it', () => {
+  store.herdr_conv_commits = 'on';
+  sent.length = 0;
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const after = convGitRules(entry({
+    branch: 'main', commit: 'b'.repeat(40),
+    commits: [{sha: 'c'.repeat(40), subject: 'split the tokenizer out'}],
+  }), seen).after;
+  assert.match(after, /conv-rule git commits/);
+  assert.match(after, /<code>cccccccc<\/code>/);
+  assert.match(after, /split the tokenizer out/);
+  assert.match(after, new RegExp(`title="${'c'.repeat(40)}"`));
+  assert.deepEqual(sent.filter(m => m.type === 'git_commits'), []);
+  store.herdr_conv_commits = 'off';
+});
+
+test('a range with no stored list is asked for once, and drawn when it answers', () => {
+  store.herdr_conv_commits = 'on';
+  sent.length = 0;
+  convCommitsCache.clear();
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+
+  const second = entry({branch: 'main', commit: 'b'.repeat(40)});
+  assert.equal(convGitRules(second, seen).after, '', 'nothing is drawn before the answer');
+  assert.deepEqual(sent.filter(m => m.type === 'git_commits'), [{
+    type: 'git_commits', host: 'local', cwd: '/work/a', from: 'a'.repeat(40), to: 'b'.repeat(40),
+  }]);
+
+  // Asked again before the answer: the question is in flight, not lost.
+  const seenAgain = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seenAgain);
+  convGitRules(second, seenAgain);
+  assert.equal(sent.filter(m => m.type === 'git_commits').length, 1);
+
+  convCommitsReceive({host: 'local', cwd: '/work/a', from: 'a'.repeat(40), to: 'b'.repeat(40),
+                      commits: [{sha: 'd'.repeat(40), subject: 'delete the old lexer'}]});
+  const seenFinal = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seenFinal);
+  assert.match(convGitRules(second, seenFinal).after, /delete the old lexer/);
+  store.herdr_conv_commits = 'off';
+});
+
+test('an empty answer is remembered, so a quiet range is not asked about forever', () => {
+  store.herdr_conv_commits = 'on';
+  sent.length = 0;
+  convCommitsCache.clear();
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'e'.repeat(40)}), seen);
+  convGitRules(entry({branch: 'main', commit: 'f'.repeat(40)}), seen);
+  convCommitsReceive({host: 'local', cwd: '/work/a', from: 'e'.repeat(40), to: 'f'.repeat(40),
+                      commits: []});
+  const again = new Map();
+  convGitRules(entry({branch: 'main', commit: 'e'.repeat(40)}), again);
+  assert.equal(convGitRules(entry({branch: 'main', commit: 'f'.repeat(40)}), again).after, '');
+  assert.equal(sent.filter(m => m.type === 'git_commits').length, 1, 'asked once, answered once');
+  store.herdr_conv_commits = 'off';
+});
+
+test('the first turn of a thread has no range to ask about', () => {
+  // There is no earlier commit, so there is no `from` — and asking for one would be a question
+  // about the whole history of the repository.
+  store.herdr_conv_commits = 'on';
+  sent.length = 0;
+  convCommitsCache.clear();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), new Map());
+  assert.deepEqual(sent.filter(m => m.type === 'git_commits'), []);
+  store.herdr_conv_commits = 'off';
+});
+
+test('a turn with neither a branch nor a commit draws nothing at all', () => {
+  assert.deepEqual(convGitRules(entry({}), new Map()), {before: '', after: ''});
+  assert.deepEqual(convGitRules(null, new Map()), {before: '', after: ''});
+});
+
+test('the toggle is remembered', () => {
+  store.herdr_conv_commits = 'off';
+  assert.equal(convCommitsOn(), false);
+  toggleConvCommits();
+  assert.equal(store.herdr_conv_commits, 'on');
+  assert.equal(convCommitsOn(), true);
+  toggleConvCommits();
+  assert.equal(store.herdr_conv_commits, 'off');
 });

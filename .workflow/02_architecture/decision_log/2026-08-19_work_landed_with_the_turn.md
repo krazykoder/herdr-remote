@@ -50,6 +50,24 @@ which is the decision about the user's data; `git rev-parse` in a directory the 
 recording adds no new category of thing on disk. A feature that has to be found in an environment
 variable before it works is a feature that silently does not.
 
+## Drawn as events, not as labels
+
+A branch is the same for twenty messages in a row. Stamping each of them says nothing a reader
+wants; what they are looking for is the moment it changed, which is one line between two messages.
+So the thread draws `⎇ Branch changed to feat/x` as a rule of the same kind it already uses for a
+break in the recording, and the commits — when the reader switches them on — as a short list where
+they happened, between the message before and the message after.
+
+`conv_query`'s text output does the same, and that is the point rather than a nicety: an
+orchestrator composing a multi-agent conversation reads the record through that formatter, and it
+should be reading the same timeline a person sees. One record, two renderings, the same events.
+
+The commit list is fetched on demand (`git_commits`) rather than stored, so the toggle costs one
+git call per range the reader actually looks at. Two guards make that safe to expose: both ends
+must be shas, since a ref like `--output=x` reaches git's argument parser, and the directory has to
+be one a live pane is open in — otherwise a client could name any path and have the relay read a
+repository the user never pointed it at.
+
 ## What was not built
 
 Commit *contents*: no diffs, no file lists, no stats. A subject and a sha are what a person needs to
