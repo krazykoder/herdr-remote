@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS turns (
 CREATE INDEX IF NOT EXISTS turns_time ON turns(at, id);
 CREATE INDEX IF NOT EXISTS turns_fp   ON turns(host, agent, cwd, at, id);
 CREATE INDEX IF NOT EXISTS turns_pane ON turns(pane_id, at, id);
+CREATE INDEX IF NOT EXISTS turns_host_cwd_time ON turns(host, cwd, at, id);
 """
 
 # Columns added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS, and a record
