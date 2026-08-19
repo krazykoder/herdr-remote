@@ -1900,6 +1900,25 @@ test('a session that has already ended can be added from its recording', async (
     .toContain('ghost');
 });
 
+// "Add pane" has to cover the pane that does not exist yet, or the answer to it is a trip out to
+// Projects and back. The chip opens the same sheet the composer's membership list does.
+test('a pane that is not running yet is added by starting it', async ({page}) => {
+  await openCard(page);
+  await startable(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  const fresh = page.locator('#convView .conv-chip.fresh');
+  await expect(fresh).toHaveText('+ New agent');
+  await fresh.click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+});
+
+// A relay that will not start sessions gets no chip, rather than one that refuses after the tap.
+test('the picker offers no new agent where the relay will not start one', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('#convView .conv-chip.fresh')).toHaveCount(0);
+});
+
 test('the picker names every session the same way, running or recorded', async ({page}) => {
   await openCard(page);
   await page.evaluate(async () => {

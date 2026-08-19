@@ -561,6 +561,12 @@
             ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}` +
             agentBadge(x.agent || '') + '</button>').join('')
         : '<span class="conv-none">Every live pane is already in this conversation.</span>') +
+        // The pane that does not exist yet, offered beside the ones that do. "Add a pane" is one
+        // question, and answering it by sending the reader out to Projects to start a session and
+        // then back in here to join it is the same answer in three steps. The same sheet the
+        // composer's membership list opens, so a new agent is started and joined the one way.
+        (canStartFromConv()
+          ? `<button class="conv-chip fresh" onclick="openNewAgent()">+ New agent</button>` : '') +
         (past.length ? `<span class="conv-pick-head">Recorded</span>` + past.map(r =>
           `<button class="conv-chip past" data-key="${escapeHtml(r.key)}"` +
           ` onclick="convJoinRecord(this.dataset.key)">${escapeHtml(r.label || 'Former pane')}` +

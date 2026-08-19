@@ -3051,6 +3051,15 @@
       gap: 6px;
     }
 
+    /* Every other chip in this row names something that already exists; this one makes one. Dashed
+       and in the same blue every other "+ Start" wears, so it is not read as a pane that happens to
+       be called "New". */
+    .conv-roster-add .conv-chip.fresh {
+      border-style: dashed;
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
     .conv-roster-add .conv-chip.past {
       /* Dimmer than a live pane, and it has to stay legible: this is a real choice, not a disabled
          one. */
