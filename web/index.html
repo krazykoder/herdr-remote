@@ -3310,6 +3310,10 @@
 
     /* One commit. A badge and not a line: they arrive in twos and threes, and three lines of prose
        under every turn is a thread nobody can skim. */
+    /* Neutral fill, agent-coloured text — the same division the branch badge makes. The colour
+       says whose commit it is; the fill stays out of the way, because a wall of washed pills under
+       every turn competes with the bubbles they belong to, and the bubble above has already said
+       whose it is in its own wash. */
     .conv-commit {
       display: inline-flex;
       align-items: baseline;
@@ -3317,9 +3321,9 @@
       max-width: 100%;
       padding: 2px 8px;
       border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--green) 35%, var(--border));
-      background: color-mix(in srgb, var(--green) 9%, transparent);
-      color: var(--muted);
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--muted) 10%, var(--surface));
+      color: color-mix(in srgb, var(--conv-agent, var(--muted)) 75%, var(--text));
       font-size: max(7px, calc(var(--conv-font, 13px) * 0.72));
       line-height: 1.5;
       /* A subject is a line of prose that may be long, and the thread's width is the reader's line
@@ -3327,10 +3331,11 @@
       overflow-wrap: anywhere;
     }
 
+    /* The sha is the identifier and reads at full strength; the subject beside it is prose and is
+       already carrying the colour at three quarters. */
     .conv-commit code {
       flex: none;
-      color: var(--green);
-      opacity: 0.9;
+      color: var(--conv-agent, var(--muted));
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 

@@ -509,6 +509,20 @@ test('the badge is painted in the addressed agent\'s own colour, and asks for no
   assert.deepEqual(sent, []);
 });
 
+test('the commit strip carries the agent colour so its badges can be painted with it', () => {
+  // The strip is a sibling of the bubble, not a child, so it inherits none of the bubble's own
+  // `--conv-agent` — without this the badges fall back to grey text on a grey fill.
+  store.herdr_conv_commits = 'on';
+  const seen = new Map();
+  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
+  const after = convGitRules(entry({
+    branch: 'main', commit: 'b'.repeat(40),
+    commits: [{sha: 'c'.repeat(40), subject: 'one'}],
+  }), seen, '', 'var(--agent-claude)').after;
+  assert.match(after, /style="--conv-agent:var\(--agent-claude\)"/);
+  store.herdr_conv_commits = 'off';
+});
+
 test('the commit strip takes the bubble\'s column', () => {
   // Hung under the bubble, so a two-column thread has to put it under the right one — a strip that
   // ignored the side would sit under the wrong agent's messages in every pair.

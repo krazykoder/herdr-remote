@@ -349,3 +349,33 @@ test('the badge is painted in the addressed agent\u2019s own colour', async ({pa
   expect(painted).not.toBe('');
   expect(painted).not.toBe('rgba(0, 0, 0, 0)');
 });
+
+test('a commit badge is painted in its agent\u2019s colour on a neutral fill', async ({page}) => {
+  // The strip is a sibling of the bubble and inherits nothing from it, which a vm slice cannot
+  // see: it can say the variable was written, only a browser can say it resolved to a colour.
+  await open(page);
+  const key = await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await page.evaluate(() => localStorage.setItem('herdr_conv_commits', 'on'));
+  await receiveTurns(page, key, [
+    {seq: 9001, text: 'Before.', branch: 'main', commit: 'a'.repeat(40)},
+    {seq: 9002, text: 'After.', branch: 'main', commit: 'b'.repeat(40),
+     commits: [{sha: 'c'.repeat(40), subject: 'the one commit'}]},
+  ]);
+  const sha = page.locator('#convThread .conv-commit code').first();
+  await expect(sha).toBeVisible();
+  const paint = await sha.evaluate(el => {
+    const badge = el.closest('.conv-commit');
+    return {sha: getComputedStyle(el).color, fill: getComputedStyle(badge).backgroundColor};
+  });
+  // Claude's own colour, resolved — not the muted fallback the variable falls back to unset.
+  const claude = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--agent-claude').trim());
+  const muted = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim());
+  expect(paint.sha).not.toBe('');
+  expect(paint.sha, 'the sha must not fall back to the muted default').not.toBe(muted);
+  expect(claude, 'the theme has to define the colour for this to mean anything').not.toBe('');
+  // And the fill stays out of the way rather than washing with the same colour.
+  expect(paint.fill).not.toBe(paint.sha);
+});

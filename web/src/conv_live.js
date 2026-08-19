@@ -438,7 +438,7 @@
     // cwd), so the fetched range and the stored one now describe the same window.
     const convGitWhere = e => `${e.host || 'local'}|${e.cwd || ''}`;
 
-    function convGitRules(e, seen, side) {
+    function convGitRules(e, seen, side, color) {
       const none = {before: '', after: ''};
       if (!e || (!e.branch && !e.commit)) return none;
       const key = e.key || '';
@@ -459,7 +459,12 @@
       if (convCommitsOn()) {
         const commits = convCommitsFor(e, there.commit);
         if (commits && commits.length) {
-          after = `<div class="conv-commits${side || ''}">` + commits.map(c =>
+          // The agent's own colour, carried on the strip rather than on each badge: the strip is a
+          // sibling of the bubble and not a child of it, so it inherits nothing from the bubble's
+          // own `--conv-agent`. The fill stays neutral — a wall of washed pills under every turn
+          // competes with the bubbles, and the colour has already been said by the bubble above.
+          after = `<div class="conv-commits${side || ''}"` +
+            `${color ? ` style="--conv-agent:${color}"` : ''}>` + commits.map(c =>
             `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
             `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code>` +
             `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;
