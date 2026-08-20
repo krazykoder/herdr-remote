@@ -345,7 +345,30 @@
       return `[#${seq} ${from ? from + ': ' : ''}${said.length > 40 ? said.slice(0, 40) + '…' : said}]`;
     }
 
-    // Written in at the caret, on its own line, with the caret left after it — the sketch is
+    // Where the thread has a quote *now*, rather than where it was when it was tapped. The thread
+    // re-renders under the composer while it is being written in, and a position remembered at tap
+    // time can be a different message by the time the next one is picked. A quote whose bubble has
+    // gone sorts last, which leaves the tokens still in the thread in their own order.
+    function dockQuoteAt(text) {
+      const el = Array.from(document.querySelectorAll('#convViewThread .conv-msg'))
+        .find(m => (m.dataset.text || '') === text);
+      return el ? Number(el.dataset.i) : Infinity;
+    }
+
+    // A new token goes in front of the first one already in the box that the thread says later —
+    // so the quotes read in the order they were said, whatever order they were tapped in. Three
+    // bubbles picked bottom-up are still one exchange, and an agent handed them reversed is being
+    // told a different conversation. With nothing later than it, it lands at the caret, which is
+    // what makes the common case — reading down, picking as you go — write at the end as before.
+    function dockTokenSpot(input, i) {
+      for (const m of input.value.matchAll(DOCK_TOKEN)) {
+        const q = dockTokens.get(Number(m[1]));
+        if (q && dockQuoteAt(q.text) > i) return m.index;
+      }
+      return input.selectionStart == null ? input.value.length : input.selectionStart;
+    }
+
+    // Written in on its own line, with the caret left after it — the sketch is
     // `[#1 …] - what I want done with it`, so the note the reader is about to type follows the
     // token rather than being pushed onto another line by the app.
     function toggleConvDockPick(i) {
@@ -365,10 +388,13 @@
       } else {
         const seq = ++dockTokenSeq;
         dockTokens.set(seq, {text, key: el.dataset.key || ''});
-        const at = input.selectionStart == null ? input.value.length : input.selectionStart;
+        const at = dockTokenSpot(input, i);
         const before = input.value.slice(0, at), after = input.value.slice(at);
+        // A line of its own at both ends now that a token can land in front of another one:
+        // appended at the caret there was never anything after it to run into.
         const token = (before && !before.endsWith('\n') ? '\n' : '') +
-          dockTokenText(seq, text, el.dataset.who);
+          dockTokenText(seq, text, el.dataset.who) +
+          (after && !after.startsWith('\n') ? '\n' : '');
         input.value = before + token + after;
         input.selectionStart = input.selectionEnd = (before + token).length;
       }

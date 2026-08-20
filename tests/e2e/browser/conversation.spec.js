@@ -3457,6 +3457,31 @@ test('no chip sends the payload with no instruction', async ({page}) => {
   expect(body).not.toContain('Review, edit, fix');
 });
 
+// Tapped in whatever order the eye found them, written in the order the thread said them.
+test('quotes are written in thread order, whichever order they were tapped in', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  const said = await page.evaluate(() => [...document.querySelectorAll('#convViewThread .conv-msg')]
+    .map(m => m.dataset.text));
+  expect(said.length).toBeGreaterThan(1);
+
+  // Picked bottom-up, which is what reading back through a thread does.
+  await pickBubble(page, said[said.length - 1]);
+  await pickBubble(page, said[0]);
+
+  const value = await page.locator('#convInput').inputValue();
+  const at = t => value.indexOf(t.slice(0, 20));
+  expect(at(said[0])).toBeGreaterThan(-1);
+  expect(at(said[0])).toBeLessThan(at(said[said.length - 1]));
+  // And the send carries that order, because the box is what it is built from.
+  await sendPicked(page);
+  const body = await sentBody(page);
+  expect(body.indexOf(said[0])).toBeLessThan(body.indexOf(said[said.length - 1]));
+});
+
 test('chips add up, in the order they were tapped', async ({page}) => {
   await open(page);
   await joinBoth(page);
