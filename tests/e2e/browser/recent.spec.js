@@ -45,7 +45,7 @@ test('the button is in the last row of every view', async ({page}) => {
       members: [{key, added: 1, label: 'Architect 1'}]}]);
   });
   await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
   await expect(page.locator('#convView')).toBeVisible();
   await expect(btn).toBeVisible();
   // Settings, which is a panel over everything else.
@@ -95,7 +95,7 @@ test('a conversation visited is in the same list, in the same order', async ({pa
       members: [{key, added: 1, label: 'Architect 1'}]}]);
   });
   await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
   await expect(page.locator('#convView')).toBeVisible();
   await page.locator('#statusBar .recent-btn').click();
   // The conversation was the last thing opened, so it is first — above the pane that was open
