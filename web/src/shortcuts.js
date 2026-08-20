@@ -91,10 +91,10 @@
 
     // --- The terminal's own history, floating over the pane ---
     //
-    // Over the pane and not in the $ palette, because the two answer different questions. The
-    // palette is a decision — which of my saved commands do I want — and it covers the screen to
-    // ask it. This is a glance at what was just run, and covering the terminal to see what was
-    // typed into it defeats the reason for looking.
+    // A disclosure in the pane's floating row, not the $ palette, because the two answer
+    // different questions. The palette is a decision — which of my saved commands do I want — and
+    // it covers the screen to ask it. This is a glance at what was just run, and covering the
+    // terminal to see what was typed into it defeats the reason for looking.
     //
     // Open or shut is remembered globally rather than per pane: it is a preference about how much
     // of the terminal the reader wants covered, and it does not change because they switched
@@ -174,8 +174,9 @@
           <button class="hist-x" onclick="deleteTermCommand(${i})"
             aria-label="Forget this command">&times;</button>
         </div>`).join('');
-      // Newest is at the bottom and the list grows upward, so the end is what an opening list
-      // should be showing — a scrollTop of 0 would open it on the oldest thing in it.
+      // Newest is at the bottom, so a list long enough to scroll opens on the end of itself: the
+      // command most likely to be wanted again is the one just run, and a scrollTop of 0 would
+      // open on the oldest thing in it.
       list.scrollTop = list.scrollHeight;
     }
 
