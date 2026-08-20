@@ -80,6 +80,44 @@ test('a pair named in one browser reaches a browser that has never seen it',
   await fresh.context.close();
 });
 
+// The auto conversations the app files for live panes are state like any other — and they are the
+// one kind this app *manufactures*. A browser that has never connected reads an empty index, and
+// filing every live pane against that emptiness produces a document it then defends: an edit made
+// before the first answer is deliberately not adopted over, because it is normally the user typing
+// while the answer is in flight. So the new browser's fabricated index won, and every conversation
+// every other browser had was replaced by a fresh one with a new id — same names, no history, and
+// every `conv_view` pointer dangling.
+const convIds = page => page.evaluate(() => {
+  try { return (JSON.parse(localStorage.getItem('herdr_conversations') || '{}').items || [])
+    .map(c => c.id).sort(); }
+  catch (e) { return []; }
+});
+
+test('a browser that has never connected adopts the conversations rather than minting its own',
+     async ({page, browser, relayURL}) => {
+  await connected(page);
+  await synced(page);
+  // The fake herdr's panes, filed automatically — two of them, since `amp` is deliberately an
+  // agent this app ships no profile for.
+  await expect.poll(() => convIds(page)).toHaveLength(2);
+  const mine = await convIds(page);
+  // And on the relay before the second browser asks for it. The write is debounced, and a browser
+  // that connects inside that window is answered "nothing here" — which is a real empty index and
+  // not the case under test.
+  await expect.poll(() => page.evaluate(() => stateRev.conversations)).toBeGreaterThan(0);
+
+  const fresh = await otherBrowser(browser, relayURL);
+  // Long enough for several agent snapshots: the mint rides on one, so "it did not happen" has to
+  // outlast more than the first.
+  await fresh.page.waitForTimeout(3000);
+  expect(await convIds(fresh.page), 'the second browser minted its own set').toEqual(mine);
+
+  // And the first browser still has what it had. This is the half that made the bug destructive
+  // rather than merely wasteful: the fabricated index was written back over the shared one.
+  expect(await convIds(page)).toEqual(mine);
+  await fresh.context.close();
+});
+
 test('a rename in one browser lands in another that is already open',
      async ({page, browser, relayURL}) => {
   const other = await otherBrowser(browser, relayURL);
@@ -149,7 +187,9 @@ test('the relay refuses the second write at a revision and hands back the winner
     const real = ws.onmessage;
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
-      if (m.type === 'state_ack' || m.type === 'state_conflict') seen.push(m);
+      // This document only: the app files auto conversations of its own once the index has
+      // arrived, and that write's ack is not part of the race being forced here.
+      if ((m.type === 'state_ack' || m.type === 'state_conflict') && m.name === 'pairs') seen.push(m);
       return real(e);
     };
     const rev = stateRev.pairs;

@@ -232,6 +232,13 @@
       }
       // Edits made while the answer was in the air, plus anything the seed decided to upload.
       for (const name of Array.from(stateDirty)) stateSyncFlush(name);
+      // And the work that was held back until the index was real. A pane the relay's index has
+      // never heard of still deserves a conversation — it just has to be decided against the
+      // adopted document rather than against an empty one.
+      if (first) {
+        try { if (typeof convAutoJoin === 'function') convAutoJoin(); }
+        catch (e) { /* the view is not loaded (vm slice), or not up yet */ }
+      }
     }
 
     function stateSyncAck(msg) {
@@ -256,6 +263,15 @@
       stateSyncApply(name, msg.body == null ? null : msg.body);
     }
 
+    // Whether the first answer is still in the air. The app must not *invent* a document while
+    // this is true: a browser that has never connected reads its own empty localStorage, and
+    // anything built from that emptiness — an auto conversation per live pane, say — is then a
+    // local edit, which the dirty branch in stateSyncReceive protects from being adopted over.
+    // The result is a new browser overwriting the shared index with a fabricated copy of it.
+    // Editing is still fine here; what is not fine is manufacturing state from an absence that is
+    // about to be filled.
+    function stateSyncPending() { return stateMode === 'pulling'; }
+
     // A relay older than this client answers state_get with its unknown-message-type error. That is
     // a fact about the relay, not a failure to put in front of the user — swallow it once, run
     // local-only for the life of this socket, and never send a state_put it cannot answer.
@@ -275,3 +291,4 @@
     window.stateSyncAck = stateSyncAck;
     window.stateSyncConflict = stateSyncConflict;
     window.stateSyncNoteError = stateSyncNoteError;
+    window.stateSyncPending = stateSyncPending;

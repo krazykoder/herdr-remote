@@ -240,13 +240,24 @@
 
     function convAutoJoin() {
       if (!convAutoOn() || !agents.length) return;
+      // Not before the relay has answered with the shared index. A browser that has never
+      // connected reads an empty one, and filing every live pane against that emptiness mints a
+      // duplicate of a conversation the relay is about to hand over — which then wins, because a
+      // document edited before the answer arrives is not adopted over. That is one new browser
+      // replacing every conversation every other browser had. stateSyncReceive calls this again
+      // once the index is real.
+      if (typeof stateSyncPending === 'function' && stateSyncPending()) return;
       const seen = convAutoSeen(), had = new Set(seen);
+      const items = loadConvIndex();
+      // A pane the index already files is not fresh, whoever filed it. The seen list is this
+      // browser's own memory and a second browser has none of it, so membership is what survives
+      // being handed an index built somewhere else.
+      for (const c of items) for (const m of (c && c.members) || []) if (m && m.key) had.add(m.key);
       // Only a pane an agent is running in has messages to record — the same gate the menu item
       // uses, so a harness the app cannot read is not filed under a record it can never write to.
       const fresh = agents.filter(a => convMemberKey(a) && !had.has(convMemberKey(a))
         && profileFor(a.agent));
       if (!fresh.length) return;
-      const items = loadConvIndex();
       const added = fresh.map(a => {
         const conv = {
           id: 'c_' + Math.random().toString(36).slice(2, 10),

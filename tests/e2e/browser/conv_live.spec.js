@@ -381,21 +381,20 @@ test('the commit strip does not claim the turn\u2019s agent made the commits', a
     probe.remove();
     return out;
   });
-  const paint = await strip.locator('.conv-commit code').first()
-    .evaluate(el => getComputedStyle(el).color);
   expect(claude.agent, 'the theme has to define the colour for this to mean anything').not.toBe('');
-  expect(paint, 'the sha must not be painted in the speaking agent\u2019s colour')
+  expect(claude.muted, 'and the muted one, which is what it must be painted in instead')
     .not.toBe(claude.agent);
-  expect(paint).toBe(claude.muted);
+  // toHaveCSS rather than one evaluate: the thread re-renders on every snapshot, and a node read
+  // through a handle that a redraw has replaced answers every computed property with an empty
+  // string — which is a flake, not a finding. These re-resolve the locator until it settles.
+  await expect(strip.locator('.conv-commit code').first(),
+    'the sha must not be painted in the speaking agent\u2019s colour')
+    .toHaveCSS('color', claude.muted);
 
   // And it does not sit against the bubble it follows: full width, centred, so it reads as a rule
   // across the thread like the branch line above it.
-  const box = await strip.evaluate(el => {
-    const s = getComputedStyle(el);
-    return {self: s.alignSelf, justify: s.justifyContent};
-  });
-  expect(box.self).toBe('center');
-  expect(box.justify).toBe('center');
+  await expect(strip).toHaveCSS('align-self', 'center');
+  await expect(strip).toHaveCSS('justify-content', 'center');
 });
 
 // The point of keeping it: the record is on this device, so a reload does not re-ask for a window
