@@ -38,6 +38,9 @@ const fakeNode = () => ({
 // The roster the badge resolves a pane id against, and who the composer is pointed at.
 const panes = {};
 let addressed = '';
+let recentIndex = [];
+const noted = [];
+let hangs = 0;
 
 const ctx = vm.createContext({
   console,
@@ -47,22 +50,31 @@ const ctx = vm.createContext({
   activePane: '',
   localStorage: {getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }},
   ws: {readyState: 1, send: s => sent.push(JSON.parse(s))},
-  renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => {}, showToast: () => {},
+  renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => { hangs++; }, showToast: () => {},
+  // The pill's own lapse timer. Never fired here — a test that wants the lapse moves the clock
+  // instead, which is the thing convLiveSyncing actually reads.
+  setTimeout: () => 0,
   escapeHtml: s => String(s),
   agentColor: agent => `var(--${agent || 'muted'})`,
   // The roster key builder, in the one spelling the rest of the app uses.
   convMemberKey: a => JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']),
+  loadConvIndex: () => recentIndex,
+  convNoteLiveCounts: keys => noted.push(keys),
   // The live roster. A row is scoped to a pane by who is on it, so the tests below set it.
   agents: [],
 });
 
-const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
+const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate', 'convLiveWarmRecent',
+               'convLiveSyncing', 'convLiveNoteError', 'convLiveAskDone', 'CONV_LIVE_ASK_TIMEOUT',
+               'convLiveOlder', 'convLiveCanLoadOlder', 'convOlderHtml', 'CONV_LIVE_DEEP_MAX',
                'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules', 'convLiveHydrate',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'syncBranchBadge', 'syncBranchBadges',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
+const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate, convLiveWarmRecent,
+       convLiveSyncing, convLiveNoteError, convLiveAskDone, CONV_LIVE_ASK_TIMEOUT,
+       convLiveOlder, convLiveCanLoadOlder, convOlderHtml, CONV_LIVE_DEEP_MAX,
        convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules, convLiveHydrate,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        syncBranchBadge, syncBranchBadges,
@@ -80,10 +92,29 @@ const turn = (seq, fp, at, text) => ({
 
 function reset(roster) {
   sent.length = 0;
+  // The tests above ask the relay plenty and answer almost none of it, which is fine for what they
+  // check and would leave the pill lit for whoever runs next.
+  convLiveAskDone(true);
+  noted.length = 0;
   convLiveCache.clear();
   ctx.agents.length = 0;
   for (const a of (roster || [])) ctx.agents.push(a);
 }
+
+test('startup warms only the five most-recent conversations even with live view off', async () => {
+  await convLiveHydrate();
+  reset();
+  store.herdr_conv_live = 'off';
+  recentIndex = Array.from({length: 6}, (_, i) => ({
+    created: i, members: [{key: JSON.stringify(['local', `%${i}`, 'claude', `/work/${i}`]), seen: i}],
+  }));
+  convLiveWarmRecent();
+  assert.equal(sent.length, 1);
+  assert.equal(asked().fingerprints.length, 5);
+  assert.deepEqual(asked().fingerprints.map(fp => fp[2]),
+                   ['/work/5', '/work/4', '/work/3', '/work/2', '/work/1']);
+  store.herdr_conv_live = 'on';
+});
 
 // The question the block last put on the wire.
 const asked = () => sent[sent.length - 1];
@@ -108,6 +139,7 @@ test('a pane the answer said nothing about is still current through it', () => {
   convLiveInvalidate();
   convLiveFetch([KEY_A, KEY_B]);
   assert.equal(asked().since_id, 7, 'a quiet pane must not drag the roster back to a full window');
+  assert.deepEqual(noted.at(-1), [KEY_A, KEY_B], 'every relay answer refreshes the landing metadata');
 });
 
 test('a member joining a roster makes the question whole again', () => {
@@ -293,6 +325,78 @@ test('a commits field that is not a list is not trusted', () => {
   assert.deepEqual(convLiveEntries([KEY_A])[0].commits, []);
 });
 
+// --- One fingerprint, several panes ---
+//
+// A fingerprint is `[host, agent, cwd]`, and that is deliberate: it is what survives herdr
+// renumbering every pane on restart. It is also not a pane. Four claude sessions in one repository
+// are one fingerprint, and the relay answers a fingerprint with the newest 200 rows across all of
+// them — cut further by a byte bound. Whoever spoke most recently takes the window, and a pane with
+// its own long history renders a handful of rows while the record holds hundreds.
+
+// KEY_A2 and paneTurn above are the second pane sharing FP_A's agent and directory: same
+// fingerprint, one pane apart, which is the whole subject of this section.
+
+test('an answer that did not fit is asked again for each pane the roster names', () => {
+  reset();
+  convLiveFetch([KEY_A, KEY_A2]);
+  const roster = asked();
+  assert.deepEqual(new Set(roster.fingerprints.map(f => f.join('|'))),
+                   new Set([FP_A.join('|')]), 'both members are one fingerprint');
+  assert.equal(roster.pane, undefined, 'the roster question is not scoped to a pane');
+
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(1, '%9', 100, 'the busy neighbour')],
+                   fingerprints: [FP_A], truncated: true});
+  assert.deepEqual(sent.map(m => m.pane), ['%1', '%9'],
+                   'each pane gets a window of its own');
+  for (const m of sent) assert.deepEqual(m.fingerprints, [FP_A]);
+});
+
+test('an answer that fitted is not asked again', () => {
+  reset();
+  convLiveFetch([KEY_A, KEY_A2]);
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(1, '%1', 100, 'all of it')], fingerprints: [FP_A]});
+  assert.deepEqual(sent, [], 'nothing was left out, so there is nothing narrower to ask');
+});
+
+test('a pane-scoped answer does not stand as the fingerprint’s watermark', () => {
+  // The bug this guards: the narrow answer carries one pane's rows, and its highest id taken as
+  // the watermark would tell the next delta that every other pane sharing the fingerprint is
+  // current through an id it was never asked about. Their turns would never arrive again.
+  reset();
+  convLiveFetch([KEY_A]);
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(9, '%1', 100, 'narrow')], fingerprints: [FP_A], pane: '%1'});
+  convLiveInvalidate();
+  convLiveFetch([KEY_A], true);
+  assert.equal(asked().since_id, undefined);
+
+  // And the roster answer that does settle it is the one with no pane on it.
+  convLiveReceive({turns: [paneTurn(9, '%1', 100, 'narrow')], fingerprints: [FP_A]});
+  convLiveInvalidate();
+  convLiveFetch([KEY_A]);
+  assert.equal(asked().since_id, 9);
+});
+
+test('the ceiling is counted per pane, not over the fingerprint', () => {
+  // Over the fingerprint, the busiest pane evicts the quiet one down to nothing: the reader opens
+  // a pane with a long history behind it and is shown whatever is left after its neighbours took
+  // their share of one number.
+  // Both panes live, so each row is claimed by the pane that made it — the inheritance rule that
+  // hands an ended pane's rows to whoever holds the fingerprint is a different question.
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  const turns = [];
+  for (let i = 1; i <= CONV_LIVE_ROWS; i++) turns.push(paneTurn(i, '%1', i, 'mine ' + i));
+  for (let i = 1; i <= CONV_LIVE_ROWS; i++) {
+    turns.push(paneTurn(CONV_LIVE_ROWS + i, '%9', CONV_LIVE_ROWS + i, 'theirs ' + i));
+  }
+  convLiveReceive({turns, fingerprints: [FP_A]});
+  assert.equal(convLiveEntries([KEY_A]).length, CONV_LIVE_ROWS,
+               'the quiet pane keeps its own window');
+  assert.equal(convLiveEntries([KEY_A2]).length, CONV_LIVE_ROWS);
+});
 
 // --- Branch changes and commits, as events in the thread ---
 //
@@ -568,4 +672,231 @@ test('each member is still introduced by its own branch', () => {
   const other = convGitRules({...shared, key: KEY_B, branch: 'main', commit: 'a'.repeat(40)}, seen);
   assert.match(first.before, /main/);
   assert.match(other.before, /main/, 'the second member has not been introduced yet');
+});
+
+// --- "Syncing…", said only while a question is in the air ---
+//
+// The pill is the only thing telling a reader that a short thread is short because the answer has
+// not landed yet. Two ways to get it wrong, and both leave it lying: a counter that never comes
+// back down keeps it lit over a thread that is finished, and one that comes down on the first
+// answer of a refill puts it out while several panes are still outstanding.
+
+test('a question in the air is syncing; its answer settles it', async () => {
+  await convLiveHydrate();
+  reset();
+  assert.equal(convLiveSyncing(), false, 'nothing asked, nothing said');
+  convLiveFetch([KEY_A, KEY_B]);
+  assert.equal(convLiveSyncing(), true);
+  convLiveReceive({fingerprints: [FP_A, FP_B], turns: []});
+  assert.equal(convLiveSyncing(), false);
+});
+
+test('a refill is several questions, and each of them has to be answered', async () => {
+  await convLiveHydrate();
+  // Two panes of one agent in one directory: one fingerprint, so a truncated roster answer is
+  // asked again once per pane.
+  const paneA = JSON.stringify(['local', '%1', 'claude', '/work/a']);
+  const paneB = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([paneA, paneB]);
+  convLiveReceive({fingerprints: [FP_A], turns: [], truncated: true});
+  const refills = sent.filter(m => m.pane);
+  assert.equal(refills.length, 2, 'one narrowed question per pane');
+  assert.equal(convLiveSyncing(), true, 'the roster answer settled itself and opened two more');
+
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', turns: []});
+  assert.equal(convLiveSyncing(), true, 'the second pane is still outstanding');
+  convLiveReceive({fingerprints: [FP_A], pane: '%9', turns: []});
+  assert.equal(convLiveSyncing(), false);
+});
+
+test('an answer that never comes lets it go out on its own', async () => {
+  await convLiveHydrate();
+  reset();
+  convLiveFetch([KEY_A]);
+  assert.equal(convLiveSyncing(), true);
+  // The socket died with the question in it. Nothing will ever answer, and a pill lit forever is
+  // worse than no pill at all.
+  vm.runInContext('convLiveAskedAt = Date.now() - CONV_LIVE_ASK_TIMEOUT - 1;', ctx);
+  assert.equal(convLiveSyncing(), false);
+  assert.equal(convLiveSyncing(), false, 'and it stays out');
+});
+
+test('the record being off answers every outstanding question at once', async () => {
+  await convLiveHydrate();
+  reset();
+  convLiveFetch([KEY_A, KEY_B]);
+  assert.equal(convLiveSyncing(), true);
+  convLiveNoteError('conversation log is off');
+  assert.equal(convLiveSyncing(), false,
+               'no answer is coming for any of them, and the thread says why instead');
+});
+
+// --- Walking one thread backwards, by hand ---
+//
+// Everything else here goes forwards. This is the only question that does not, and it is the one
+// with the most ways to look like it worked while doing nothing:
+//
+//   - the trim keeps the newest window a pane, so rows fetched from *before* it are discarded on
+//     the tick they arrive unless the ceiling was raised first;
+//   - a backfill's highest id is older than the bucket's watermark, so taken as one it winds the
+//     bucket backwards and the next delta re-fetches everything in between;
+//   - a joint thread's members do not share an oldest row, so one question over the roster hands
+//     most of them a window they already hold.
+
+// A pane with more turns than one window, so there is something behind the window to walk into.
+const deepTurns = (n, from) => Array.from({length: n}, (_, i) =>
+  turn(from + i, FP_A, 1000 + (from + i), `turn ${from + i}`));
+
+test('the oldest window is asked for by the oldest row on hand, and kept when it lands', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  // The newest window. seq 801..1000, so 800 and below are behind it.
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801), truncated: true});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS);
+  assert.equal(convLiveCanLoadOlder([KEY_A]), true);
+
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A]), 1);
+  const back = asked();
+  assert.equal(back.until_id, 801, 'the window before the oldest row this browser holds');
+  assert.equal(back.pane, '%1', 'pane-scoped: an oldest row belongs to a pane, not to a roster');
+  assert.equal(back.since_id, undefined, 'a walk back is not a delta');
+
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS * 2,
+               'the ceiling was raised before the answer, so the rows were not trimmed away');
+  assert.equal(bucket.turns[0].seq, 601, 'and they went in at the old end');
+});
+
+test('a walk back never becomes the watermark', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.syncedTo, 1000);
+
+  convLiveOlder([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  assert.equal(bucket.syncedTo, 1000,
+               'an older window says nothing about what is new, and winding this back would '
+               + 'make the next delta re-fetch every turn in between');
+});
+
+test('the record having nothing older ends the walk rather than repeating it', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(10, 1)});
+  assert.equal(convLiveCanLoadOlder([KEY_A]), true);
+
+  convLiveOlder([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 1, turns: []});
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false, 'there is nothing behind the start');
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A]), 0, 'and the question is not asked again');
+  assert.equal(sent.length, 0);
+  assert.match(convOlderHtml([KEY_A]), /start of the relay/);
+});
+
+test('a respawn walks the old physical pane while keeping the new member as owner', async () => {
+  await convLiveHydrate();
+  const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([fresh], true);
+  // The roster query attaches unclaimed %1 history to its %9 respawn.
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  sent.length = 0;
+  assert.equal(convLiveOlder([fresh]), 1);
+  const back = asked();
+  assert.equal(back.pane, '%1');
+  assert.equal(back.owner_pane, '%9');
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', owner_pane: '%9', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS * 2);
+  assert.equal(convLiveEntries([fresh])[0].text, 'turn 601');
+  // The end result belongs to the current member, not the old, dead physical pane.
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', owner_pane: '%9', until_id: 601, turns: []});
+  assert.equal(convLiveCanLoadOlder([fresh]), false);
+});
+
+test('a relay too old to echo the owner still ends the walk in the right place', async () => {
+  // The page is deployed separately from the relay and can be any age relative to it, so an answer
+  // carrying `pane` and no `owner_pane` is an ordinary case and not a broken one. Marking the dead
+  // physical pane as ended would leave the member's button up over a record with nothing behind it.
+  await convLiveHydrate();
+  const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([fresh], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  convLiveOlder([fresh]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801, turns: []});
+  assert.equal(convLiveCanLoadOlder([fresh]), false);
+  assert.match(convOlderHtml([fresh]), /start of the relay/);
+});
+
+test('the walk stops at the ceiling this device keeps', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  let top = 100000;
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, top)});
+  // Walk until it refuses. Every answer is a full window, so nothing but the ceiling can stop it.
+  let presses = 0;
+  while (convLiveOlder([KEY_A])) {
+    presses++;
+    assert.ok(presses <= 50, 'the walk must terminate');
+    const until = asked().until_id;
+    convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: until,
+                     turns: deepTurns(CONV_LIVE_ROWS, until - CONV_LIVE_ROWS)});
+  }
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_DEEP_MAX);
+  assert.equal(presses, CONV_LIVE_DEEP_MAX / CONV_LIVE_ROWS - 1);
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  assert.match(convOlderHtml([KEY_A]), /As far back as this device keeps/);
+});
+
+test('a joint thread asks once per member, each from its own oldest row', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%2', agent: 'codex', cwd: '/work/b'}]);
+  convLiveFetch([KEY_A, KEY_B], true);
+  convLiveReceive({fingerprints: [FP_A, FP_B],
+                   turns: [turn(400, FP_A, 4000, 'a'), turn(900, FP_B, 9000, 'b')]});
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A, KEY_B]), 2);
+  const asks = sent.filter(m => m.until_id != null);
+  assert.deepEqual(asks.map(m => [m.pane, m.until_id]).sort(),
+                   [['%1', 400], ['%2', 900]],
+                   'one bound over both would hand the newer member a window it already holds');
+});
+
+test('nothing is offered before the relay has answered at all', async () => {
+  await convLiveHydrate();
+  reset();
+  assert.equal(convOlderHtml([KEY_A]), '', 'an unanswered thread is not one with older messages');
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: []});
+  assert.equal(convOlderHtml([KEY_A]), '',
+               'and an empty record has no window behind it either');
+});
+
+test('the walk is not offered over this browser’s own transcript', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  store.herdr_conv_live = 'off';
+  assert.equal(convOlderHtml([KEY_A]), '', 'the local transcript is not the relay’s record');
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  store.herdr_conv_live = 'on';
 });
