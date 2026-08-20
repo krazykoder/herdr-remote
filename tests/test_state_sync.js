@@ -18,9 +18,9 @@ const vm = require('node:vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'state_sync.js'), 'utf8');
 
-const NAMES = ['stateSyncPlan', 'STATE_DOCS', 'STATE_DEBOUNCE', 'stateSyncOpen', 'stateSyncClose',
-               'stateSyncMark', 'stateSyncReceive', 'stateSyncAck', 'stateSyncConflict',
-               'stateSyncNoteError', 'stateSyncFlushAll'];
+const NAMES = ['stateSyncPlan', 'stateMerge', 'STATE_DOCS', 'STATE_DEBOUNCE', 'stateSyncOpen',
+               'stateSyncClose', 'stateSyncMark', 'stateSyncReceive', 'stateSyncAck',
+               'stateSyncConflict', 'stateSyncNoteError', 'stateSyncFlushAll'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
 
@@ -105,11 +105,80 @@ test('nothing outside the allowlist is ever read or written', () => {
 
 // --- the seeding decision ---------------------------------------------------
 
-test('stateSyncPlan: the relay holding a document always wins', () => {
+test('stateSyncPlan: a browser with nothing downloads, a browser with something extends', () => {
   const {stateSyncPlan} = boot();
-  assert.equal(stateSyncPlan(3, '{"a":1}', null), 'adopt');
-  assert.equal(stateSyncPlan(3, '{"a":1}', '{"b":2}'), 'adopt');
+  assert.equal(stateSyncPlan(3, '{"a":1}', null), 'adopt', 'nothing to extend from');
+  assert.equal(stateSyncPlan(3, '{"a":1}', '{"b":2}'), 'merge');
   assert.equal(stateSyncPlan(3, '{"a":1}', '{"a":1}'), 'idle', 'agreement is not a change');
+});
+
+// The union of two lists of id'd objects, and of two maps. Every case here is a way the old
+// 'adopt' verdict threw one side away.
+const convDoc = (...ids) =>
+  JSON.stringify({version: 1, items: ids.map(id => ({id: id, name: id, members: []}))});
+const convIdsOf = body => JSON.parse(body).items.map(c => c.id);
+
+test('stateMerge: an entry only this browser has is added, never allowed to replace one', () => {
+  const {stateMerge} = boot();
+  const merged = stateMerge('conversations', convDoc('shared', 'both'), convDoc('both', 'mine'));
+  assert.deepEqual(convIdsOf(merged), ['shared', 'both', 'mine']);
+  // The relay's copy of a shared id is the one kept: it is what every other browser is reading.
+  assert.equal(JSON.parse(merged).items.find(c => c.id === 'both').name, 'both');
+});
+
+test('stateMerge: a local document that adds nothing produces no write', () => {
+  const {stateMerge} = boot();
+  const server = convDoc('a', 'b');
+  assert.equal(stateMerge('conversations', server, convDoc('a')), server,
+               'a subset must come back as the relay body itself, so the caller sends nothing');
+});
+
+test('stateMerge: pairs merge under their own key, and maps merge by key', () => {
+  const {stateMerge} = boot();
+  const pairsDoc = (...ids) => JSON.stringify({version: 1, pairs: ids.map(id => ({id: id}))});
+  assert.deepEqual(JSON.parse(stateMerge('pairs', pairsDoc('p1'), pairsDoc('p2'))).pairs,
+                   [{id: 'p1'}, {id: 'p2'}]);
+  assert.deepEqual(
+    JSON.parse(stateMerge('conv_view', '{"a":"c1"}', '{"a":"mine","b":"c2"}')),
+    {a: 'c1', b: 'c2'}, 'the relay wins the key both hold, and ours is added');
+});
+
+test('stateMerge: anything it cannot read safely comes back null, so the relay wins whole', () => {
+  const {stateMerge} = boot();
+  assert.equal(stateMerge('conversations', 'not json', convDoc('a')), null);
+  assert.equal(stateMerge('conversations', convDoc('a'), '[1,2]'), null, 'wrong shape');
+  assert.equal(stateMerge('conv_view', '[1]', '{"a":1}'), null, 'a map document that is an array');
+  assert.equal(stateMerge('pairs', null, '{}'), null);
+  assert.equal(stateMerge('nope', '{}', '{}'), null, 'a name with no declared shape');
+});
+
+test('stateMerge: the side that just typed wins an id both hold', () => {
+  const {stateMerge} = boot();
+  const server = JSON.stringify({version: 1, items: [{id: 'c1', name: 'theirs'}]});
+  const local = JSON.stringify({version: 1, items: [{id: 'c1', name: 'mine'}, {id: 'c2'}]});
+  assert.equal(JSON.parse(stateMerge('conversations', server, local, true)).items[0].name, 'mine');
+  assert.equal(JSON.parse(stateMerge('conversations', server, local, false)).items[0].name,
+               'theirs');
+  // Either way both rows survive; only which copy of c1 is kept changes.
+  for (const mine of [true, false]) {
+    assert.deepEqual(convIdsOf(stateMerge('conversations', server, local, mine)).sort(),
+                     ['c1', 'c2']);
+  }
+});
+
+test('stateMerge: a body that already contains the other comes back unchanged', () => {
+  const {stateMerge} = boot();
+  const local = convDoc('a', 'b');
+  assert.equal(stateMerge('conversations', convDoc('a'), local, true), local,
+               'ours is a superset, so there is nothing to build');
+  assert.equal(stateMerge('conv_view', '{"a":1}', '{"a":2,"b":3}', true), '{"a":2,"b":3}');
+});
+
+test('stateMerge: an entry with no id is not carried over', () => {
+  const {stateMerge} = boot();
+  const local = JSON.stringify({version: 1, items: [{name: 'no id here'}]});
+  assert.equal(stateMerge('conversations', convDoc('a'), local), convDoc('a'),
+               'an id-less row cannot be deduplicated, so it would double on every connect');
 });
 
 test('stateSyncPlan: an empty relay is seeded by whoever has something', () => {

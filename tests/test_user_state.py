@@ -10,7 +10,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "relay"))
 
-from user_state import Conflict, DOC_NAMES, MAX_BODY, UserState  # noqa: E402
+from user_state import (Conflict, DOC_NAMES, HISTORY_KEEP, MAX_BODY,  # noqa: E402
+                        UserState)
 
 
 class UserStateTest(unittest.TestCase):
@@ -134,6 +135,84 @@ class UserStateTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(revs), len(set(revs)), f"a revision was handed out twice: {revs}")
         self.assertEqual(self.s.get(["pairs"])["pairs"]["rev"], max(revs))
+
+
+class HistoryTest(unittest.TestCase):
+    """What makes an overwrite survivable.
+
+    `docs` is one row per name, so a client that writes the wrong document destroys the right one.
+    That happened: a browser filed its own conversation index over the shared one and took every
+    name the user had typed with it. Nothing in this file existed to get them back.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.s = UserState(os.path.join(self.dir.name, "state.sqlite3"))
+        self.addCleanup(self.dir.cleanup)
+        self.addCleanup(self.s.close)
+
+    def test_every_revision_is_kept_newest_first(self):
+        for i in range(3):
+            self.s.put("conversations", i, f'{{"items":[{i}]}}')
+        self.assertEqual([h["rev"] for h in self.s.history("conversations")], [3, 2, 1])
+        self.assertEqual(self.s.body_at("conversations", 1), '{"items":[0]}')
+
+    def test_an_overwrite_leaves_the_replaced_body_readable(self):
+        self.s.put("conversations", 0, '{"items":["named"]}')
+        self.s.put("conversations", 1, '{"items":["fabricated"]}')
+        self.assertEqual(self.s.body_at("conversations", 1), '{"items":["named"]}')
+
+    def test_restore_puts_an_old_body_back_as_a_new_revision(self):
+        self.s.put("conversations", 0, "first")
+        self.s.put("conversations", 1, "second")
+        self.assertEqual(self.s.restore("conversations", 1), 3)
+        doc = self.s.get(["conversations"])["conversations"]
+        self.assertEqual((doc["rev"], doc["body"]), (3, "first"))
+
+    def test_a_restore_is_itself_in_the_history(self):
+        self.s.put("pairs", 0, "a")
+        self.s.put("pairs", 1, "b")
+        self.s.restore("pairs", 1)
+        self.assertEqual([h["rev"] for h in self.s.history("pairs")], [3, 2, 1])
+
+    def test_a_revision_that_never_existed_reads_as_none(self):
+        self.s.put("pairs", 0, "a")
+        self.assertIsNone(self.s.body_at("pairs", 99))
+        with self.assertRaises(ValueError):
+            self.s.restore("pairs", 99)
+
+    def test_a_refused_write_records_nothing(self):
+        self.s.put("pairs", 0, "a")
+        with self.assertRaises(Conflict):
+            self.s.put("pairs", 0, "b")
+        self.assertEqual([h["rev"] for h in self.s.history("pairs")], [1])
+
+    def test_history_is_bounded(self):
+        for i in range(HISTORY_KEEP + 5):
+            self.s.put("pairs", i, str(i))
+        kept = self.s.history("pairs", HISTORY_KEEP * 2)
+        self.assertEqual(len(kept), HISTORY_KEEP)
+        self.assertEqual(kept[0]["rev"], HISTORY_KEEP + 5)
+        self.assertIsNone(self.s.body_at("pairs", 1), "the oldest revisions are pruned")
+
+    def test_the_history_is_per_document(self):
+        self.s.put("pairs", 0, "p")
+        self.s.put("conversations", 0, "c")
+        self.assertEqual([h["rev"] for h in self.s.history("pairs")], [1])
+        self.assertEqual(self.s.body_at("conversations", 1), "c")
+
+    def test_an_unknown_name_is_refused_rather_than_read_as_empty(self):
+        for call in (lambda: self.s.history("widgets"), lambda: self.s.body_at("widgets", 1)):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_history_survives_reopening_the_file(self):
+        self.s.put("pairs", 0, "a")
+        self.s.put("pairs", 1, "b")
+        self.s.close()
+        reopened = UserState(self.s.path)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.body_at("pairs", 1), "a")
 
 
 if __name__ == "__main__":

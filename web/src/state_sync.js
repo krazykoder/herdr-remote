@@ -39,16 +39,77 @@
     const stateInFlight = new Set();
 
     // Pure. What to do with one document on the first answer after connect.
-    //   'adopt'  — the relay holds it; take it, whatever this browser had
+    //   'merge'  — both sides hold one; the union, so neither browser's work is dropped
+    //   'adopt'  — the relay holds it and this browser has nothing; take it whole
     //   'upload' — the relay holds nothing and this browser does; seed it
     //   'idle'   — neither has anything, or they already agree
     //
-    // 'adopt' is where this feature deletes something the user typed: the second browser to
-    // connect loses its own pairs to the first. That is what one shared answer means, and it is
-    // why stateSyncApply keeps a copy of what it overwrites.
+    // 'adopt' used to be the verdict whenever the two differed, and that is where this feature
+    // deleted things the user had typed: whichever browser connected second lost its own list to
+    // the first, and a browser that had manufactured a list from an absence wrote that over the
+    // real one. A document with nothing local is still adopted whole — there is nothing to extend
+    // from, so it is downloaded from scratch.
     function stateSyncPlan(serverRev, serverBody, localBody) {
-      if (serverRev > 0) return serverBody === localBody ? 'idle' : 'adopt';
+      if (serverRev > 0) {
+        if (serverBody === localBody) return 'idle';
+        return localBody ? 'merge' : 'adopt';
+      }
       return localBody ? 'upload' : 'idle';
+    }
+
+    // The shape of each document, which is the whole of what this module knows about their
+    // contents. `list` names the key an envelope carries its id'd objects under; `map` is a plain
+    // object keyed by something already unique. Both merge without understanding a single field.
+    const STATE_SHAPE = {
+      pairs:         { list: 'pairs' },
+      conversations: { list: 'items' },
+      conv_view:     { map: true },
+      conv_hidden:   { map: true },
+    };
+
+    // The union of the two, or null when this cannot be done safely — a body that does not parse,
+    // or does not have the shape the name says it has. Null means the caller adopts the relay's
+    // document whole, which is the old behaviour and never loses the *shared* copy.
+    //
+    // Which side wins an id both hold is the one thing `mine` decides, and it follows who just
+    // typed: a document this browser edited between state_get and its answer keeps its own version
+    // of a shared entry, because reverting an edit made a moment ago with nothing said about why is
+    // the other way to lose work. Everything else is the same union either way.
+    //
+    // A merge can add and can never delete: a conversation deleted on another browser while this
+    // one was away comes back. That is the trade — a resurrected row is a nuisance and a destroyed
+    // one is not recoverable — and it is why this runs only on the first answer after connect. A
+    // delete made while both are open arrives as an ordinary broadcast and is applied whole.
+    //
+    // No cap is applied here. The app's own convFit runs on the next save and trims to the same
+    // ceiling; the merged body only has to survive until then, and two indexes of a few dozen
+    // conversations are two orders of magnitude under the relay's 256 KB limit.
+    function stateMerge(name, serverBody, localBody, mine) {
+      const shape = STATE_SHAPE[name];
+      if (!shape || serverBody == null || localBody == null) return null;
+      let server, local;
+      try { server = JSON.parse(serverBody); local = JSON.parse(localBody); }
+      catch (e) { return null; }
+      if (!server || !local || typeof server !== 'object' || typeof local !== 'object') return null;
+      const win = mine ? local : server, lose = mine ? server : local;
+      const winBody = mine ? localBody : serverBody;
+      if (shape.list) {
+        const key = shape.list;
+        if (!Array.isArray(server[key]) || !Array.isArray(local[key])) return null;
+        const have = new Set(win[key].map(x => x && x.id).filter(Boolean));
+        // An entry with no id cannot be told apart from one already held, so it is not carried
+        // over: duplicating it on every connect is worse than losing a malformed row.
+        const extra = lose[key].filter(x => x && x.id && !have.has(x.id));
+        // Nothing to add. Returned as the winning body itself, so the caller can tell "the union
+        // is one of the two I already have" from "the union is new and has to be written".
+        if (!extra.length) return winBody;
+        const out = Object.assign({}, win);
+        out[key] = win[key].concat(extra);
+        return JSON.stringify(out);
+      }
+      if (Array.isArray(server) || Array.isArray(local)) return null;
+      if (Object.keys(lose).every(k => k in win)) return winBody;
+      return JSON.stringify(Object.assign({}, lose, win));
     }
 
     function stateRead(name) {
@@ -207,6 +268,38 @@
         const doc = docs[name] || {};
         const rev = doc.rev || 0;
         stateRev[name] = rev;
+        const body = doc.body == null ? null : doc.body;
+        if (first) {
+          // Ahead of the dirty check on purpose. A document edited between state_get and its
+          // answer used to skip adoption entirely and flush this browser's copy over the relay's,
+          // which is exactly how a manufactured index destroyed a real one. The union keeps that
+          // edit — `mine` gives it the collisions — without dropping anything for it.
+          const local = stateRead(name);
+          const mine = stateDirty.has(name);
+          const plan = stateSyncPlan(rev, body, local);
+          if (plan === 'upload') stateDirty.add(name);
+          else if (plan === 'adopt') { stateSyncApply(name, body); stateDirty.delete(name); }
+          else if (plan === 'merge') {
+            const merged = stateMerge(name, body, local, mine);
+            if (merged === null) {
+              // Not a shape this can unite. A document the user just edited keeps its own body and
+              // is flushed over the relay's, which is what this did for every document before the
+              // union existed; one nobody touched takes the relay's whole.
+              if (!mine) { stateSyncApply(name, body); }
+            } else if (merged === body) {
+              // Ours added nothing. No write, and nothing left dirty to send.
+              stateSyncApply(name, body);
+              stateDirty.delete(name);
+            } else {
+              // Either a real union, or our own body winning intact — both have to go up.
+              stateSyncApply(name, merged);
+              stateDirty.add(name);
+            }
+          } else {
+            stateDirty.delete(name);   // 'idle': the relay already holds exactly this
+          }
+          continue;
+        }
         if (stateDirty.has(name)) {
           // Edited in this browser between state_get and its answer. The answer was already in
           // flight when the user acted, so adopting it here would revert an edit made a moment
@@ -220,14 +313,10 @@
           if (doc.body != null && doc.body === stateRead(name)) stateDirty.delete(name);
           continue;
         }
-        if (first) {
-          const plan = stateSyncPlan(rev, doc.body == null ? null : doc.body, stateRead(name));
-          if (plan === 'adopt') stateSyncApply(name, doc.body == null ? null : doc.body);
-          else if (plan === 'upload') { stateDirty.add(name); }
-        } else if (rev > 0 && !stateInFlight.has(name)) {
+        if (rev > 0 && !stateInFlight.has(name)) {
           // A push from another browser. Not while our own write is in flight: the ack settles
           // that document, and applying an older body underneath it would undo the edit we made.
-          stateSyncApply(name, doc.body == null ? null : doc.body);
+          stateSyncApply(name, body);
         }
       }
       // Edits made while the answer was in the air, plus anything the seed decided to upload.
@@ -292,3 +381,4 @@
     window.stateSyncConflict = stateSyncConflict;
     window.stateSyncNoteError = stateSyncNoteError;
     window.stateSyncPending = stateSyncPending;
+    window.stateMerge = stateMerge;

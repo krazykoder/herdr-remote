@@ -123,6 +123,39 @@ test('a browser that has never connected adopts the conversations rather than mi
   await fresh.context.close();
 });
 
+test('a browser that already has conversations extends the shared set instead of replacing it',
+     async ({page, browser, relayURL}) => {
+  await connected(page);
+  await synced(page);
+  await expect.poll(() => convIds(page)).toHaveLength(2);
+  await expect.poll(() => page.evaluate(() => stateRev.conversations)).toBeGreaterThan(0);
+  const shared = await convIds(page);
+
+  // A second machine that was working offline: its own conversation, written straight into the
+  // index the way the app writes one, and never seen by the relay. This is the shape that lost
+  // everything — the browser holding it used to flush it over the shared document on connect.
+  const context = await browser.newContext({baseURL: relayURL});
+  const other = await context.newPage();
+  await other.goto('/');
+  await other.evaluate(() => {
+    localStorage.setItem('herdr_conversations', JSON.stringify({version: 1, items: [
+      {id: 'c_offline', name: 'Made while away', created: Date.now(), members: []},
+    ]}));
+  });
+  await other.reload();
+  await connected(other);
+  await synced(other);
+
+  // Both sides, on both machines, and the relay holding the union rather than either half.
+  const both = shared.concat(['c_offline']).sort();
+  await expect.poll(() => other.evaluate(() => {
+    const items = (JSON.parse(localStorage.getItem('herdr_conversations') || '{}').items) || [];
+    return items.map(c => c.id).sort();
+  })).toEqual(both);
+  await expect.poll(() => convIds(page).then(ids => ids.slice().sort())).toEqual(both);
+  await context.close();
+});
+
 test('a rename in one browser lands in another that is already open',
      async ({page, browser, relayURL}) => {
   const other = await otherBrowser(browser, relayURL);
