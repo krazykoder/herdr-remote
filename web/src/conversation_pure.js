@@ -602,11 +602,55 @@
     // `liveAgents` is whatever the caller has: the agents array, or a set of member keys already
     // worked out. Anything else counts as nothing live rather than as an error — this measures
     // storage, and a wrong split is better than a panel that will not draw.
-    function calcConvAnalytics(convs, recordsMap, liveAgents) {
-      const list = convs || [];
-      const records = (recordsMap && typeof recordsMap.get === 'function')
+    // What one stored thing costs, as the browser will store it. A record that will not serialise
+    // is counted as nothing rather than throwing: a panel that cannot draw tells the reader less
+    // about their storage than a figure that is short by one transcript.
+    function convStoredBytes(thing) {
+      try {
+        return JSON.stringify(thing).length;
+      } catch (e) { return 0; }
+    }
+
+    // Callers hold their records as a Map or as a plain object, and both are asked the same
+    // question here.
+    function convRecordsMap(recordsMap) {
+      return (recordsMap && typeof recordsMap.get === 'function')
         ? recordsMap
         : new Map(Object.entries(recordsMap || {}));
+    }
+
+    // Every transcript key any conversation names. What is *not* in here is the whole of what the
+    // per-conversation rows cannot see.
+    function convNamedKeys(convs) {
+      const named = new Set();
+      for (const c of convs || []) {
+        for (const m of (c && c.members) || []) if (m && m.key) named.add(m.key);
+      }
+      return named;
+    }
+
+    // The transcripts in IndexedDB that no conversation names, and what they cost.
+    //
+    // These are not a leak and not a bug: they are the ended sessions the Add-pane picker offers
+    // under "Recorded", kept precisely so a conversation can be assembled after the fact. But a
+    // table that says "bytes in IndexedDB" and adds up only what conversations name is
+    // under-reporting by exactly them — and on a browser that has been running agents for a month
+    // they are most of the database. Reported as their own line rather than spread across the
+    // conversations, because they belong to none of them.
+    function calcUnfiledRecords(convs, recordsMap) {
+      const named = convNamedKeys(convs);
+      let count = 0, bytes = 0;
+      for (const [key, rec] of convRecordsMap(recordsMap)) {
+        if (!rec || named.has(key)) continue;
+        count += 1;
+        bytes += convStoredBytes(rec);
+      }
+      return {count: count, bytes: bytes};
+    }
+
+    function calcConvAnalytics(convs, recordsMap, liveAgents) {
+      const list = convs || [];
+      const records = convRecordsMap(recordsMap);
       const memberKey = a => a &&
         (a.key || (typeof convMemberKey === 'function' ? convMemberKey(a) : '') || a.pane_id || '');
       // Anything with `has` is taken as the set of keys itself — duck-typed rather than
@@ -627,10 +671,7 @@
           if (rec) {
             const entries = rec.entries || [];
             msgCount += entries.length;
-            let bytes = 0;
-            try {
-              bytes = JSON.stringify(rec).length;
-            } catch (e) { /* ignore */ }
+            const bytes = convStoredBytes(rec);
             if (liveKeySet.has(m.key)) {
               liveBytes += bytes;
             } else {
@@ -641,10 +682,7 @@
         // The index row is in IndexedDB too, and a column called Total that left it out would be
         // under-reporting by exactly the thing it names. It is small — a name, a member list — but
         // it is the only part a conversation with no transcripts at all still costs.
-        let indexBytes = 0;
-        try {
-          indexBytes = JSON.stringify(c).length;
-        } catch (e) { /* a cycle in the index row: the transcripts are still worth reporting */ }
+        const indexBytes = convStoredBytes(c);
         const totalBytes = liveBytes + recordedBytes + indexBytes;
         const sizeMb = totalBytes / (1024 * 1024);
 

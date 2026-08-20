@@ -5111,16 +5111,55 @@ test('conversation storage analytics displays live, recorded, and total IDB brea
   await expect(page.locator('#convAnalyticsWrap .conv-analytics-table')).toBeVisible();
   const headers = await page.locator('#convAnalyticsWrap .conv-analytics-table th').allInnerTexts();
   expect(headers).toEqual(['CONVERSATION', 'MESSAGES', 'LIVE IDB', 'RECORDED IDB', 'INDEX', 'TOTAL IDB']);
-  await expect(page.locator('#convAnalyticsWrap .conv-analytics-table tfoot td').first()).toContainText('Total');
+  // Last row of the foot: an unfiled line can sit above it, and the total is always the bottom.
+  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr:last-child td');
+  await expect(foot.first()).toContainText('Total');
 
   // The three parts have to add up to the fourth. The sizes are rendered rounded, so the check is
   // against the byte counts in the tooltips — a table whose columns do not reconcile reads as one
   // of them being wrong, whichever one is.
-  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot td');
   const bytes = async i => Number((await foot.nth(i).getAttribute('title')).replace(/[^0-9]/g, ''));
   const [live, recorded, index, total] =
     [await bytes(2), await bytes(3), await bytes(4), await bytes(5)];
   expect(index).toBeGreaterThan(0);
   expect(live + recorded + index).toBe(total);
+});
+
+// The bug this covers: a browser that had been running agents for weeks showed Recorded IDB as 0
+// on conversation after conversation, while the Add-pane picker was plainly offering a list of
+// recorded sessions. Both were true — those sessions were in no conversation, and a table that
+// only ever added up what conversations name could not see them. On a real database they are most
+// of it.
+test('storage counts the transcripts no conversation names, rather than reporting them as nothing',
+  async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  const stored = await page.evaluate(async () => {
+    // An ended session nobody filed: a key no live pane can have, and no conversation names.
+    await convPut({
+      key: JSON.stringify(['local', 'w7:p7', 'codex', '/work/gone']),
+      label: 'a pane that ended', touched: Date.now(),
+      entries: [{who: 'agent', text: 'z'.repeat(4000)}],
+    });
+    const view = document.getElementById('timelineView');
+    if (view) view.style.display = 'block';
+    await renderConvAnalytics();
+    return (await convAll()).reduce((n, r) => n + JSON.stringify(r).length, 0);
+  });
+
+  const unfiled = page.locator('#convAnalyticsWrap .conv-analytics-unfiled td');
+  await expect(unfiled.first()).toHaveText('1 unfiled transcript');
+  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr:last-child td');
+  const bytes = async (loc, i) => Number((await loc.nth(i).getAttribute('title')).replace(/[^0-9]/g, ''));
+  expect(await bytes(unfiled, 3)).toBeGreaterThan(4000);
+
+  // It is a finished transcript, so it is on the Recorded side of the total — and the total is now
+  // every transcript in the database plus the index rows, which is what the panel claims to be.
+  const [live, recorded, index, total] =
+    [await bytes(foot, 2), await bytes(foot, 3), await bytes(foot, 4), await bytes(foot, 5)];
+  expect(recorded).toBeGreaterThan(4000);
+  expect(live + recorded + index).toBe(total);
+  expect(total - index).toBe(stored);
+  await expect(page.locator('#convAnalyticsTotal')).toContainText('1 unfiled transcript');
 });
 

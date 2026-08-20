@@ -41,7 +41,7 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEnt
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
-               'calcConvAnalytics', 'sortConvAnalyticsRows', 'formatConvSize',
+               'calcConvAnalytics', 'calcUnfiledRecords', 'sortConvAnalyticsRows', 'formatConvSize',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -52,7 +52,7 @@ const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessa
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
-       calcConvAnalytics, sortConvAnalyticsRows, formatConvSize,
+       calcConvAnalytics, calcUnfiledRecords, sortConvAnalyticsRows, formatConvSize,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -897,6 +897,31 @@ test('calcConvAnalytics takes a set of member keys as well as an agents array', 
   const none = calcConvAnalytics(convs, recordsMap, null)[0];
   assert.strictEqual(none.liveBytes, 0);
   assert.strictEqual(none.totalBytes, fromArray.totalBytes);
+});
+
+test('calcUnfiledRecords counts the transcripts no conversation names', () => {
+  const convs = [{ id: 'c1', name: 'Alpha', members: [{ key: 'm1' }, { key: 'm2' }] }];
+  const records = new Map([
+    ['m1', { key: 'm1', entries: [{ who: 'agent', text: 'in a conversation' }] }],
+    ['m2', { key: 'm2', entries: [] }],
+    ['m9', { key: 'm9', entries: [{ who: 'agent', text: 'x'.repeat(500) }] }],
+    ['m8', { key: 'm8', entries: [{ who: 'agent', text: 'y'.repeat(500) }] }],
+  ]);
+
+  const unfiled = calcUnfiledRecords(convs, records);
+  assert.strictEqual(unfiled.count, 2);
+  assert.ok(unfiled.bytes > 1000);
+  // The whole database, once each side is asked for its half: the per-conversation rows and this
+  // between them account for every record, which is the property the storage panel rests on.
+  const named = calcConvAnalytics(convs, records, []);
+  const transcripts = named.reduce((n, r) => n + r.liveBytes + r.recordedBytes, 0);
+  const whole = Array.from(records.values()).reduce((n, r) => n + JSON.stringify(r).length, 0);
+  assert.strictEqual(transcripts + unfiled.bytes, whole);
+
+  // No conversations at all is the case that matters most: deleting the last conversation does not
+  // delete a word of what was said in it.
+  assert.strictEqual(calcUnfiledRecords([], records).count, 4);
+  assert.strictEqual(calcUnfiledRecords(null, records).bytes, whole);
 });
 
 test('sortConvAnalyticsRows sorts rows by column and direction', () => {

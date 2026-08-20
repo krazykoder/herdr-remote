@@ -337,10 +337,15 @@
     // --- Conversation storage analytics ---
     let convAnalyticsSort = { col: 'size', dir: 'desc' };
     let convAnalyticsData = [];
+    // Transcripts in the database that no conversation names. Not a row in the table — they have
+    // no conversation to be sorted among — so they are kept beside it and reported under it.
+    let convAnalyticsUnfiled = { count: 0, bytes: 0 };
 
     async function fetchConvAnalytics() {
       const convs = typeof loadConvIndex === 'function' ? loadConvIndex() : [];
-      if (!convs.length) return [];
+      // The database is read even with no conversations in the index. Deleting the last
+      // conversation does not delete the transcripts it named, and "no conversations stored yet"
+      // over a database holding a month of them is the panel's worst possible answer.
       const recordsMap = new Map();
       if (typeof openConvDB === 'function') {
         const db = await openConvDB();
@@ -363,6 +368,8 @@
           if (r) recordsMap.set(k, r);
         }
       }
+      convAnalyticsUnfiled = typeof calcUnfiledRecords === 'function'
+        ? calcUnfiledRecords(convs, recordsMap) : {count: 0, bytes: 0};
       return typeof calcConvAnalytics === 'function'
         ? calcConvAnalytics(convs, recordsMap, typeof agents !== 'undefined' ? agents : [])
         : [];
@@ -399,21 +406,35 @@
       const totalLiveBytes = convAnalyticsData.reduce((acc, c) => acc + (c.liveBytes || 0), 0);
       const totalRecordedBytes = convAnalyticsData.reduce((acc, c) => acc + (c.recordedBytes || 0), 0);
       const totalIndexBytes = convAnalyticsData.reduce((acc, c) => acc + (c.indexBytes || 0), 0);
-      const totalBytes = totalLiveBytes + totalRecordedBytes + totalIndexBytes;
+      // Every ended session no conversation names is a finished transcript, so it lands on the
+      // Recorded side — the one place it can go without being attributed to a conversation it is
+      // not in.
+      const unfiled = convAnalyticsUnfiled || {count: 0, bytes: 0};
+      const totalBytes = totalLiveBytes + totalRecordedBytes + totalIndexBytes + unfiled.bytes;
+      const unfiledLabel = `${unfiled.count} unfiled transcript${unfiled.count === 1 ? '' : 's'}`;
 
       if (totalEl) {
         const n = convAnalyticsData.length;
         // The two transcript halves in the line, the index only in the tooltip: it is a rounding
         // error beside them, and a third figure on a line read at a glance buys nothing.
-        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
-          `${formatConvSize(totalBytes)} (Live: ${formatConvSize(totalLiveBytes)} · Recorded: ${formatConvSize(totalRecordedBytes)})`;
+        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'}` +
+          (unfiled.count ? ` + ${unfiledLabel}` : '') + ` · ` +
+          `${formatConvSize(totalBytes)} (Live: ${formatConvSize(totalLiveBytes)} · Recorded: ` +
+          `${formatConvSize(totalRecordedBytes + unfiled.bytes)})`;
         totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Live: ` +
           `${totalLiveBytes.toLocaleString()} B · Recorded: ${totalRecordedBytes.toLocaleString()} B · ` +
-          `Index: ${totalIndexBytes.toLocaleString()} B)`;
+          `Index: ${totalIndexBytes.toLocaleString()} B · Unfiled: ${unfiled.bytes.toLocaleString()} B)`;
       }
 
       if (!convAnalyticsData.length) {
-        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">No conversations stored yet</div>';
+        // Not the same sentence in both cases: a browser with no conversations and no transcripts
+        // has nothing stored, and a browser that has had its conversations deleted still has every
+        // word those panes said sitting in the database.
+        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">' +
+          (unfiled.count
+            ? `No conversations — ${escapeHtml(unfiledLabel)} in storage, ${formatConvSize(unfiled.bytes)}. ` +
+              'Add one of those panes to a conversation to see it here.'
+            : 'No conversations stored yet') + '</div>';
         return;
       }
 
@@ -449,11 +470,23 @@
           `</tr>`;
       }).join('');
 
-      const footHtml = `<tfoot><tr>` +
+      // Its own line above the total rather than a row in the table: it is not a conversation, it
+      // cannot be opened, and sorting it among things that can would only ever be in the way.
+      const unfiledHtml = unfiled.count ? `<tr class="conv-analytics-unfiled">` +
+        `<td title="Transcripts of ended sessions that no conversation names. Kept so a ` +
+        `conversation can still be assembled from them.">${escapeHtml(unfiledLabel)}</td>` +
+        `<td class="conv-analytics-num">—</td>` +
+        `<td class="conv-analytics-num">—</td>` +
+        `<td class="conv-analytics-num" title="${unfiled.bytes.toLocaleString()} bytes">${formatConvSize(unfiled.bytes)}</td>` +
+        `<td class="conv-analytics-num">—</td>` +
+        `<td class="conv-analytics-num" title="${unfiled.bytes.toLocaleString()} bytes">${formatConvSize(unfiled.bytes)}</td>` +
+        `</tr>` : '';
+
+      const footHtml = `<tfoot>${unfiledHtml}<tr>` +
         `<td><strong>Total (${convAnalyticsData.length})</strong></td>` +
         `<td class="conv-analytics-num"><strong>${totalMsgs.toLocaleString()}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalLiveBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalLiveBytes)}</strong></td>` +
-        `<td class="conv-analytics-num" title="${totalRecordedBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalRecordedBytes)}</strong></td>` +
+        `<td class="conv-analytics-num" title="${(totalRecordedBytes + unfiled.bytes).toLocaleString()} bytes"><strong>${formatConvSize(totalRecordedBytes + unfiled.bytes)}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalIndexBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalIndexBytes)}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalBytes)}</strong></td>` +
         `</tr></tfoot>`;
