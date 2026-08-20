@@ -12,7 +12,9 @@ id that did not exist in its immediately preceding local index in the local-only
 `herdr_conversations_pending` outbox. On connect or conflict, only ids still in that outbox and
 absent from the returned relay index are appended. Their complete conversation objects — including
 their pane members — are retained. An acknowledgement, or a returned body already containing an
-id, removes that id from the outbox.
+id, removes that id from the outbox — and so does the id leaving the local index, since a
+conversation deleted before it synced, or one `convFit` trimmed, is not waiting to be sent
+anywhere and would otherwise sit in the outbox for good.
 
 This is not general union: unmarked local rows and all local changes to a backend-known id lose to
 the backend. Auto conversations are eligible pending creations only after `state_get` completes;
