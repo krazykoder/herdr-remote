@@ -117,8 +117,12 @@
     const MAX_TERM_SHORTCUTS = 24;
 
     // Read-only, every one of them. Nothing that writes ships as a default — a destructive
-    // command in a grid the user did not choose is one mis-tap from a bad afternoon.
+    // command in a grid the user did not choose is one mis-tap from a bad afternoon. `RPROMPT=`
+    // is the one that changes anything, and what it changes is a variable in the shell's own
+    // session: it is the relay's HERDR_TERMINAL_INIT by hand, for a terminal the app did not open
+    // or a relay too old to send it.
     const DEFAULT_TERM_SHORTCUTS = [
+      { label: 'tidy prompt', text: 'RPROMPT=; clear' },
       { label: 'ls', text: 'ls -la' },
       { label: 'git status', text: 'git status' },
       { label: 'git log', text: 'git log --oneline -10' },
