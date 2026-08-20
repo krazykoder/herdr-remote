@@ -481,7 +481,7 @@ agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
 latest_agents = []  # last full snapshot, replayed to each client on connect
 latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
-shell_panes = set()  # pane IDs in latest_shells, for the respond refusal in handle_client
+shell_panes = set()  # pane IDs in latest_shells: the respond refusal, and submit_paste's shortcut
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
 # "ctrl+<key>" and not "C-<key>": herdr accepts C-c as a legacy spelling but answers
@@ -1073,9 +1073,22 @@ async def submit_paste(pane_id, text, remote=None):
     A pane already `working` when the paste arrives is a message queued behind what the agent is
     doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
     nothing to watch. One press after the settle, exactly as before, and the return says so.
+
+    And a pane with no agent skips all of it. Every rule here is about a TUI — booting, laying out a
+    paste, showing a permission prompt — and a shell has none of them. It has no status to watch
+    either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
+    "still starting" and waits out to the timeout, leaving the command unentered at the prompt.
     """
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
     await asyncio.sleep(submit_settle(text))
+    # A shell is none of the cases below. It has no TUI to be mid-boot, no composer to be mid-paste
+    # and no permission prompt for an Enter to accept, so there is nothing the loop could learn by
+    # watching — and nothing to watch it *with*: a real `pane list` reports `unknown` for a pane
+    # carrying no agent, which the loop reads as "still starting" and waits out to the timeout,
+    # leaving the command sitting at the prompt. Press once and say so.
+    if pane_id in shell_panes:
+        await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+        return True
     deadline = time.monotonic() + SUBMIT_TIMEOUT
     presses, first = 0, True
     while time.monotonic() < deadline:

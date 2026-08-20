@@ -43,7 +43,7 @@ class SubmitPaste(unittest.TestCase):
             self.addCleanup(p.stop)
         self.calls = []
 
-    def run_paste(self, statuses, text="hello"):
+    def run_paste(self, statuses, text="hello", shell=False):
         """Drive one submit_paste over a scripted sequence of pane statuses.
 
         The last entry repeats once the script runs out, which is how "and it stays that way" is
@@ -63,7 +63,9 @@ class SubmitPaste(unittest.TestCase):
             self.calls.append(args)
             return ""
 
+        shells = {"w1:p1"} if shell else set()
         with patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "shell_panes", shells), \
              patch.object(herdr_relay, "run_herdr", herdr):
             took = asyncio.run(herdr_relay.submit_paste("w1:p1", text))
         return took
@@ -121,6 +123,92 @@ class SubmitPaste(unittest.TestCase):
         took = self.run_paste(["working"])
         self.assertFalse(took)
         self.assertEqual(len(self.enters()), 1)
+
+
+class SubmitIntoAShell(unittest.TestCase):
+    """A pane with no agent takes the Enter straight away.
+
+    Every rule above is about an agent's TUI: whether it has booted, whether it has finished laying
+    out a paste, whether the box on screen is a permission prompt. A shell has none of those. It
+    also has no `agent_status` for the loop to watch — a real `pane list` says `unknown` for a pane
+    carrying no agent — so watching it means waiting out SUBMIT_TIMEOUT and then giving up with the
+    command sitting unsent at the prompt. That is the bug this class exists to keep fixed.
+    """
+
+    def setUp(self):
+        for name, value in (("SUBMIT_POLL", 0.001), ("SUBMIT_TIMEOUT", 0.5),
+                            ("SEND_SETTLE", 0.001), ("SEND_SETTLE_MAX", 0.001)):
+            p = patch.object(herdr_relay, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.calls = []
+
+    def submit(self, text="ls -la"):
+        def herdr(*args, remote=None):
+            self.calls.append(args)
+            return ""
+
+        def status(pane_id, remote=None):
+            # The status a shell really reports, so a regression that goes back to watching it
+            # fails here rather than passing on a friendlier fake.
+            return "unknown"
+
+        with patch.object(herdr_relay, "shell_panes", {"w1:p1"}), \
+             patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "run_herdr", herdr):
+            return asyncio.run(herdr_relay.submit_paste("w1:p1", text))
+
+    def test_the_command_is_pasted_and_entered(self):
+        took = self.submit()
+        self.assertTrue(took, "a shell always takes an Enter — there is nothing to be unsure about")
+        self.assertEqual([c[:3] for c in self.calls], [
+            ("pane", "send-text", "w1:p1"),
+            ("pane", "send-keys", "w1:p1"),
+        ])
+        self.assertEqual(self.calls[1][3], "Enter")
+
+    def test_the_pane_is_not_polled_at_all(self):
+        # Not merely "it works anyway": a shell has no status worth a `pane list` round trip, and
+        # the point of the branch is that it does not make one.
+        polls = []
+
+        def status(pane_id, remote=None):
+            polls.append(pane_id)
+            return "unknown"
+
+        def herdr(*args, remote=None):
+            return ""
+
+        with patch.object(herdr_relay, "shell_panes", {"w1:p1"}), \
+             patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "run_herdr", herdr):
+            asyncio.run(herdr_relay.submit_paste("w1:p1", "pwd"))
+        self.assertEqual(polls, [])
+
+    def test_an_agent_pane_is_still_watched(self):
+        # The guard is membership, not a mode: with terminal mode off `shell_panes` is empty, and
+        # every pane goes the long way exactly as before.
+        seen = iter(["idle", "working"])
+        last = ["working"]
+
+        def status(pane_id, remote=None):
+            try:
+                last[0] = next(seen)
+            except StopIteration:
+                pass
+            return last[0]
+
+        calls = []
+
+        def herdr(*args, remote=None):
+            calls.append(args)
+            return ""
+
+        with patch.object(herdr_relay, "shell_panes", set()), \
+             patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "run_herdr", herdr):
+            self.assertTrue(asyncio.run(herdr_relay.submit_paste("w1:p1", "hello")))
+        self.assertEqual(len([c for c in calls if c[:2] == ("pane", "send-keys")]), 1)
 
 
 if __name__ == "__main__":
