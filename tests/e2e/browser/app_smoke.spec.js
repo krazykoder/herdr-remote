@@ -32,6 +32,17 @@ test('the page boots and connects to its own relay', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
 });
 
+// The <script src> order in index.html is the program: nothing enforces it, and a module that
+// reads another's binding at load time breaks at boot if the tags move. state_sync.js is loaded
+// before every module that calls into it, so a reorder shows up here.
+test('shared state is wired into the socket by the time it is open', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  expect(await page.evaluate(() => typeof stateSyncMark)).toBe('function');
+  expect(await page.evaluate(() => typeof savePairs)).toBe('function');
+  // Answered, not merely asked: `pulling` here would mean the relay never replied to state_get.
+  await expect.poll(() => page.evaluate(() => stateMode)).toBe('live');
+});
+
 test('agent filters live on the existing card separator', async ({page}) => {
   await expect.poll(() => page.evaluate(() => agents.length)).toBeGreaterThan(0);
   const kinds = await page.evaluate(() => [...new Set(agents.map(a => a.agent).filter(Boolean))]);
@@ -47,6 +58,19 @@ test('agent filters live on the existing card separator', async ({page}) => {
   }).toBe(true);
 });
 
+// Two separately deployed halves. The page can only report its own build; what the relay is and
+// what herdr is under it are the relay's to say, and it says them on connect.
+test('Settings names the app, the relay, and the herdr under it', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  // Served unbuilt from the working copy, which is what the relay does — so the page has no
+  // stamped version and says so rather than naming the last release.
+  await expect(page.locator('#verApp')).toHaveText('dev');
+  await expect(page.locator('#verRelay')).toHaveText(/^\d+\.\d+\.\d+$/);
+  await expect(page.locator('#verHerdr')).toHaveText('9.9.9-fake');
+  await expect(page.locator('#versionHint')).toContainText('unbuilt');
+});
+
 test('Activity tracks local WebSocket payload bytes in a newest-first interval stack', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
   // Off means no collection and no empty telemetry panel claiming an hour it did not observe.
@@ -57,7 +81,7 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   await page.locator('#bandwidthOn').check();
   await page.locator('#navTimeline').click();
   await expect(page.locator('#bandwidth')).toBeVisible();
-  await expect(page.locator('#bandwidthRows .bandwidth-chip')).toHaveCount(36);
+  await expect(page.locator('#bandwidthRows .bandwidth-chip')).toHaveCount(39);
 
   // A real request and its real relay reply exercise both central WebSocket hooks, rather than
   // testing the counters by calling them directly.
@@ -101,7 +125,7 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   // the reader adds up, and they are rounded before they are read.
   for (const [total, split] of adds) expect(Math.abs(total - split)).toBeLessThanOrEqual(total * 0.02 + 64);
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
-    await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
+    await expect(row.locator('.bandwidth-chip')).toHaveCount(13);
   }
   expect(await page.evaluate(() => {
     const b = bandwidthBuckets()[0];
@@ -109,9 +133,45 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   })).toBeGreaterThan(0);
   // Records are a stack: a quiet interval is absent, never drawn as a fabricated zero column.
   await page.evaluate(() => noteBandwidth('sent', 'older bucket', Date.now() - 30 * 60 * 1000));
-  await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(12);
+  await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(13);
   expect(await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at))).toEqual(
     await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at).slice().sort((a, b) => b - a)));
+
+  // Hist is every closed interval added up, so it is what the row's own chips come to once the
+  // one still being filled is left out — a running column has no business in a completed total.
+  const hist = await page.locator('#bandwidthRows').evaluate(rows => {
+    const bytes = t => { const [n, unit] = (t || '0 B').split(' ');
+      return Number(n) * (unit === 'MB' ? 1024 * 1024 : unit === 'KB' ? 1024 : 1); };
+    const row = rows.querySelector('.bandwidth-row');
+    const closed = [...row.querySelectorAll('.bandwidth-chips .bandwidth-chip')]
+      .filter(c => !c.classList.contains('now'));
+    return [bytes(row.querySelector('.bandwidth-chip.bandwidth-hist').textContent),
+      closed.reduce((n, c) => n + bytes(c.textContent), 0)];
+  });
+  expect(Math.abs(hist[0] - hist[1])).toBeLessThanOrEqual(hist[0] * 0.02 + 64);
+
+  // And it stays beside the name when the hours scroll past: the total is what every bucket is
+  // being compared against, so it has to still be on screen when the bucket is reached.
+  // Narrowed to a phone's worth of table, because on a desktop the whole hour fits and nothing is
+  // sticky until something scrolls. Wide enough for the name and the total together — narrower
+  // than the two of them, a browser clamps the sticky column back inside the scrollport and there
+  // is nothing left to hold still. Drawn again at that width: the offset is measured as the table
+  // is written, so a resize is only picked up on the next draw.
+  await page.evaluate(() => {
+    document.getElementById('bandwidthRows').style.maxWidth = '420px';
+    renderBandwidth();
+  });
+  const stuck = await page.locator('#bandwidthRows').evaluate(rows => {
+    rows.scrollLeft = rows.scrollWidth;
+    const row = rows.querySelector('.bandwidth-row');
+    const name = row.querySelector('.bandwidth-label').getBoundingClientRect();
+    const h = row.querySelector('.bandwidth-chip.bandwidth-hist').getBoundingClientRect();
+    const at = [h.left - name.right, h.left - rows.getBoundingClientRect().left];
+    rows.style.maxWidth = '';
+    return at;
+  });
+  expect(Math.abs(stuck[0])).toBeLessThan(1);  // flush against the name, no gap to show through
+  expect(stuck[1]).toBeGreaterThan(0);
 
   // A second tap on Activity leaves it, which is what every other panel button does.
   await page.locator('#navTimeline').click();
@@ -140,9 +200,9 @@ test('the newest bucket is the one filling, and it is drawn while it fills', asy
   // the numbers underneath it are minutes old at most, and the difference between a small total
   // and a stopped one is the whole reason to look.
   const times = page.locator('#bandwidthRows .bandwidth-time');
-  await expect(times).toHaveCount(12);
-  await expect(times.first()).toHaveText('now');
-  await expect(times.first()).toHaveClass(/now/);
+  await expect(times).toHaveCount(13);
+  await expect(times.nth(1)).toHaveText('now');
+  await expect(times.nth(1)).toHaveClass(/now/);
 
   // And it is redrawn where it stands, without leaving Activity and coming back.
   const live = page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip.now');

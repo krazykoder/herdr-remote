@@ -211,6 +211,7 @@
       const other = panes.length
         ? `<div class="bandwidth-row" id="otherBandwidthRow">` +
           `<span class="bandwidth-label">Shared</span>` +
+          `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals, not attributable to one pane"></span>` +
           `<div class="bandwidth-chips">${buckets.map(b => {
             const range = b.empty ? 'No data' : '';
             return `<span class="bandwidth-chip${b.at && b.at === liveAt ? ' now' : ''}" ` +
@@ -221,13 +222,16 @@
       const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : [], metric,
         panes.map(a => a.pane_id)).join(',');
       if (rows.dataset.sig !== sig) {
-        // One grid for the header and all three rows, so the columns line up and the whole table
+        // One grid for the header and all rows, so the columns line up and the whole table
         // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
         // against Received at 2:40 and never see that they had.
         // The name column takes exactly what the longest name and its badge need — a pane called
         // "Architect 1 [claude]" is not worth abbreviating, and the buckets are the half that can
-        // afford to scroll under it.
-        rows.style.gridTemplateColumns = `max-content repeat(${buckets.length}, minmax(46px, 1fr))`;
+        // afford to scroll under it. Then the historical total, which is sticky beside the name:
+        // it is the one number a reader scrolling back through the hours is comparing against, and
+        // a summary that leaves the screen when the detail is reached is a summary nobody reads.
+        rows.style.gridTemplateColumns =
+          `max-content minmax(52px, max-content) repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -245,11 +249,13 @@
         };
         rows.innerHTML =
           `<div class="bandwidth-head"><span class="bandwidth-label"></span>` +
+          `<span class="bandwidth-time bandwidth-hist-head" title="Total of all completed intervals (excludes live in-progress)">Hist</span>` +
           buckets.map(b => { const t = at(b);
             return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
               `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
           kinds.map(([, label]) =>
             `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+            `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${label}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
@@ -257,6 +263,7 @@
           panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
             `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
             `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${escapeHtml(paneLabel(a))}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${paneKind[1]}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
@@ -266,11 +273,19 @@
       // The numbers, written into the chips that are already there.
       const bars = rows.querySelectorAll('.bandwidth-row');
       kinds.forEach(([, , value], r) => {
-        const chips = bars[r].querySelectorAll('.bandwidth-chip');
+        const histChip = bars[r].querySelector('.bandwidth-chip.bandwidth-hist');
+        // Every closed interval the stack still holds, not only the ones with a column: the panel
+        // shows the last few hours and this is the whole of what was kept. `liveAt` is 0 when
+        // nothing is open, and no bucket is at 0, so that case excludes nothing — which is right.
+        const histSum = bandwidth.filter(b => b && !b.empty && b.at !== liveAt)
+          .reduce((sum, b) => sum + value(b), 0);
+        if (histChip) histChip.textContent = formatBandwidth(histSum);
+        const chips = bars[r].querySelectorAll('.bandwidth-chips .bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
       // Filled as the pane rows are read, so what is left over is exactly what they did not claim.
       const claimed = buckets.map(() => 0);
+      let claimedHist = 0;
       panes.forEach((a, i) => {
         const row = bars[i + kinds.length];
         const b = paneBandwidth[a.pane_id];
@@ -278,29 +293,61 @@
         dot.style.background = statusColor(a);
         dot.classList.toggle('pulse', a.status === 'working');
         row.querySelector('.pane-bandwidth-ping').textContent = b && b.ping ? ` · ${fmtAgo(new Date(b.ping))}` : '';
-        const byAt = Object.fromEntries((b ? b.buckets : []).map(entry => [entry.at, entry]));
-        const chips = row.querySelectorAll('.bandwidth-chip');
-        buckets.forEach((bucket, j) => { const entry = byAt[bucket.at];
+        const allBuckets = b ? b.buckets : [];
+        const paneHistSum = allBuckets.filter(entry => entry.at !== liveAt).reduce((sum, entry) => sum + paneKind[2](entry), 0);
+        claimedHist += paneHistSum;
+        const histChip = row.querySelector('.bandwidth-chip.bandwidth-hist');
+        if (histChip) histChip.textContent = formatBandwidth(paneHistSum);
+
+        const byAt = Object.fromEntries(allBuckets.map(entry => [entry.at, entry]));
+        const chips = row.querySelectorAll('.bandwidth-chips .bandwidth-chip');
+        buckets.forEach((bucket, j) => {
+          const entry = byAt[bucket.at];
           if (entry) claimed[j] += paneKind[2](entry);
-          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : ''; });
+          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : '';
+        });
       });
       const otherRow = panes.length ? bars[kinds.length + panes.length] : null;
       if (otherRow) {
-        const chips = otherRow.querySelectorAll('.bandwidth-chip');
+        const globalHistTotal = bandwidth.filter(b => b && !b.empty && b.at !== liveAt).reduce((sum, b) => sum + paneKind[2](b), 0);
+        const otherHistChip = otherRow.querySelector('.bandwidth-chip.bandwidth-hist');
+        if (otherHistChip) otherHistChip.textContent = formatBandwidth(Math.max(0, globalHistTotal - claimedHist));
+
+        const chips = otherRow.querySelectorAll('.bandwidth-chips .bandwidth-chip');
         // Clamped: a pane row is written from its own record and the total from another, and a
         // number below zero would be the panel reporting a rounding difference as traffic.
-        buckets.forEach((b, j) => { chips[j].textContent = b.empty ? '' :
-          formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j])); });
+        buckets.forEach((b, j) => {
+          chips[j].textContent = b.empty ? '' :
+            formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j]));
+        });
+      }
+
+      // What the name column ended up being, handed back to the stylesheet so the Hist column can
+      // stick to its right edge. Only the browser knows it — the column is sized to its contents.
+      // Last, after every name is written: a pane's "last seen" is appended to its label above, and
+      // measured before that the column comes out narrower than it ends up. Re-read every draw
+      // rather than once per layout — a rename, or the panel first opened while it was hidden and
+      // measured as zero, both change it without changing the signature.
+      const nameW = getComputedStyle(rows).gridTemplateColumns.split(' ')[0];
+      if (parseFloat(nameW) > 0 && rows.style.getPropertyValue('--bandwidth-name-w') !== nameW) {
+        rows.style.setProperty('--bandwidth-name-w', nameW);
       }
     }
 
-    // --- Conversation storage analytics ---
-    let convAnalyticsSort = { col: 'size', dir: 'desc' };
+    // --- Transcript storage analytics ---
+    // One row per pane transcript, which is what the database is keyed by. See calcPaneStorage for
+    // why this is not per conversation.
+    let convAnalyticsSort = { col: 'bytes', dir: 'desc' };
     let convAnalyticsData = [];
+    // The conversation index, which lives in localStorage rather than IndexedDB. Reported under the
+    // table because it is the rest of what this app stores, not because it is a transcript.
+    let convAnalyticsIndexBytes = 0;
 
     async function fetchConvAnalytics() {
       const convs = typeof loadConvIndex === 'function' ? loadConvIndex() : [];
-      if (!convs.length) return [];
+      // The database is read even with no conversations in the index. Deleting the last
+      // conversation does not delete the transcripts it named, and "no conversations stored yet"
+      // over a database holding a month of them is the panel's worst possible answer.
       const recordsMap = new Map();
       if (typeof openConvDB === 'function') {
         const db = await openConvDB();
@@ -323,7 +370,15 @@
           if (r) recordsMap.set(k, r);
         }
       }
-      return typeof calcConvAnalytics === 'function' ? calcConvAnalytics(convs, recordsMap) : [];
+      convAnalyticsIndexBytes = typeof calcConvIndexBytes === 'function'
+        ? calcConvIndexBytes(convs) : 0;
+      // The kept copy of the relay's record is on disk too, so the panel waits for it rather than
+      // reporting zero for a store it has not opened yet.
+      if (typeof convLiveHydrate === 'function') await convLiveHydrate();
+      const liveCache = typeof convLiveCacheBytes === 'function' ? convLiveCacheBytes() : new Map();
+      return typeof calcPaneStorage === 'function'
+        ? calcPaneStorage(convs, recordsMap, typeof agents !== 'undefined' ? agents : [], liveCache)
+        : [];
     }
 
     async function renderConvAnalytics() {
@@ -353,16 +408,36 @@
       const totalEl = document.getElementById('convAnalyticsTotal');
       if (!tableWrap) return;
 
-      const totalBytes = convAnalyticsData.reduce((acc, c) => acc + (c.totalBytes || 0), 0);
+      const totalMsgs = convAnalyticsData.reduce((acc, r) => acc + (r.msgCount || 0), 0);
+      const openBytes = convAnalyticsData.reduce((acc, r) => acc + (r.open ? r.bytes || 0 : 0), 0);
+      const transcriptBytes = convAnalyticsData.reduce((acc, r) => acc + (r.bytes || 0), 0);
+      const indexBytes = convAnalyticsIndexBytes || 0;
+      // A fingerprint's copy is shared by every pane of one agent in one directory, so summing the
+      // rows would count it once per pane. Summed over the distinct buckets instead.
+      const cachedBytes = Array.from(
+        new Map(convAnalyticsData.map(r => [r.fp || r.key, r.liveBytes || 0])).values())
+        .reduce((acc, n) => acc + n, 0);
+      // The database plus the index that names parts of it: everything this app has put on this
+      // device. The two are in different stores — IndexedDB and localStorage — and the tooltip is
+      // where that is said, because the reader's question is what it all costs.
+      const totalBytes = transcriptBytes + indexBytes + cachedBytes;
+
       if (totalEl) {
         const n = convAnalyticsData.length;
-        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
-          formatConvSize(totalBytes);
-        totalEl.title = `${totalBytes.toLocaleString()} bytes on this device`;
+        totalEl.textContent = `Total: ${n} ${n === 1 ? 'transcript' : 'transcripts'} · ` +
+          `${formatConvSize(totalBytes)} stored` +
+          (cachedBytes ? ` (${formatConvSize(cachedBytes)} of it the relay's record)` : '');
+        totalEl.title = `${transcriptBytes.toLocaleString()} bytes of transcripts in IndexedDB ` +
+          `(Open panes: ${openBytes.toLocaleString()} B · Ended panes: ` +
+          `${(transcriptBytes - openBytes).toLocaleString()} B), plus ` +
+          `${indexBytes.toLocaleString()} B of conversation index in localStorage. ` +
+          `${cachedBytes.toLocaleString()} B is this browser's kept copy of the relay's own record, ` +
+          `in IndexedDB beside the transcripts.`;
       }
 
       if (!convAnalyticsData.length) {
-        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">No conversations stored yet</div>';
+        tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">' +
+          'Nothing recorded in this browser yet' + '</div>';
         return;
       }
 
@@ -373,35 +448,74 @@
       const arrow = col => convAnalyticsSort.col === col ? `<span class="sort-arrow">${convAnalyticsSort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
       const ariaSort = col => convAnalyticsSort.col === col ? (convAnalyticsSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
 
-      const th = (col, label, alignRight) =>
-        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')" style="${alignRight ? 'text-align:right;' : ''}">` +
+      // Every figure in this table is one transcript in IndexedDB. The tooltips are where that is
+      // said, and they are not optional: the columns this replaced were called Live and Recorded,
+      // and "Live" is already this app's word for the relay-backed thread (conv_live.js), which
+      // costs this browser nothing at all.
+      const th = (col, label, alignRight, tip) =>
+        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')"` +
+        `${tip ? ` title="${escapeHtml(tip)}"` : ''} style="${alignRight ? 'text-align:right;' : ''}">` +
         `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
 
-      const rowsHtml = sorted.map(c => {
-        // Rounded the way the rest of the app rounds bytes: a conversation of four messages is
-        // kilobytes, and "0.00 MB" beside it read as a row that had failed to measure itself.
-        const size = formatConvSize(c.totalBytes);
-        const titleTip = `${escapeHtml(c.name)} · ${c.totalBytes.toLocaleString()} bytes`;
-        // The id rides in a data attribute rather than inside the handler's quotes: a name or an
-        // id with an apostrophe in it would otherwise end the string and break the row.
+      const rowsHtml = sorted.map(r => {
+        // Where the pane's words are filed, and the answer is sometimes "nowhere" — a transcript in
+        // no conversation is an ended session the Add-pane picker still offers, not a leak.
+        const filed = (r.convs || []).length
+          ? escapeHtml((r.convs || []).join(', '))
+          : '<span class="conv-analytics-unfiled-tag" title="An ended session no conversation names.'
+            + ' Kept so a conversation can still be assembled from it.">unfiled</span>';
+        const state = r.open
+          ? '<span class="conv-analytics-open" title="This pane is running now — its transcript is'
+            + ' still growing.">open</span>'
+          : '<span title="This session has ended — its transcript is finished.">ended</span>';
         return `<tr>` +
-          `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
-          `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
-          `${escapeHtml(c.name)}</button>${c.auto ? ' <span class="conv-analytics-auto-badge">auto</span>' : ''}</td>` +
-          `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
-          `<td class="conv-analytics-num">${c.panes.toLocaleString()}</td>` +
-          `<td class="conv-analytics-num" title="${titleTip}">${size}</td>` +
+          `<td title="${escapeHtml(r.key)}">${escapeHtml(r.name)}` +
+          `${r.agent ? ` <span class="conv-analytics-auto-badge">${escapeHtml(r.agent)}</span>` : ''}</td>` +
+          `<td>${filed}</td>` +
+          `<td class="conv-analytics-num">${state}</td>` +
+          `<td class="conv-analytics-num">${(r.msgCount || 0).toLocaleString()}</td>` +
+          `<td class="conv-analytics-num" title="${(r.bytes || 0).toLocaleString()} bytes">` +
+          `${formatConvSize(r.bytes)}</td>` +
+          `<td class="conv-analytics-num conv-analytics-cached" ` +
+          `title="${(r.liveBytes || 0).toLocaleString()} bytes of the relay's record, kept here">` +
+          `${r.liveBytes ? formatConvSize(r.liveBytes) : '—'}</td>` +
           `</tr>`;
       }).join('');
 
-      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Conversations by local storage size">` +
+      // The index is not a transcript and has no row of its own above; it is named here because the
+      // reader's question is what the app costs in total, and the three stores answer it together.
+      const footHtml = `<tfoot><tr>` +
+        `<td><strong>Total (${convAnalyticsData.length})</strong></td>` +
+        `<td title="${indexBytes.toLocaleString()} bytes of conversation index, in localStorage">` +
+        `+ index ${formatConvSize(indexBytes)}</td>` +
+        `<td class="conv-analytics-num"><strong>${formatConvSize(openBytes)}</strong></td>` +
+        `<td class="conv-analytics-num"><strong>${totalMsgs.toLocaleString()}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes, transcripts and index">` +
+        `<strong>${formatConvSize(totalBytes)}</strong></td>` +
+        `<td class="conv-analytics-num conv-analytics-cached" ` +
+        `title="${cachedBytes.toLocaleString()} bytes of the relay's record, kept on this device">` +
+        `${cachedBytes ? formatConvSize(cachedBytes) : '—'}</td>` +
+        `</tr></tfoot>`;
+
+      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Pane transcripts by local storage size">` +
         `<thead><tr>` +
-        th('name', 'Conversation', false) +
-        th('msgCount', 'Messages', true) +
-        th('panes', 'Panes', true) +
-        th('size', 'Size', true) +
+        th('name', 'Pane', false, 'The pane this transcript was recorded from. One row per '
+          + 'transcript in IndexedDB — the database is keyed by pane, not by conversation.') +
+        th('convs', 'In', false, 'The conversations this pane is a member of. A pane can be in '
+          + 'several, or in none.') +
+        th('open', 'State', true, 'Whether the pane is running right now. An open pane\'s '
+          + 'transcript is still growing; an ended one is as big as it will ever be.') +
+        th('msgCount', 'Messages', true, 'Messages recorded in this transcript.') +
+        th('bytes', 'Stored (IDB)', true, 'What this transcript costs in IndexedDB — the words this '
+          + 'browser captured from the pane. Every byte the app stores on this device is one of '
+          + 'these rows, plus the index named in the footer.') +
+        th('liveBytes', 'Relay copy', true, 'What this browser has kept of the relay\'s own record '
+          + 'for this pane — read by the Live toggle and now stored, so it is there after a refresh '
+          + 'and while the relay is unreachable. A second source for the same conversation, never '
+          + 'folded into the transcript beside it.') +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +
+        footHtml +
         `</table>`;
     }
 
@@ -485,10 +599,11 @@
       let wsUrl = url;
       if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       ws = new WebSocket(wsUrl);
+      const socket = ws;
       // Central wire accounting. Every caller goes through this socket, so instrumenting it here
       // catches polls, sends, pushes and commands without duplicating counters at each call site.
-      const send = ws.send.bind(ws);
-      ws.send = data => {
+      const send = socket.send.bind(socket);
+      socket.send = data => {
         noteBandwidth('sent', data);
         try { const msg = JSON.parse(data); if (msg.type === 'read_pane') notePaneBandwidth(msg.pane_id, 'sent', data); }
         catch (e) { /* non-JSON wire payloads have no pane identity */ }
@@ -496,21 +611,29 @@
       };
       // Re-announcing the push subscription here rather than only at subscribe time is what makes
       // it survive the socket being down at the wrong moment — on a phone that is most of the time.
-      ws.onopen = () => {
+      socket.onopen = () => {
+        if (ws !== socket) return;
         setStatus('connected');
         if (window.cue) cue('ready');
         announceSubscription();
+        stateSyncOpen(socket);
       };
-      ws.onclose = () => {
+      socket.onclose = () => {
+        if (ws !== socket) return;
+        stateSyncClose(socket);
         // First drop only: reconnect attempts every 3s must not keep pushing the clock forward, or
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
         resetBandwidthBucket();
+        // The versions belonged to the relay that just went away. Held rather than cleared: a
+        // reconnect is three seconds off, and a Settings card that empties on every phone-in-pocket
+        // drop reads as the relay having no version at all.
         setStatus('disconnected');
         setTimeout(connect, 3000);
       };
-      ws.onerror = () => setStatus('disconnected');
-      ws.onmessage = (e) => {
+      socket.onerror = () => { if (ws === socket) setStatus('disconnected'); };
+      socket.onmessage = (e) => {
+        if (ws !== socket) return;
         noteBandwidth('received', e.data);
         const msg = JSON.parse(e.data);
         if (msg.type === 'pane_content') notePaneBandwidth(msg.pane_id, 'received', e.data);
@@ -544,12 +667,24 @@
     }
     function handleMessage(msg) {
       if (msg.type === 'error') {
+        // A relay older than this client answers state_get with "unknown message type". That is a
+        // fact about the relay, not a failure to put in front of the user.
+        if (stateSyncNoteError(msg.message)) return;
         convLiveNoteError(msg.message);
         showToast(msg.message || 'The relay refused that.');
       }
+      else if (msg.type === 'state') { stateSyncReceive(msg); }
+      else if (msg.type === 'state_ack') { stateSyncAck(msg); }
+      else if (msg.type === 'state_conflict') { stateSyncConflict(msg); }
       else if (msg.type === 'conv_log') {
         convLiveReceive(msg);
       }
+      else if (msg.type === 'git_commits') {
+        // The answer to a range the thread asked about. Only the ranges it asked for come back, so
+        // there is nothing to filter here.
+        convCommitsReceive(msg);
+      }
+      else if (msg.type === 'versions') { setRelayVersions(msg); }
       else if (msg.type === 'projects') {
         projects = msg.projects || [];
         render();
@@ -674,6 +809,9 @@
         // blocked, or one that just ended, changes what the bar should offer.
         renderQuickActions();
         syncConvBadge();
+        // The branch rides on the snapshot, so the badge over the dock follows one. The pane's own
+        // badge is done by syncOpenPaneChrome below, which is the path a pane switch also takes.
+        if (typeof syncBranchBadges === 'function') syncBranchBadges();
         if (activePane) {
           // herdr reuses a pane_id once its pane closes, so an open pane that has left both lists
           // is not retargeted or polled on — it is let go.
@@ -717,6 +855,7 @@
         renderBandwidth();
         renderQuickActions();
         syncConvBadge();
+        if (typeof syncBranchBadges === 'function') syncBranchBadges();
       }
       else if (msg.type === 'blocked') {
         const a = agents.find(x => x.pane_id === msg.pane_id);

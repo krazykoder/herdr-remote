@@ -105,6 +105,14 @@ test('the conversation window scrolls as a whole, and its button knows that', as
 const rightEdge = (page, id) => page.locator(id).evaluate(el =>
   Math.round(el.getBoundingClientRect().right));
 
+// Polled rather than measured once. Both of these views keep loading after the button appears —
+// the record answers, the thread redraws, a scrollbar comes and goes — and each of those moves the
+// right edge by a pixel or two for one frame. A single measurement catches whichever frame it
+// landed in, which is a test that fails on a busy machine and passes on a quiet one; the assertion
+// is still exact equality, it just waits for the layout to stop moving first.
+const edgesLineUp = (page, a, b) => expect.poll(async () =>
+  (await rightEdge(page, a)) - (await rightEdge(page, b))).toBe(0);
+
 test('the jump lines up under the row it belongs to, in both views', async ({page}) => {
   await open(page);
   await join(page);
@@ -113,7 +121,7 @@ test('the jump lines up under the row it belongs to, in both views', async ({pag
   await expect(page.locator('#paneLast')).toBeVisible();
   // Against the row rather than against the refresh in it: the pane's row ends with the ↑↓ step
   // buttons, and it is the edge of the row the eye reads as the column.
-  expect(await rightEdge(page, '#paneLast')).toBe(await rightEdge(page, '#termWrap .hang-float'));
+  await edgesLineUp(page, '#paneLast', '#termWrap .hang-float');
 
   await page.locator('.term-header .back').click();
   await page.locator('#conversations .conversation-card').click();
@@ -122,7 +130,7 @@ test('the jump lines up under the row it belongs to, in both views', async ({pag
   // The row here too, and for the same reason: it ends with the record toggle beside the refresh,
   // and the eye reads the column off the edge of the row rather than off whichever button it
   // happens to start with.
-  expect(await rightEdge(page, '#convLast')).toBe(await rightEdge(page, '#convView .hang-float'));
+  await edgesLineUp(page, '#convLast', '#convView .hang-float');
 });
 
 test('the pane refresh reads again and tidies without asking', async ({page}) => {

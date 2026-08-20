@@ -7,6 +7,11 @@
   <meta name="theme-color" content="#1a1b26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Stamped by scripts/build.py from the version in herdr-plugin.toml, which is the one place
+       this project's version is written down. Served unbuilt from the relay these keep saying
+       "dev", which is what the page then is: the working copy on disk, not a release. -->
+  <meta name="app-version" content="dev">
+  <meta name="app-built" content="">
   <!-- A file, not the data: URI this used to be. iOS only offers Add to Home Screen for a page
        with a fetchable manifest and a real icon, and only a home-screen web app can receive Web
        Push — so these two lines are load-bearing for Lock Screen notifications, not polish.
@@ -757,6 +762,25 @@
 
     .bandwidth-time.now { color: var(--green); }
 
+    /* The historical total stays put alongside the name. It is the number every bucket is being
+       compared against, and a total that scrolls off the moment the reader goes looking for the
+       hour that produced it is a total nobody can use. Its offset is the name column's own width,
+       measured after layout (see renderBandwidth) because that column is sized to its contents.
+       Offset by exactly that width, so it lands flush against the name and covers the column gap
+       the buckets would otherwise be seen sliding through. */
+    .bandwidth-hist-head,
+    .bandwidth-chip.bandwidth-hist {
+      position: sticky;
+      left: var(--bandwidth-name-w, 0px);
+      z-index: 1;
+    }
+
+    .bandwidth-hist-head {
+      font-weight: 600;
+      color: var(--text);
+      background: var(--bg);
+    }
+
     .bandwidth-chip {
       padding: 3px 4px;
       border: 1px solid var(--border);
@@ -764,6 +788,12 @@
       text-align: center;
       color: var(--text);
       background: color-mix(in srgb, var(--text) 4%, var(--bg));
+    }
+
+    .bandwidth-chip.bandwidth-hist {
+      font-weight: 600;
+      border-color: color-mix(in srgb, var(--border) 80%, var(--text));
+      background: color-mix(in srgb, var(--text) 7%, var(--bg));
     }
 
     /* The bucket still being filled: what is on the wire right now, not a closed total. */
@@ -918,6 +948,13 @@
       background: color-mix(in srgb, var(--text) 4%, transparent);
     }
 
+    .conv-analytics-table tfoot td {
+      border-top: 1px solid var(--border);
+      border-bottom: none;
+      font-weight: 600;
+      background: color-mix(in srgb, var(--text) 3%, transparent);
+    }
+
     .conv-analytics-name-btn {
       border: none;
       background: transparent;
@@ -956,6 +993,22 @@
       color: var(--text);
     }
 
+    /* A transcript in no conversation, and a pane still running. Both are ordinary states, so
+       neither is coloured as a warning — muted for the first, the live green for the second. */
+    .conv-analytics-unfiled-tag {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .conv-analytics-open {
+      color: var(--green);
+    }
+
+    /* A second source for the same conversation, drawn as the aside it is. */
+    .conv-analytics-cached {
+      color: var(--muted);
+    }
+
     /* Settings */
     .settings {
       display: none;
@@ -982,6 +1035,26 @@
       color: var(--muted);
       display: block;
       margin-bottom: 6px;
+    }
+
+    /* Name and value on one line each, the values in a column of their own so three version
+       numbers can be compared down the page rather than hunted for in a sentence. Monospace for
+       the same reason a diff is: 0.5.0 against 0.5.10 is a character-by-character read. */
+    .version-list {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 2px 10px;
+      margin: 0;
+      font-size: 0.75rem;
+    }
+
+    .version-list dt { color: var(--muted); }
+
+    .version-list dd {
+      margin: 0;
+      color: var(--text);
+      font-family: monospace;
+      overflow-wrap: anywhere;
     }
 
     .setting-group input {
@@ -1434,6 +1507,15 @@
       font-weight: 700;
     }
 
+    /* Every agent badge wears its own harness colour, so a picked one is only bolder than the rest
+       — four lit pills where one is chosen. Once there is a choice the others step back, the way
+       the composer's chips do. Only while something is picked: a row of dimmed badges with nothing
+       chosen would read as disabled. */
+    #startAgents:has(.badge.pick.on) .badge.pick:not(.on),
+    #newAgentKinds:has(.badge.pick.on) .badge.pick:not(.on) {
+      opacity: 0.4;
+    }
+
     .workspace-card {
       border-color: color-mix(in srgb, var(--text) 10%, transparent);
     }
@@ -1857,6 +1939,110 @@
       padding: 12px 16px;
       color: var(--muted);
       font-size: 0.75rem;
+    }
+
+    /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
+       is a real choice, not a disabled one. */
+    .pair-pick.past {
+      opacity: 0.85;
+    }
+
+    /* The pane picker's frame. Three bands: the heading and its search stay put, the rows scroll
+       between them, and the action sits at the foot where a thumb is and where the keyboard cannot
+       cover it. The panel is what has the height, so only the list is given the overflow. */
+    .pick-panel {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 420px;
+      max-height: 80dvh;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: env(safe-area-inset-bottom, 8px);
+    }
+
+    .pick-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .pick-title {
+      flex: 1;
+      font-size: 0.8rem;
+      font-weight: 600;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .pick-x {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+
+    .pick-search {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .pick-search[hidden] {
+      display: none;
+    }
+
+    .pick-search input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      /* 16px, like every other field here: anything smaller and iOS zooms the page on focus. */
+      font-size: 16px;
+    }
+
+    #pickList {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .pick-foot {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    #pickSubmit {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--blue);
+      color: var(--bg);
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    #pickSubmit:disabled {
+      opacity: 0.45;
+      cursor: default;
     }
 
     .agent .project {
@@ -3098,8 +3284,7 @@
     .conv-roster .conv-drop,
     .conv-roster .conv-again,
     .conv-roster .conv-open,
-    .conv-roster-actions button,
-    .conv-roster-add .conv-chip {
+    .conv-roster-actions button {
       font-size: 0.65rem;
       /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
          buttons and no thread. 32px is a thumb, and every one of these is either reversible or
@@ -3135,14 +3320,6 @@
       color: var(--blue);
     }
 
-    .conv-roster-add {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding-top: 6px;
-    }
-
-    .conv-roster-add .conv-chip,
     .conv-roster .conv-open,
     .conv-roster .conv-again {
       color: var(--blue);
@@ -3226,40 +3403,6 @@
        is a reading state, and nothing about it is a deletion. */
     .conv-roster-row.hidden-member .who {
       opacity: 0.55;
-    }
-
-    .conv-roster-add .conv-none {
-      font-size: 0.65rem;
-      color: var(--muted);
-    }
-
-    /* The ended sessions in the picker, under their own heading — "which pane is running" and
-       "which recording exists" are different questions, and a flat list of chips would ask them as
-       one. */
-    .conv-roster-add .conv-pick-head {
-      flex-basis: 100%;
-      margin: 4px 0 0;
-      font-size: 0.6rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    .conv-roster-add .conv-chip {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .conv-roster-add .conv-chip.past {
-      /* Dimmer than a live pane, and it has to stay legible: this is a real choice, not a disabled
-         one. */
-      opacity: 0.85;
-    }
-
-    .conv-roster-add .conv-chip .ago {
-      font-size: 0.6rem;
-      color: var(--muted);
     }
 
     .conv-roster .conv-tier-note {
@@ -3415,6 +3558,130 @@
       letter-spacing: 0;
       font-variant-numeric: tabular-nums;
       opacity: 0.75;
+    }
+
+    /* Where the work landed, drawn as events between the messages — the same furniture as the
+       rule that marks a break in the recording, because it is the same kind of fact: something
+       that happened in the gap between two things that were said. */
+    /* Which branch the addressed agent is on, floating over the bottom of whatever is being read.
+       The thread's branch rules say when it *changed*; this says what is true now, which is a
+       different question and the one a reader has while writing the next message. Centred and
+       over the content rather than in a row of its own: a permanent strip would cost the thread
+       a line of height for a fact that rarely changes.
+
+       Per agent, not per view: in a conversation two members can be on two branches, so this
+       follows whoever the composer is addressing. */
+    .branch-badge {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 4;
+      max-width: 70%;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--branch-color, var(--blue)) 45%, var(--border));
+      background: color-mix(in srgb, var(--branch-color, var(--blue)) 12%, var(--surface));
+      color: var(--branch-color, var(--blue));
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.5;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+      /* It hangs over the thread, and the thread is what the finger is for. */
+      pointer-events: none;
+    }
+
+    .branch-badge[hidden] {
+      display: none;
+    }
+
+    /* Inside the pane's box, which clips — so it sits just above its own bottom edge. */
+    #paneBranch {
+      bottom: 8px;
+    }
+
+    /* Above the dock rather than inside it: the dock is the composer, and this is not part of what
+       is being written. */
+    #convBranch {
+      bottom: 100%;
+      margin-bottom: 6px;
+      /* `.conv-dock > *` hands every child its taps back; this one wants none of them. */
+      pointer-events: none;
+    }
+
+    .conv-rule.git.branch {
+      color: var(--blue);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .conv-rule.git.branch::before,
+    .conv-rule.git.branch::after {
+      border-top-color: var(--blue);
+      opacity: 0.4;
+    }
+
+    /* A list, so the dashes either side of a one-line rule would have nothing to sit beside. A
+       left rule instead: it reads as a run of things that happened, in order, at this point. */
+    /* What this turn committed, hung under the bubble that did it rather than drawn as a rule
+       across the thread. A rule is a divider — it says the thread moved on — and these are not
+       between two messages, they belong to the one above them: the agent said it finished and
+       these are what it finished. So they take the bubble's width and its side and sit tight
+       against its underside, the way a caption belongs to its picture. */
+    /* Full width and centred, like the branch rule above it: these are a fact about the checkout
+       and not about the pane that spoke last, so the strip must not read as belonging to the bubble
+       above it. Aligned to a bubble and painted in its colour, it read as authorship — which git
+       cannot support, since two agents in one repository commit as the same person. */
+    .conv-commits {
+      width: 100%;
+      box-sizing: border-box;
+      align-self: center;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: baseline;
+      gap: 4px;
+      margin: 6px 0 8px;
+      padding: 0 4px;
+    }
+
+    /* What the badges beside it are. Says the claim out loud, so the strip does not have to be
+       guessed at from where it sits. */
+    .conv-commits-lede {
+      color: var(--muted);
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.68));
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+    }
+
+    /* One commit. A badge and not a line: they arrive in twos and threes, and three lines of prose
+       under every turn is a thread nobody can skim. */
+    /* Neutral throughout. The colour used to be the speaker's, which said "this agent made this" —
+       a claim the range cannot support: it is per checkout, and a commit merged in from another
+       agent's worktree lands in it too. */
+    .conv-commit {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 5px;
+      max-width: 100%;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--muted) 10%, var(--surface));
+      color: color-mix(in srgb, var(--muted) 45%, var(--text));
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.72));
+      line-height: 1.5;
+      /* A subject is a line of prose that may be long, and the thread's width is the reader's line
+         length. One badge wraps its own text rather than making the thread scroll sideways. */
+      overflow-wrap: anywhere;
+    }
+
+    /* The sha is the identifier and reads at full strength; the subject beside it is prose. */
+    .conv-commit code {
+      flex: none;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     .conv-who .dot {
@@ -3901,6 +4168,7 @@
        macOS gives a chunky arrow at 13px, iOS a hairline one about half the size, which is why the
        same button read as tiny on a phone and fine on a desktop. Same reasoning as convGlyph. */
     .hang-live svg,
+    .hang-commits svg,
     .hang-tidy svg,
     .conv-analytics-refresh svg {
       display: block;
@@ -3909,6 +4177,13 @@
     .hang-live.live {
       color: var(--green);
       border-color: var(--green);
+    }
+
+    /* Lit in the branch colour rather than the record's green: two buttons side by side in the
+       same green would read as one state with two switches. */
+    .hang-commits.live {
+      color: var(--blue);
+      border-color: var(--blue);
     }
 
     /* The jump to the end, in the corner the end is in. The pane is not a scroller itself — its
@@ -5108,6 +5383,20 @@
           guide →</a></div>
     </div>
 
+    <!-- Under Connect because it answers the question Connect raises: this page and the relay it
+         reached are two separately deployed things, and "which versions am I actually running"
+         is the first thing asked when one of them behaves unlike the other. The page knows its
+         own build; the other two come from the relay, so they read as unknown until connected. -->
+    <div class="setting-group">
+      <label>Versions</label>
+      <dl class="version-list">
+        <dt>App</dt><dd id="verApp">dev</dd>
+        <dt>Relay</dt><dd id="verRelay">—</dd>
+        <dt>herdr CLI</dt><dd id="verHerdr">—</dd>
+      </dl>
+      <div class="hint" id="versionHint"></div>
+    </div>
+
     <div class="setting-group">
       <label>Push Notifications</label>
       <div id="pushStatus" style="font-size:0.75rem;margin-bottom:6px"></div>
@@ -5250,6 +5539,19 @@
     </div>
 
     <div class="setting-group">
+      <label>The relay's record, kept here</label>
+      <div class="hint">The Live toggle reads the relay's own record — every turn it wrote, watched
+        or not. What this browser has read of it is now kept on this device, so it is there after a
+        refresh, after a week away, and while the relay is unreachable. Only what was already read
+        is kept: this fetches nothing on its own, and the pane's own transcript is separate and
+        untouched.</div>
+      <button class="nav-key" onclick="forgetLiveRecord()">Forget the kept record</button>
+      <div class="hint" id="liveKeptHint">Everything kept is on the relay too, so this costs history
+        only where the relay has since pruned it. It is read again the next time a thread is
+        opened.</div>
+    </div>
+
+    <div class="setting-group">
       <label class="toggle-option"><input type="checkbox" id="autocorrectOn" onchange="setAutocorrect(this.checked)"> Autocorrect in the composer</label>
       <div class="hint">Off by default. Both composers type into an agent's prompt, where a flag is
         not a typo and a path is not a sentence — a keyboard that capitalises the first word of one
@@ -5298,9 +5600,9 @@
       <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
       <div id="bandwidthRows"></div>
     </section>
-    <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
-      <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
-      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
+    <section class="conv-analytics" id="convAnalytics" aria-label="Transcript storage">
+      <h2><span id="convAnalyticsTitle">Transcripts by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 transcripts · 0.00 MB</span>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what this browser is storing" aria-label="Refresh transcript storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
       <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
     </section>
   </div>
@@ -5356,6 +5658,12 @@
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
         </svg></button>
+      <button class="hang-btn hang-commits" id="convCommits" onclick="toggleConvCommits()"
+        aria-pressed="false" aria-label="Show commits in the thread">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.5" /><path d="M12 2v6.5M12 15.5V22" />
+        </svg></button>
       <button class="hang-btn hang-live" id="convLive" onclick="toggleConvLive()"
         aria-pressed="false" aria-label="Read the relay’s record">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
@@ -5378,6 +5686,9 @@
     <!-- The dock: who you are talking to, what is added to what you send, and the composer it all
          modifies. Sits statically at the bottom of the conversation view. -->
     <div class="conv-dock" id="convDock">
+      <!-- The addressed member's branch, hanging above the dock. Its members can be on different
+           branches, so it follows the target chip rather than the conversation. -->
+      <div class="branch-badge" id="convBranch" hidden></div>
       <div class="chip-menu" id="whoMenu" role="menu" hidden></div>
       <div class="chip-menu" id="chipMenu" role="menu" hidden></div>
       <!-- How the composer behaves: standing switches, not a mode of the moment. -->
@@ -5606,6 +5917,8 @@
       <!-- A pane opened a moment ago still holds the last one's text until its own first read
            lands, so this hangs over the middle of the pane rather than replacing it. -->
       <div class="term-loading" id="termLoading" hidden>Loading…</div>
+      <!-- Which branch this pane's work is landing on. See .branch-badge. -->
+      <div class="branch-badge" id="paneBranch" hidden></div>
       <div class="sel-band" id="selBand" hidden></div>
       <div class="ruler" id="ruler" hidden aria-hidden="true">
         <div class="ruler-handle" id="rulerTop" hidden></div>
@@ -5641,6 +5954,16 @@
             <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
             <path d="M4.5 5.5v13c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-13" />
             <path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3" />
+          </svg></button>
+        <!-- Whether the thread shows what was committed between the messages. Beside the record
+             toggle because it is only ever true of the relay's record — this browser's transcript
+             has no commits in it — and because the two are one question: how much of what happened
+             do you want to see. -->
+        <button class="hang-btn hang-commits" id="paneCommits" onclick="toggleConvCommits()"
+          aria-pressed="false" aria-label="Show commits in the thread">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5" /><path d="M12 2v6.5M12 15.5V22" />
           </svg></button>
         <div class="block-nav" id="blockNav" hidden>
           <button onclick="stepBlock(1)" title="Next agent message" aria-label="Next agent message">↓</button>
@@ -5871,29 +6194,37 @@
     style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
-  <!-- Pair editor — pins two live same-host panes. Frontend only; the relay knows nothing of pairs. -->
-  <div id="pairSheet" style="display:none;position:fixed;inset:0;z-index:100;">
-    <div onclick="closePair()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
-    <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Pair · <span id="pairSource"></span></span>
-        <button onclick="closePair()" aria-label="Close"
-          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+  <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
+       question — which other pane — so they are one sheet, and only the words on the button at the
+       bottom and what it does with the answer differ. Frontend only; the relay knows nothing of
+       pairs or of conversations. -->
+  <div id="pickSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closePicker()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div class="pick-panel">
+      <div class="pick-head">
+        <span class="pick-title" id="pickTitle"></span>
+        <button class="pick-x" onclick="closePicker()" aria-label="Close">✕</button>
+      </div>
+      <!-- Hidden until there is enough to search; renderPicker owns that. -->
+      <div class="pick-search" hidden>
+        <input id="pickSearch" type="search" placeholder="Search panes…" aria-label="Search panes"
+          autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+          oninput="renderPicker()" />
       </div>
       <!-- Edge to edge and outside the padding, the same as the reorder sheet's rows: a list of
-           panes reads as a list when the rows run the full width of the sheet. -->
-      <div id="pairCandidates"></div>
-      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+           panes reads as a list when the rows run the full width of the sheet. It is also the only
+           part that scrolls, so the search box and the action stay put while it does. -->
+      <div id="pickList"></div>
+      <div class="pick-foot">
+        <!-- What a pair still needs once its partner is chosen. Nothing else the sheet is used for
+             asks anything more than "which one", so nothing else puts anything here. -->
         <div id="pairFields" style="display:none;flex-direction:column;gap:12px">
           <label class="start-field">Pair name<input id="pairName" maxlength="64" type="text" /></label>
           <label class="start-field">This pane's name<input id="pairRoleA" maxlength="32" type="text" /></label>
           <label class="start-field">Partner's name<input id="pairRoleB" maxlength="32" type="text" /></label>
         </div>
-        <p id="pairError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
-        <button id="pairSubmit" onclick="savePair()"
-          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Save
-          pair</button>
+        <p id="pickError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="pickSubmit" onclick="pickSubmit()"></button>
       </div>
     </div>
   </div>
@@ -6054,6 +6385,7 @@
     <script src="src/state.js"></script>
   <script src="src/attention.js"></script>
   <script src="src/utils.js"></script>
+  <script src="src/state_sync.js"></script>
   <script src="src/pairs_pure.js"></script>
   <script src="src/settings.js"></script>
   <script src="src/sound.js"></script>
@@ -6069,6 +6401,7 @@
   <script src="src/conv_live.js"></script>
   <script src="src/terminal.js"></script>
   <script src="src/reorder.js"></script>
+  <script src="src/pane_picker.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
   <script src="src/conv_dock.js"></script>

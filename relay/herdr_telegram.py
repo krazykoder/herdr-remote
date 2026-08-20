@@ -11,6 +11,7 @@ from telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMar
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, ContextTypes, filters
 
 from agent_state import apply_agent_message
+import tg_util
 
 logging.basicConfig(level=logging.INFO)
 # httpx logs every request URL at INFO; that URL contains the bot token. Silence it.
@@ -29,12 +30,10 @@ def scrub(value) -> str:
 
     WebSocket exceptions (e.g. InvalidURI) embed the full relay URL incl. the
     ?token= query, so raw exception text must never be surfaced unredacted.
+
+    Shared with the ops bot via tg_util — two copies of this is how a leak gets introduced.
     """
-    s = str(value)
-    for secret in (_RELAY_TOKEN, TOKEN):
-        if secret:
-            s = s.replace(secret, "<redacted>")
-    return s
+    return tg_util.scrub(value, _RELAY_TOKEN, TOKEN)
 
 if not TOKEN:
     print("Set HERDR_TG_TOKEN (from @BotFather)")

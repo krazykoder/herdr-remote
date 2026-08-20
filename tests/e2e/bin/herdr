@@ -80,6 +80,11 @@ if STATE and args[:2] == ["pane", "list"]:
 # so the fake keeps its own. FAKE_TAKEN_NAMES seeds it.
 TAKEN = [n for n in os.environ.get("FAKE_TAKEN_NAMES", "").split(",") if n]
 
+# The relay asks once, on the first client connect, and shows it in Settings.
+if args[:1] == ["--version"]:
+    print("herdr 9.9.9-fake")
+    sys.exit(0)
+
 # FAKE_FAIL names a subcommand pair that should fail, e.g. "agent start".
 fail = os.environ.get("FAKE_FAIL", "")
 if fail and " ".join(args[:2]) == fail:

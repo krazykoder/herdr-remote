@@ -507,14 +507,20 @@
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.term-menu-wrap')) closeTermMenu();
       if (!e.target.closest('.fire-wrap')) closeFireMenu();
+      // A sheet these panels open sits *above* them with its own backdrop, so a tap in it is not a
+      // tap on the thread behind — dismissing the panel under it would leave the sheet acting on a
+      // roster the user can no longer see.
+      const inSheet = !!e.target.closest('#pickSheet');
       // The pane's roster panel is a disclosure hung off the header, and a tap on the thread
       // behind it is a tap on the thing it is covering.
-      if (convPaneRoster && !e.target.closest('#convPaneRoster') && !e.target.closest('#paneConvWho')) {
+      if (convPaneRoster && !inSheet &&
+          !e.target.closest('#convPaneRoster') && !e.target.closest('#paneConvWho')) {
         toggleConvPaneRoster();
       }
       // The conversation window's copy of that panel, on the same terms. It had no dismiss of its
       // own, so it stayed open over the thread until the button that opened it was found again.
-      if (convRosterOpen && !e.target.closest('#convViewRoster') && !e.target.closest('#convViewWho')) {
+      if (convRosterOpen && !inSheet &&
+          !e.target.closest('#convViewRoster') && !e.target.closest('#convViewWho')) {
         toggleConvRoster();
       }
     }, true);

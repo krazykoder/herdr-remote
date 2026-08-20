@@ -94,3 +94,50 @@
     function setSummaryHighlight(on) { setHighlight(SUMMARY_HIGHLIGHT_KEY, 'summaryHighlight', on); }
     document.getElementById('userHighlight').checked = highlightOn(USER_HIGHLIGHT_KEY);
     document.getElementById('summaryHighlight').checked = highlightOn(SUMMARY_HIGHLIGHT_KEY);
+
+    // What is running, and where each part of the answer comes from. The page knows its own build
+    // because the build stamped it into a meta tag; the relay and the herdr binary under it are
+    // only knowable from the relay, which sends both when a client connects. Two separately
+    // deployed halves, and a mismatch between them is the explanation for a whole class of "the
+    // app does not do that" — so it is said out loud rather than left to be worked out.
+    const appVersion = (document.querySelector('meta[name="app-version"]') || {}).content || 'dev';
+    const appBuilt = (document.querySelector('meta[name="app-built"]') || {}).content || '';
+    let relayVersions = {};
+
+    function setRelayVersions(msg) {
+      relayVersions = msg || {};
+      renderVersions();
+    }
+
+    function renderVersions() {
+      const app = document.getElementById('verApp');
+      if (!app) return;
+      // "dev" is what the page is when it was served from the working copy rather than built:
+      // there is no version to name, and naming the last release would be a lie about what is
+      // on screen.
+      app.textContent = appVersion + (appBuilt ? ` · ${appBuilt}` : '');
+      // Em dash, not "unknown": nothing has been asked yet. A relay too old to answer leaves it
+      // at that too, which is itself the answer — that relay predates this message.
+      document.getElementById('verRelay').textContent = relayVersions.relay || '—';
+      document.getElementById('verHerdr').textContent = relayVersions.herdr || '—';
+      const hint = document.getElementById('versionHint');
+      if (!hint) return;
+      const mismatch = !!relayVersions.relay && appVersion !== 'dev' &&
+        appVersion !== relayVersions.relay;
+      if (!relayVersions.relay) {
+        hint.textContent = 'Relay and herdr versions arrive when the relay connects.';
+      } else if (appVersion === 'dev') {
+        hint.textContent = 'This page is being served unbuilt from the working copy, so it has no ' +
+          'version of its own. Run make build to stamp one.';
+      } else if (mismatch) {
+        hint.textContent = `This page is ${appVersion} and the relay is ${relayVersions.relay}. ` +
+          'Rebuild and redeploy the app, or restart the relay, so the two match.';
+      } else {
+        hint.textContent = 'The app is built from the same version the relay reports.';
+      }
+      // The one case worth a colour: everything else here is a statement of fact, and this is the
+      // one that explains a bug the reader is probably already looking at.
+      hint.style.color = mismatch ? 'var(--orange)' : '';
+    }
+
+    renderVersions();

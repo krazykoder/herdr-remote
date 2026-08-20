@@ -63,6 +63,123 @@
       return bucket;
     }
 
+    // What this browser is keeping of the relay's record, per fingerprint, for the storage panel.
+    //
+    // Measured off the in-memory buckets rather than by reading the store back: they are written
+    // through, so they are what is on disk, and the panel must not open a second transaction per
+    // draw to learn what it already has.
+    function convLiveCacheBytes() {
+      const out = new Map();
+      for (const [fpKey, bucket] of convLiveCache) {
+        try { out.set(fpKey, JSON.stringify(bucket.turns || []).length); } catch (e) { /* skip */ }
+      }
+      return out;
+    }
+
+    // --- Kept on disk ---
+    //
+    // The record survives a refresh, a closed tab, and a week away, and reads with the relay down.
+    // Two things follow from persisting it, and both are the point:
+    //
+    //   * the delta spans sessions. `syncedTo` was a session variable, so every reload re-asked for
+    //     the window this feature exists to avoid re-asking for.
+    //   * it outlives the relay's own pruning. The relay drops its oldest rows at
+    //     HERDR_CONV_LOG_MAX, and what a client already holds is not dropped with them.
+    //
+    // Kept in its own store and never folded into a transcript: the two are different sources for
+    // one conversation, and the whole value of the toggle is being able to tell them apart.
+    const CONV_LIVE_KEEP = 400;      // fingerprints kept on disk, oldest touched evicted first
+
+    // The buckets read back from disk, once per page. Everything that reads the cache awaits it, so
+    // a render arriving before the disk does draws the record rather than an empty thread.
+    let convLiveLoaded = null;
+    // Fingerprints this session has heard the relay answer for. The first ask for each is the whole
+    // window rather than a delta: a watermark restored from disk names an id in a database this
+    // session has never spoken to, and a relay whose record was reset or moved would answer that
+    // delta with silence forever. One window per fingerprint per session settles it.
+    const convLiveVerified = new Set();
+
+    function convLiveHydrate() {
+      if (convLiveLoaded) return convLiveLoaded;
+      convLiveLoaded = (async () => {
+        if (typeof openConvDB !== 'function') return;
+        const db = await openConvDB();
+        if (!db) return;
+        try {
+          const read = db.transaction(CONV_LIVE_STORE, 'readonly').objectStore(CONV_LIVE_STORE);
+          for (const rec of (await idbReq(read.getAll())) || []) {
+            if (!rec || !rec.fp || convLiveCache.has(rec.fp)) continue;
+            convLiveCache.set(rec.fp, {
+              turns: rec.turns || [], syncedTo: rec.syncedTo || 0, lastFetch: 0,
+              // Answered by the relay once, on a previous day. Without this the thread would say
+              // "Reading the relay's record…" over rows it is already drawing.
+              answered: true,
+            });
+          }
+        } catch (e) { /* the session keeps its own copy in memory */ }
+      })();
+      return convLiveLoaded;
+    }
+
+    // Write-through, per fingerprint, after the answer that changed it. Failures are silent by
+    // design: a full quota costs this session's durability and nothing else, and the thread on
+    // screen is already drawn from memory.
+    async function convLivePersist(fpKeys) {
+      if (typeof openConvDB !== 'function') return;
+      const db = await openConvDB();
+      if (!db) return;
+      const now = Date.now();
+      try {
+        const store = db.transaction(CONV_LIVE_STORE, 'readwrite').objectStore(CONV_LIVE_STORE);
+        await Promise.all(Array.from(fpKeys || [], fpKey => {
+          const bucket = convLiveCache.get(fpKey);
+          if (!bucket) return null;
+          return idbReq(store.put({ fp: fpKey, turns: bucket.turns || [],
+            syncedTo: bucket.syncedTo || 0, touched: now }));
+        }).filter(Boolean));
+      } catch (e) { return; }
+      await convLiveEvict(db);
+    }
+
+    // The store's own ceiling. The per-fingerprint cap (CONV_LIVE_ROWS) bounds one pane; this bounds
+    // how many panes are kept at all, so a machine that has run hundreds of sessions does not carry
+    // every one of them forever. Oldest touched first, which is the same rule the transcripts use.
+    async function convLiveEvict(db) {
+      try {
+        const read = db.transaction(CONV_LIVE_STORE, 'readonly').objectStore(CONV_LIVE_STORE);
+        const count = await idbReq(read.count());
+        if (count <= CONV_LIVE_KEEP) return;
+        const byAge = db.transaction(CONV_LIVE_STORE, 'readwrite').objectStore(CONV_LIVE_STORE);
+        const stale = (await idbReq(byAge.index('touched').getAllKeys())) || [];
+        for (const key of stale.slice(0, count - CONV_LIVE_KEEP)) byAge.delete(key);
+      } catch (e) { /* the cap is a tidy-up, not a correctness property */ }
+    }
+
+    // Everything this browser is keeping of the relay's record, dropped in one go. The transcripts
+    // are untouched: this is the copy that can always be fetched again.
+    async function convLiveForget() {
+      convLiveCache.clear();
+      convLiveVerified.clear();
+      if (typeof openConvDB !== 'function') return;
+      const db = await openConvDB();
+      if (!db) return;
+      try {
+        await idbReq(db.transaction(CONV_LIVE_STORE, 'readwrite')
+          .objectStore(CONV_LIVE_STORE).clear());
+      } catch (e) { /* nothing to do about it, and nothing lost that cannot be re-read */ }
+    }
+
+    // The Settings button. Confirmed, because it is a delete — and worded as what it costs, which
+    // is nothing except where the relay has pruned what this browser still had.
+    async function forgetLiveRecord() {
+      if (!confirm('Forget the relay record kept on this device? It is read again the next time a '
+        + 'thread is opened, except for anything the relay has since pruned.')) return;
+      await convLiveForget();
+      if (typeof renderConvView === 'function') renderConvView();
+      if (typeof renderConvAnalytics === 'function') renderConvAnalytics();
+      showToast('Forgot the kept copy of the relay’s record');
+    }
+
     function convLiveOn() {
       try { return localStorage.getItem(CONV_LIVE_KEY) === 'on'; } catch (e) { return false; }
     }
@@ -113,12 +230,26 @@
       if (!convLiveOn()) return;
       const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
       if (!fps.length) return;
+      // Whatever is on disk, before deciding anything: the watermark that says what to ask for
+      // lives there now, and asking without it would re-fetch a window this browser already holds.
+      // The render that follows draws from the same buckets, so a thread is on screen either way.
+      if (!convLiveLoaded) { convLiveHydrate().then(() => renderConvView()); return; }
       if (!ws || ws.readyState !== 1) {
-        convLiveError = 'Not connected — the relay’s record cannot be read right now.';
+        // Only when there is nothing to show. With the record on disk, a relay that is down or a
+        // phone with no signal is a thread that is behind, not a thread that is empty — and saying
+        // "cannot be read right now" over rows the reader is looking at is simply false.
+        const held = fps.some(fp => (convLiveCache.get(convFpKey(fp)) || {}).turns?.length);
+        convLiveError = held ? '' : 'Not connected — the relay’s record cannot be read right now.';
         return;
       }
       const now = Date.now();
       let needsFetch = !!force;
+      // A fingerprint restored from disk carries a watermark from another session, possibly from
+      // another copy of the relay's database. Its first ask is the window, and it is a delta after
+      // that — see convLiveVerified.
+      for (const fp of fps) {
+        if (!convLiveVerified.has(convFpKey(fp))) { force = true; needsFetch = true; }
+      }
       // The floor over the roster, not the ceiling: the buckets were last answered by different
       // queries, so the only id every member is proven current through is the lowest of them. A
       // member with no bucket has been answered through nothing, and the query goes out whole.
@@ -168,10 +299,14 @@
       // echoes the request back for exactly this: without it an empty answer is indistinguishable
       // from one that was never asked, and a quiet pane would never come up to date.
       for (const fp of (Array.isArray(msg.fingerprints) ? msg.fingerprints : [])) {
-        const bucket = convLiveBucket(convFpKey(fp));
+        const fpKey = convFpKey(fp);
+        const bucket = convLiveBucket(fpKey);
         bucket.lastFetch = now;
         bucket.answered = true;
+        // Heard from, this session, against this relay: the next ask for it can be a delta.
+        convLiveVerified.add(fpKey);
         if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
+        touched.add(fpKey);
       }
 
       for (const fpKey of touched) {
@@ -183,6 +318,10 @@
           bucket.turns.splice(0, bucket.turns.length - CONV_LIVE_ROWS);
         }
       }
+
+      // Kept, so the next session starts where this one got to. Not awaited: the thread below is
+      // drawn from memory and a disk write is not something a reader should wait behind.
+      convLivePersist(touched);
 
       if (!convLiveOn()) return;
       renderConvView();
@@ -292,9 +431,206 @@
           // prompts go on — but nobody typed it, and a reader scrolling back through an unattended
           // session must be able to tell those two apart (N8).
           via: t.origin === 'arbitrator' ? 'arbitrator' : undefined,
+          // Where the work landed. The record's own columns, carried through untouched — a turn
+          // that says what an agent did is worth much more next to the branch it did it on. The
+          // host and directory come with them because they are what a commit range is asked for
+          // in: the fingerprint has them, but the entry is what the thread renders from.
+          branch: t.branch || '', commit: t.commit || '',
+          commits: Array.isArray(t.commits) ? t.commits : [],
+          host: t.host || 'local', cwd: t.cwd || '',
           kind: t.kind, live: true,
         };
       }).filter(e => e.text);
+    }
+
+    // --- Where the work landed, as events in the thread ---
+    //
+    // Not as a footer on every bubble. A branch is the same for twenty messages in a row and
+    // stamping each of them says nothing; what a reader is looking for is the *moment it changed*,
+    // which is one line between two messages. Commits are the same shape of fact — something that
+    // happened between two things that were said — so they are drawn where they happened rather
+    // than hung off whichever message came after them.
+    //
+    // Both are the same rule the thread already uses for a gap in the recording.
+
+    // A commit is looked up by its first characters and read by its subject; the other 32 are noise
+    // in a thread. The whole sha stays in the title, because a sha nobody can copy is a lookup
+    // nobody can do.
+    const CONV_SHA_SHOWN = 8;
+
+    // Showing the commits is a per-device reading preference, like the record toggle beside it —
+    // not a fact about the work, so it is not one of the documents that follow the user between
+    // browsers.
+    const CONV_COMMITS_KEY = 'herdr_conv_commits';
+
+    function convCommitsOn() {
+      try { return localStorage.getItem(CONV_COMMITS_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvCommits() {
+      const on = !convCommitsOn();
+      try { localStorage.setItem(CONV_COMMITS_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+      renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+      if (typeof hangSync === 'function') hangSync();
+      showToast(on ? 'Showing commits in the thread' : 'Hiding commits');
+    }
+
+    // 'cwd|host|from|to' -> a list of commits, or 'asked' while the question is in the air. The
+    // relay stores the list only when HERDR_GIT_COMMITS is on, because it is the one part of this
+    // that can be recomputed from the two shas the record already keeps — so the ordinary case is
+    // that the thread asks for it, once per range, the first time a reader wants to see it.
+    const convCommitsCache = new Map();
+    const convCommitsKey = (host, cwd, from, to) => `${host}|${cwd}|${from}|${to}`;
+
+    function convCommitsAsk(host, cwd, from, to) {
+      const key = convCommitsKey(host, cwd, from, to);
+      if (convCommitsCache.has(key)) return;
+      convCommitsCache.set(key, 'asked');
+      try {
+        ws.send(JSON.stringify({type: 'git_commits', host: host, cwd: cwd, from: from, to: to}));
+      } catch (e) {
+        convCommitsCache.delete(key);   // no socket; the next render asks again
+      }
+    }
+
+    function convCommitsReceive(msg) {
+      if (!msg) return;
+      const key = convCommitsKey(msg.host || 'local', msg.cwd || '', msg.from || '', msg.to || '');
+      convCommitsCache.set(key, Array.isArray(msg.commits) ? msg.commits : []);
+      renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+    }
+
+    // The list for one range: stored on the turn if the relay was told to keep it, otherwise
+    // whatever the answer to our question was. `null` means "not known yet" — the question has just
+    // gone out and the next render draws it.
+    function convCommitsFor(e, fromSha) {
+      if ((e.commits || []).length) return e.commits;
+      if (!fromSha || !e.commit || fromSha === e.commit || !e.cwd) return [];
+      const host = e.host || 'local';
+      const key = convCommitsKey(host, e.cwd, fromSha, e.commit);
+      const hit = convCommitsCache.get(key);
+      if (Array.isArray(hit)) return hit;
+      convCommitsAsk(host, e.cwd, fromSha, e.commit);
+      return null;
+    }
+
+    // --- The branch the addressed agent is on, as a standing badge ---
+    //
+    // The rules above answer "when did this change"; this answers "where am I now", which is the
+    // question a reader has with their thumb over the composer. Per *agent* and not per view: a
+    // conversation's members can be in different checkouts on different branches, so this follows
+    // whoever the composer is addressing rather than the conversation as a whole.
+    //
+    // It rides on the snapshot and is asked for by nothing. The relay probes git at turn end and
+    // reads the rest back out of its own record, so by the time a pane is on screen the answer is
+    // already in the state this browser holds — one more round trip per selection would buy only
+    // the minutes between a branch switch and the next turn that mentions it.
+
+    function branchOf(pane) {
+      return (pane && pane.branch) || '';
+    }
+
+    function syncBranchBadge(id, pane) {
+      const box = document.getElementById(id);
+      if (!box) return;
+      const branch = branchOf(pane);
+      // innerHTML only when it changed: this runs on every snapshot, and rewriting a node under a
+      // finger is how a tap lands on nothing.
+      if (box.dataset.branch !== branch) {
+        box.dataset.branch = branch;
+        box.innerHTML = branch ? `⎇ ${escapeHtml(branch)}` : '';
+        box.title = branch ? `${branch} — the branch this agent's work is landing on` : '';
+      }
+      // The branch belongs to an agent, so use that agent's existing theme colour rather than a
+      // generic git colour. A Claude target reads orange; a Codex target reads blue.
+      box.style.setProperty('--branch-color',
+                            typeof agentColor === 'function' ? agentColor((pane || {}).agent) : 'var(--blue)');
+      box.hidden = !branch;
+    }
+
+    // Both badges from wherever the caller is. The pane view addresses the pane it has open; the
+    // conversation addresses whichever member the dock is pointed at.
+    function syncBranchBadges() {
+      const of = id => (typeof paneOf === 'function' && id) ? paneOf(id) : null;
+      syncBranchBadge('paneBranch', of(typeof activePane === 'undefined' ? '' : activePane));
+      syncBranchBadge('convBranch', of(typeof dockAddressed === 'function' ? dockAddressed() : ''));
+    }
+
+    const convGitRule = (cls, body) => `<div class="conv-rule git ${cls}">${body}</div>`;
+
+    // What goes above and below one entry, and the running state that makes it possible to tell.
+    //
+    // The two halves are not the same kind of thing, and they are drawn differently on purpose.
+    // `before` is a rule across the thread: it announces the state the *next* bubble is in, which
+    // is what a divider is for. `after` is a rule too, and used not to be: it hung under the bubble
+    // above at that bubble's width and side, which said the turn that just ended made these
+    // commits. It did not necessarily — see below — so it is drawn across the thread as well.
+    //
+    // They are also counted differently, and this is the part that is easy to get wrong. A branch
+    // is tracked **per member**: a joint thread is several panes, and each of them deserves to be
+    // introduced once. A commit range is tracked **per checkout**, because a commit belongs to a
+    // repository's history and not to whoever happened to speak next. Two agents pairing in one
+    // directory, counted per member, would each carry the previous sha *they* last ended on — so
+    // the same commit would appear under a bubble from each of them, twice, once misattributed.
+    // Per checkout it appears exactly once, under the first turn to end after it was made. It is
+    // also the rule the relay already uses when it stores a list (last_commit is keyed by host and
+    // cwd), so the fetched range and the stored one now describe the same window.
+    //
+    // What that ordering cannot say is *who* committed. The first turn to end after a commit is
+    // not the pane that made it — with two agents in one checkout it is whichever finished first —
+    // and git has no per-pane provenance to appeal to: both commit as the same person. So the strip
+    // is drawn as a fact about the repository and never in the speaker's colour.
+    const convGitWhere = e => `${e.host || 'local'}|${e.cwd || ''}`;
+
+    function convGitRules(e, seen) {
+      const none = {before: '', after: ''};
+      if (!e || (!e.branch && !e.commit)) return none;
+      const key = e.key || '';
+      const was = seen.get(key) || {};
+      // One map, two kinds of key. A member key is `[host, pane, agent, cwd]` and a checkout key is
+      // `host|cwd`, so neither can be mistaken for the other.
+      const where = convGitWhere(e);
+      const there = seen.get(where) || {};
+      let before = '';
+      if (e.branch && e.branch !== was.branch) {
+        // A first sighting is context and a change is an event, and they read differently: the
+        // first says where this is happening, the second says something happened.
+        before = convGitRule('branch', was.branch
+          ? `⎇ Branch changed to ${escapeHtml(e.branch)}`
+          : `⎇ ${escapeHtml(e.branch)}`);
+      }
+      let after = '';
+      if (convCommitsOn()) {
+        const commits = convCommitsFor(e, there.commit);
+        if (commits && commits.length) {
+          // Neutral, and not aligned to the bubble above it. These are the commits this checkout
+          // gained during the turn that just ended — which is not the same claim as "this agent
+          // made them", and git cannot tell the difference: two agents working in one repository
+          // commit as the same person, and the range is per checkout precisely so a commit appears
+          // once rather than under each of them. Drawn in the agent's colour and tucked under its
+          // bubble, that once read as authorship, and a reader went looking for work in the wrong
+          // pane's history.
+          const where = (e.cwd || '').split('/').filter(Boolean).pop() || 'this checkout';
+          const tip = `Landed in ${where} while this turn was open. Commits are per checkout — `
+            + `another agent working here may have made them.`;
+          after = `<div class="conv-commits" title="${escapeHtml(tip)}">` +
+            `<span class="conv-commits-lede">landed in ${escapeHtml(where)}</span>` +
+            commits.map(c =>
+            `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
+            `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code>` +
+            `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;
+        }
+      }
+      // Both are carried forward when a later turn has neither: a pane that stepped out of the
+      // checkout for one turn has not changed branch, and announcing the same branch again when it
+      // steps back in would be an event that did not happen.
+      seen.set(key, {branch: e.branch || was.branch});
+      seen.set(where, {commit: e.commit || there.commit});
+      return {before: before, after: after};
     }
 
     // What the thread says when the relay's record is on screen and empty. Three different facts,

@@ -424,11 +424,14 @@ test('a live pane can be added to a conversation from the conversation', async (
   await openCard(page);
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(1);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await page.locator('#convView .conv-roster-add .conv-chip', {hasText: 'scratch'}).click();
+  await page.locator('#pickList .pair-pick', {hasText: 'scratch'}).click();
+  // The tick is the choice; the action at the foot is what commits it, and it names how many.
+  await expect(page.locator('#pickSubmit')).toHaveText('Add pane');
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
   await expect(page.locator('#convView .conv-roster-row').nth(1)).toContainText('recording');
   // The picker closes behind the pick, and the roster is what changed on disk.
-  await expect(page.locator('#convView .conv-roster-add')).toHaveCount(0);
+  await expect(page.locator('#pickSheet')).toBeHidden();
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(2);
 });
 
@@ -1889,15 +1892,113 @@ test('a session that has already ended can be added from its recording', async (
         at_src: 'state'}]});
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  const chip = page.locator('#convView .conv-chip.past');
-  await expect(chip).toHaveText(/yesterday's codex/);
-  await expect(page.locator('#convView .conv-pick-head').last()).toHaveText('Recorded');
-  await chip.click();
+  const row = page.locator('#pickList .pair-pick.past');
+  await expect(row).toContainText("yesterday's codex");
+  await expect(page.locator('#pickList .pair-head').last()).toHaveText('Recorded');
+  await row.click();
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convView .conv-roster-row')).toHaveCount(2);
   // Its words are in the thread, merged into the chronology rather than copied anywhere.
   await expect(page.locator('#convViewThread')).toContainText('Shipped the migration.');
   expect(await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key)))
     .toContain('ghost');
+});
+
+// "Add pane" has to cover the pane that does not exist yet, or the answer to it is a trip out to
+// Projects and back. The row opens the same sheet the composer's membership list does.
+test('a pane that is not running yet is added by starting it', async ({page}) => {
+  await openCard(page);
+  await startable(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  const fresh = page.locator('#pickList .pair-add');
+  await expect(fresh).toContainText('Start a session and add it');
+  await fresh.click();
+  await expect(page.locator('#pickSheet')).toBeHidden();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+});
+
+// A relay that will not start sessions gets no row, rather than one that refuses after the tap.
+test('the picker offers no new agent where the relay will not start one', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('#pickList .pair-add')).toHaveCount(0);
+});
+
+// Starting one is not only a row at the bottom of the picker. The roster is where a conversation
+// is managed, and a relay that will start a session says so there.
+test('the roster starts an agent next to where it adds one, and dims the harnesses not picked',
+  async ({page}) => {
+  await openCard(page);
+  await expect(page.locator('#convView .conv-roster-actions button', {hasText: 'New agent'}))
+    .toHaveCount(0);
+  await page.evaluate(async () => {
+    projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+    startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect']};
+    await renderConvStandalone(false);
+  });
+
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'New agent'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+
+  // One harness is picked from the start, so the others have to look unpicked at a glance — the
+  // badge already wears its own colour, and bolder text alone does not carry across four of them.
+  const dim = () => page.evaluate(() => [...document.querySelectorAll('#newAgentKinds .badge.pick')]
+    .map(b => [b.classList.contains('on'), getComputedStyle(b).opacity]));
+  expect(await dim()).toEqual([[true, '1'], [false, '0.4']]);
+  await page.locator('#newAgentKinds .badge.pick').nth(1).click();
+  expect(await dim()).toEqual([[false, '0.4'], [true, '1']]);
+});
+
+// Several panes on one trip. Joining used to close the sheet after each pick, so a conversation of
+// four was three more trips through the same list.
+test('several panes are added in one go, and the action counts them', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    await convPut({key: 'ghost', label: "yesterday's codex", touched: Date.now() - 7200000,
+      spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('#pickSubmit')).toBeDisabled();
+  await page.locator('#pickList .pair-pick', {hasText: 'scratch'}).click();
+  await page.locator('#pickList .pair-pick.past').click();
+  await expect(page.locator('#pickSubmit')).toHaveText('Add 2 panes');
+  // Ticked twice is unticked: the row is a switch, not a one-way choice.
+  await page.locator('#pickList .pair-pick.past').click();
+  await expect(page.locator('#pickSubmit')).toHaveText('Add pane');
+  await page.locator('#pickList .pair-pick.past').click();
+  await page.locator('#pickSubmit').click();
+  await expect(page.locator('#convView .conv-roster-row')).toHaveCount(3);
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
+});
+
+// A roster long enough to scroll is searched rather than scrolled. What is searched is what a row
+// shows — its name, its harness, its path — so the badge's word finds it too.
+test('the picker filters its rows by what they say', async ({page}) => {
+  await openCard(page);
+  await page.evaluate(async () => {
+    for (let i = 0; i < 6; i++) {
+      await convPut({key: `ghost${i}`, label: `former ${i}`, touched: Date.now() - 7200000,
+        spawn: {agent: 'codex', project: 'charts'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
+    }
+  });
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
+  await expect(page.locator('.pick-search')).toBeVisible();
+  await page.locator('#pickSearch').fill('former 3');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
+  // Typed the way a name is abbreviated, not spelled: the letters in order, inside one field.
+  await page.locator('#pickSearch').fill('frm 3');
+  await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
+  // The harness, which only the badge shows. It crosses the groups — the live scratch pane is a
+  // codex too — and it discriminates: naming the live one drops all six recordings.
+  await page.locator('#pickSearch').fill('cdx');
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running', 'Recorded']);
+  await page.locator('#pickSearch').fill('scratch');
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running']);
+  // A group with nothing left in it takes its heading with it.
+  await page.locator('#pickSearch').fill('former 3');
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Recorded']);
+  await page.locator('#pickSearch').fill('nothing here at all');
+  await expect(page.locator('#pickList .pair-empty')).toContainText('Nothing here matches');
 });
 
 test('the picker names every session the same way, running or recorded', async ({page}) => {
@@ -1907,14 +2008,14 @@ test('the picker names every session the same way, running or recorded', async (
       spawn: {agent: 'codex'}, entries: [{who: 'agent', text: 'done', at: 1, at_src: 'state'}]});
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await expect(page.locator('#convView .conv-pick-head')).toHaveText(['Running', 'Recorded']);
+  await expect(page.locator('#pickList .pair-head')).toHaveText(['Running', 'Recorded']);
   // A live session is the same kind of choice as an ended one, so it is named the same way: the
   // pane's label and the harness it runs, in the badge every other surface uses.
-  const live = page.locator('#convView .conv-chip:not(.past)', {hasText: 'scratch'});
+  const live = page.locator('#pickList .pair-pick:not(.past)', {hasText: 'scratch'});
   await expect(live.locator('.badge')).toHaveText('codex');
-  await expect(page.locator('#convView .conv-chip.past .badge')).toHaveText('codex');
-  // Same chip, so the badge sits the same way in both.
-  for (const el of [live, page.locator('#convView .conv-chip.past')]) {
+  await expect(page.locator('#pickList .pair-pick.past .badge')).toHaveText('codex');
+  // Same row, so the badge sits the same way in both.
+  for (const el of [live, page.locator('#pickList .pair-pick.past')]) {
     await expect(el).toHaveCSS('display', 'flex');
     await expect(el).toHaveCSS('align-items', 'center');
   }
@@ -1924,9 +2025,9 @@ test('the picker does not offer a pane the conversation already holds', async ({
   await openCard(page);
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
   // The open pane is already a member and its transcript is in the store, so it must appear in
-  // neither group — the live chips or the recorded ones.
-  const keys = await page.locator('#convView .conv-chip').evaluateAll(
-    els => els.map(e => e.dataset.key));
+  // neither group — the live rows or the recorded ones.
+  const keys = await page.locator('#pickList .pair-pick').evaluateAll(
+    els => els.map(e => e.dataset.id));
   const mine = await page.evaluate(() => convMemberKey(paneOf(activePane)));
   expect(keys).not.toContain(mine);
 });
@@ -3356,6 +3457,31 @@ test('no chip sends the payload with no instruction', async ({page}) => {
   expect(body).not.toContain('Review, edit, fix');
 });
 
+// Tapped in whatever order the eye found them, written in the order the thread said them.
+test('quotes are written in thread order, whichever order they were tapped in', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await tapWire(page);
+  await openWindow(page);
+  const said = await page.evaluate(() => [...document.querySelectorAll('#convViewThread .conv-msg')]
+    .map(m => m.dataset.text));
+  expect(said.length).toBeGreaterThan(1);
+
+  // Picked bottom-up, which is what reading back through a thread does.
+  await pickBubble(page, said[said.length - 1]);
+  await pickBubble(page, said[0]);
+
+  const value = await page.locator('#convInput').inputValue();
+  const at = t => value.indexOf(t.slice(0, 20));
+  expect(at(said[0])).toBeGreaterThan(-1);
+  expect(at(said[0])).toBeLessThan(at(said[said.length - 1]));
+  // And the send carries that order, because the box is what it is built from.
+  await sendPicked(page);
+  const body = await sentBody(page);
+  expect(body.indexOf(said[0])).toBeLessThan(body.indexOf(said[said.length - 1]));
+});
+
 test('chips add up, in the order they were tapped', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3435,7 +3561,9 @@ test('a note typed after a token goes out after the message it names', async ({p
 
 // Picking is done while reading, halfway up a long thread. The composer takes the caret so a note
 // can follow the token straight away — and that is exactly what drags the thread to the bottom if
-// the focus is allowed to scroll, putting the reader somewhere they were not.
+// the focus is allowed to scroll, putting the reader somewhere they were not. It takes it only
+// once there is a sentence in progress: on a phone the caret is the on-screen keyboard, and a
+// reader picking three bubbles is not writing yet.
 test('selecting a bubble preserves the thread scroll position rather than scrolling to bottom', async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -3460,7 +3588,14 @@ test('selecting a bubble preserves the thread scroll position rather than scroll
   await page.locator('#convViewThread .conv-msg', {hasText: 'line 3'}).first()
     .locator('.conv-pick').click();
   expect(await scroll()).toBe(120);
-  // And the note can be typed without going looking for the box.
+  // Nothing written yet, so the keyboard stays down and the thread stays readable.
+  expect(await page.evaluate(() => document.activeElement.id)).not.toBe('convInput');
+
+  // Written into, and the next pick puts the caret back where the sentence left off.
+  await page.locator('#convInput').fill('compare these');
+  await page.locator('#convViewThread .conv-msg', {hasText: 'line 5'}).first()
+    .locator('.conv-pick').click();
+  expect(await scroll()).toBe(120);
   expect(await page.evaluate(() => document.activeElement.id)).toBe('convInput');
 });
 
@@ -4669,6 +4804,34 @@ test('a conversation of one is never offered a solo to be in', async ({page}) =>
   await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'})).toHaveCount(0);
 });
 
+test('the composer settings pair the addressed pane, then offer to edit or undo it', async ({page}) => {
+  // The pair strip is on the pane screen and the composer is not, so without this the only way to
+  // pair from a conversation was to leave it.
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+
+  const addressed = await page.evaluate(() => paneLabel(agents.find(a => a.pane_id === dockAddressed())));
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  await page.locator('#optMenu .menu-item', {hasText: `Pair ${addressed} with…`}).click();
+
+  await expect(page.locator('#pickTitle')).toHaveText(new RegExp(`^Pair · .*${addressed}$`));
+  await page.locator('#pickList .pair-pick').first().click();
+  await page.locator('#pickSubmit').click();
+  await expect(page.locator('#pickSheet')).toBeHidden();
+
+  // Reopened, the menu reads back the pair rather than offering to make one.
+  await page.locator('#xferRow .xfer-chip.opts').click();
+  const name = await page.evaluate(() => pairs[0].name);
+  await expect(page.locator('#optMenu .menu-item', {hasText: `Edit pair · ${name}`})).toBeVisible();
+  const off = page.locator('#optMenu .menu-item', {hasText: 'Unpair'});
+  await off.click();
+  await expect(off).toHaveText('Unpair?');   // asked twice, like every other ending action
+  await off.click();
+  expect(await page.evaluate(() => pairs.length)).toBe(0);
+});
+
 // --- Starting one from the landing page ---
 // Every other way into a conversation begins at a pane: open it, name a conversation, and the
 // pane is the first member. This is the other direction — an empty one first, members after —
@@ -4684,11 +4847,12 @@ test('the Conversations header starts an empty one and opens it on its picker', 
   await page.locator('#conversations .conv-new').click();
   await expect(page.locator('#convViewTitle')).toHaveText('New conversation');
   await expect(page.locator('#convViewWho')).toHaveText(/0 panes/);
-  // Landed on the one thing there is to do: the roster open, with the picker already down.
+  // Landed on the one thing there is to do: the roster open, with the picker already up.
   await expect(page.locator('#convViewRoster')).toBeVisible();
-  await expect(page.locator('.conv-roster-add')).toBeVisible();
+  await expect(page.locator('#pickSheet')).toBeVisible();
 
-  await page.locator('.conv-roster-add .conv-chip').first().click();
+  await page.locator('#pickList .pair-pick').first().click();
+  await page.locator('#pickSubmit').click();
   await expect(page.locator('#convViewWho')).toHaveText(/1 pane\b/);
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
@@ -4697,9 +4861,12 @@ test('the Conversations header starts an empty one and opens it on its picker', 
 test('a second one is numbered rather than named the same thing twice', async ({page}) => {
   await page.goto('/');
   await expect(page.locator('#agents .agent').first()).toBeVisible();
+  // A new conversation lands on the picker, so leaving without adding anyone means closing it.
   await page.locator('#conversations .conv-new').click();
+  await page.locator('#pickSheet .pick-x').click();
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conv-new').click();
+  await page.locator('#pickSheet .pick-x').click();
   await expect(page.locator('#convViewTitle')).toHaveText('New conversation 2');
   await page.locator('#convView .back').click();
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
@@ -4932,3 +5099,103 @@ test('backspace takes a whole token, and the instruction at the start of the box
   await expect(page.locator('#xferLoad')).toBeHidden();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
+
+test('storage analytics gives every pane transcript a row, whatever it is filed under',
+  async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  // A row is a transcript, so the open pane needs one: joinBoth writes scratch's and files both.
+  await read(page);
+  await page.evaluate(async () => {
+    const view = document.getElementById('timelineView');
+    if (view) view.style.display = 'block';
+    await renderConvAnalytics();
+  });
+  await expect(page.locator('#convAnalyticsWrap .conv-analytics-table')).toBeVisible();
+  // The sorted column carries its arrow in the same cell, and it is not part of the name.
+  const headers = (await page.locator('#convAnalyticsWrap .conv-analytics-table th').allInnerTexts())
+    .map(h => h.replace(/[\s▲▼]+$/, ''));
+  // Per pane, not per conversation: the database is keyed by pane, one pane can be in several
+  // conversations and one transcript in none, so a per-conversation sum double-counts and
+  // under-reports at once.
+  expect(headers).toEqual(['PANE', 'IN', 'STATE', 'MESSAGES', 'STORED (IDB)', 'RELAY COPY']);
+  await expect(page.locator('#convAnalyticsWrap th', {hasText: 'State'}))
+    .toHaveAttribute('title', /running right now/);
+
+  // The open pane is drawn as open, and it is the pane that is actually running.
+  const row = page.locator('#convAnalyticsWrap tbody tr', {hasText: AGENT});
+  await expect(row.locator('.conv-analytics-open')).toHaveText('open');
+  await expect(row).toContainText('new authentication feature');
+  // Nothing has asked the relay for its record, so there is nothing cached to report.
+  await expect(row.locator('td').nth(5)).toHaveText('—');
+});
+
+// The confusion this column exists to end: the Live thread and the recorded one look identical on
+// screen, so a reader seeing the relay's record cannot tell which store it came from. Both are on
+// disk now, and they are two sources for one conversation — so they are two columns, never a sum.
+test('the relay record is kept in its own column, beside the transcript it is not', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  const stored = await page.evaluate(async () => {
+    const bucket = convLiveBucket(convFpKey(convKeyFingerprint(convMemberKey(paneOf(activePane)))));
+    bucket.turns = [{id: 1, seq: 1, text: 'x'.repeat(3000), kind: 'agent'}];
+    const view = document.getElementById('timelineView');
+    if (view) view.style.display = 'block';
+    await renderConvAnalytics();
+    return (await convAll()).reduce((n, r) => n + JSON.stringify(r).length, 0);
+  });
+
+  const row = page.locator('#convAnalyticsWrap tbody tr', {hasText: AGENT});
+  const bytes = async loc => Number((await loc.getAttribute('title')).replace(/[^0-9]/g, ''));
+  expect(await bytes(row.locator('td').nth(5))).toBeGreaterThan(3000);
+
+  // The transcript column is untouched by it — the two sources are never folded — and the footer
+  // total is transcripts, index and relay copy together, which is what the device is holding.
+  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr td');
+  const [transcripts, index, relay] =
+    [stored, await bytes(foot.nth(1)), await bytes(foot.nth(5))];
+  expect(relay).toBeGreaterThan(3000);
+  expect(await bytes(foot.nth(4))).toBe(transcripts + index + relay);
+  await expect(page.locator('#convAnalyticsTotal')).toContainText("the relay's record");
+});
+
+// The bug this covers: a browser that had been running agents for weeks showed Recorded IDB as 0
+// on conversation after conversation, while the Add-pane picker was plainly offering a list of
+// recorded sessions. Both were true — those sessions were in no conversation, and a table that
+// only ever added up what conversations name could not see them. On a real database they are most
+// of it. Now they are rows like any other, marked unfiled.
+test('storage counts the transcripts no conversation names, rather than reporting them as nothing',
+  async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  const stored = await page.evaluate(async () => {
+    // An ended session nobody filed: a key no live pane can have, and no conversation names.
+    await convPut({
+      key: JSON.stringify(['local', 'w7:p7', 'codex', '/work/gone']),
+      label: 'a pane that ended', touched: Date.now(),
+      entries: [{who: 'agent', text: 'z'.repeat(4000)}],
+    });
+    const view = document.getElementById('timelineView');
+    if (view) view.style.display = 'block';
+    await renderConvAnalytics();
+    return (await convAll()).reduce((n, r) => n + JSON.stringify(r).length, 0);
+  });
+
+  const orphan = page.locator('#convAnalyticsWrap tbody tr', {hasText: 'a pane that ended'});
+  await expect(orphan.locator('.conv-analytics-unfiled-tag')).toHaveText('unfiled');
+  await expect(orphan).toContainText('ended');
+  const bytes = async loc => Number((await loc.getAttribute('title')).replace(/[^0-9]/g, ''));
+  expect(await bytes(orphan.locator('td').nth(4))).toBeGreaterThan(4000);
+
+  // The rows are the database: every transcript in it, counted once, and the footer total is those
+  // plus the index that names some of them.
+  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr td');
+  const rows = await page.locator('#convAnalyticsWrap tbody tr td:nth-child(5)').all();
+  let sum = 0;
+  for (const cell of rows) sum += await bytes(cell);
+  expect(sum).toBe(stored);
+  expect(await bytes(foot.nth(4))).toBe(stored + await bytes(foot.nth(1)));
+  await expect(page.locator('#convAnalyticsTotal')).toContainText('transcripts');
+});
+

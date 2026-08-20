@@ -1,3 +1,26 @@
+    // The shell is sized to the *visual* viewport, not the layout one, so anything docked at the
+    // bottom — the conversation composer, the terminal input — rides above the on-screen keyboard
+    // instead of behind it. `interactive-widget=resizes-content` in the meta tag does this on
+    // Chrome for Android; Safari ignores it and leaves the page at full height with the keyboard
+    // drawn over the last 300px of it, which is where the composer lives.
+    (() => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const fit = () => {
+        // Pinch-zoom shrinks the visual viewport too, and that is the user looking closer rather
+        // than a widget taking space. Resizing the page to the zoomed frame would reflow it under
+        // their fingers; zooming back out fires this again and restores the fit.
+        if (vv.scale > 1.01) return;
+        document.body.style.height = vv.height + 'px';
+        // Safari also scrolls the layout viewport up to reveal the focused field, taking the
+        // header off screen. With the body already short enough to fit, there is nothing to reveal.
+        if (vv.offsetTop) window.scrollTo(0, 0);
+      };
+      vv.addEventListener('resize', fit);
+      vv.addEventListener('scroll', fit);
+      fit();
+    })();
+
     // How recently a pane moved, in the three bands the colours are drawn from. One function so
     // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
     function activityBucket(paneId) {

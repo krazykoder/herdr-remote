@@ -123,7 +123,7 @@ test('starting a session to pair with it makes the pair, not a form', async ({pa
     openPendingStart();
     return {
       pairs: pairs.map(p => [p.name, p.members.map(m => m.pane_id)]),
-      sheet: document.getElementById('pairSheet').style.display,
+      sheet: document.getElementById('pickSheet').style.display,
       stored: localStorage.getItem('herdr_pairs'),
     };
   });
@@ -145,8 +145,8 @@ test('a pane already paired is not re-paired behind the user', async ({page}) =>
     openPendingStart();
     return {
       names: pairs.map(p => p.name),
-      sheet: document.getElementById('pairSheet').style.display,
-      warning: document.getElementById('pairError').textContent,
+      sheet: document.getElementById('pickSheet').style.display,
+      warning: document.getElementById('pickError').textContent,
     };
   });
 
@@ -162,7 +162,7 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
   await setup(page);          // seeds "Tab pair" over Architect 1 and amp
   await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
 
-  const rows = page.locator('#pairCandidates .pair-pick');
+  const rows = page.locator('#pickList .pair-pick');
   await expect(rows).toHaveCount(2);
   const first = rows.first();
   await expect(first.locator('.name')).toHaveText('Architect 1');
@@ -174,7 +174,7 @@ test('the partner list is the reorder sheet row, carrying the pair instead of th
   // Literally the same row: one height for both sheets, or the two lists read as two kinds of thing.
   const [pairBox, orderBox] = await page.evaluate(() => {
     const h = el => el.getBoundingClientRect().height;
-    const pair = h(document.querySelector('#pairCandidates .pair-pick'));
+    const pair = h(document.querySelector('#pickList .pair-pick'));
     closePair();
     openOrder();
     return [pair, h(document.querySelector('#orderRows .order-row'))];
@@ -195,10 +195,10 @@ test('the way out of "nobody to pair with" is a row in the same list', async ({p
     source.project_id = 'charts';
     startOptions = {roles: ['architect'], agents: ['claude'], terminal: false};
     openPairDialog(source.pane_id);
-    const add = document.querySelector('#pairCandidates .pair-add');
+    const add = document.querySelector('#pickList .pair-add');
     return {
       name: add.querySelector('.name').textContent,
-      last: add === document.querySelector('#pairCandidates > *:last-child'),
+      last: add === document.querySelector('#pickList > *:last-child'),
       dot: !!add.querySelector('.dot'),
     };
   });
@@ -210,7 +210,7 @@ test('the way out of "nobody to pair with" is a row in the same list', async ({p
 test('choosing a partner marks its row, not just the fields below', async ({page}) => {
   await setup(page);
   await page.evaluate(() => openPairDialog(agents.find(a => paneLabel(a) === 'scratch').pane_id));
-  const rows = page.locator('#pairCandidates .pair-pick');
+  const rows = page.locator('#pickList .pair-pick');
   await rows.nth(1).click();
 
   await expect(rows.nth(1)).toHaveAttribute('aria-pressed', 'true');

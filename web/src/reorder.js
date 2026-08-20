@@ -132,69 +132,59 @@
       });
     })();
 
-    // warn=true for "this will replace X" — it is a caution, not a refusal, and colouring it like
-    // a failure teaches the user to ignore the colour.
+    // The pair's own name for the picker's error line. Kept because the pair flow is the only
+    // caller that has anything to warn about, and it warns from three places.
     function setPairError(text, warn) {
-      const el = document.getElementById('pairError');
-      el.textContent = text || '';
-      el.style.color = warn ? 'var(--orange)' : 'var(--red)';
-      el.style.display = text ? 'block' : 'none';
+      setPickError(text, warn);
     }
 
     function openPairDialog(paneId, ev) {
       if (ev) ev.stopPropagation();
-      pairSource = agents.find(a => a.pane_id === paneId);
-      if (!pairSource) return;
+      const source = agents.find(a => a.pane_id === paneId);
+      if (!source) return;
+      // Before the sheet, not after: its first render reads the candidate list off these.
+      pairSource = source;
       pairPartner = null;
-      document.getElementById('pairSource').textContent = paneTitle(pairSource);
+      openPanePicker({
+        title: `Pair · ${paneTitle(source)}`,
+        empty: `No other live session on ${source.host || 'local'}. ` +
+          'A pair needs two live panes on one host.',
+        // Read fresh on every keystroke, so a pane that lands while the sheet is open is in it. The
+        // right edge carries what only matters here — the pair this pane is already in, which is
+        // what makes choosing it a replacement rather than an addition.
+        groups: () => [{head: 'Partner', rows: pairCandidates(agents, pairSource).map(a => {
+          const existing = pairFor(pairs, a.pane_id);
+          return pickPaneRow(a, existing ? {note: `in "${existing.name}"`} : null);
+        })}],
+        extra: pairStartRow,
+        choose: chosen => chosen.length ? choosePartner(chosen[0]) : clearPartner(),
+        label: () => 'Save pair',
+        submit: savePair,
+      });
+    }
+
+    // The way out of "there is nobody to pair with": start the partner from here. Offered alongside
+    // a full list too — the partner wanted is often one that does not exist yet. Gated on the start
+    // dialog being usable at all, not on this pane's agent: which agent the new session runs is
+    // answered in that dialog, not inherited from here.
+    function pairStartRow() {
+      if (!pairSource || !startOptions || !pairSource.project_id) return '';
+      return `<button class="pair-pick pair-add" onclick="startAndPair()">
+      <span class="kind" aria-hidden="true">＋</span>
+      <span class="info"><span class="name">Start a session and pair with it</span><span class="meta">A new session in this project, paired the moment it lands</span></span>
+    </button>`;
+    }
+
+    // Unticking the partner takes the form back down with it: the fields name a pair that is no
+    // longer being made, and leaving them up invites a save that has nothing to save.
+    function clearPartner() {
+      pairPartner = null;
       document.getElementById('pairFields').style.display = 'none';
       setPairError('');
-      renderPairCandidates();
-      document.getElementById('pairSheet').style.display = 'block';
     }
 
     function closePair() {
-      document.getElementById('pairSheet').style.display = 'none';
-      pairSource = null; pairPartner = null;
-    }
-
-    function renderPairCandidates() {
-      const box = document.getElementById('pairCandidates');
-      const submit = document.getElementById('pairSubmit');
-      const candidates = pairCandidates(agents, pairSource);
-      // The way out of "there is nobody to pair with": start the partner from here. Offered
-      // alongside a full list too — the partner wanted is often one that does not exist yet.
-      // Gated on the dialog being usable at all, not on this pane's agent: which agent the new
-      // session runs is answered in that dialog, not inherited from here.
-      const spawn = (startOptions && pairSource.project_id)
-        ? `<button class="pair-pick pair-add" onclick="startAndPair()">
-      <span class="kind" aria-hidden="true">＋</span>
-      <span class="info"><span class="name">Start a session and pair with it</span><span class="meta">A new session in this project, paired the moment it lands</span></span>
-    </button>`
-        : '';
-      if (!candidates.length) {
-        box.innerHTML = `<p class="pair-empty">No other live session on ${escapeHtml(pairSource.host || 'local')}. A pair needs two live panes on one host.</p>` + spawn;
-        submit.disabled = true;
-        return;
-      }
-      // The reorder sheet's row, without the handle: same dot, same kind glyph, same name over a
-      // badge and a short path. The right edge carries what only matters here — the pair this pane
-      // is already in, which is what makes choosing it a replacement rather than an addition.
-      box.innerHTML = '<div class="pair-head">Partner</div>' +
-        candidates.map(a => {
-          const existing = pairFor(pairs, a.pane_id);
-          const note = existing ? `<span class="pair-note">in "${escapeHtml(existing.name)}"</span>` : '';
-          const on = pairPartner && pairPartner.pane_id === a.pane_id;
-          const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
-          const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
-          return `<button class="pair-pick${on ? ' on' : ''}" aria-pressed="${on ? 'true' : 'false'}" onclick="choosePartner('${escapeHtml(a.pane_id)}')">
-      <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
-      <span class="kind" aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span>
-      <span class="info"><span class="name">${escapeHtml(paneLabel(a))}</span><span class="meta">${meta}</span></span>
-      ${note}<span class="pair-tick" aria-hidden="true">${on ? '✓' : ''}</span>
-    </button>`;
-        }).join('') + spawn;
-      submit.disabled = !pairPartner;
+      closePicker();
     }
 
     // A pair needs a second live pane and there is not always one. Hands off to the start dialog —
@@ -212,6 +202,9 @@
     function choosePartner(paneId) {
       pairPartner = agents.find(a => a.pane_id === paneId);
       if (!pairPartner) return;
+      // The picker's own choice too, so a partner chosen from outside the sheet is ticked in it —
+      // which is how the start dialog comes back from "start a session and pair with it".
+      if (pickerOpen()) picker.chosen = [paneId];
       document.getElementById('pairName').value =
         `${paneLabel(pairSource)} ↔ ${paneLabel(pairPartner)}`.slice(0, 64);
       // Default to the pane's own name — "Architect 1", "Reviewer 2" — which is what the
@@ -224,7 +217,7 @@
       const clashes = [pairSource, pairPartner].map(p => pairFor(pairs, p.pane_id)).filter(Boolean);
       const names = [...new Set(clashes.map(p => p.name))];
       setPairError(names.length ? `Saving replaces the existing pair ${names.map(n => `"${n}"`).join(' and ')}.` : '', true);
-      renderPairCandidates();
+      renderPicker();
     }
 
     function savePair() {
@@ -244,17 +237,26 @@
       closePair();
       render();
       renderPairStrip();
+      // A pair is what draws a conversation's two members as two columns, so a thread on screen is
+      // reading a layout this just changed.
+      renderConvManage();
     }
 
-    function unpair() {
-      const pair = pairFor(pairs, activePane);
+    // The pane is named because the composer's own menu unpairs the agent it is addressed to, which
+    // is not always the pane being read. Unset means the open pane, which is what the pane menu asks
+    // about.
+    function unpair(paneId) {
+      const pair = pairFor(pairs, paneId || activePane);
       if (!pair) return;
-      // The arm is what asked; the menu it was armed in is still open behind it.
+      // The arm is what asked; the menu it was armed in is still open behind it. Both menus, because
+      // either can be the one holding the armed button.
       closeTermMenu();
+      closeDockMenu('optMenu');
       pairs = pairs.filter(p => p.id !== pair.id);
       savePairs();
       render();
       renderPairStrip();
+      renderConvManage();
     }
 
     // Who you are reading, always; the pair controls only when there is a healthy pair to work.

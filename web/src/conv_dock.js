@@ -232,11 +232,34 @@
         `<button class="menu-item" role="menuitemcheckbox" aria-checked="${on}" ` +
         `onclick="${call}" title="${escapeHtml(why)}">` +
         `<span class="tick">${on ? '✓' : ''}</span>${escapeHtml(label)}</button>`).join('') +
+        dockPairItems() +
         `<button class="menu-item" role="menuitem" onclick="closeDockMenu('optMenu')">Done</button>`;
       closeDockMenu('chipMenu');
       closeDockMenu('whoMenu');
       box.hidden = false;
       syncDockHeight();
+    }
+
+    // The addressed agent's pair, managed from the box that talks to it. It used to be reachable
+    // only from that pane's own gear menu, which meant leaving the conversation to answer a question
+    // about one of its members — and a pair is what draws two of them as two columns here, so it is
+    // a question this window raises.
+    function dockPairItems() {
+      const to = paneOf(dockAddressed());
+      if (!to) return '';
+      const name = escapeHtml(paneLabel(to));
+      const pair = pairFor(pairs, to.pane_id);
+      const open = `closeDockMenu('optMenu'); openPairDialog('${escapeHtml(to.pane_id)}')`;
+      if (!pair) {
+        return `<button class="menu-item" role="menuitem" onclick="${open}" ` +
+          `aria-label="Pair ${name} with another pane">Pair ${name} with…</button>`;
+      }
+      return `<button class="menu-item" role="menuitem" onclick="${open}" ` +
+        `aria-label="Edit the pair ${escapeHtml(pair.name)}">Edit pair · ${escapeHtml(pair.name)}</button>` +
+        `<button class="menu-item danger arm-btn" role="menuitem" ` +
+        `data-pane="${escapeHtml(to.pane_id)}" ` +
+        `onclick="armButton(this, 'Unpair?', () => unpair(this.dataset.pane))" ` +
+        `aria-label="Unpair ${name}">Unpair…</button>`;
     }
 
     function optMenuOpen() {
@@ -322,7 +345,30 @@
       return `[#${seq} ${from ? from + ': ' : ''}${said.length > 40 ? said.slice(0, 40) + '…' : said}]`;
     }
 
-    // Written in at the caret, on its own line, with the caret left after it — the sketch is
+    // Where the thread has a quote *now*, rather than where it was when it was tapped. The thread
+    // re-renders under the composer while it is being written in, and a position remembered at tap
+    // time can be a different message by the time the next one is picked. A quote whose bubble has
+    // gone sorts last, which leaves the tokens still in the thread in their own order.
+    function dockQuoteAt(text) {
+      const el = Array.from(document.querySelectorAll('#convViewThread .conv-msg'))
+        .find(m => (m.dataset.text || '') === text);
+      return el ? Number(el.dataset.i) : Infinity;
+    }
+
+    // A new token goes in front of the first one already in the box that the thread says later —
+    // so the quotes read in the order they were said, whatever order they were tapped in. Three
+    // bubbles picked bottom-up are still one exchange, and an agent handed them reversed is being
+    // told a different conversation. With nothing later than it, it lands at the caret, which is
+    // what makes the common case — reading down, picking as you go — write at the end as before.
+    function dockTokenSpot(input, i) {
+      for (const m of input.value.matchAll(DOCK_TOKEN)) {
+        const q = dockTokens.get(Number(m[1]));
+        if (q && dockQuoteAt(q.text) > i) return m.index;
+      }
+      return input.selectionStart == null ? input.value.length : input.selectionStart;
+    }
+
+    // Written in on its own line, with the caret left after it — the sketch is
     // `[#1 …] - what I want done with it`, so the note the reader is about to type follows the
     // token rather than being pushed onto another line by the app.
     function toggleConvDockPick(i) {
@@ -342,22 +388,29 @@
       } else {
         const seq = ++dockTokenSeq;
         dockTokens.set(seq, {text, key: el.dataset.key || ''});
-        const at = input.selectionStart == null ? input.value.length : input.selectionStart;
+        const at = dockTokenSpot(input, i);
         const before = input.value.slice(0, at), after = input.value.slice(at);
+        // A line of its own at both ends now that a token can land in front of another one:
+        // appended at the caret there was never anything after it to run into.
         const token = (before && !before.endsWith('\n') ? '\n' : '') +
-          dockTokenText(seq, text, el.dataset.who);
+          dockTokenText(seq, text, el.dataset.who) +
+          (after && !after.startsWith('\n') ? '\n' : '');
         input.value = before + token + after;
         input.selectionStart = input.selectionEnd = (before + token).length;
       }
       autoGrow(input);
       syncConvCursor();
       syncDockTokens();
-      // The box takes the caret, because a note is what usually follows a pick — but `preventScroll`,
-      // or the browser brings the composer into view and the reader loses the place they were
-      // reading. The thread is put back where it was as well: `autoGrow` changes the composer's
-      // height, and a taller composer moves the thread under a scrollTop that no longer means the
-      // same line.
-      input.focus({preventScroll: true});
+      // The box takes the caret only once something has been written into it. Picking bubbles is
+      // reading, and on a phone every focus() is the on-screen keyboard rising over the thread
+      // being read — three picks up a long thread meant three keyboards. A box holding nothing but
+      // tokens is not a sentence in progress, so the reader is left alone and taps it when they
+      // have something to say; once they have, the caret follows the pick so the note carries on
+      // where it was. `preventScroll` either way, or the browser brings the composer into view and
+      // the reader loses their place. The thread is put back where it was as well: `autoGrow`
+      // changes the composer's height, and a taller composer moves the thread under a scrollTop
+      // that no longer means the same line.
+      if (input.value.replace(DOCK_TOKEN, '').trim()) input.focus({preventScroll: true});
       if (thread) thread.scrollTop = wasAt;
     }
 
@@ -502,6 +555,10 @@
       const dock = document.getElementById('convDock');
       const row = document.getElementById('xferRow');
       if (!dock || !row) return;
+      // The addressed member's branch. Here rather than beside the snapshot handler because the
+      // target changes without a snapshot — picking another member is the commonest way this
+      // badge changes at all.
+      if (typeof syncBranchBadges === 'function') syncBranchBadges();
       const load = document.getElementById('xferLoad');
       if (load) {
         const html = dockLoadHtml();

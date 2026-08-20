@@ -300,7 +300,7 @@
       renderConversations();
       openConversation(conv.id);
       convRosterOpen = true;
-      await convToggleAdd();   // which renders the roster, and again once the records are read
+      await convToggleAdd();   // straight to the picker: an empty conversation has one thing to do
     }
 
     // "New conversation", then the first number that is free. Numbered and not stamped: two of
@@ -333,7 +333,6 @@
       convRosterHtmlLast = '';
       convStripSig = '';
       convRosterOpen = false;
-      convAdding = false;
       openPanel('convView');
       syncNavBtns();   // the walk is standing somewhere new, and its arrows are on screen here too
       // Tabs come from the index and live snapshot, not transcript storage. Draw them before the
@@ -373,7 +372,7 @@
       jumpToPane(live.pane_id);
     }
 
-    let convStandaloneToken = 0, convStandaloneHtml = '', convAdding = false;
+    let convStandaloneToken = 0, convStandaloneHtml = '';
     // The roster panel's disclosure state, and which members the reader has folded out of the
     // thread. Both are about looking, not about the record: hiding a member changes no membership,
     // deletes no words, and stops no recording — it is the reading equivalent of turning a page
@@ -398,6 +397,7 @@
       if (have.size) all[convViewId] = Array.from(have); else delete all[convViewId];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       convStandaloneHtml = '';
       renderConvManage();
     }
@@ -426,6 +426,7 @@
       if (key && rest.length) all[id] = rest; else delete all[id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       convStandaloneHtml = '';
       renderConvManage();
     }
@@ -539,32 +540,6 @@
           ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
           ` aria-label="Remove this member from the conversation">Remove</button></div>`;
       }).join('');
-      // Candidates are the live panes this conversation does not already name — including panes
-      // already recording elsewhere, which bring their own transcript with them (D3).
-      const taken = new Set((conv.members || []).map(m => m.key));
-      const free = agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)));
-      // And the sessions that have already ended, which is what a conversation assembled after the
-      // fact is made of. Newest first: a picker is ordered by what you are most likely to want.
-      const now = Date.now();
-      const past = convPickRecs
-        .filter(r => !taken.has(r.key) && !live.has(r.key) && (r.entries || []).length)
-        .sort((a, b) => (b.touched || 0) - (a.touched || 0))
-        .slice(0, CONV_PICK_MAX);
-      // Both groups are the same kind of choice — a session, by name, with the harness it runs —
-      // so they are the same chip. What differs is the heading above them and, for one that has
-      // ended, how long ago it last said anything.
-      const chips = !convAdding ? '' : `<div class="conv-roster-add">` +
-        `<span class="conv-pick-head">Running</span>` + (free.length
-        ? free.map(x => `<button class="conv-chip" data-key="${escapeHtml(convMemberKey(x))}"` +
-            ` onclick="convJoinPane(this.dataset.key)">${escapeHtml(paneLabel(x))}` +
-            agentBadge(x.agent || '') + '</button>').join('')
-        : '<span class="conv-none">Every live pane is already in this conversation.</span>') +
-        (past.length ? `<span class="conv-pick-head">Recorded</span>` + past.map(r =>
-          `<button class="conv-chip past" data-key="${escapeHtml(r.key)}"` +
-          ` onclick="convJoinRecord(this.dataset.key)">${escapeHtml(r.label || 'Former pane')}` +
-          agentBadge((r.spawn || {}).agent || '') +
-          `<span class="ago">${escapeHtml(convSpan(now - (r.touched || now)))}</span></button>`
-        ).join('') : '') + '</div>';
       // The tier, said where the button that changes it is. "How do I make this one mine" is the
       // question an auto record raises, and the answer is one word on the button below it.
       const tier = conv.auto
@@ -579,9 +554,14 @@
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
         `Duplicate</button>` +
         `<button onclick="renameConversation()">Rename</button>` +
-        `<button aria-pressed="${convAdding ? 'true' : 'false'}"` +
-        ` onclick="convToggleAdd()">Add pane</button>` +
-        `</div>${chips}${tier}</div>`;
+        `<button onclick="convToggleAdd()">Add pane</button>` +
+        // Starting one is offered next to adding one, not only inside the picker: from a pane's
+        // roster the picker is two taps away, and "there is nobody to add yet" is exactly the
+        // moment the answer is a new agent.
+        (canStartFromConv()
+          ? `<button onclick="openNewAgent()" aria-label="Start a new agent in this conversation">` +
+            `New agent</button>` : '') +
+        `</div>${tier}</div>`;
     }
 
     // A pane does not carry the role it was started with, and neither does a record that predates
@@ -755,39 +735,91 @@
     let convPickRecs = [];
     const CONV_PICK_MAX = 60;
 
+    // "Which other pane" is the pair sheet's question too, so it is asked in the pair sheet — with
+    // the tick left on, because adding four panes to a conversation used to be four trips through a
+    // dialog that closed itself after each one.
     async function convToggleAdd() {
-      convAdding = !convAdding;
-      if (!convAdding) { convPickRecs = []; renderConvManage(); return; }
-      renderConvManage();
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      if (!conv) return;
       convPickRecs = await convAll();
-      if (convAdding) renderConvManage();
-    }
-
-    // A member built from a record instead of from a pane: the session has ended, so there is no
-    // paneLabel to ask and the record's own label is the only name it has left.
-    function convJoinRecord(key) {
-      const rec = convPickRecs.find(r => r.key === key);
-      if (!rec) return;
-      convAdding = false;
-      convPickRecs = [];
-      // No CONV_MEMBER_MAX check: that caps panes *recording* at once, and this one has stopped.
-      convEdit(conv => {
-        conv.members = (conv.members || []).concat(
-          { key: key, added: Date.now(), label: rec.label || '' });
+      const taken = new Set((conv.members || []).map(m => m.key));
+      const live = new Set(agents.map(convMemberKey));
+      // The live panes this conversation does not already name — including panes already recording
+      // elsewhere, which bring their own transcript with them (D3). And the sessions that have
+      // already ended, which is what a conversation assembled after the fact is made of. Newest
+      // first: a picker is ordered by what you are most likely to want.
+      const now = Date.now();
+      const free = () => agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)));
+      const past = convPickRecs
+        .filter(r => !taken.has(r.key) && !live.has(r.key) && (r.entries || []).length)
+        .sort((a, b) => (b.touched || 0) - (a.touched || 0))
+        .slice(0, CONV_PICK_MAX);
+      openPanePicker({
+        title: `Add to · ${conv.name}`,
+        multi: true,
+        empty: 'Every live pane is already in this conversation.',
+        // Both groups are the same kind of choice — a session, by name, with the harness it runs —
+        // so they are the same row. What differs is the heading above it and, for one that has
+        // ended, how long ago it last said anything. A pane is chosen by its member key rather than
+        // its pane id: a record has no pane behind it to name.
+        groups: () => [
+          {head: 'Running', rows: free().map(x =>
+            pickPaneRow(x, {id: convMemberKey(x)}))},
+          {head: 'Recorded', rows: past.map(r => ({
+            id: r.key,
+            name: r.label || 'Former pane',
+            agent: (r.spawn || {}).agent || '',
+            project: r.project || (r.spawn || {}).project || (r.spawn || {}).project_id || '',
+            meta: agentBadge((r.spawn || {}).agent || ''),
+            note: convSpan(now - (r.touched || now)),
+            color: 'var(--muted)',
+            glyph: agentGlyph(),
+            dim: true,
+          }))},
+        ],
+        // The pane that does not exist yet, under the ones that do. Answering "add a pane" by
+        // sending the reader out to Projects to start a session and back in here to join it is the
+        // same answer in three steps.
+        extra: () => canStartFromConv()
+          ? `<button class="pair-pick pair-add" onclick="closePicker(); openNewAgent()">
+      <span class="kind" aria-hidden="true">＋</span>
+      <span class="info"><span class="name">Start a session and add it</span><span class="meta">A new agent in this conversation, recording from the moment it lands</span></span>
+    </button>` : '',
+        label: chosen => chosen.length > 1 ? `Add ${chosen.length} panes` : 'Add pane',
+        submit: keys => { closePicker(); convJoinKeys(keys); },
       });
     }
 
-    function convJoinPane(key) {
-      const pane = agents.find(x => convMemberKey(x) === key);
-      if (!pane) return;
-      convAdding = false;
+    // Every chosen member in one edit. One at a time would save, re-render and re-file the
+    // conversation once per pane, and the ceiling would be counted against a roster that the
+    // previous save had already grown.
+    function convJoinKeys(keys) {
+      const recs = convPickRecs;
       convPickRecs = [];
+      if (!keys.length) return;
       convEdit(conv => {
-        if (convRecordingMembers(conv).length >= CONV_MEMBER_MAX) {
-          showToast(`"${conv.name}" already has ${CONV_MEMBER_MAX} live panes.`);
-          return false;
+        let recording = convRecordingMembers(conv).length;
+        const add = [];
+        for (const key of keys) {
+          const pane = agents.find(x => convMemberKey(x) === key);
+          if (pane) {
+            // The cap is on panes *recording* at once, which is why a record is never counted
+            // against it: that session has stopped.
+            if (recording >= CONV_MEMBER_MAX) {
+              showToast(`"${conv.name}" already has ${CONV_MEMBER_MAX} live panes.`);
+              continue;
+            }
+            recording++;
+            add.push(convMemberOf(pane));
+            continue;
+          }
+          // A member built from a record instead of from a pane: the session has ended, so there is
+          // no paneLabel to ask and the record's own label is the only name it has left.
+          const rec = recs.find(r => r.key === key);
+          if (rec) add.push({key: key, added: Date.now(), label: rec.label || ''});
         }
-        conv.members = (conv.members || []).concat(convMemberOf(pane));
+        if (!add.length) return false;
+        conv.members = (conv.members || []).concat(add);
       });
     }
 
@@ -804,10 +836,12 @@
       delete hidden[conv.id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(hidden)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
       const views = convViews();
       for (const key in views) if (views[key] === conv.id) delete views[key];
       try { localStorage.setItem(CONV_VIEW_KEY, JSON.stringify(views)); }
       catch (e) { /* private mode: this session only */ }
+      if (typeof stateSyncMark === 'function') stateSyncMark('conv_view');
       convStandaloneHtml = '';
       renderConversations();
       if (document.body.classList.contains('conversation-open')) {
@@ -1054,6 +1088,9 @@
       // The mic button is hidden over a terminal, and a live recogniser with no way to stop it
       // would keep writing into the composer.
       if (shell && dictation) dictation.stop();
+      // Which branch this pane's work is landing on — the snapshot carries it, and this is the
+      // one path every snapshot and every pane switch goes through.
+      if (typeof syncBranchBadges === 'function') syncBranchBadges();
     }
 
     function openTerminal(paneId) {

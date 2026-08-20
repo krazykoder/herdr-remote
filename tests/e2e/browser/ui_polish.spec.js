@@ -381,3 +381,17 @@ test('the pane menu draws its selects at the same size as its other items', asyn
     expect(r.size).toBe(r.itemSize);
   });
 });
+
+// The composer is docked to the bottom of the app, and on a phone the on-screen keyboard is drawn
+// over the bottom of the app — so the box you are typing in ends up behind the keys. What fixes it
+// is sizing the shell to the *visual* viewport rather than the layout one. No browser here opens a
+// keyboard, but the keyboard is only one of the things that shrinks that viewport: this checks the
+// shell follows it at all, which is the part that regresses.
+test('the app is sized to the visual viewport, not the layout one', async ({page}) => {
+  const fits = () => page.evaluate(() =>
+    Math.abs(document.body.getBoundingClientRect().height - window.visualViewport.height) < 1);
+  expect(await fits()).toBe(true);
+  // A resize is what a keyboard looks like from the page's side.
+  await page.setViewportSize({width: 390, height: 500});
+  await expect.poll(fits).toBe(true);
+});

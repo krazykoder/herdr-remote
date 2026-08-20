@@ -593,64 +593,112 @@
       }
     }
 
-    // Total storage footprint and statistics per conversation across index and transcripts.
-    function calcConvAnalytics(convs, recordsMap) {
-      const list = convs || [];
-      const records = (recordsMap && typeof recordsMap.get === 'function')
+    // What one stored thing costs, as the browser will store it. A record that will not serialise
+    // is counted as nothing rather than throwing: a panel that cannot draw tells the reader less
+    // about their storage than a figure that is short by one transcript.
+    function convStoredBytes(thing) {
+      try {
+        return JSON.stringify(thing).length;
+      } catch (e) { return 0; }
+    }
+
+    // Callers hold their records as a Map or as a plain object, and both are asked the same
+    // question here.
+    function convRecordsMap(recordsMap) {
+      return (recordsMap && typeof recordsMap.get === 'function')
         ? recordsMap
         : new Map(Object.entries(recordsMap || {}));
-      return list.map(c => {
-        const members = c.members || [];
-        let msgCount = 0;
-        let transcriptBytes = 0;
-        const seenKeys = new Set();
-        for (const m of members) {
-          if (!m || !m.key || seenKeys.has(m.key)) continue;
-          seenKeys.add(m.key);
-          const rec = records.get(m.key);
-          if (rec) {
-            const entries = rec.entries || [];
-            msgCount += entries.length;
-            try {
-              transcriptBytes += JSON.stringify(rec).length;
-            } catch (e) { /* ignore */ }
-          }
+    }
+
+    // The keys of the panes that are running right now. `liveAgents` is whatever the caller has:
+    // the agents array, or a set of member keys already worked out. Anything with `has` is taken as
+    // the set itself — duck-typed rather than `instanceof Set`, which is false for a Set made in
+    // another realm. Anything else counts as nothing live rather than as an error: this measures
+    // storage, and a wrong flag is better than a panel that will not draw.
+    function convLiveKeySet(liveAgents) {
+      if (liveAgents && typeof liveAgents.has === 'function') return liveAgents;
+      const memberKey = a => a &&
+        (a.key || (typeof convMemberKey === 'function' ? convMemberKey(a) : '') || a.pane_id || '');
+      return new Set(Array.from(liveAgents || [], memberKey).filter(Boolean));
+    }
+
+    // What this browser is storing, one row per transcript — which is one row per pane that ever
+    // recorded, whether its session is running or long over.
+    //
+    // Per *pane* and not per conversation, because the pane is what the database is keyed by. A
+    // conversation is a name over some of those keys: it holds no words of its own, one pane can be
+    // in several of them, and a transcript in none of them is still on disk. Summed per
+    // conversation, those three facts make the figure unreadable — a pane's bytes counted twice,
+    // or not at all, and no row at all for the ended sessions that are most of a months-old
+    // database. Every record gets a row here, and the total is the database.
+    //
+    // The conversations a pane is in ride along as a label, so the grouping is still on screen —
+    // it is just no longer what the arithmetic is done over.
+    // `liveCache` is what the relay's record is costing in memory this session, by fingerprint —
+    // optional, and zero everywhere the Live toggle has never been used.
+    function calcPaneStorage(convs, recordsMap, liveAgents, liveCache) {
+      const records = convRecordsMap(recordsMap);
+      const live = convLiveKeySet(liveAgents);
+      const cached = convRecordsMap(liveCache);
+      const named = new Map();
+      for (const c of convs || []) {
+        for (const m of (c && c.members) || []) {
+          if (!m || !m.key) continue;
+          if (!named.has(m.key)) named.set(m.key, []);
+          named.get(m.key).push(c.name || 'Untitled');
         }
-        let indexBytes = 0;
-        try {
-          indexBytes = JSON.stringify(c).length;
-        } catch (e) { /* ignore */ }
+      }
+      const rows = [];
+      for (const [key, rec] of records) {
+        if (!rec) continue;
+        const entries = rec.entries || [];
+        const fp = typeof convKeyFingerprint === 'function' && typeof convFpKey === 'function'
+          ? convFpKey(convKeyFingerprint(key)) : key;
+        rows.push({
+          key: key,
+          // The label the recorder stamped, then the pane id the key carries. A transcript always
+          // has one or the other: the pane id is in the key by construction.
+          name: rec.label || (typeof convKeyPaneId === 'function' ? convKeyPaneId(key) : '') || 'Pane',
+          agent: rec.agent || '',
+          msgCount: entries.length,
+          bytes: convStoredBytes(rec),
+          fp: fp,
+          // The relay's record for the same pane, held in memory for this session. A fingerprint
+          // is per host+agent+cwd and a key is per pane, so two panes of one agent in one directory
+          // share a bucket: this is what the Live thread cost to fetch, not a second transcript.
+          liveBytes: cached.get(fp) || 0,
+          open: live.has(key),
+          convs: named.get(key) || [],
+          touched: rec.touched || 0,
+        });
+      }
+      return rows;
+    }
 
-        const totalBytes = transcriptBytes + indexBytes;
-        const sizeMb = totalBytes / (1024 * 1024);
-
-        return {
-          id: c.id,
-          name: c.name || 'Untitled',
-          auto: !!c.auto,
-          panes: members.length,
-          msgCount: msgCount,
-          totalBytes: totalBytes,
-          sizeMb: sizeMb,
-          touched: c.touched || 0,
-        };
-      });
+    // What the conversation index costs, which is the other half of the answer to "how much is this
+    // app storing". It is in localStorage rather than IndexedDB and it is small beside the
+    // transcripts, but it is the part that is there even for a conversation whose panes never
+    // recorded a word.
+    function calcConvIndexBytes(convs) {
+      return convStoredBytes({ version: 1, items: convs || [] });
     }
 
     function sortConvAnalyticsRows(rows, col, dir) {
       const d = dir === 'asc' ? 1 : -1;
       const list = (rows || []).slice();
+      const text = (row, f) => f === 'convs' ? (row.convs || []).join(', ') : (row[f] || '');
       return list.sort((a, b) => {
-        if (col === 'name') {
-          return d * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true });
+        if (col === 'name' || col === 'convs') {
+          return d * text(a, col).localeCompare(text(b, col), undefined,
+            { sensitivity: 'base', numeric: true });
         }
-        if (col === 'msgCount') {
-          return d * ((a.msgCount || 0) - (b.msgCount || 0));
-        }
-        if (col === 'panes') {
-          return d * ((a.panes || 0) - (b.panes || 0));
-        }
-        return d * ((a.totalBytes || 0) - (b.totalBytes || 0));
+        // `open` is a boolean, and boolean arithmetic is what sorts it: true - false is 1.
+        // Every other column is a number on the row, so the column id is the field name and a new
+        // column needs a header rather than a branch here. Anything not on the list sorts by size,
+        // which is the table's default and the one column a row always has.
+        const numeric = ['msgCount', 'bytes', 'touched', 'open'];
+        const f = numeric.indexOf(col) === -1 ? 'bytes' : col;
+        return d * ((a[f] || 0) - (b[f] || 0));
       });
     }
 

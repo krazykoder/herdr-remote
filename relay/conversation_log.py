@@ -19,6 +19,7 @@ between turns that ended inside one poll.
 Writes live here. Reads live in conv_query, which this module imports rather than the reverse, so
 the process an agent runs to read the record holds no code that could write it.
 """
+import json
 import os
 import sqlite3
 import time
@@ -110,12 +111,25 @@ CREATE TABLE IF NOT EXISTS turns (
   status_to    TEXT,
   at           INTEGER NOT NULL,
   at_src       TEXT    NOT NULL,
-  decision_id  INTEGER
+  decision_id  INTEGER,
+  branch       TEXT    NOT NULL DEFAULT '',
+  commit_sha   TEXT    NOT NULL DEFAULT '',
+  commits      TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS turns_time ON turns(at, id);
 CREATE INDEX IF NOT EXISTS turns_fp   ON turns(host, agent, cwd, at, id);
 CREATE INDEX IF NOT EXISTS turns_pane ON turns(pane_id, at, id);
+CREATE INDEX IF NOT EXISTS turns_host_cwd_time ON turns(host, cwd, at, id);
 """
+
+# Columns added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS, and a record
+# written by an older relay is the ordinary case rather than the exception — this is a durable
+# file the user has been accumulating for as long as they have had the feature on.
+ADDED_COLUMNS = (
+    ("branch", "TEXT NOT NULL DEFAULT ''"),
+    ("commit_sha", "TEXT NOT NULL DEFAULT ''"),
+    ("commits", "TEXT NOT NULL DEFAULT ''"),
+)
 
 
 def now_ms():
@@ -138,20 +152,65 @@ class ConversationLog:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
         try:
             os.chmod(path, 0o600)
         except OSError:
             pass  # a filesystem that will not take a mode is not a reason to lose the record
 
+    def _migrate(self):
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(turns)")}
+        for name, decl in ADDED_COLUMNS:
+            if name not in have:
+                self.conn.execute(f"ALTER TABLE turns ADD COLUMN {name} {decl}")
+
     def close(self):
         self.conn.close()
+
+    def knows_directory(self, host, cwd):
+        """Has this relay ever recorded a turn in this directory on this host?
+
+        The set of directories the relay has watched, which outlives the panes that were open in
+        them — a conversation read a week later is a record whose panes are all gone. It is the
+        only claim git should be run on: it is this relay's own history and never a path a client
+        named.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM turns WHERE host=? AND cwd=? LIMIT 1",
+            (host or "local", cwd or "")).fetchone() is not None
+
+    def last_commit(self, host, cwd):
+        """The commit the last recorded turn for this directory was at, or ''.
+
+        The other end of a turn's commit range. Kept here rather than in the relay's memory because
+        a relay restart is not a break in the record: the agent that committed something over lunch
+        did so between two turns, and losing the range because the relay was restarted between them
+        would lose exactly the history this feature exists to keep.
+        """
+        row = self.conn.execute(
+            "SELECT commit_sha FROM turns WHERE host=? AND cwd=? AND commit_sha<>''"
+            " ORDER BY at DESC, id DESC LIMIT 1", (host or "local", cwd or "")).fetchone()
+        return row["commit_sha"] if row else ""
+
+    def last_branch(self, host, cwd):
+        """The branch the last recorded turn for this directory was on, or ''.
+
+        Same reasoning as last_commit above, for the other half of the same fact: a relay restart
+        is not a break in the record. The app shows the addressed agent's branch beside its
+        composer, and reading it back from here is what fills that in on the first snapshot after a
+        restart rather than leaving it blank until every pane has ended another turn.
+        """
+        row = self.conn.execute(
+            "SELECT branch FROM turns WHERE host=? AND cwd=? AND branch<>''"
+            " ORDER BY at DESC, id DESC LIMIT 1", (host or "local", cwd or "")).fetchone()
+        return row["branch"] if row else ""
 
     # --- writing ---
 
     def record(self, *, agent, pane_id, kind, origin, at_src, host="local", cwd="", label="",
                project="", text="", tail="", span=None, status_from=None, status_to=None,
-               at=None, decision_id=None):
+               at=None, decision_id=None, git=None):
         """One turn. Returns its id, which is also its sequence.
 
         Enums are checked rather than trusted: this record is what an automated loop will later
@@ -166,19 +225,27 @@ class ConversationLog:
             raise ValueError(f"unknown at_src: {at_src!r}")
         text = (text or "")[:TEXT_MAX]
         tail = (tail or "")[-TAIL_MAX:]
+        # `git` is whatever relay/git_probe produced, or nothing at all — an agent working outside
+        # a checkout, a host without git, the feature switched off. The record stores it as it was
+        # given: this module runs no commands and knows nothing about repositories.
+        git = git or {}
+        commits = git.get("commits") or []
         row = self.conn.execute(
             "INSERT INTO turns (host, agent, cwd, pane_id, label, project, kind, origin,"
-            " text, tail, range_start, range_end, status_from, status_to, at, at_src, decision_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " text, tail, range_start, range_end, status_from, status_to, at, at_src, decision_id,"
+            " branch, commit_sha, commits)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (host or "local", agent or "", cwd or "", pane_id, label or "", project or "",
              kind, origin, text, tail,
              span[0] if span else None, span[1] if span else None,
-             status_from, status_to, at if at is not None else now_ms(), at_src, decision_id))
+             status_from, status_to, at if at is not None else now_ms(), at_src, decision_id,
+             git.get("branch") or "", git.get("commit") or "",
+             json.dumps(commits) if commits else ""))
         self.conn.commit()
         self._prune()
         return row.lastrowid
 
-    def record_turn_end(self, pane, content, status_from, status_to, at=None):
+    def record_turn_end(self, pane, content, status_from, status_to, at=None, git=None):
         """A pane that just stopped working, from the content of its pane.
 
         Returns the ids written, oldest first — usually one or two, and empty when this turn is
@@ -213,6 +280,13 @@ class ConversationLog:
             label=pane.get("label") or "", project=pane.get("project") or "",
             at_src="backfill" if backfilled else "poll",
             status_from=status_from, status_to=status_to)
+        # Every row of one turn end is at the same commit on the same branch — they are one moment,
+        # read out of one screen. The list of commits is not repeated across them: it is the work
+        # that happened *before* this moment, and writing it onto four rows would show a person the
+        # same three commits four times. It goes on the last row, which is the one the turn ends on.
+        git = git or {}
+        git_head = {"branch": git.get("branch"), "commit": git.get("commit")}
+        git_last = dict(git_head, commits=git.get("commits") or [])
         if not fresh:
             # Nothing readable at all: a harness with no profile, a pane showing its own banner, a
             # window that begins mid-block. The tail is the honest fallback and saying "a turn ended
@@ -222,7 +296,7 @@ class ConversationLog:
             if self._last_tail(pane) == tail:
                 return []
             return [self.record(kind="agent_blocked" if status_to == "blocked" else "agent_final",
-                                origin="agent", text="", tail=tail, at=at, **common)]
+                                origin="agent", text="", tail=tail, at=at, git=git_last, **common)]
         base = at if at is not None else now_ms()
         last_agent = max((i for i, m in enumerate(new) if m[0] == "agent"), default=-1)
         out = []
@@ -237,14 +311,16 @@ class ConversationLog:
                 # person put those words there and does not know which person, and only a send it
                 # performed itself may claim more than that (N4).
                 out.append(self.record(kind="human_prompt", origin="human_terminal",
-                                       text=text, span=span, at=when, **common))
+                                       text=text, span=span, at=when,
+                                       git=git_last if i == len(new) - 1 else git_head, **common))
             else:
                 # Only the agent's closing block is the one the end state is about. The blocks above
                 # it are what it said on the way there — and a prompt typed after it does not move
                 # the state, so the last message of the window is not always the agent's.
                 out.append(self.record(
                     kind="agent_blocked" if i == last_agent and status_to == "blocked" else "agent_final",
-                    origin="agent", text=text, span=span, at=when, **common))
+                    origin="agent", text=text, span=span, at=when,
+                    git=git_last if i == len(new) - 1 else git_head, **common))
         return out
 
     def _has_record(self, pane):

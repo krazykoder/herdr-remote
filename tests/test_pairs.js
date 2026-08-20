@@ -302,11 +302,11 @@ test('the conversation window\'s targets do not require a pair', () => {
   // and the dock exists to serve it: membership is what makes an agent a target. The sheet still
   // needs a pair — it transfers to *the partner*.
   //
-  // The dock reads a pair in exactly one place, and only to pick a default: no health check, and
+  // The dock reads a pair to pick a default and in its settings menu: no health check, and
   // nothing that decides who is *in* the row. A pair that is broken, absent, or outside this
   // conversation simply does not answer, and the row falls back to its first member.
   assert.ok(!/\bpairHealth\(/.test(CONV_DOCK), 'the dock must never gate on pair health');
-  assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 1);
+  assert.equal((CONV_DOCK.match(/\bpairFor\(/g) || []).length, 2);
   assert.match(CONV_DOCK,
     /function dockPairTarget\(source, list\) \{[\s\S]*?list\.some\(a => a\.pane_id === partner\.pane_id\) \? partner\.pane_id : ''/);
   const members = CONV_DOCK.split('function dockMembers(')[1].split('\n    }')[0];
