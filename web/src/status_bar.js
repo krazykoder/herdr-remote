@@ -577,6 +577,9 @@
         // an hour offline reads as three seconds when the socket finally comes back.
         if (!wsDownSince) wsDownSince = Date.now();
         resetBandwidthBucket();
+        // The versions belonged to the relay that just went away. Held rather than cleared: a
+        // reconnect is three seconds off, and a Settings card that empties on every phone-in-pocket
+        // drop reads as the relay having no version at all.
         setStatus('disconnected');
         setTimeout(connect, 3000);
       };
@@ -633,6 +636,7 @@
         // there is nothing to filter here.
         convCommitsReceive(msg);
       }
+      else if (msg.type === 'versions') { setRelayVersions(msg); }
       else if (msg.type === 'projects') {
         projects = msg.projects || [];
         render();

@@ -71,6 +71,27 @@ log.addHandler(_console_handler)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 
 HERDR = os.environ.get("HERDR_BIN") or shutil.which("herdr") or "/opt/homebrew/bin/herdr"
+
+
+def _plugin_version():
+    """This project's version, read from the plugin manifest that already declares it.
+
+    One place to bump rather than a copy here and another in the page. Parsed with a regex and not
+    tomllib, which is 3.11 and this script says 3.10 — and a manifest whose version line has moved
+    beyond a quoted literal is a manifest this needs to be looking at anyway. Missing or unreadable
+    is not fatal: an unknown version is worth less than a relay, so it reports empty and runs.
+    """
+    manifest = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "herdr-plugin.toml")
+    try:
+        with open(manifest, encoding="utf-8") as f:
+            found = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    except OSError:
+        return ""
+    return found.group(1) if found else ""
+
+
+RELAY_VERSION = _plugin_version()
 WS_PORT = int(os.environ.get("HERDR_RELAY_PORT", "8375"))
 POLL_INTERVAL = 2
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
@@ -668,6 +689,18 @@ def run_herdr(*args, remote=None):
         return run_herdr_result(*args, remote=remote).stdout.strip()
     except Exception:
         return ""
+
+
+@functools.lru_cache(maxsize=1)
+def herdr_version():
+    """The herdr on this host, as `herdr --version` prints it: "herdr 0.8.0".
+
+    Asked once and remembered — the binary does not change under a running relay, and this is on
+    the path every client connects through. Empty when herdr is missing or does not answer, which
+    the page shows as unknown rather than as a version it invented.
+    """
+    out = run_herdr("--version")
+    return out.split()[-1] if out else ""
 
 
 def split_panes(panes, host_label, remote=None, include_shells=False):
@@ -1600,6 +1633,12 @@ async def handle_client(ws, listener="lan"):
     clients.add(ws)
     connected_at = time.monotonic()
     try:
+        # What this client is talking to, before anything it might have to explain. The page is
+        # deployed apart from the relay and can be months older than it, so "which versions"
+        # cannot be answered by the page alone — and it is the first question asked when the two
+        # disagree. Unconditional: a client that does not know the type ignores it.
+        await ws.send(json.dumps({"type": "versions", "relay": RELAY_VERSION,
+                                  "herdr": herdr_version()}))
         # Preserve the legacy wire behavior when Projects are disabled. When enabled,
         # Projects must arrive before the cached snapshot so the client can group it.
         if PROJECTS:

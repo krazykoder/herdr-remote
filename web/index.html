@@ -7,6 +7,11 @@
   <meta name="theme-color" content="#1a1b26">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Stamped by scripts/build.py from the version in herdr-plugin.toml, which is the one place
+       this project's version is written down. Served unbuilt from the relay these keep saying
+       "dev", which is what the page then is: the working copy on disk, not a release. -->
+  <meta name="app-version" content="dev">
+  <meta name="app-built" content="">
   <!-- A file, not the data: URI this used to be. iOS only offers Add to Home Screen for a page
        with a fetchable manifest and a real icon, and only a home-screen web app can receive Web
        Push — so these two lines are load-bearing for Lock Screen notifications, not polish.
@@ -1014,6 +1019,26 @@
       color: var(--muted);
       display: block;
       margin-bottom: 6px;
+    }
+
+    /* Name and value on one line each, the values in a column of their own so three version
+       numbers can be compared down the page rather than hunted for in a sentence. Monospace for
+       the same reason a diff is: 0.5.0 against 0.5.10 is a character-by-character read. */
+    .version-list {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 2px 10px;
+      margin: 0;
+      font-size: 0.75rem;
+    }
+
+    .version-list dt { color: var(--muted); }
+
+    .version-list dd {
+      margin: 0;
+      color: var(--text);
+      font-family: monospace;
+      overflow-wrap: anywhere;
     }
 
     .setting-group input {
@@ -5138,6 +5163,20 @@
       <div class="hint">Run <code>./relay/start.sh</code> to get a URL. <a
           href="https://github.com/dcolinmorgan/herdr-remote/blob/main/QUICKSTART.md" style="color:var(--blue)">Setup
           guide →</a></div>
+    </div>
+
+    <!-- Under Connect because it answers the question Connect raises: this page and the relay it
+         reached are two separately deployed things, and "which versions am I actually running"
+         is the first thing asked when one of them behaves unlike the other. The page knows its
+         own build; the other two come from the relay, so they read as unknown until connected. -->
+    <div class="setting-group">
+      <label>Versions</label>
+      <dl class="version-list">
+        <dt>App</dt><dd id="verApp">dev</dd>
+        <dt>Relay</dt><dd id="verRelay">—</dd>
+        <dt>herdr CLI</dt><dd id="verHerdr">—</dd>
+      </dl>
+      <div class="hint" id="versionHint"></div>
     </div>
 
     <div class="setting-group">

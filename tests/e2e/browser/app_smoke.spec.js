@@ -58,6 +58,19 @@ test('agent filters live on the existing card separator', async ({page}) => {
   }).toBe(true);
 });
 
+// Two separately deployed halves. The page can only report its own build; what the relay is and
+// what herdr is under it are the relay's to say, and it says them on connect.
+test('Settings names the app, the relay, and the herdr under it', async ({page}) => {
+  await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
+  await page.locator('#navSettings').click();
+  // Served unbuilt from the working copy, which is what the relay does — so the page has no
+  // stamped version and says so rather than naming the last release.
+  await expect(page.locator('#verApp')).toHaveText('dev');
+  await expect(page.locator('#verRelay')).toHaveText(/^\d+\.\d+\.\d+$/);
+  await expect(page.locator('#verHerdr')).toHaveText('9.9.9-fake');
+  await expect(page.locator('#versionHint')).toContainText('unbuilt');
+});
+
 test('Activity tracks local WebSocket payload bytes in a newest-first interval stack', async ({page}) => {
   await expect.poll(() => page.evaluate(() => ws && ws.readyState)).toBe(1);
   // Off means no collection and no empty telemetry panel claiming an hour it did not observe.

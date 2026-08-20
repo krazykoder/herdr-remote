@@ -152,9 +152,9 @@ async def gate_on_run():
         async with connect(url()) as ws:
             seen, snap = await drain_to_agents(ws)
             types = [m["type"] for m in seen]
-            check("start_options sits between projects and agents",
-                  types[:3] == ["projects", "start_options", "agents"], types)
-            opts = seen[1]
+            check("start_options sits between projects and agents, under the version greeting",
+                  types[:4] == ["versions", "projects", "start_options", "agents"], types)
+            opts = next(m for m in seen if m["type"] == "start_options")
             check("allowlist is the relay's, in order", opts["agents"] == ["claude", "codex"], opts)
             check("roles are fixed", opts["roles"] == ["architect", "reviewer", "agent"], opts)
 
@@ -490,7 +490,7 @@ async def lan_open_run():
             seen, _ = await drain_to_agents(ws)
             types = [m["type"] for m in seen]
             check("D5 start_options reaches an unauthenticated LAN client",
-                  types[:3] == ["projects", "start_options", "agents"], types)
+                  types[:4] == ["versions", "projects", "start_options", "agents"], types)
             open(LOG, "w").close()
             r = await rpc(ws, {"type": "start_agent", "name": "claude", "role": "architect",
                                "project_id": "charts", "placement": "new_workspace"})
