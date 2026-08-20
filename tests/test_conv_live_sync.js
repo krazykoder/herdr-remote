@@ -805,6 +805,43 @@ test('the record having nothing older ends the walk rather than repeating it', a
   assert.match(convOlderHtml([KEY_A]), /start of the relay/);
 });
 
+test('a respawn walks the old physical pane while keeping the new member as owner', async () => {
+  await convLiveHydrate();
+  const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([fresh], true);
+  // The roster query attaches unclaimed %1 history to its %9 respawn.
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  sent.length = 0;
+  assert.equal(convLiveOlder([fresh]), 1);
+  const back = asked();
+  assert.equal(back.pane, '%1');
+  assert.equal(back.owner_pane, '%9');
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', owner_pane: '%9', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS * 2);
+  assert.equal(convLiveEntries([fresh])[0].text, 'turn 601');
+  // The end result belongs to the current member, not the old, dead physical pane.
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', owner_pane: '%9', until_id: 601, turns: []});
+  assert.equal(convLiveCanLoadOlder([fresh]), false);
+});
+
+test('a relay too old to echo the owner still ends the walk in the right place', async () => {
+  // The page is deployed separately from the relay and can be any age relative to it, so an answer
+  // carrying `pane` and no `owner_pane` is an ordinary case and not a broken one. Marking the dead
+  // physical pane as ended would leave the member's button up over a record with nothing behind it.
+  await convLiveHydrate();
+  const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([fresh], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  convLiveOlder([fresh]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801, turns: []});
+  assert.equal(convLiveCanLoadOlder([fresh]), false);
+  assert.match(convOlderHtml([fresh]), /start of the relay/);
+});
+
 test('the walk stops at the ceiling this device keeps', async () => {
   await convLiveHydrate();
   reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);

@@ -419,14 +419,19 @@
     // asked for. 0 when it holds nothing — there is no window before nothing, and the ordinary
     // forward fetch is what that member needs.
     function convLiveOldestSeq(key, claimed) {
+      const oldest = convLiveOldest(key, claimed);
+      return oldest ? oldest.seq : 0;
+    }
+
+    function convLiveOldest(key, claimed) {
       const fp = convKeyFingerprint(key);
       const bucket = fp && convLiveCache.get(convFpKey(fp));
-      if (!bucket) return 0;
+      if (!bucket) return null;
       const mine = convPaneOfKey(key);
-      let oldest = 0;
+      let oldest = null;
       for (const t of bucket.turns) {
         if (!t.seq || !convLiveRowIsMine(t, mine, claimed)) continue;
-        if (!oldest || t.seq < oldest) oldest = t.seq;
+        if (!oldest || t.seq < oldest.seq) oldest = t;
       }
       return oldest;
     }
@@ -468,13 +473,32 @@
         if (bucket.ended[pane]) continue;
         const have = Math.min(bucket.depth[pane] || CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
         if (have >= CONV_LIVE_DEEP_MAX) continue;
-        const oldest = convLiveOldestSeq(key, claimed);
+        const oldest = convLiveOldest(key, claimed);
         if (!oldest) continue;
+        // A respawn inherits rows from its prior pane id. The relay must filter that old physical
+        // pane, while depth and the end marker still belong to the current logical member.
+        const sourcePane = oldest.pane_id || pane;
         // Raised before the answer, not after it: the trim runs on the tick the rows land, and a
         // ceiling still at one window would throw them away before anything drew them.
+        //
+        // Both keys, because the trim counts by the pane id on the *row* and the ceiling is asked
+        // about the member: raising only the member's would cap the arriving rows at one window
+        // and stall the walk. That gives a respawned member a generous cap on each physical pane
+        // it spans, but not a larger walk — presses stop at the member's own ceiling, so what is
+        // actually fetched is still CONV_LIVE_DEEP_MAX rows however they split.
         bucket.depth[pane] = Math.min(have + CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
-        ws.send(JSON.stringify({ type: 'conv_log', fingerprints: [fp], pane: pane,
-                                 until_id: oldest, last: CONV_LIVE_ROWS }));
+        bucket.depth[sourcePane] = Math.min(have + CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
+        const payload = { type: 'conv_log', fingerprints: [fp], pane: sourcePane,
+                          until_id: oldest.seq, last: CONV_LIVE_ROWS };
+        if (sourcePane !== pane) {
+          payload.owner_pane = pane;
+          // The same answer, remembered locally, for a relay too old to echo it back. This page is
+          // deployed separately from the relay and can be any age relative to it — against one that
+          // has not been restarted the end marker would otherwise land on the dead pane, and the
+          // reader would never be told the walk had reached the bottom.
+          (bucket.owner || (bucket.owner = {}))[sourcePane] = pane;
+        }
+        ws.send(JSON.stringify(payload));
         asked++;
       }
       if (asked) convLiveAskSent(asked);
@@ -642,7 +666,9 @@
         // The record had nothing before what this browser already holds. Recorded per pane so the
         // reader is told the walk is over rather than handed a button that does nothing — and so
         // the depth this ask raised is not spent again on a question with no answer.
-        if (msg.until_id != null && msg.pane && !turns.length) bucket.ended[msg.pane] = true;
+        if (msg.until_id != null && msg.pane && !turns.length) {
+          bucket.ended[msg.owner_pane || (bucket.owner || {})[msg.pane] || msg.pane] = true;
+        }
         touched.add(fpKey);
       }
 

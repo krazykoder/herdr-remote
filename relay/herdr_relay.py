@@ -1748,6 +1748,11 @@ async def handle_client(ws, listener="lan"):
                 # a watermark for every pane sharing the fingerprint, and the rest go quiet.
                 if msg.get("pane"):
                     out_msg["pane"] = msg.get("pane")
+                # A current pane can inherit a prior pane id after a respawn. `pane` filters the
+                # physical record; this echoes the current logical owner so the browser can apply
+                # the result and its end marker to the right member.
+                if msg.get("owner_pane"):
+                    out_msg["owner_pane"] = msg.get("owner_pane")
                 # Echoed for a third reason, and the sharpest one: a backfill answer is the window
                 # *before* what the client holds, so its highest id is older than the client's
                 # watermark. Taken as a watermark it would wind that client backwards and make the
