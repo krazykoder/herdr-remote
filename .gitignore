@@ -16,3 +16,6 @@ test-results/
 playwright-report/
 .claude/
 /.herdr-remote/
+
+# Throwaway repro specs — written to reproduce a bug, never a suite
+tests/e2e/browser/zz_repro*.spec.js
