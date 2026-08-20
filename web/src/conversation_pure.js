@@ -593,16 +593,22 @@
       }
     }
 
-    // Total storage footprint and statistics per conversation across index and transcripts.
-    function calcConvAnalytics(convs, recordsMap) {
+    // Total IDB storage footprint and statistics per conversation across live and recorded pane transcripts.
+    function calcConvAnalytics(convs, recordsMap, liveAgents) {
       const list = convs || [];
       const records = (recordsMap && typeof recordsMap.get === 'function')
         ? recordsMap
         : new Map(Object.entries(recordsMap || {}));
+      const liveKeySet = new Set(
+        Array.isArray(liveAgents)
+          ? liveAgents.map(a => a ? (a.key || (typeof convMemberKey === 'function' ? convMemberKey(a) : '') || a.pane_id || '') : '').filter(Boolean)
+          : (liveAgents instanceof Set ? liveAgents : [])
+      );
       return list.map(c => {
         const members = c.members || [];
         let msgCount = 0;
-        let transcriptBytes = 0;
+        let liveBytes = 0;
+        let recordedBytes = 0;
         const seenKeys = new Set();
         for (const m of members) {
           if (!m || !m.key || seenKeys.has(m.key)) continue;
@@ -611,17 +617,18 @@
           if (rec) {
             const entries = rec.entries || [];
             msgCount += entries.length;
+            let bytes = 0;
             try {
-              transcriptBytes += JSON.stringify(rec).length;
+              bytes = JSON.stringify(rec).length;
             } catch (e) { /* ignore */ }
+            if (liveKeySet.has(m.key)) {
+              liveBytes += bytes;
+            } else {
+              recordedBytes += bytes;
+            }
           }
         }
-        let indexBytes = 0;
-        try {
-          indexBytes = JSON.stringify(c).length;
-        } catch (e) { /* ignore */ }
-
-        const totalBytes = transcriptBytes + indexBytes;
+        const totalBytes = liveBytes + recordedBytes;
         const sizeMb = totalBytes / (1024 * 1024);
 
         return {
@@ -630,6 +637,8 @@
           auto: !!c.auto,
           panes: members.length,
           msgCount: msgCount,
+          liveBytes: liveBytes,
+          recordedBytes: recordedBytes,
           totalBytes: totalBytes,
           sizeMb: sizeMb,
           touched: c.touched || 0,
@@ -649,6 +658,12 @@
         }
         if (col === 'panes') {
           return d * ((a.panes || 0) - (b.panes || 0));
+        }
+        if (col === 'liveBytes') {
+          return d * ((a.liveBytes || 0) - (b.liveBytes || 0));
+        }
+        if (col === 'recordedBytes') {
+          return d * ((a.recordedBytes || 0) - (b.recordedBytes || 0));
         }
         return d * ((a.totalBytes || 0) - (b.totalBytes || 0));
       });

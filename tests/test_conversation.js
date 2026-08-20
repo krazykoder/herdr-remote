@@ -847,41 +847,54 @@ test('calcConvAnalytics accurately aggregates message count, panes, and total si
     ['m3', { key: 'm3', entries: [] }],
   ]);
 
-  const stats = calcConvAnalytics(convs, recordsMap);
+  // Live agents: m1 is live, m2 is recorded/past, m3 is live
+  const liveAgents = [{ pane_id: 'w1:p1', key: 'm1' }, { pane_id: 'w1:p3', key: 'm3' }];
+
+  const stats = calcConvAnalytics(convs, recordsMap, liveAgents);
   assert.strictEqual(stats.length, 2);
 
-  // c1: 2 members/panes, 2 + 1 = 3 messages, totalBytes > 0
+  // c1: 2 members/panes, 2 + 1 = 3 messages, liveBytes > 0, recordedBytes > 0, totalBytes = liveBytes + recordedBytes
   assert.strictEqual(stats[0].id, 'c1');
   assert.strictEqual(stats[0].name, 'Alpha Plan');
   assert.strictEqual(stats[0].auto, false);
   assert.strictEqual(stats[0].panes, 2);
   assert.strictEqual(stats[0].msgCount, 3);
-  assert.ok(stats[0].totalBytes > 0);
+  assert.ok(stats[0].liveBytes > 0);
+  assert.ok(stats[0].recordedBytes > 0);
+  assert.strictEqual(stats[0].totalBytes, stats[0].liveBytes + stats[0].recordedBytes);
   assert.ok(stats[0].sizeMb > 0);
 
-  // c2: 1 member, 0 messages
+  // c2: 1 member, 0 messages, empty transcript
   assert.strictEqual(stats[1].id, 'c2');
   assert.strictEqual(stats[1].name, 'Beta Review');
   assert.strictEqual(stats[1].auto, true);
   assert.strictEqual(stats[1].panes, 1);
   assert.strictEqual(stats[1].msgCount, 0);
-  assert.ok(stats[1].totalBytes > 0);
+  assert.strictEqual(stats[1].totalBytes, stats[1].liveBytes + stats[1].recordedBytes);
 });
 
 test('sortConvAnalyticsRows sorts rows by column and direction', () => {
   const rows = [
-    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, totalBytes: 5000 },
-    { id: '2', name: 'Beta', msgCount: 50, panes: 3, totalBytes: 20000 },
-    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, totalBytes: 1000 },
+    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, liveBytes: 1000, recordedBytes: 4000, totalBytes: 5000 },
+    { id: '2', name: 'Beta', msgCount: 50, panes: 3, liveBytes: 15000, recordedBytes: 5000, totalBytes: 20000 },
+    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, liveBytes: 200, recordedBytes: 800, totalBytes: 1000 },
   ];
 
   // Sort by size (totalBytes) descending
-  const bySizeDesc = sortConvAnalyticsRows(rows, 'size', 'desc');
+  const bySizeDesc = sortConvAnalyticsRows(rows, 'totalBytes', 'desc');
   assert.deepStrictEqual(bySizeDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
 
   // Sort by size ascending
-  const bySizeAsc = sortConvAnalyticsRows(rows, 'size', 'asc');
+  const bySizeAsc = sortConvAnalyticsRows(rows, 'totalBytes', 'asc');
   assert.deepStrictEqual(bySizeAsc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
+
+  // Sort by liveBytes descending
+  const byLiveDesc = sortConvAnalyticsRows(rows, 'liveBytes', 'desc');
+  assert.deepStrictEqual(byLiveDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by recordedBytes descending
+  const byRecDesc = sortConvAnalyticsRows(rows, 'recordedBytes', 'desc');
+  assert.deepStrictEqual(byRecDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
 
   // Sort by name ascending
   const byNameAsc = sortConvAnalyticsRows(rows, 'name', 'asc');

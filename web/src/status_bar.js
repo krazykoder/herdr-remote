@@ -323,7 +323,9 @@
           if (r) recordsMap.set(k, r);
         }
       }
-      return typeof calcConvAnalytics === 'function' ? calcConvAnalytics(convs, recordsMap) : [];
+      return typeof calcConvAnalytics === 'function'
+        ? calcConvAnalytics(convs, recordsMap, typeof agents !== 'undefined' ? agents : [])
+        : [];
     }
 
     async function renderConvAnalytics() {
@@ -353,12 +355,16 @@
       const totalEl = document.getElementById('convAnalyticsTotal');
       if (!tableWrap) return;
 
-      const totalBytes = convAnalyticsData.reduce((acc, c) => acc + (c.totalBytes || 0), 0);
+      const totalMsgs = convAnalyticsData.reduce((acc, c) => acc + (c.msgCount || 0), 0);
+      const totalLiveBytes = convAnalyticsData.reduce((acc, c) => acc + (c.liveBytes || 0), 0);
+      const totalRecordedBytes = convAnalyticsData.reduce((acc, c) => acc + (c.recordedBytes || 0), 0);
+      const totalBytes = totalLiveBytes + totalRecordedBytes;
+
       if (totalEl) {
         const n = convAnalyticsData.length;
         totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
-          formatConvSize(totalBytes);
-        totalEl.title = `${totalBytes.toLocaleString()} bytes on this device`;
+          `${formatConvSize(totalBytes)} (Live: ${formatConvSize(totalLiveBytes)} · Recorded: ${formatConvSize(totalRecordedBytes)})`;
+        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Live: ${totalLiveBytes.toLocaleString()} B · Recorded: ${totalRecordedBytes.toLocaleString()} B)`;
       }
 
       if (!convAnalyticsData.length) {
@@ -378,30 +384,39 @@
         `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
 
       const rowsHtml = sorted.map(c => {
-        // Rounded the way the rest of the app rounds bytes: a conversation of four messages is
-        // kilobytes, and "0.00 MB" beside it read as a row that had failed to measure itself.
-        const size = formatConvSize(c.totalBytes);
-        const titleTip = `${escapeHtml(c.name)} · ${c.totalBytes.toLocaleString()} bytes`;
-        // The id rides in a data attribute rather than inside the handler's quotes: a name or an
-        // id with an apostrophe in it would otherwise end the string and break the row.
+        const liveSize = formatConvSize(c.liveBytes);
+        const recSize = formatConvSize(c.recordedBytes);
+        const totalSize = formatConvSize(c.totalBytes);
+        const titleTip = `${escapeHtml(c.name)} · Live: ${(c.liveBytes || 0).toLocaleString()} B · Recorded: ${(c.recordedBytes || 0).toLocaleString()} B · Total: ${(c.totalBytes || 0).toLocaleString()} B`;
         return `<tr>` +
           `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
           `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
           `${escapeHtml(c.name)}</button>${c.auto ? ' <span class="conv-analytics-auto-badge">auto</span>' : ''}</td>` +
           `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
-          `<td class="conv-analytics-num">${c.panes.toLocaleString()}</td>` +
-          `<td class="conv-analytics-num" title="${titleTip}">${size}</td>` +
+          `<td class="conv-analytics-num" title="${(c.liveBytes || 0).toLocaleString()} bytes">${liveSize}</td>` +
+          `<td class="conv-analytics-num" title="${(c.recordedBytes || 0).toLocaleString()} bytes">${recSize}</td>` +
+          `<td class="conv-analytics-num" title="${titleTip}">${totalSize}</td>` +
           `</tr>`;
       }).join('');
+
+      const footHtml = `<tfoot><tr>` +
+        `<td><strong>Total (${convAnalyticsData.length})</strong></td>` +
+        `<td class="conv-analytics-num"><strong>${totalMsgs.toLocaleString()}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalLiveBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalLiveBytes)}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalRecordedBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalRecordedBytes)}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalBytes)}</strong></td>` +
+        `</tr></tfoot>`;
 
       tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Conversations by local storage size">` +
         `<thead><tr>` +
         th('name', 'Conversation', false) +
         th('msgCount', 'Messages', true) +
-        th('panes', 'Panes', true) +
-        th('size', 'Size', true) +
+        th('liveBytes', 'Live IDB', true) +
+        th('recordedBytes', 'Recorded IDB', true) +
+        th('totalBytes', 'Total IDB', true) +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +
+        footHtml +
         `</table>`;
     }
 

@@ -5074,3 +5074,18 @@ test('backspace takes a whole token, and the instruction at the start of the box
   await expect(page.locator('#xferLoad')).toBeHidden();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveCount(0);
 });
+
+test('conversation storage analytics displays live, recorded, and total IDB breakdown with footer totals', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await page.evaluate(async () => {
+    const view = document.getElementById('timelineView');
+    if (view) view.style.display = 'block';
+    await renderConvAnalytics();
+  });
+  await expect(page.locator('#convAnalyticsWrap .conv-analytics-table')).toBeVisible();
+  const headers = await page.locator('#convAnalyticsWrap .conv-analytics-table th').allInnerTexts();
+  expect(headers).toEqual(['CONVERSATION', 'MESSAGES', 'LIVE IDB', 'RECORDED IDB', 'TOTAL IDB']);
+  await expect(page.locator('#convAnalyticsWrap .conv-analytics-table tfoot td').first()).toContainText('Total');
+});
+
