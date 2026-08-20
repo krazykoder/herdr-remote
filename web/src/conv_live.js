@@ -63,6 +63,20 @@
       return bucket;
     }
 
+    // What the relay's record is costing, per fingerprint, for the storage panel.
+    //
+    // Nothing here is stored: this cache is a Map that dies with the page, and the durable copy of
+    // these turns is the relay's own SQLite on its host. It is reported beside the transcripts
+    // precisely because the two are constantly confused — the thread the Live toggle draws looks
+    // exactly like the recorded one and costs this browser no disk at all.
+    function convLiveCacheBytes() {
+      const out = new Map();
+      for (const [fpKey, bucket] of convLiveCache) {
+        try { out.set(fpKey, JSON.stringify(bucket.turns || []).length); } catch (e) { /* skip */ }
+      }
+      return out;
+    }
+
     function convLiveOn() {
       try { return localStorage.getItem(CONV_LIVE_KEY) === 'on'; } catch (e) { return false; }
     }

@@ -334,12 +334,14 @@
       }
     }
 
-    // --- Conversation storage analytics ---
-    let convAnalyticsSort = { col: 'size', dir: 'desc' };
+    // --- Transcript storage analytics ---
+    // One row per pane transcript, which is what the database is keyed by. See calcPaneStorage for
+    // why this is not per conversation.
+    let convAnalyticsSort = { col: 'bytes', dir: 'desc' };
     let convAnalyticsData = [];
-    // Transcripts in the database that no conversation names. Not a row in the table — they have
-    // no conversation to be sorted among — so they are kept beside it and reported under it.
-    let convAnalyticsUnfiled = { count: 0, bytes: 0 };
+    // The conversation index, which lives in localStorage rather than IndexedDB. Reported under the
+    // table because it is the rest of what this app stores, not because it is a transcript.
+    let convAnalyticsIndexBytes = 0;
 
     async function fetchConvAnalytics() {
       const convs = typeof loadConvIndex === 'function' ? loadConvIndex() : [];
@@ -368,10 +370,11 @@
           if (r) recordsMap.set(k, r);
         }
       }
-      convAnalyticsUnfiled = typeof calcUnfiledRecords === 'function'
-        ? calcUnfiledRecords(convs, recordsMap) : {count: 0, bytes: 0};
-      return typeof calcConvAnalytics === 'function'
-        ? calcConvAnalytics(convs, recordsMap, typeof agents !== 'undefined' ? agents : [])
+      convAnalyticsIndexBytes = typeof calcConvIndexBytes === 'function'
+        ? calcConvIndexBytes(convs) : 0;
+      const liveCache = typeof convLiveCacheBytes === 'function' ? convLiveCacheBytes() : new Map();
+      return typeof calcPaneStorage === 'function'
+        ? calcPaneStorage(convs, recordsMap, typeof agents !== 'undefined' ? agents : [], liveCache)
         : [];
     }
 
@@ -402,39 +405,36 @@
       const totalEl = document.getElementById('convAnalyticsTotal');
       if (!tableWrap) return;
 
-      const totalMsgs = convAnalyticsData.reduce((acc, c) => acc + (c.msgCount || 0), 0);
-      const totalLiveBytes = convAnalyticsData.reduce((acc, c) => acc + (c.liveBytes || 0), 0);
-      const totalRecordedBytes = convAnalyticsData.reduce((acc, c) => acc + (c.recordedBytes || 0), 0);
-      const totalIndexBytes = convAnalyticsData.reduce((acc, c) => acc + (c.indexBytes || 0), 0);
-      // Every ended session no conversation names is a finished transcript, so it lands on the
-      // Recorded side — the one place it can go without being attributed to a conversation it is
-      // not in.
-      const unfiled = convAnalyticsUnfiled || {count: 0, bytes: 0};
-      const totalBytes = totalLiveBytes + totalRecordedBytes + totalIndexBytes + unfiled.bytes;
-      const unfiledLabel = `${unfiled.count} unfiled transcript${unfiled.count === 1 ? '' : 's'}`;
+      const totalMsgs = convAnalyticsData.reduce((acc, r) => acc + (r.msgCount || 0), 0);
+      const openBytes = convAnalyticsData.reduce((acc, r) => acc + (r.open ? r.bytes || 0 : 0), 0);
+      const transcriptBytes = convAnalyticsData.reduce((acc, r) => acc + (r.bytes || 0), 0);
+      const indexBytes = convAnalyticsIndexBytes || 0;
+      // A fingerprint's cache is shared by every pane of one agent in one directory, so summing the
+      // rows would count it once per pane. Summed over the distinct buckets instead.
+      const cachedBytes = Array.from(
+        new Map(convAnalyticsData.map(r => [r.fp || r.key, r.liveBytes || 0])).values())
+        .reduce((acc, n) => acc + n, 0);
+      // The database plus the index that names parts of it: everything this app has put on this
+      // device. The two are in different stores — IndexedDB and localStorage — and the tooltip is
+      // where that is said, because the reader's question is what it all costs.
+      const totalBytes = transcriptBytes + indexBytes;
 
       if (totalEl) {
         const n = convAnalyticsData.length;
-        // The two transcript halves in the line, the index only in the tooltip: it is a rounding
-        // error beside them, and a third figure on a line read at a glance buys nothing.
-        totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'}` +
-          (unfiled.count ? ` + ${unfiledLabel}` : '') + ` · ` +
-          `${formatConvSize(totalBytes)} (Open: ${formatConvSize(totalLiveBytes)} · Ended: ` +
-          `${formatConvSize(totalRecordedBytes + unfiled.bytes)})`;
-        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Open panes: ` +
-          `${totalLiveBytes.toLocaleString()} B · Ended panes: ${totalRecordedBytes.toLocaleString()} B · ` +
-          `Index: ${totalIndexBytes.toLocaleString()} B · Unfiled: ${unfiled.bytes.toLocaleString()} B)`;
+        totalEl.textContent = `Total: ${n} ${n === 1 ? 'transcript' : 'transcripts'} · ` +
+          `${formatConvSize(totalBytes)} stored` +
+          (cachedBytes ? ` · ${formatConvSize(cachedBytes)} cached` : '');
+        totalEl.title = `${transcriptBytes.toLocaleString()} bytes of transcripts in IndexedDB ` +
+          `(Open panes: ${openBytes.toLocaleString()} B · Ended panes: ` +
+          `${(transcriptBytes - openBytes).toLocaleString()} B), plus ` +
+          `${indexBytes.toLocaleString()} B of conversation index in localStorage. ` +
+          `${cachedBytes.toLocaleString()} B of the relay's own record is cached in memory for this ` +
+          `session and is not stored here at all.`;
       }
 
       if (!convAnalyticsData.length) {
-        // Not the same sentence in both cases: a browser with no conversations and no transcripts
-        // has nothing stored, and a browser that has had its conversations deleted still has every
-        // word those panes said sitting in the database.
         tableWrap.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px;font-size:0.75rem;">' +
-          (unfiled.count
-            ? `No conversations — ${escapeHtml(unfiledLabel)} in storage, ${formatConvSize(unfiled.bytes)}. ` +
-              'Add one of those panes to a conversation to see it here.'
-            : 'No conversations stored yet') + '</div>';
+          'Nothing recorded in this browser yet' + '</div>';
         return;
       }
 
@@ -445,72 +445,70 @@
       const arrow = col => convAnalyticsSort.col === col ? `<span class="sort-arrow">${convAnalyticsSort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
       const ariaSort = col => convAnalyticsSort.col === col ? (convAnalyticsSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
 
-      // Every column is transcripts in IndexedDB — the split is which pane each one belongs to, not
-      // two kinds of storage. The tooltip is the whole of that distinction, so it is not optional:
-      // "Live" was read as the relay-backed thread (conv_live.js), which costs this browser nothing.
+      // Every figure in this table is one transcript in IndexedDB. The tooltips are where that is
+      // said, and they are not optional: the columns this replaced were called Live and Recorded,
+      // and "Live" is already this app's word for the relay-backed thread (conv_live.js), which
+      // costs this browser nothing at all.
       const th = (col, label, alignRight, tip) =>
         `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')"` +
         `${tip ? ` title="${escapeHtml(tip)}"` : ''} style="${alignRight ? 'text-align:right;' : ''}">` +
         `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
 
-      const rowsHtml = sorted.map(c => {
-        const liveSize = formatConvSize(c.liveBytes);
-        const recSize = formatConvSize(c.recordedBytes);
-        const idxSize = formatConvSize(c.indexBytes);
-        const totalSize = formatConvSize(c.totalBytes);
-        const titleTip = `${escapeHtml(c.name)} · Open panes: ${(c.liveBytes || 0).toLocaleString()} B · ` +
-          `Ended panes: ${(c.recordedBytes || 0).toLocaleString()} B · ` +
-          `Index: ${(c.indexBytes || 0).toLocaleString()} B · ` +
-          `Total: ${(c.totalBytes || 0).toLocaleString()} B`;
+      const rowsHtml = sorted.map(r => {
+        // Where the pane's words are filed, and the answer is sometimes "nowhere" — a transcript in
+        // no conversation is an ended session the Add-pane picker still offers, not a leak.
+        const filed = (r.convs || []).length
+          ? escapeHtml((r.convs || []).join(', '))
+          : '<span class="conv-analytics-unfiled-tag" title="An ended session no conversation names.'
+            + ' Kept so a conversation can still be assembled from it.">unfiled</span>';
+        const state = r.open
+          ? '<span class="conv-analytics-open" title="This pane is running now — its transcript is'
+            + ' still growing.">open</span>'
+          : '<span title="This session has ended — its transcript is finished.">ended</span>';
         return `<tr>` +
-          `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
-          `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
-          `${escapeHtml(c.name)}</button>${c.auto ? ' <span class="conv-analytics-auto-badge">auto</span>' : ''}</td>` +
-          `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
-          `<td class="conv-analytics-num" title="${(c.liveBytes || 0).toLocaleString()} bytes">${liveSize}</td>` +
-          `<td class="conv-analytics-num" title="${(c.recordedBytes || 0).toLocaleString()} bytes">${recSize}</td>` +
-          `<td class="conv-analytics-num" title="${(c.indexBytes || 0).toLocaleString()} bytes">${idxSize}</td>` +
-          `<td class="conv-analytics-num" title="${titleTip}">${totalSize}</td>` +
+          `<td title="${escapeHtml(r.key)}">${escapeHtml(r.name)}` +
+          `${r.agent ? ` <span class="conv-analytics-auto-badge">${escapeHtml(r.agent)}</span>` : ''}</td>` +
+          `<td>${filed}</td>` +
+          `<td class="conv-analytics-num">${state}</td>` +
+          `<td class="conv-analytics-num">${(r.msgCount || 0).toLocaleString()}</td>` +
+          `<td class="conv-analytics-num" title="${(r.bytes || 0).toLocaleString()} bytes">` +
+          `${formatConvSize(r.bytes)}</td>` +
+          `<td class="conv-analytics-num conv-analytics-cached" ` +
+          `title="${(r.liveBytes || 0).toLocaleString()} bytes held in memory for this session">` +
+          `${r.liveBytes ? formatConvSize(r.liveBytes) : '—'}</td>` +
           `</tr>`;
       }).join('');
 
-      // Its own line above the total rather than a row in the table: it is not a conversation, it
-      // cannot be opened, and sorting it among things that can would only ever be in the way.
-      const unfiledHtml = unfiled.count ? `<tr class="conv-analytics-unfiled">` +
-        `<td title="Transcripts of ended sessions that no conversation names. Kept so a ` +
-        `conversation can still be assembled from them.">${escapeHtml(unfiledLabel)}</td>` +
-        `<td class="conv-analytics-num">—</td>` +
-        `<td class="conv-analytics-num">—</td>` +
-        `<td class="conv-analytics-num" title="${unfiled.bytes.toLocaleString()} bytes">${formatConvSize(unfiled.bytes)}</td>` +
-        `<td class="conv-analytics-num">—</td>` +
-        `<td class="conv-analytics-num" title="${unfiled.bytes.toLocaleString()} bytes">${formatConvSize(unfiled.bytes)}</td>` +
-        `</tr>` : '';
-
-      const footHtml = `<tfoot>${unfiledHtml}<tr>` +
+      // The index is not a transcript and has no row of its own above; it is named here because the
+      // reader's question is what the app costs in total, and the two stores answer it together.
+      const footHtml = `<tfoot><tr>` +
         `<td><strong>Total (${convAnalyticsData.length})</strong></td>` +
+        `<td title="${indexBytes.toLocaleString()} bytes of conversation index, in localStorage">` +
+        `+ index ${formatConvSize(indexBytes)}</td>` +
+        `<td class="conv-analytics-num"><strong>${formatConvSize(openBytes)}</strong></td>` +
         `<td class="conv-analytics-num"><strong>${totalMsgs.toLocaleString()}</strong></td>` +
-        `<td class="conv-analytics-num" title="${totalLiveBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalLiveBytes)}</strong></td>` +
-        `<td class="conv-analytics-num" title="${(totalRecordedBytes + unfiled.bytes).toLocaleString()} bytes"><strong>${formatConvSize(totalRecordedBytes + unfiled.bytes)}</strong></td>` +
-        `<td class="conv-analytics-num" title="${totalIndexBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalIndexBytes)}</strong></td>` +
-        `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalBytes)}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes, transcripts and index">` +
+        `<strong>${formatConvSize(totalBytes)}</strong></td>` +
+        `<td class="conv-analytics-num conv-analytics-cached" ` +
+        `title="${cachedBytes.toLocaleString()} bytes of the relay's record, in memory only">` +
+        `${cachedBytes ? formatConvSize(cachedBytes) : '—'}</td>` +
         `</tr></tfoot>`;
 
-      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Conversations by local storage size">` +
+      tableWrap.innerHTML = `<table class="conv-analytics-table" aria-label="Pane transcripts by local storage size">` +
         `<thead><tr>` +
-        th('name', 'Conversation', false) +
-        th('msgCount', 'Messages', true) +
-        th('liveBytes', 'Open panes', true,
-          'Transcripts recorded in this browser for members whose pane is still running. '
-          + 'They are on disk like the rest — this column is the part still growing.') +
-        th('recordedBytes', 'Ended panes', true,
-          'Transcripts recorded in this browser for members whose session has ended. '
-          + 'Finished: nothing will be added to them.') +
-        // The row that names the conversation is in IndexedDB too, and the three columns have to
-        // add up to the fourth or the table reads as one of them being wrong.
-        th('indexBytes', 'Index', true,
-          'The conversation row itself — its name and its member list.') +
-        th('totalBytes', 'Total IDB', true,
-          'Everything this conversation costs in IndexedDB.') +
+        th('name', 'Pane', false, 'The pane this transcript was recorded from. One row per '
+          + 'transcript in IndexedDB — the database is keyed by pane, not by conversation.') +
+        th('convs', 'In', false, 'The conversations this pane is a member of. A pane can be in '
+          + 'several, or in none.') +
+        th('open', 'State', true, 'Whether the pane is running right now. An open pane\'s '
+          + 'transcript is still growing; an ended one is as big as it will ever be.') +
+        th('msgCount', 'Messages', true, 'Messages recorded in this transcript.') +
+        th('bytes', 'Stored (IDB)', true, 'What this transcript costs in IndexedDB — the words this '
+          + 'browser captured from the pane. Every byte the app stores on this device is one of '
+          + 'these rows, plus the index named in the footer.') +
+        th('liveBytes', 'Live (cached)', true, 'The relay\'s own record for this pane, fetched by '
+          + 'the Live toggle and held in memory for this session only. It is stored on the relay '
+          + 'host, not in this browser, and it is gone on reload — so it costs no disk here.') +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +
         footHtml +

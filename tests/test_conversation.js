@@ -41,7 +41,7 @@ const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEnt
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
-               'calcConvAnalytics', 'calcUnfiledRecords', 'sortConvAnalyticsRows', 'formatConvSize',
+               'calcPaneStorage', 'calcConvIndexBytes', 'sortConvAnalyticsRows', 'formatConvSize',
                'CONV_TEXT_MAX', 'CONV_OUTBOX_MAX', 'CONV_OUTBOX_TTL', 'CONV_MEMBER_MAX', 'CONV_ROSTER_MAX'];
 vm.runInContext(
   PAIRS_PURE + '\n' + SUMMARY_DETECT + '\n' + CONV_PURE
@@ -52,7 +52,7 @@ const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessa
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
-       calcConvAnalytics, calcUnfiledRecords, sortConvAnalyticsRows, formatConvSize,
+       calcPaneStorage, calcConvIndexBytes, sortConvAnalyticsRows, formatConvSize,
        CONV_TEXT_MAX, CONV_OUTBOX_MAX, CONV_OUTBOX_TTL, CONV_MEMBER_MAX,
        CONV_ROSTER_MAX} = ctx.__out;
 
@@ -820,148 +820,85 @@ test('a member with nothing recorded yet contributes nothing and breaks nothing'
   assert.deepStrictEqual(texts(mergeEntries([])), []);
 });
 
-test('calcConvAnalytics accurately aggregates message count, panes, and total size', () => {
+test('calcPaneStorage gives every transcript in the database a row of its own', () => {
   const convs = [
-    {
-      id: 'c1',
-      name: 'Alpha Plan',
-      auto: false,
-      members: [
-        { key: 'm1', pane_id: 'w1:p1', agent: 'claude' },
-        { key: 'm2', pane_id: 'w1:p2', agent: 'codex' },
-      ],
-    },
-    {
-      id: 'c2',
-      name: 'Beta Review',
-      auto: true,
-      members: [
-        { key: 'm3', pane_id: 'w1:p3', agent: 'pi' },
-      ],
-    },
+    { id: 'c1', name: 'Alpha Plan', members: [{ key: 'm1' }, { key: 'm2' }] },
+    { id: 'c2', name: 'Beta Review', auto: true, members: [{ key: 'm1' }] },
   ];
-
-  const recordsMap = new Map([
-    ['m1', { key: 'm1', entries: [{ who: 'user', text: 'hi' }, { who: 'agent', text: 'hello' }] }],
-    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'working on it' }] }],
-    ['m3', { key: 'm3', entries: [] }],
-  ]);
-
-  // Live agents: m1 is live, m2 is recorded/past, m3 is live
-  const liveAgents = [{ pane_id: 'w1:p1', key: 'm1' }, { pane_id: 'w1:p3', key: 'm3' }];
-
-  const stats = calcConvAnalytics(convs, recordsMap, liveAgents);
-  assert.strictEqual(stats.length, 2);
-
-  // c1: 2 members/panes, 2 + 1 = 3 messages, and a total that is the three parts added up — the
-  // index row counts too, or a column called Total leaves out the one thing it names.
-  assert.strictEqual(stats[0].id, 'c1');
-  assert.strictEqual(stats[0].name, 'Alpha Plan');
-  assert.strictEqual(stats[0].auto, false);
-  assert.strictEqual(stats[0].panes, 2);
-  assert.strictEqual(stats[0].msgCount, 3);
-  assert.ok(stats[0].liveBytes > 0);
-  assert.ok(stats[0].recordedBytes > 0);
-  assert.ok(stats[0].indexBytes > 0);
-  assert.strictEqual(stats[0].totalBytes,
-    stats[0].liveBytes + stats[0].recordedBytes + stats[0].indexBytes);
-  assert.ok(stats[0].sizeMb > 0);
-
-  // c2: 1 member, 0 messages, empty transcript — and still not free, because the index row that
-  // names it is itself in IndexedDB.
-  assert.strictEqual(stats[1].id, 'c2');
-  assert.strictEqual(stats[1].name, 'Beta Review');
-  assert.strictEqual(stats[1].auto, true);
-  assert.strictEqual(stats[1].panes, 1);
-  assert.strictEqual(stats[1].msgCount, 0);
-  assert.ok(stats[1].indexBytes > 0);
-  assert.strictEqual(stats[1].totalBytes,
-    stats[1].liveBytes + stats[1].recordedBytes + stats[1].indexBytes);
-});
-
-test('calcConvAnalytics takes a set of member keys as well as an agents array', () => {
-  const convs = [{ id: 'c1', name: 'Alpha', members: [{ key: 'm1' }, { key: 'm2' }] }];
-  const recordsMap = new Map([
-    ['m1', { key: 'm1', entries: [{ who: 'agent', text: 'live one' }] }],
-    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'ended one' }] }],
-  ]);
-
-  const fromArray = calcConvAnalytics(convs, recordsMap, [{ key: 'm1' }])[0];
-  const fromSet = calcConvAnalytics(convs, recordsMap, new Set(['m1']))[0];
-  assert.ok(fromArray.liveBytes > 0 && fromArray.recordedBytes > 0);
-  assert.strictEqual(fromSet.liveBytes, fromArray.liveBytes);
-  assert.strictEqual(fromSet.recordedBytes, fromArray.recordedBytes);
-
-  // Nothing usable for the split still measures: everything counts as recorded rather than the
-  // panel refusing to draw.
-  const none = calcConvAnalytics(convs, recordsMap, null)[0];
-  assert.strictEqual(none.liveBytes, 0);
-  assert.strictEqual(none.totalBytes, fromArray.totalBytes);
-});
-
-test('calcUnfiledRecords counts the transcripts no conversation names', () => {
-  const convs = [{ id: 'c1', name: 'Alpha', members: [{ key: 'm1' }, { key: 'm2' }] }];
   const records = new Map([
-    ['m1', { key: 'm1', entries: [{ who: 'agent', text: 'in a conversation' }] }],
-    ['m2', { key: 'm2', entries: [] }],
-    ['m9', { key: 'm9', entries: [{ who: 'agent', text: 'x'.repeat(500) }] }],
-    ['m8', { key: 'm8', entries: [{ who: 'agent', text: 'y'.repeat(500) }] }],
+    ['m1', { key: 'm1', label: 'Architect 1', agent: 'claude',
+             entries: [{ who: 'user', text: 'hi' }, { who: 'agent', text: 'hello' }] }],
+    ['m2', { key: 'm2', label: 'Codex', agent: 'codex',
+             entries: [{ who: 'agent', text: 'working on it' }] }],
+    ['m9', { key: 'm9', label: 'a pane that ended', entries: [{ who: 'agent', text: 'x'.repeat(500) }] }],
   ]);
 
-  const unfiled = calcUnfiledRecords(convs, records);
-  assert.strictEqual(unfiled.count, 2);
-  assert.ok(unfiled.bytes > 1000);
-  // The whole database, once each side is asked for its half: the per-conversation rows and this
-  // between them account for every record, which is the property the storage panel rests on.
-  const named = calcConvAnalytics(convs, records, []);
-  const transcripts = named.reduce((n, r) => n + r.liveBytes + r.recordedBytes, 0);
-  const whole = Array.from(records.values()).reduce((n, r) => n + JSON.stringify(r).length, 0);
-  assert.strictEqual(transcripts + unfiled.bytes, whole);
+  const rows = calcPaneStorage(convs, records, [{ key: 'm1' }]);
+  const by = k => rows.find(r => r.key === k);
 
-  // No conversations at all is the case that matters most: deleting the last conversation does not
-  // delete a word of what was said in it.
-  assert.strictEqual(calcUnfiledRecords([], records).count, 4);
-  assert.strictEqual(calcUnfiledRecords(null, records).bytes, whole);
+  // Every record, whether a conversation names it or not — which is the whole point: the panel
+  // this replaced could only ever draw what the index pointed at.
+  assert.strictEqual(rows.map(r => r.key).sort().join(','), 'm1,m2,m9');
+  assert.strictEqual(rows.reduce((n, r) => n + r.bytes, 0),
+    Array.from(records.values()).reduce((n, r) => n + JSON.stringify(r).length, 0));
+
+  // A pane in two conversations is one row naming both, and is counted once.
+  assert.strictEqual(by('m1').convs.join(' + '), 'Alpha Plan + Beta Review');
+  assert.strictEqual(by('m1').msgCount, 2);
+  assert.strictEqual(by('m1').open, true);
+  assert.strictEqual(by('m1').name, 'Architect 1');
+
+  assert.strictEqual(by('m2').open, false);
+  // Filed nowhere, still on disk, still a row.
+  assert.strictEqual(by('m9').convs.length, 0);
+  assert.ok(by('m9').bytes > 500);
+});
+
+test('calcPaneStorage takes a set of member keys as well as an agents array', () => {
+  const records = new Map([
+    ['m1', { key: 'm1', entries: [{ who: 'agent', text: 'one' }] }],
+    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'two' }] }],
+  ]);
+  // Joined rather than compared as arrays: these are built inside the vm, where Array.prototype is
+  // another realm's and deepStrictEqual counts that as a difference.
+  const open = live => calcPaneStorage([], records, live).filter(r => r.open)
+    .map(r => r.key).join(',');
+
+  assert.strictEqual(open([{ key: 'm1' }]), 'm1');
+  assert.strictEqual(open(new Set(['m1'])), 'm1');
+  // Nothing usable for the flag still measures: every pane reads as ended rather than the panel
+  // refusing to draw.
+  assert.strictEqual(open(null), '');
+  assert.strictEqual(calcPaneStorage(null, records, null).length, 2);
+});
+
+test('calcConvIndexBytes measures the index as localStorage holds it', () => {
+  const convs = [{ id: 'c1', name: 'Alpha', members: [{ key: 'm1' }] }];
+  // The wrapper too: saveConvIndex writes {version, items}, and the index costs what is written.
+  assert.strictEqual(calcConvIndexBytes(convs),
+    JSON.stringify({ version: 1, items: convs }).length);
+  assert.ok(calcConvIndexBytes([]) > 0);
+  assert.strictEqual(calcConvIndexBytes(null), calcConvIndexBytes([]));
 });
 
 test('sortConvAnalyticsRows sorts rows by column and direction', () => {
   const rows = [
-    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, liveBytes: 1000, recordedBytes: 4000, indexBytes: 60, totalBytes: 5060 },
-    { id: '2', name: 'Beta', msgCount: 50, panes: 3, liveBytes: 15000, recordedBytes: 5000, indexBytes: 40, totalBytes: 20040 },
-    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, liveBytes: 200, recordedBytes: 800, indexBytes: 90, totalBytes: 1090 },
+    { key: '1', name: 'Zeta', msgCount: 10, bytes: 5060, open: false, convs: ['Mid'] },
+    { key: '2', name: 'Beta', msgCount: 50, bytes: 20040, open: true, convs: [] },
+    { key: '3', name: 'Alpha', msgCount: 5, bytes: 1090, open: false, convs: ['Early', 'Late'] },
   ];
+  const names = (col, dir) => sortConvAnalyticsRows(rows, col, dir).map(r => r.name).join(',');
 
-  // Sort by size (totalBytes) descending
-  const bySizeDesc = sortConvAnalyticsRows(rows, 'totalBytes', 'desc');
-  assert.deepStrictEqual(bySizeDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
-
-  // Sort by size ascending
-  const bySizeAsc = sortConvAnalyticsRows(rows, 'totalBytes', 'asc');
-  assert.deepStrictEqual(bySizeAsc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
-
-  // Sort by liveBytes descending
-  const byLiveDesc = sortConvAnalyticsRows(rows, 'liveBytes', 'desc');
-  assert.deepStrictEqual(byLiveDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
-
-  // Sort by recordedBytes descending
-  const byRecDesc = sortConvAnalyticsRows(rows, 'recordedBytes', 'desc');
-  assert.deepStrictEqual(byRecDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
-
-  // Sort by indexBytes descending — a column is only sortable if the sorter knows it.
-  const byIdxDesc = sortConvAnalyticsRows(rows, 'indexBytes', 'desc');
-  assert.deepStrictEqual(byIdxDesc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
-
-  // Sort by name ascending
-  const byNameAsc = sortConvAnalyticsRows(rows, 'name', 'asc');
-  assert.deepStrictEqual(byNameAsc.map(r => r.name), ['Alpha', 'Beta', 'Zeta']);
-
-  // Sort by msgCount descending
-  const byMsgDesc = sortConvAnalyticsRows(rows, 'msgCount', 'desc');
-  assert.deepStrictEqual(byMsgDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
-
-  // Sort by panes descending
-  const byPanesDesc = sortConvAnalyticsRows(rows, 'panes', 'desc');
-  assert.deepStrictEqual(byPanesDesc.map(r => r.name), ['Beta', 'Alpha', 'Zeta']);
+  assert.strictEqual(names('bytes', 'desc'), 'Beta,Zeta,Alpha');
+  assert.strictEqual(names('bytes', 'asc'), 'Alpha,Zeta,Beta');
+  assert.strictEqual(names('name', 'asc'), 'Alpha,Beta,Zeta');
+  assert.strictEqual(names('msgCount', 'desc'), 'Beta,Zeta,Alpha');
+  // A boolean column sorts by boolean arithmetic; the open pane comes first descending.
+  assert.strictEqual(names('open', 'desc').split(',')[0], 'Beta');
+  // An unfiled row sorts as the empty string, which puts it first ascending.
+  assert.strictEqual(names('convs', 'asc'), 'Beta,Alpha,Zeta');
+  // A column the sorter does not know falls back to size, the one field every row has.
+  assert.strictEqual(names('nonsense', 'desc'), 'Beta,Zeta,Alpha');
 });
 
 test('formatConvSize formats bytes to MB, KB, and B correctly', () => {

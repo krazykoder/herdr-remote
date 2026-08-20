@@ -993,6 +993,22 @@
       color: var(--text);
     }
 
+    /* A transcript in no conversation, and a pane still running. Both are ordinary states, so
+       neither is coloured as a warning — muted for the first, the live green for the second. */
+    .conv-analytics-unfiled-tag {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .conv-analytics-open {
+      color: var(--green);
+    }
+
+    /* Nothing in this column is on disk, and it is drawn as the aside it is. */
+    .conv-analytics-cached {
+      color: var(--muted);
+    }
+
     /* Settings */
     .settings {
       display: none;
@@ -5369,9 +5385,9 @@
       <button class="bandwidth-metric" id="bandwidthPanes" aria-pressed="false" onclick="setBandwidthPanes(!bandwidthPanesOn())">Agents</button></h2>
       <div id="bandwidthRows"></div>
     </section>
-    <section class="conv-analytics" id="convAnalytics" aria-label="Conversation storage">
-      <h2><span id="convAnalyticsTitle">Conversations by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 convs · 0.00 MB</span>
-      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what the conversations are using" aria-label="Refresh conversation storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
+    <section class="conv-analytics" id="convAnalytics" aria-label="Transcript storage">
+      <h2><span id="convAnalyticsTitle">Transcripts by storage</span><span class="bandwidth-total" id="convAnalyticsTotal">0 transcripts · 0.00 MB</span>
+      <button class="conv-analytics-refresh" id="convAnalyticsRefresh" onclick="refreshConvAnalytics()" title="Re-measure what this browser is storing" aria-label="Refresh transcript storage"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg></button></h2>
       <div class="conv-analytics-wrap" id="convAnalyticsWrap"></div>
     </section>
   </div>
