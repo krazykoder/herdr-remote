@@ -3429,34 +3429,37 @@
        between two messages, they belong to the one above them: the agent said it finished and
        these are what it finished. So they take the bubble's width and its side and sit tight
        against its underside, the way a caption belongs to its picture. */
+    /* Full width and centred, like the branch rule above it: these are a fact about the checkout
+       and not about the pane that spoke last, so the strip must not read as belonging to the bubble
+       above it. Aligned to a bubble and painted in its colour, it read as authorship — which git
+       cannot support, since two agents in one repository commit as the same person. */
     .conv-commits {
-      width: 86%;
+      width: 100%;
       box-sizing: border-box;
-      align-self: flex-start;
+      align-self: center;
       display: flex;
       flex-wrap: wrap;
+      justify-content: center;
+      align-items: baseline;
       gap: 4px;
-      margin: 3px 0 8px;
+      margin: 6px 0 8px;
       padding: 0 4px;
     }
 
-    .conv-thread.conv-solo .conv-commits {
-      width: 100%;
-    }
-
-    /* Under the right-hand column's bubbles, and packed from the right so the strip ends where the
-       bubble does. */
-    .conv-commits.conv-right {
-      align-self: flex-end;
-      justify-content: flex-end;
+    /* What the badges beside it are. Says the claim out loud, so the strip does not have to be
+       guessed at from where it sits. */
+    .conv-commits-lede {
+      color: var(--muted);
+      font-size: max(7px, calc(var(--conv-font, 13px) * 0.68));
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
     }
 
     /* One commit. A badge and not a line: they arrive in twos and threes, and three lines of prose
        under every turn is a thread nobody can skim. */
-    /* Neutral fill, agent-coloured text — the same division the branch badge makes. The colour
-       says whose commit it is; the fill stays out of the way, because a wall of washed pills under
-       every turn competes with the bubbles they belong to, and the bubble above has already said
-       whose it is in its own wash. */
+    /* Neutral throughout. The colour used to be the speaker's, which said "this agent made this" —
+       a claim the range cannot support: it is per checkout, and a commit merged in from another
+       agent's worktree lands in it too. */
     .conv-commit {
       display: inline-flex;
       align-items: baseline;
@@ -3466,7 +3469,7 @@
       border-radius: 999px;
       border: 1px solid var(--border);
       background: color-mix(in srgb, var(--muted) 10%, var(--surface));
-      color: color-mix(in srgb, var(--conv-agent, var(--muted)) 75%, var(--text));
+      color: color-mix(in srgb, var(--muted) 45%, var(--text));
       font-size: max(7px, calc(var(--conv-font, 13px) * 0.72));
       line-height: 1.5;
       /* A subject is a line of prose that may be long, and the thread's width is the reader's line
@@ -3474,11 +3477,10 @@
       overflow-wrap: anywhere;
     }
 
-    /* The sha is the identifier and reads at full strength; the subject beside it is prose and is
-       already carrying the colour at three quarters. */
+    /* The sha is the identifier and reads at full strength; the subject beside it is prose. */
     .conv-commit code {
       flex: none;
-      color: var(--conv-agent, var(--muted));
+      color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 

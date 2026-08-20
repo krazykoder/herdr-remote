@@ -561,10 +561,9 @@
     //
     // The two halves are not the same kind of thing, and they are drawn differently on purpose.
     // `before` is a rule across the thread: it announces the state the *next* bubble is in, which
-    // is what a divider is for. `after` belongs to the bubble above it — the turn said it was
-    // finished and these are what it finished — so it takes that bubble's width and side and hangs
-    // under it as badges. `side` is the bubble's own alignment class, passed in because the view
-    // owns the layout and this file owns the record's shape.
+    // is what a divider is for. `after` is a rule too, and used not to be: it hung under the bubble
+    // above at that bubble's width and side, which said the turn that just ended made these
+    // commits. It did not necessarily — see below — so it is drawn across the thread as well.
     //
     // They are also counted differently, and this is the part that is easy to get wrong. A branch
     // is tracked **per member**: a joint thread is several panes, and each of them deserves to be
@@ -575,9 +574,14 @@
     // Per checkout it appears exactly once, under the first turn to end after it was made. It is
     // also the rule the relay already uses when it stores a list (last_commit is keyed by host and
     // cwd), so the fetched range and the stored one now describe the same window.
+    //
+    // What that ordering cannot say is *who* committed. The first turn to end after a commit is
+    // not the pane that made it — with two agents in one checkout it is whichever finished first —
+    // and git has no per-pane provenance to appeal to: both commit as the same person. So the strip
+    // is drawn as a fact about the repository and never in the speaker's colour.
     const convGitWhere = e => `${e.host || 'local'}|${e.cwd || ''}`;
 
-    function convGitRules(e, seen, side, color) {
+    function convGitRules(e, seen) {
       const none = {before: '', after: ''};
       if (!e || (!e.branch && !e.commit)) return none;
       const key = e.key || '';
@@ -598,12 +602,19 @@
       if (convCommitsOn()) {
         const commits = convCommitsFor(e, there.commit);
         if (commits && commits.length) {
-          // The agent's own colour, carried on the strip rather than on each badge: the strip is a
-          // sibling of the bubble and not a child of it, so it inherits nothing from the bubble's
-          // own `--conv-agent`. The fill stays neutral — a wall of washed pills under every turn
-          // competes with the bubbles, and the colour has already been said by the bubble above.
-          after = `<div class="conv-commits${side || ''}"` +
-            `${color ? ` style="--conv-agent:${color}"` : ''}>` + commits.map(c =>
+          // Neutral, and not aligned to the bubble above it. These are the commits this checkout
+          // gained during the turn that just ended — which is not the same claim as "this agent
+          // made them", and git cannot tell the difference: two agents working in one repository
+          // commit as the same person, and the range is per checkout precisely so a commit appears
+          // once rather than under each of them. Drawn in the agent's colour and tucked under its
+          // bubble, that once read as authorship, and a reader went looking for work in the wrong
+          // pane's history.
+          const where = (e.cwd || '').split('/').filter(Boolean).pop() || 'this checkout';
+          const tip = `Landed in ${where} while this turn was open. Commits are per checkout — `
+            + `another agent working here may have made them.`;
+          after = `<div class="conv-commits" title="${escapeHtml(tip)}">` +
+            `<span class="conv-commits-lede">landed in ${escapeHtml(where)}</span>` +
+            commits.map(c =>
             `<span class="conv-commit" title="${escapeHtml(c.sha || '')}">` +
             `<code>${escapeHtml(String(c.sha || '').slice(0, CONV_SHA_SHOWN))}</code>` +
             `<span>${escapeHtml(c.subject || '')}</span></span>`).join('') + `</div>`;

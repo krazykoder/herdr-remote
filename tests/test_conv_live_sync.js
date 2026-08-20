@@ -57,13 +57,13 @@ const ctx = vm.createContext({
 });
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
-               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules',
+               'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules', 'convLiveHydrate',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'syncBranchBadge', 'syncBranchBadges',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
-       convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules,
+       convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules, convLiveHydrate,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        syncBranchBadge, syncBranchBadges,
        CONV_LIVE_ROWS, CONV_LIVE_EVERY} = ctx.__out;
@@ -88,7 +88,10 @@ function reset(roster) {
 // The question the block last put on the wire.
 const asked = () => sent[sent.length - 1];
 
-test('the first question over a roster asks for the window, not a delta', () => {
+test('the first question over a roster asks for the window, not a delta', async () => {
+  // The first ask of a session waits for the kept record to be read off disk — there is no
+  // IndexedDB in a vm, so this settles immediately, but it still has to be awaited.
+  await convLiveHydrate();
   reset();
   convLiveFetch([KEY_A, KEY_B]);
   assert.equal(sent.length, 1);
@@ -509,35 +512,21 @@ test('the badge is painted in the addressed agent\'s own colour, and asks for no
   assert.deepEqual(sent, []);
 });
 
-test('the commit strip carries the agent colour so its badges can be painted with it', () => {
-  // The strip is a sibling of the bubble, not a child, so it inherits none of the bubble's own
-  // `--conv-agent` — without this the badges fall back to grey text on a grey fill.
+test('the commit strip says the commits landed in a checkout, not who made them', () => {
+  // The range is per checkout, so the first turn to end after a commit is not the pane that made
+  // it. Painted in the speaker's colour under its bubble, the strip said otherwise.
   store.herdr_conv_commits = 'on';
   const seen = new Map();
   convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
   const after = convGitRules(entry({
-    branch: 'main', commit: 'b'.repeat(40),
+    branch: 'main', commit: 'b'.repeat(40), cwd: '/w/herdr-remote',
     commits: [{sha: 'c'.repeat(40), subject: 'one'}],
-  }), seen, '', 'var(--agent-claude)').after;
-  assert.match(after, /style="--conv-agent:var\(--agent-claude\)"/);
-  store.herdr_conv_commits = 'off';
-});
-
-test('the commit strip takes the bubble\'s column', () => {
-  // Hung under the bubble, so a two-column thread has to put it under the right one — a strip that
-  // ignored the side would sit under the wrong agent's messages in every pair.
-  store.herdr_conv_commits = 'on';
-  const commits = [{sha: 'e'.repeat(40), subject: 'move the parser'}];
-  const seen = new Map();
-  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), seen);
-  const right = convGitRules(entry({branch: 'main', commit: 'b'.repeat(40), commits}),
-                             seen, ' conv-right').after;
-  assert.match(right, /class="conv-commits conv-right"/);
-
-  const left = new Map();
-  convGitRules(entry({branch: 'main', commit: 'a'.repeat(40)}), left);
-  assert.match(convGitRules(entry({branch: 'main', commit: 'b'.repeat(40), commits}), left).after,
-               /class="conv-commits"/, 'no side is the left column, as the bubble has it');
+  }), seen).after;
+  assert.match(after, /class="conv-commits"/);
+  assert.doesNotMatch(after, /conv-right/, 'a fact about the repository takes no bubble\'s column');
+  assert.doesNotMatch(after, /--conv-agent/, 'nor the speaking agent\'s colour');
+  assert.match(after, /landed in herdr-remote/);
+  assert.match(after, /Commits are per checkout/);
   store.herdr_conv_commits = 'off';
 });
 

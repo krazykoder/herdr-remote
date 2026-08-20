@@ -835,9 +835,7 @@
         // the last one from the same member. Built by conv_live, which owns the record's shape; a
         // thread of drafts and pane reads has neither, and the guard is what keeps this file
         // working in a slice that never loaded that one.
-        // `side` goes in because the commits hang under this bubble and have to take its column;
-        // the branch rule above is a divider across the whole thread and takes none.
-        const git = typeof convGitRules === 'function' ? convGitRules(e, gitSeen, side, color)
+        const git = typeof convGitRules === 'function' ? convGitRules(e, gitSeen)
           : {before: '', after: ''};
         // Who said it, for the composer's token to name: two bubbles of the same length from two
         // members read alike once they are cut to `[#1 …]`, and a quote is worth nothing if the

@@ -350,9 +350,12 @@ test('the badge is painted in the addressed agent\u2019s own colour', async ({pa
   expect(painted).not.toBe('rgba(0, 0, 0, 0)');
 });
 
-test('a commit badge is painted in its agent\u2019s colour on a neutral fill', async ({page}) => {
-  // The strip is a sibling of the bubble and inherits nothing from it, which a vm slice cannot
-  // see: it can say the variable was written, only a browser can say it resolved to a colour.
+test('the commit strip does not claim the turn\u2019s agent made the commits', async ({page}) => {
+  // The range is per checkout: `last_commit(host, cwd)` on the relay, so a commit merged in from
+  // another agent's worktree lands in whichever pane's turn ends next. Painted in the speaker's
+  // colour and tucked under its bubble, that read as authorship — a claim git cannot support,
+  // since every agent in one repository commits as the same person. Only a browser can say what
+  // the strip resolved to, which is why this is here and not in a vm slice.
   await open(page);
   const key = await joinAndThread(page);
   await page.locator('#paneLive').click();
@@ -362,22 +365,37 @@ test('a commit badge is painted in its agent\u2019s colour on a neutral fill', a
     {seq: 9002, text: 'After.', branch: 'main', commit: 'b'.repeat(40),
      commits: [{sha: 'c'.repeat(40), subject: 'the one commit'}]},
   ]);
-  const sha = page.locator('#convThread .conv-commit code').first();
-  await expect(sha).toBeVisible();
-  const paint = await sha.evaluate(el => {
-    const badge = el.closest('.conv-commit');
-    return {sha: getComputedStyle(el).color, fill: getComputedStyle(badge).backgroundColor};
+  const strip = page.locator('#convThread .conv-commits').first();
+  await expect(strip).toBeVisible();
+
+  // It says what it is: these landed in a checkout, not "this agent made them".
+  await expect(strip.locator('.conv-commits-lede')).toContainText('landed in');
+  expect(await strip.getAttribute('title')).toContain('per checkout');
+
+  const claude = await page.evaluate(() => {
+    // Resolve the tokens the same way the strip does, so hex and rgb() are comparable.
+    const probe = document.createElement('span');
+    document.body.appendChild(probe);
+    const read = v => { probe.style.color = v; return getComputedStyle(probe).color; };
+    const out = {agent: read('var(--agent-claude)'), muted: read('var(--muted)')};
+    probe.remove();
+    return out;
   });
-  // Claude's own colour, resolved — not the muted fallback the variable falls back to unset.
-  const claude = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue('--agent-claude').trim());
-  const muted = await page.evaluate(() =>
-    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim());
-  expect(paint.sha).not.toBe('');
-  expect(paint.sha, 'the sha must not fall back to the muted default').not.toBe(muted);
-  expect(claude, 'the theme has to define the colour for this to mean anything').not.toBe('');
-  // And the fill stays out of the way rather than washing with the same colour.
-  expect(paint.fill).not.toBe(paint.sha);
+  const paint = await strip.locator('.conv-commit code').first()
+    .evaluate(el => getComputedStyle(el).color);
+  expect(claude.agent, 'the theme has to define the colour for this to mean anything').not.toBe('');
+  expect(paint, 'the sha must not be painted in the speaking agent\u2019s colour')
+    .not.toBe(claude.agent);
+  expect(paint).toBe(claude.muted);
+
+  // And it does not sit against the bubble it follows: full width, centred, so it reads as a rule
+  // across the thread like the branch line above it.
+  const box = await strip.evaluate(el => {
+    const s = getComputedStyle(el);
+    return {self: s.alignSelf, justify: s.justifyContent};
+  });
+  expect(box.self).toBe('center');
+  expect(box.justify).toBe('center');
 });
 
 // The point of keeping it: the record is on this device, so a reload does not re-ask for a window
