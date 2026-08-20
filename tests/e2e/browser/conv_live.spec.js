@@ -506,3 +506,57 @@ test('a question in the air is said over the thread, and nothing is said at rest
     });
     await expect(pill).toBeHidden();
   });
+
+test('the thread offers the window before it, and says when there is not one', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  // Above the oldest bubble, not floating over the thread.
+  const older = page.locator('#convThread .conv-older-btn');
+  await expect(older).toBeVisible();
+  // Measured inside the page in one go: the thread redraws every poll, so reading two boxes over
+  // two round trips measures two different renders.
+  await expect.poll(() => page.evaluate(() => {
+    const btn = document.querySelector('#convThread .conv-older');
+    const msg = document.querySelector('#convThread .conv-msg');
+    return !!btn && !!msg && btn.getBoundingClientRect().top < msg.getBoundingClientRect().top;
+  })).toBe(true);
+
+  // Pressed until the record runs out. The fake herdr's log starts where this run did, so that
+  // takes a couple of windows at most — and reaching it is a different answer from a button that
+  // did nothing, which is the whole point of the control saying so.
+  for (let i = 0; i < 6 && await older.count(); i++) {
+    await older.click();
+    await page.waitForTimeout(200);
+  }
+  await expect(page.locator('#convThread .conv-older-end')).toContainText('start of the relay');
+  await expect(older).toHaveCount(0);
+});
+
+test('the walk back is not offered over this browser’s own transcript', async ({page}) => {
+  await open(page);
+  const key = await joinAndThread(page);
+  expect(await localRecord(page, key)).toBeGreaterThan(0);
+  await expect(page.locator('#convThread')).toContainText('Only this browser ever saw this');
+  await expect(page.locator('#convThread .conv-older')).toHaveCount(0);
+});
+
+test('the conversation window offers the same way back', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convViewThread .conv-msg')).not.toHaveCount(0);
+
+  const older = page.locator('#convViewThread .conv-older-btn');
+  await expect(older).toBeVisible();
+  for (let i = 0; i < 6 && await older.count(); i++) {
+    await older.click();
+    await page.waitForTimeout(200);
+  }
+  await expect(page.locator('#convViewThread .conv-older-end')).toContainText('start of the relay');
+});

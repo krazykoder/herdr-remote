@@ -1005,7 +1005,8 @@
       const rosterHtml = convRosterOpen ? convRosterHtml(conv, composed.recs, hidden) : '';
       if (rosterHtml !== convRosterHtmlLast) { convRosterHtmlLast = rosterHtml; panel.innerHTML = rosterHtml; }
       panel.hidden = !convRosterOpen;
-      const html = (entries.length
+      const html = (typeof convOlderHtml === 'function' ? convOlderHtml(shownKeys) : '') +
+        (entries.length
         // Same fallback the visibility filter above uses: a single-member thread's entries carry no
         // key, and the dock reads a bubble's key to know who wrote it — an unkeyed bubble has no
         // source and so no target to exclude.

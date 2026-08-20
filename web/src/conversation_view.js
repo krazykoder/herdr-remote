@@ -485,7 +485,9 @@
       renderConvPaneChrome(conv, recs, hidden, key, entries);
       const html = convHeadHtml(thread, key, joint ? -1 : entries.length,
         joint ? entries.length : -1, convsForPane(a)) +
-        (joint ? convMembersHtml(thread, recs) : '') + (entries.length
+        (joint ? convMembersHtml(thread, recs) : '') +
+        // Above the oldest bubble, which is where the reader is by the time they want it.
+        (typeof convOlderHtml === 'function' ? convOlderHtml(want) : '') + (entries.length
         ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +

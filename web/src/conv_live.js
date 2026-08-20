@@ -21,6 +21,15 @@
     // rather than an arbitrary window of it.
     const CONV_LIVE_ROWS = 200;
 
+    // How far back a reader may walk one pane, by hand. Ten presses of CONV_LIVE_ROWS.
+    //
+    // A ceiling and not "until the record runs out", because this store shares an IndexedDB budget
+    // with the transcripts: an uncapped walk back through a busy pane evicts another conversation's
+    // history to make room, and a silent eviction of something the reader did not ask about is a
+    // worse outcome than a button that stops. What it costs is visible while it is spent — the
+    // storage panel reports this store per pane.
+    const CONV_LIVE_DEEP_MAX = 2000;
+
     // The thread re-renders on every poll of the open pane, and a query per render would be a
     // database read every three seconds for a thread nobody touched. A turn ending pushes straight
     // past this — see `convLiveSync` — so the cadence costs freshness only while nothing happens.
@@ -29,7 +38,12 @@
     // The record, one bucket per pane fingerprint rather than one answer per roster, so a pane in
     // two conversations is fetched once and the second thread draws with no round trip.
     //
-    //   Map<fpKey, { turns: Array, syncedTo: number, lastFetch: number }>
+    //   Map<fpKey, { turns: Array, syncedTo: number, lastFetch: number,
+    //                 depth: {paneId: rows}, ended: {paneId: true} }>
+    //
+    // `depth` is how many rows of each pane this browser has asked to keep — CONV_LIVE_ROWS until a
+    // reader walks back, and raised a window at a time by `convLiveOlder`. `ended` is the pane the
+    // record had nothing older for, which is what lets the button say so rather than go quiet.
     //
     // `syncedTo` is the id this fingerprint has been *answered through*, which is not the same as
     // the id of its newest turn. A roster query covers every member jointly, so a member that
@@ -94,7 +108,7 @@
     function convLiveBucket(fpKey) {
       let bucket = convLiveCache.get(fpKey);
       if (!bucket) {
-        bucket = { turns: [], syncedTo: 0, lastFetch: 0 };
+        bucket = { turns: [], syncedTo: 0, lastFetch: 0, depth: {}, ended: {} };
         convLiveCache.set(fpKey, bucket);
       }
       return bucket;
@@ -148,6 +162,9 @@
             if (!rec || !rec.fp || convLiveCache.has(rec.fp)) continue;
             convLiveCache.set(rec.fp, {
               turns: rec.turns || [], syncedTo: rec.syncedTo || 0, lastFetch: 0,
+              // Without this a walk back would survive the reload only until the next answer, when
+              // the trim would cut every pane to one window again and throw it all away.
+              depth: rec.depth || {}, ended: rec.ended || {},
               // Answered by the relay once, on a previous day. Without this the thread would say
               // "Reading the relay's record…" over rows it is already drawing.
               answered: true,
@@ -172,7 +189,8 @@
           const bucket = convLiveCache.get(fpKey);
           if (!bucket) return null;
           return idbReq(store.put({ fp: fpKey, turns: bucket.turns || [],
-            syncedTo: bucket.syncedTo || 0, touched: now }));
+            syncedTo: bucket.syncedTo || 0, depth: bucket.depth || {},
+            ended: bucket.ended || {}, touched: now }));
         }).filter(Boolean));
       } catch (e) { return; }
       await convLiveEvict(db);
@@ -342,8 +360,12 @@
       convLiveFetch(keys, false, true);
     }
 
-    // The newest CONV_LIVE_ROWS of each pane, in reading order. Pure.
-    function convLiveTrim(turns) {
+    // The newest rows of each pane, in reading order. Pure.
+    //
+    // CONV_LIVE_ROWS each, unless a reader has walked that pane back: `depth` is what
+    // `convLiveOlder` raised, and without reading it this would discard every backfilled row on
+    // the same tick it arrived — the walk back would fetch, trim, and show nothing.
+    function convLiveTrim(turns, depth) {
       const kept = [];
       const seen = new Map();
       // Backwards: the newest end is the end that is kept, which is the same end the relay's own
@@ -351,12 +373,112 @@
       for (let i = turns.length - 1; i >= 0; i--) {
         const t = turns[i];
         const pane = t.pane_id || '';
+        const cap = Math.min((depth && depth[pane]) || CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
         const n = seen.get(pane) || 0;
-        if (n >= CONV_LIVE_ROWS) continue;
+        if (n >= cap) continue;
         seen.set(pane, n + 1);
         kept.push(t);
       }
       return kept.reverse();
+    }
+
+    // --- Walking one thread backwards, because a reader asked ---
+    //
+    // Everything above goes forwards. The relay answers the newest `last` rows inside a byte
+    // ceiling, and `since_id` asks for what has happened since — so a pane with a thousand turns
+    // shows its recent end and grows from there, and the rest is unreachable by any question this
+    // client knew how to ask.
+    //
+    // This is the other direction, and it is deliberately manual. The automatic behaviour is
+    // unchanged: nothing walks back on its own, because the rows are the reader's disk and the
+    // relay's time, and neither should be spent on history nobody asked to see.
+
+    // Which pane ids a roster accounts for — one that is live right now, or one the roster names.
+    // A row carrying any of them belongs to that member and to nobody else; a row from a pane that
+    // has exited has no claimant and goes to whoever holds the fingerprint now, which is what keeps
+    // a respawned pane's history attached to it.
+    function convLiveClaimed(keys) {
+      const claimed = new Set();
+      for (const x of (typeof agents !== 'undefined' ? agents : [])) {
+        if (x.pane_id) claimed.add(x.pane_id);
+      }
+      for (const k of (keys || [])) claimed.add(convPaneOfKey(k));
+      return claimed;
+    }
+
+    function convPaneOfKey(k) {
+      try { return (JSON.parse(k) || [])[1] || ''; } catch (e) { return ''; }
+    }
+
+    function convLiveRowIsMine(t, mine, claimed) {
+      const pid = t.pane_id || '';
+      return !(mine && pid && pid !== mine && claimed.has(pid));
+    }
+
+    // The oldest row this browser holds for one member, which is the id the next window back is
+    // asked for. 0 when it holds nothing — there is no window before nothing, and the ordinary
+    // forward fetch is what that member needs.
+    function convLiveOldestSeq(key, claimed) {
+      const fp = convKeyFingerprint(key);
+      const bucket = fp && convLiveCache.get(convFpKey(fp));
+      if (!bucket) return 0;
+      const mine = convPaneOfKey(key);
+      let oldest = 0;
+      for (const t of bucket.turns) {
+        if (!t.seq || !convLiveRowIsMine(t, mine, claimed)) continue;
+        if (!oldest || t.seq < oldest) oldest = t.seq;
+      }
+      return oldest;
+    }
+
+    // Whether there is a window back left to ask for, per member. Three ways to be finished, and
+    // the button has to be able to tell all three from "not yet asked": the record said it had
+    // nothing older, the pane is at the ceiling, or this browser holds nothing to walk back from.
+    function convLiveCanLoadOlder(keys) {
+      if (!convLiveOn()) return false;
+      const claimed = convLiveClaimed(keys);
+      return (keys || []).some(key => {
+        const fp = convKeyFingerprint(key);
+        const bucket = fp && convLiveCache.get(convFpKey(fp));
+        if (!bucket) return false;
+        const pane = convPaneOfKey(key);
+        if (bucket.ended[pane]) return false;
+        if ((bucket.depth[pane] || CONV_LIVE_ROWS) >= CONV_LIVE_DEEP_MAX) return false;
+        return convLiveOldestSeq(key, claimed) > 0;
+      });
+    }
+
+    // One window back for every member that has one, asked pane by pane.
+    //
+    // Pane-scoped rather than over the roster, and not because it is tidier: `until_id` is one
+    // member's oldest row, and several members do not share one. Asked jointly, the member with
+    // the oldest row would set the bound for all of them and the others would be handed a window
+    // they already hold.
+    function convLiveOlder(keys) {
+      if (!ws || ws.readyState !== 1) return 0;
+      const claimed = convLiveClaimed(keys);
+      let asked = 0;
+      for (const key of (keys || [])) {
+        const fp = convKeyFingerprint(key);
+        if (!fp) continue;
+        const fpKey = convFpKey(fp);
+        const bucket = convLiveCache.get(fpKey);
+        if (!bucket) continue;
+        const pane = convPaneOfKey(key);
+        if (bucket.ended[pane]) continue;
+        const have = Math.min(bucket.depth[pane] || CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
+        if (have >= CONV_LIVE_DEEP_MAX) continue;
+        const oldest = convLiveOldestSeq(key, claimed);
+        if (!oldest) continue;
+        // Raised before the answer, not after it: the trim runs on the tick the rows land, and a
+        // ceiling still at one window would throw them away before anything drew them.
+        bucket.depth[pane] = Math.min(have + CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
+        ws.send(JSON.stringify({ type: 'conv_log', fingerprints: [fp], pane: pane,
+                                 until_id: oldest, last: CONV_LIVE_ROWS }));
+        asked++;
+      }
+      if (asked) convLiveAskSent(asked);
+      return asked;
     }
 
     // A window that did not reach the end, spent again on one pane at a time.
@@ -393,6 +515,87 @@
       if (sent.size) convLiveAskSent(sent.size);
     }
 
+    // The control, at the top of the thread rather than floating over it: it is about the oldest
+    // bubble, so it belongs above the oldest bubble — which is also where the reader's eye already
+    // is by the time they want it. Absent whenever there is nothing to press it for, and it says
+    // which of the reasons that is: the ceiling and the bottom of the record are different answers.
+    function convOlderHtml(keys) {
+      if (!convLiveOn()) return '';
+      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      if (!fps.some(fp => (convLiveCache.get(convFpKey(fp)) || {}).answered)) return '';
+      if (convLiveCanLoadOlder(keys)) {
+        return '<div class="conv-older"><button class="conv-older-btn" ' +
+          'onclick="convLoadOlder(this)" ' +
+          'title="Ask the relay for the window before the oldest message here">' +
+          '↑ Load older</button></div>';
+      }
+      const claimed = convLiveClaimed(keys);
+      const deep = (keys || []).some(key => {
+        const fp = convKeyFingerprint(key);
+        const bucket = fp && convLiveCache.get(convFpKey(fp));
+        return bucket && (bucket.depth[convPaneOfKey(key)] || 0) > CONV_LIVE_ROWS;
+      });
+      if (!deep) return '';
+      const ceiling = (keys || []).some(key => {
+        const fp = convKeyFingerprint(key);
+        const bucket = fp && convLiveCache.get(convFpKey(fp));
+        return bucket && (bucket.depth[convPaneOfKey(key)] || 0) >= CONV_LIVE_DEEP_MAX
+          && !bucket.ended[convPaneOfKey(key)] && convLiveOldestSeq(key, claimed) > 0;
+      });
+      return '<div class="conv-older"><span class="conv-older-end">' + (ceiling
+        ? `As far back as this device keeps — ${CONV_LIVE_DEEP_MAX} messages a pane`
+        : 'The start of the relay’s record') + '</span></div>';
+    }
+
+    // Pressed. The thread grows *upwards*, so the reader's place has to be put back afterwards:
+    // rows prepended above the scroll position move everything they were reading down by their own
+    // height, and a control that throws you somewhere else is not one anybody presses twice.
+    let convOlderAnchor = null;
+
+    function convLoadOlder(btn) {
+      const box = btn && btn.closest ? btn.closest('.conv-thread, .conv-wrap, .term-wrap') : null;
+      const scroller = box && box.classList.contains('conv-thread') ? box
+        : (typeof hangConvBox === 'function' && box && box.id === 'convWrap' ? hangConvBox() : box);
+      const keys = convOlderKeys(box);
+      if (scroller) convOlderAnchor = { box: scroller, height: scroller.scrollHeight };
+      if (!convLiveOlder(keys)) { convOlderAnchor = null; return; }
+      if (btn) btn.disabled = true;
+    }
+
+    // Whose thread was pressed. The window addresses its conversation's roster; the pane addresses
+    // whatever roster its own thread is drawn from, which is the pane alone unless it is in a
+    // conversation.
+    function convOlderKeys(box) {
+      const inWindow = !!(box && box.id === 'convViewThread');
+      const id = inWindow ? (typeof convViewId !== 'undefined' ? convViewId : '')
+        : (typeof convViewId !== 'undefined' && typeof convPaneRoster !== 'undefined'
+           && convPaneRoster ? convViewId : '');
+      const conv = id && typeof loadConvIndex === 'function'
+        ? loadConvIndex().find(c => c.id === id) : null;
+      if (inWindow) return conv ? (conv.members || []).map(m => m.key) : [];
+      const a = (typeof activePane !== 'undefined' && activePane && typeof paneOf === 'function')
+        ? paneOf(activePane) : null;
+      const mine = a ? convMemberKey(a) : '';
+      const roster = conv ? (conv.members || []).map(m => m.key) : [];
+      if (roster.length) return roster;
+      return mine ? [mine] : [];
+    }
+
+    // Put the reader back where they were, once the rows are on screen. Measured rather than
+    // remembered by row: the bubbles are variable height and a wrapped one is not the same height
+    // twice, so the only number that answers this is how much taller the box got.
+    // Held across several answers rather than cleared by the first: a joint thread asks one
+    // question per member, and each answer that lands grows the box again. The anchor moves with
+    // it and is dropped only once nothing is outstanding.
+    function convOlderRestore() {
+      const anchor = convOlderAnchor;
+      if (!anchor || !anchor.box) return;
+      const grew = anchor.box.scrollHeight - anchor.height;
+      if (grew > 0) anchor.box.scrollTop += grew;
+      anchor.height = anchor.box.scrollHeight;
+      if (!convLiveSyncing()) convOlderAnchor = null;
+    }
+
     // The relay answering. Addressed to the client that asked and never broadcast, so this arrives
     // only where someone turned the toggle on.
     function convLiveReceive(msg) {
@@ -427,12 +630,19 @@
         // taking its highest id as the watermark would tell the next delta that every *other*
         // pane sharing this fingerprint is current through an id it was never asked about, and
         // their rows would never arrive at all.
-        if (!msg.pane) {
+        // `until_id` as well as `pane`: a backfill's highest id is *older* than this bucket's
+        // watermark, so taking it as one would wind the bucket backwards and make the next delta
+        // re-fetch every turn in between. The relay echoes it back for exactly this check.
+        if (!msg.pane && msg.until_id == null) {
           convLiveVerified.add(fpKey);
           if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
           bucket.lastFetch = now;
           bucket.answered = true;
         }
+        // The record had nothing before what this browser already holds. Recorded per pane so the
+        // reader is told the walk is over rather than handed a button that does nothing — and so
+        // the depth this ask raised is not spent again on a question with no answer.
+        if (msg.until_id != null && msg.pane && !turns.length) bucket.ended[msg.pane] = true;
         touched.add(fpKey);
       }
 
@@ -446,7 +656,7 @@
         // thread is a pane. Over the bucket, the busiest pane sharing a fingerprint evicts the
         // quiet one's history down to nothing — the reader opens a pane with 181 turns behind it
         // and is shown whatever is left of 200 after its neighbours took theirs.
-        bucket.turns = convLiveTrim(bucket.turns);
+        bucket.turns = convLiveTrim(bucket.turns, bucket.depth);
       }
 
       // A roster answer that did not fit is asked again, pane by pane. Never off a pane-scoped
@@ -460,11 +670,14 @@
       if (typeof convNoteLiveCounts === 'function') convNoteLiveCounts(convLiveAsked);
 
       if (!convLiveOn()) return;
-      renderConvView();
       // `false`: an answer arriving is not the reader asking to be moved. Both views already follow
       // the newest message for anyone sitting at the bottom, and forcing it here dragged a reader
       // who had scrolled up back down every time the record was re-read — every five seconds.
-      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+      const drawn = [renderConvView(),
+                     typeof renderConvStandalone === 'function' ? renderConvStandalone(false) : null];
+      // After the bubbles are on screen, not before: the box has to have its new height for the
+      // reader's place to be measurable at all. Both renders are async, so this waits on them.
+      if (convOlderAnchor) Promise.all(drawn).then(convOlderRestore, convOlderRestore);
     }
 
     // The one refusal worth catching: the record is off, so there is nothing to read and no amount
@@ -526,21 +739,15 @@
       // what keeps a respawned pane's history attached to it.
       // Every pane id with an owner: one that is live right now, or one this roster names. A row
       // carrying any of them belongs to that member and to nobody else.
-      const claimed = new Set();
-      for (const x of (typeof agents !== 'undefined' ? agents : [])) {
-        if (x.pane_id) claimed.add(x.pane_id);
-      }
-      const paneOfKey = k => { try { return (JSON.parse(k) || [])[1] || ''; } catch (e) { return ''; } };
-      for (const k of (keys || [])) claimed.add(paneOfKey(k));
+      const claimed = convLiveClaimed(keys);
       for (const k of (keys || [])) {
         const fp = convKeyFingerprint(k);
         if (!fp) continue;
         const bucket = convLiveCache.get(convFpKey(fp));
         if (!bucket) continue;
-        const mine = paneOfKey(k);
+        const mine = convPaneOfKey(k);
         for (const t of bucket.turns) {
-          const pid = t.pane_id || '';
-          if (mine && pid && pid !== mine && claimed.has(pid)) continue;
+          if (!convLiveRowIsMine(t, mine, claimed)) continue;
           // Two roster members can fold to one fingerprint — a pane respawned under a new id is the
           // same pane to the record — and the bucket must not be drawn twice for them.
           if (t.seq && seen.has(t.seq)) continue;

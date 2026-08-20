@@ -3850,6 +3850,43 @@
 
     .hang-pill[hidden] { display: none; }
 
+    /* The way back through a record longer than one window, at the top of the thread rather than
+       floating over it: it is about the oldest bubble, so it sits above the oldest bubble. */
+    .conv-older {
+      display: flex;
+      justify-content: center;
+      padding: 4px 0 10px;
+    }
+
+    .conv-older-btn {
+      padding: 5px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+
+    .conv-older-btn:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+      color: var(--text);
+    }
+
+    .conv-older-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* The end of the walk, said rather than left as a button that does nothing. */
+    .conv-older-end {
+      font-size: 0.7rem;
+      color: var(--muted);
+      opacity: 0.75;
+      text-align: center;
+    }
+
     /* It appears for a few hundred milliseconds at a time. Fading in stops that reading as a flash
        of chrome over the text. */
     @keyframes hang-pill-in {

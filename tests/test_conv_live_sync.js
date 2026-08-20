@@ -66,6 +66,7 @@ const ctx = vm.createContext({
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate', 'convLiveWarmRecent',
                'convLiveSyncing', 'convLiveNoteError', 'convLiveAskDone', 'CONV_LIVE_ASK_TIMEOUT',
+               'convLiveOlder', 'convLiveCanLoadOlder', 'convOlderHtml', 'CONV_LIVE_DEEP_MAX',
                'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules', 'convLiveHydrate',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'syncBranchBadge', 'syncBranchBadges',
@@ -73,6 +74,7 @@ const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveI
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate, convLiveWarmRecent,
        convLiveSyncing, convLiveNoteError, convLiveAskDone, CONV_LIVE_ASK_TIMEOUT,
+       convLiveOlder, convLiveCanLoadOlder, convOlderHtml, CONV_LIVE_DEEP_MAX,
        convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules, convLiveHydrate,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        syncBranchBadge, syncBranchBadges,
@@ -729,4 +731,135 @@ test('the record being off answers every outstanding question at once', async ()
   convLiveNoteError('conversation log is off');
   assert.equal(convLiveSyncing(), false,
                'no answer is coming for any of them, and the thread says why instead');
+});
+
+// --- Walking one thread backwards, by hand ---
+//
+// Everything else here goes forwards. This is the only question that does not, and it is the one
+// with the most ways to look like it worked while doing nothing:
+//
+//   - the trim keeps the newest window a pane, so rows fetched from *before* it are discarded on
+//     the tick they arrive unless the ceiling was raised first;
+//   - a backfill's highest id is older than the bucket's watermark, so taken as one it winds the
+//     bucket backwards and the next delta re-fetches everything in between;
+//   - a joint thread's members do not share an oldest row, so one question over the roster hands
+//     most of them a window they already hold.
+
+// A pane with more turns than one window, so there is something behind the window to walk into.
+const deepTurns = (n, from) => Array.from({length: n}, (_, i) =>
+  turn(from + i, FP_A, 1000 + (from + i), `turn ${from + i}`));
+
+test('the oldest window is asked for by the oldest row on hand, and kept when it lands', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  // The newest window. seq 801..1000, so 800 and below are behind it.
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801), truncated: true});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS);
+  assert.equal(convLiveCanLoadOlder([KEY_A]), true);
+
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A]), 1);
+  const back = asked();
+  assert.equal(back.until_id, 801, 'the window before the oldest row this browser holds');
+  assert.equal(back.pane, '%1', 'pane-scoped: an oldest row belongs to a pane, not to a roster');
+  assert.equal(back.since_id, undefined, 'a walk back is not a delta');
+
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  assert.equal(bucket.turns.length, CONV_LIVE_ROWS * 2,
+               'the ceiling was raised before the answer, so the rows were not trimmed away');
+  assert.equal(bucket.turns[0].seq, 601, 'and they went in at the old end');
+});
+
+test('a walk back never becomes the watermark', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.syncedTo, 1000);
+
+  convLiveOlder([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 801,
+                   turns: deepTurns(CONV_LIVE_ROWS, 601)});
+  assert.equal(bucket.syncedTo, 1000,
+               'an older window says nothing about what is new, and winding this back would '
+               + 'make the next delta re-fetch every turn in between');
+});
+
+test('the record having nothing older ends the walk rather than repeating it', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(10, 1)});
+  assert.equal(convLiveCanLoadOlder([KEY_A]), true);
+
+  convLiveOlder([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: 1, turns: []});
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false, 'there is nothing behind the start');
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A]), 0, 'and the question is not asked again');
+  assert.equal(sent.length, 0);
+  assert.match(convOlderHtml([KEY_A]), /start of the relay/);
+});
+
+test('the walk stops at the ceiling this device keeps', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  let top = 100000;
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, top)});
+  // Walk until it refuses. Every answer is a full window, so nothing but the ceiling can stop it.
+  let presses = 0;
+  while (convLiveOlder([KEY_A])) {
+    presses++;
+    assert.ok(presses <= 50, 'the walk must terminate');
+    const until = asked().until_id;
+    convLiveReceive({fingerprints: [FP_A], pane: '%1', until_id: until,
+                     turns: deepTurns(CONV_LIVE_ROWS, until - CONV_LIVE_ROWS)});
+  }
+  const bucket = convLiveCache.get(convFpKey(FP_A));
+  assert.equal(bucket.turns.length, CONV_LIVE_DEEP_MAX);
+  assert.equal(presses, CONV_LIVE_DEEP_MAX / CONV_LIVE_ROWS - 1);
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  assert.match(convOlderHtml([KEY_A]), /As far back as this device keeps/);
+});
+
+test('a joint thread asks once per member, each from its own oldest row', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%2', agent: 'codex', cwd: '/work/b'}]);
+  convLiveFetch([KEY_A, KEY_B], true);
+  convLiveReceive({fingerprints: [FP_A, FP_B],
+                   turns: [turn(400, FP_A, 4000, 'a'), turn(900, FP_B, 9000, 'b')]});
+  sent.length = 0;
+  assert.equal(convLiveOlder([KEY_A, KEY_B]), 2);
+  const asks = sent.filter(m => m.until_id != null);
+  assert.deepEqual(asks.map(m => [m.pane, m.until_id]).sort(),
+                   [['%1', 400], ['%2', 900]],
+                   'one bound over both would hand the newer member a window it already holds');
+});
+
+test('nothing is offered before the relay has answered at all', async () => {
+  await convLiveHydrate();
+  reset();
+  assert.equal(convOlderHtml([KEY_A]), '', 'an unanswered thread is not one with older messages');
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: []});
+  assert.equal(convOlderHtml([KEY_A]), '',
+               'and an empty record has no window behind it either');
+});
+
+test('the walk is not offered over this browser’s own transcript', async () => {
+  await convLiveHydrate();
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A], true);
+  convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
+  store.herdr_conv_live = 'off';
+  assert.equal(convOlderHtml([KEY_A]), '', 'the local transcript is not the relay’s record');
+  assert.equal(convLiveCanLoadOlder([KEY_A]), false);
+  store.herdr_conv_live = 'on';
 });
