@@ -94,7 +94,8 @@ test('nothing outside the allowlist is ever read or written', () => {
   s.stateSyncOpen();
   s.stateSyncReceive(answer({pairs: doc(0, null), conversations: doc(2, '{"items":[]}')}));
   s.tick();
-  const allowed = new Set(Object.values(s.STATE_DOCS).map(d => d.key));
+  const allowed = new Set(Object.values(s.STATE_DOCS)
+    .flatMap(d => [d.key, d.pendingKey].filter(Boolean)));
   for (const k of s.read) assert.ok(allowed.has(k), `read a key it may not read: ${k}`);
   for (const k of s.wrote) {
     assert.ok(allowed.has(k) || allowed.has(k.replace(/_local$/, '')),
@@ -105,80 +106,83 @@ test('nothing outside the allowlist is ever read or written', () => {
 
 // --- the seeding decision ---------------------------------------------------
 
-test('stateSyncPlan: a browser with nothing downloads, a browser with something extends', () => {
+test('stateSyncPlan: the backend wins whenever it has a document', () => {
   const {stateSyncPlan} = boot();
   assert.equal(stateSyncPlan(3, '{"a":1}', null), 'adopt', 'nothing to extend from');
-  assert.equal(stateSyncPlan(3, '{"a":1}', '{"b":2}'), 'merge');
+  assert.equal(stateSyncPlan(3, '{"a":1}', '{"b":2}'), 'adopt');
   assert.equal(stateSyncPlan(3, '{"a":1}', '{"a":1}'), 'idle', 'agreement is not a change');
 });
 
-// The union of two lists of id'd objects, and of two maps. Every case here is a way the old
-// 'adopt' verdict threw one side away.
+// The relay's document with this browser's unacknowledged creations appended, and nothing else.
+// Every case here is a way a local row could wrongly win, or wrongly be thrown away.
 const convDoc = (...ids) =>
   JSON.stringify({version: 1, items: ids.map(id => ({id: id, name: id, members: []}))});
 const convIdsOf = body => JSON.parse(body).items.map(c => c.id);
+const pend = (...ids) => new Set(ids);
 
-test('stateMerge: an entry only this browser has is added, never allowed to replace one', () => {
+test('stateMerge: a pending id is appended and a shared id keeps the relay copy', () => {
   const {stateMerge} = boot();
-  const merged = stateMerge('conversations', convDoc('shared', 'both'), convDoc('both', 'mine'));
+  const server = JSON.stringify({version: 1, items: [
+    {id: 'shared', name: 'theirs'}, {id: 'both', name: 'theirs'}]});
+  const local = JSON.stringify({version: 1, items: [
+    {id: 'both', name: 'mine'}, {id: 'mine', name: 'mine'}]});
+  const merged = stateMerge('conversations', server, local, pend('mine', 'both'));
   assert.deepEqual(convIdsOf(merged), ['shared', 'both', 'mine']);
-  // The relay's copy of a shared id is the one kept: it is what every other browser is reading.
-  assert.equal(JSON.parse(merged).items.find(c => c.id === 'both').name, 'both');
+  // `both` is in the outbox and in the relay's document. The relay's copy is what every other
+  // browser is reading, so an id it already holds is never replaced — outbox or not.
+  assert.equal(JSON.parse(merged).items.find(c => c.id === 'both').name, 'theirs');
 });
 
-test('stateMerge: a local document that adds nothing produces no write', () => {
+test('stateMerge: a local row that is not in the outbox is dropped', () => {
+  const {stateMerge} = boot();
+  const server = convDoc('a');
+  // The whole point of the outbox: this is a stale cache, or a conversation deleted on another
+  // browser, and appending it would resurrect what someone deleted.
+  assert.equal(stateMerge('conversations', server, convDoc('a', 'ghost'), pend()), server);
+  assert.equal(stateMerge('conversations', server, convDoc('a', 'ghost'), pend('other')), server,
+               'an outbox that names something else is still no reason to carry this one');
+});
+
+test('stateMerge: a pending create keeps its full pane membership', () => {
+  const {stateMerge} = boot();
+  const server = JSON.stringify({version: 1, items: [{id: 'c1', members: [{key: 'w:p1'}]}]});
+  const local = JSON.stringify({version: 1, items: [
+    {id: 'c1', members: [{key: 'stale'}]},
+    {id: 'c2', members: [{key: 'w:p2'}, {key: 'w:p3'}]},
+  ]});
+  const merged = JSON.parse(stateMerge('conversations', server, local, pend('c2')));
+  assert.deepEqual(merged.items.map(c => [c.id, c.members.map(m => m.key)]),
+                   [['c1', ['w:p1']], ['c2', ['w:p2', 'w:p3']]]);
+});
+
+test('stateMerge: a document with nothing to append comes back as the relay body itself', () => {
   const {stateMerge} = boot();
   const server = convDoc('a', 'b');
-  assert.equal(stateMerge('conversations', server, convDoc('a')), server,
-               'a subset must come back as the relay body itself, so the caller sends nothing');
+  assert.equal(stateMerge('conversations', server, convDoc('a'), pend('a')), server,
+               'the caller reads identity as "no write to make"');
 });
 
-test('stateMerge: pairs merge under their own key, and maps merge by key', () => {
+test('stateMerge: a map document has no outbox and always comes back as the relay body', () => {
   const {stateMerge} = boot();
-  const pairsDoc = (...ids) => JSON.stringify({version: 1, pairs: ids.map(id => ({id: id}))});
-  assert.deepEqual(JSON.parse(stateMerge('pairs', pairsDoc('p1'), pairsDoc('p2'))).pairs,
-                   [{id: 'p1'}, {id: 'p2'}]);
-  assert.deepEqual(
-    JSON.parse(stateMerge('conv_view', '{"a":"c1"}', '{"a":"mine","b":"c2"}')),
-    {a: 'c1', b: 'c2'}, 'the relay wins the key both hold, and ours is added');
+  // conv_view and conv_hidden are keyed by pane and by conversation id — keys nobody creates, so
+  // there is nothing to carry across and no reason to let a stale local key win.
+  assert.equal(stateMerge('conv_view', '{"a":"c1"}', '{"a":"mine","b":"c2"}', pend()),
+               '{"a":"c1"}');
 });
 
 test('stateMerge: anything it cannot read safely comes back null, so the relay wins whole', () => {
   const {stateMerge} = boot();
-  assert.equal(stateMerge('conversations', 'not json', convDoc('a')), null);
-  assert.equal(stateMerge('conversations', convDoc('a'), '[1,2]'), null, 'wrong shape');
-  assert.equal(stateMerge('conv_view', '[1]', '{"a":1}'), null, 'a map document that is an array');
-  assert.equal(stateMerge('pairs', null, '{}'), null);
-  assert.equal(stateMerge('nope', '{}', '{}'), null, 'a name with no declared shape');
-});
-
-test('stateMerge: the side that just typed wins an id both hold', () => {
-  const {stateMerge} = boot();
-  const server = JSON.stringify({version: 1, items: [{id: 'c1', name: 'theirs'}]});
-  const local = JSON.stringify({version: 1, items: [{id: 'c1', name: 'mine'}, {id: 'c2'}]});
-  assert.equal(JSON.parse(stateMerge('conversations', server, local, true)).items[0].name, 'mine');
-  assert.equal(JSON.parse(stateMerge('conversations', server, local, false)).items[0].name,
-               'theirs');
-  // Either way both rows survive; only which copy of c1 is kept changes.
-  for (const mine of [true, false]) {
-    assert.deepEqual(convIdsOf(stateMerge('conversations', server, local, mine)).sort(),
-                     ['c1', 'c2']);
-  }
-});
-
-test('stateMerge: a body that already contains the other comes back unchanged', () => {
-  const {stateMerge} = boot();
-  const local = convDoc('a', 'b');
-  assert.equal(stateMerge('conversations', convDoc('a'), local, true), local,
-               'ours is a superset, so there is nothing to build');
-  assert.equal(stateMerge('conv_view', '{"a":1}', '{"a":2,"b":3}', true), '{"a":2,"b":3}');
+  assert.equal(stateMerge('conversations', 'not json', convDoc('a'), pend()), null);
+  assert.equal(stateMerge('conversations', convDoc('a'), '[1,2]', pend()), null, 'wrong shape');
+  assert.equal(stateMerge('pairs', null, '{}', pend()), null);
+  assert.equal(stateMerge('nope', '{}', '{}', pend()), null, 'a name with no declared shape');
 });
 
 test('stateMerge: an entry with no id is not carried over', () => {
   const {stateMerge} = boot();
   const local = JSON.stringify({version: 1, items: [{name: 'no id here'}]});
-  assert.equal(stateMerge('conversations', convDoc('a'), local), convDoc('a'),
-               'an id-less row cannot be deduplicated, so it would double on every connect');
+  assert.equal(stateMerge('conversations', convDoc('a'), local, pend('a')), convDoc('a'),
+               'an id-less row is in no outbox, and could not be deduplicated if it were');
 });
 
 test('stateSyncPlan: an empty relay is seeded by whoever has something', () => {
@@ -267,7 +271,7 @@ test('an ack advances the revision the next write claims', () => {
   assert.deepEqual(puts.map(p => p.rev), [1, 2]);
 });
 
-test('an edit made while the answer is in the air is not lost', () => {
+test('the backend wins an edit made while the first answer is in the air', () => {
   const s = boot({herdr_pairs: 'v0'});
   s.stateSyncOpen();
   s.store.herdr_pairs = 'v1';
@@ -275,8 +279,9 @@ test('an edit made while the answer is in the air is not lost', () => {
   s.tick();
   assert.ok(!s.sent.some(m => m.type === 'state_put'));
   s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
-  const put = s.sent.find(m => m.type === 'state_put');
-  assert.equal(put.body, 'v1');
+  assert.equal(s.store.herdr_pairs, 'v0');
+  assert.equal(s.store.herdr_pairs_local, 'v1');
+  assert.ok(!s.sent.some(m => m.type === 'state_put'));
 });
 
 test('an unknown document name is not marked', () => {
@@ -331,6 +336,22 @@ test('a conflict adopts the winner and does not retry the loser', () => {
                'retrying is what turns a guarded last-write-wins back into an unguarded one');
 });
 
+test('a conversation conflict rebases only pending creates at the returned revision', () => {
+  const s = boot({herdr_conversations: convDoc('base'),
+                  herdr_conversations_pending: '["mine"]'});
+  s.stateSyncOpen();
+  s.stateSyncReceive(answer({conversations: doc(1, convDoc('base'))}));
+  s.store.herdr_conversations = convDoc('mine');
+  s.stateSyncMark('conversations');
+  s.tick();
+  s.stateSyncConflict({type: 'state_conflict', name: 'conversations', rev: 2,
+                       body: convDoc('theirs')});
+  const puts = s.sent.filter(m => m.type === 'state_put');
+  assert.deepEqual(puts.map(p => [p.rev, convIdsOf(p.body).sort()]),
+                   [[1, ['mine']], [2, ['mine', 'theirs']]]);
+  assert.deepEqual(convIdsOf(s.store.herdr_conversations).sort(), ['mine', 'theirs']);
+});
+
 // --- a relay older than this client -----------------------------------------
 
 test('an old relay silences sync instead of showing the user an error', () => {
@@ -383,7 +404,7 @@ test('a stale socket close cannot stop a replacement socket syncing', () => {
                    [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
 });
 
-test('a close before an ack retries the in-flight edit after reconnecting', () => {
+test('a reconnect adopts the backend instead of retrying an unacknowledged edit', () => {
   const s = boot({herdr_pairs: 'v0'});
   s.stateSyncOpen();
   s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
@@ -394,10 +415,11 @@ test('a close before an ack retries the in-flight edit after reconnecting', () =
   s.stateSyncOpen();
   s.stateSyncReceive(answer({pairs: doc(2, 'v0')}));
   const puts = s.sent.filter(m => m.type === 'state_put');
-  assert.deepEqual(puts.map(p => [p.rev, p.body]), [[1, 'v1'], [2, 'v1']]);
+  assert.deepEqual(puts.map(p => [p.rev, p.body]), [[1, 'v1']]);
+  assert.equal(s.store.herdr_pairs, 'v0');
 });
 
-test('replacing a socket retries its unacknowledged write', () => {
+test('replacing a socket adopts the backend over its unacknowledged write', () => {
   const s = boot({herdr_pairs: 'v0'});
   const replacementSent = [];
   const replacement = {send: d => replacementSent.push(JSON.parse(d))};
@@ -408,8 +430,8 @@ test('replacing a socket retries its unacknowledged write', () => {
   s.tick();                           // old socket accepted put; its ack was lost
   s.stateSyncOpen(replacement);       // old close is stale and intentionally ignored
   s.stateSyncReceive(answer({pairs: doc(2, 'v0')}));
-  assert.deepEqual(replacementSent.filter(m => m.type === 'state_put'),
-                   [{type: 'state_put', name: 'pairs', rev: 2, body: 'v1'}]);
+  assert.deepEqual(replacementSent.filter(m => m.type === 'state_put'), []);
+  assert.equal(s.store.herdr_pairs, 'v0');
 });
 
 test('a write goes to the socket it learned its revision from, not the global one', () => {
@@ -427,7 +449,7 @@ test('a write goes to the socket it learned its revision from, not the global on
                    [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
 });
 
-test('a send the socket refuses leaves the edit dirty rather than dropping it', () => {
+test('a refused send is replaced by backend state on reconnect', () => {
   const s = boot({herdr_pairs: 'v0'});
   s.stateSyncOpen(s.socket);
   s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
@@ -437,14 +459,13 @@ test('a send the socket refuses leaves the edit dirty rather than dropping it', 
   s.tick();
   assert.deepEqual(s.sent.filter(m => m.type === 'state_put'), [], 'the frame never left');
 
-  // The next connect must carry it. Silently dropping it here is the same lost edit the
-  // in-flight retry in stateSyncClose prevents, reached by the other door.
+  // The next connect names the backend authority, so this uncommitted edit is discarded.
   s.socket.refuse = false;
   s.stateSyncClose();
   s.stateSyncOpen(s.socket);
   s.stateSyncReceive(answer({pairs: doc(1, 'v0')}));
-  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'),
-                   [{type: 'state_put', name: 'pairs', rev: 1, body: 'v1'}]);
+  assert.deepEqual(s.sent.filter(m => m.type === 'state_put'), []);
+  assert.equal(s.store.herdr_pairs, 'v0');
 });
 
 test('a retry the relay already has is dropped instead of re-sent', () => {
@@ -494,7 +515,7 @@ test('flushing on the way out sends each document once', () => {
   assert.deepEqual(puts.map(p => p.name).sort(), ['conversations', 'pairs']);
 });
 
-test('a reconnect re-learns revisions rather than reusing stale ones', () => {
+test('a reconnect adopts backend state before any new write', () => {
   const s = boot({herdr_pairs: 'v0'});
   s.stateSyncOpen();
   s.stateSyncReceive(answer({pairs: doc(9, 'v0')}));
@@ -506,6 +527,6 @@ test('a reconnect re-learns revisions rather than reusing stale ones', () => {
   assert.ok(!s.sent.some(m => m.type === 'state_put'),
             'no write may go out before the relay has said where it is');
   s.stateSyncReceive(answer({pairs: doc(11, 'v0')}));
-  const put = s.sent.find(m => m.type === 'state_put');
-  assert.equal(put.rev, 11);
+  assert.ok(!s.sent.some(m => m.type === 'state_put'));
+  assert.equal(s.store.herdr_pairs, 'v0');
 });

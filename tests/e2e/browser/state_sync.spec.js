@@ -141,6 +141,7 @@ test('a browser that already has conversations extends the shared set instead of
     localStorage.setItem('herdr_conversations', JSON.stringify({version: 1, items: [
       {id: 'c_offline', name: 'Made while away', created: Date.now(), members: []},
     ]}));
+    localStorage.setItem('herdr_conversations_pending', JSON.stringify(['c_offline']));
   });
   await other.reload();
   await connected(other);

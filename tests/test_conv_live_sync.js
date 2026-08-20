@@ -38,6 +38,8 @@ const fakeNode = () => ({
 // The roster the badge resolves a pane id against, and who the composer is pointed at.
 const panes = {};
 let addressed = '';
+let recentIndex = [];
+const noted = [];
 
 const ctx = vm.createContext({
   console,
@@ -52,17 +54,19 @@ const ctx = vm.createContext({
   agentColor: agent => `var(--${agent || 'muted'})`,
   // The roster key builder, in the one spelling the rest of the app uses.
   convMemberKey: a => JSON.stringify([a.host || '', a.pane_id || '', a.agent || '', a.cwd || '']),
+  loadConvIndex: () => recentIndex,
+  convNoteLiveCounts: keys => noted.push(keys),
   // The live roster. A row is scoped to a pane by who is on it, so the tests below set it.
   agents: [],
 });
 
-const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate',
+const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate', 'convLiveWarmRecent',
                'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules', 'convLiveHydrate',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'syncBranchBadge', 'syncBranchBadges',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate,
+const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate, convLiveWarmRecent,
        convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules, convLiveHydrate,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        syncBranchBadge, syncBranchBadges,
@@ -80,10 +84,26 @@ const turn = (seq, fp, at, text) => ({
 
 function reset(roster) {
   sent.length = 0;
+  noted.length = 0;
   convLiveCache.clear();
   ctx.agents.length = 0;
   for (const a of (roster || [])) ctx.agents.push(a);
 }
+
+test('startup warms only the five most-recent conversations even with live view off', async () => {
+  await convLiveHydrate();
+  reset();
+  store.herdr_conv_live = 'off';
+  recentIndex = Array.from({length: 6}, (_, i) => ({
+    created: i, members: [{key: JSON.stringify(['local', `%${i}`, 'claude', `/work/${i}`]), seen: i}],
+  }));
+  convLiveWarmRecent();
+  assert.equal(sent.length, 1);
+  assert.equal(asked().fingerprints.length, 5);
+  assert.deepEqual(asked().fingerprints.map(fp => fp[2]),
+                   ['/work/5', '/work/4', '/work/3', '/work/2', '/work/1']);
+  store.herdr_conv_live = 'on';
+});
 
 // The question the block last put on the wire.
 const asked = () => sent[sent.length - 1];
@@ -108,6 +128,7 @@ test('a pane the answer said nothing about is still current through it', () => {
   convLiveInvalidate();
   convLiveFetch([KEY_A, KEY_B]);
   assert.equal(asked().since_id, 7, 'a quiet pane must not drag the roster back to a full window');
+  assert.deepEqual(noted.at(-1), [KEY_A, KEY_B], 'every relay answer refreshes the landing metadata');
 });
 
 test('a member joining a roster makes the question whole again', () => {

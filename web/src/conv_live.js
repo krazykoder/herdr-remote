@@ -231,14 +231,20 @@
     // One query for the whole roster. Sent only when the answer on hand cannot serve: a member with
     // no bucket yet, or a bucket old enough to be worth asking again. `force` is a turn ending or
     // the ⟳, both of which are someone saying "now".
-    function convLiveFetch(keys, force) {
-      if (!convLiveOn()) return;
+    function convLiveFetch(keys, force, background) {
+      if (!background && !convLiveOn()) return;
       const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
       if (!fps.length) return;
       // Whatever is on disk, before deciding anything: the watermark that says what to ask for
       // lives there now, and asking without it would re-fetch a window this browser already holds.
       // The render that follows draws from the same buckets, so a thread is on screen either way.
-      if (!convLiveLoaded) { convLiveHydrate().then(() => renderConvView()); return; }
+      if (!convLiveLoaded) {
+        convLiveHydrate().then(() => {
+          if (background) convLiveFetch(keys, force, true);
+          else renderConvView();
+        });
+        return;
+      }
       if (!ws || ws.readyState !== 1) {
         // Only when there is nothing to show. With the record on disk, a relay that is down or a
         // phone with no signal is a thread that is behind, not a thread that is empty — and saying
@@ -277,6 +283,25 @@
       // by nothing else.
       if (!force && syncedTo > 0 && syncedTo !== Infinity) payload.since_id = syncedTo;
       ws.send(JSON.stringify(payload));
+    }
+
+    // A fresh browser starts with no transcript cache, so a landing page of conversations it has
+    // never watched has nothing to count. Warm the recent end of the user's work and leave older
+    // threads to the on-demand reader.
+    //
+    // Not forced. This runs on the first answer of every connect, which on a phone is every time
+    // it comes out of a pocket, and forcing would re-ask the whole recent roster each time; the
+    // ordinary freshness rule already asks for a member with no bucket, which is the fresh browser
+    // this exists for.
+    function convLiveWarmRecent() {
+      if (typeof loadConvIndex !== 'function') return;
+      const items = loadConvIndex();
+      const recent = items.slice().sort((a, b) => {
+        const seen = c => Math.max(0, ...((c.members || []).map(m => Number(m.seen) || 0)));
+        return seen(b) - seen(a) || (Number(b.created) || 0) - (Number(a.created) || 0);
+      }).slice(0, 5);
+      const keys = [...new Set(recent.flatMap(c => (c.members || []).map(m => m.key)).filter(Boolean))];
+      convLiveFetch(keys, false, true);
     }
 
     // The newest CONV_LIVE_ROWS of each pane, in reading order. Pure.
@@ -392,6 +417,7 @@
       // Kept, so the next session starts where this one got to. Not awaited: the thread below is
       // drawn from memory and a disk write is not something a reader should wait behind.
       convLivePersist(touched);
+      if (typeof convNoteLiveCounts === 'function') convNoteLiveCounts(convLiveAsked);
 
       if (!convLiveOn()) return;
       renderConvView();
