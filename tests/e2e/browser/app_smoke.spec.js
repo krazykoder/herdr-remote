@@ -68,7 +68,7 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   await page.locator('#bandwidthOn').check();
   await page.locator('#navTimeline').click();
   await expect(page.locator('#bandwidth')).toBeVisible();
-  await expect(page.locator('#bandwidthRows .bandwidth-chip')).toHaveCount(36);
+  await expect(page.locator('#bandwidthRows .bandwidth-chip')).toHaveCount(39);
 
   // A real request and its real relay reply exercise both central WebSocket hooks, rather than
   // testing the counters by calling them directly.
@@ -112,7 +112,7 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   // the reader adds up, and they are rounded before they are read.
   for (const [total, split] of adds) expect(Math.abs(total - split)).toBeLessThanOrEqual(total * 0.02 + 64);
   for (const row of await page.locator('#bandwidthRows .bandwidth-row').all()) {
-    await expect(row.locator('.bandwidth-chip')).toHaveCount(12);
+    await expect(row.locator('.bandwidth-chip')).toHaveCount(13);
   }
   expect(await page.evaluate(() => {
     const b = bandwidthBuckets()[0];
@@ -120,7 +120,7 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   })).toBeGreaterThan(0);
   // Records are a stack: a quiet interval is absent, never drawn as a fabricated zero column.
   await page.evaluate(() => noteBandwidth('sent', 'older bucket', Date.now() - 30 * 60 * 1000));
-  await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(12);
+  await expect(page.locator('#bandwidthRows .bandwidth-time')).toHaveCount(13);
   expect(await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at))).toEqual(
     await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at).slice().sort((a, b) => b - a)));
 
@@ -151,9 +151,9 @@ test('the newest bucket is the one filling, and it is drawn while it fills', asy
   // the numbers underneath it are minutes old at most, and the difference between a small total
   // and a stopped one is the whole reason to look.
   const times = page.locator('#bandwidthRows .bandwidth-time');
-  await expect(times).toHaveCount(12);
-  await expect(times.first()).toHaveText('now');
-  await expect(times.first()).toHaveClass(/now/);
+  await expect(times).toHaveCount(13);
+  await expect(times.nth(1)).toHaveText('now');
+  await expect(times.nth(1)).toHaveClass(/now/);
 
   // And it is redrawn where it stands, without leaving Activity and coming back.
   const live = page.locator('#bandwidthRows .bandwidth-row').first().locator('.bandwidth-chip.now');

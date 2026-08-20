@@ -211,6 +211,7 @@
       const other = panes.length
         ? `<div class="bandwidth-row" id="otherBandwidthRow">` +
           `<span class="bandwidth-label">Shared</span>` +
+          `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals, not attributable to one pane"></span>` +
           `<div class="bandwidth-chips">${buckets.map(b => {
             const range = b.empty ? 'No data' : '';
             return `<span class="bandwidth-chip${b.at && b.at === liveAt ? ' now' : ''}" ` +
@@ -221,13 +222,10 @@
       const sig = buckets.map(b => b.at || 'empty').concat(liveAt ? 'live' : [], metric,
         panes.map(a => a.pane_id)).join(',');
       if (rows.dataset.sig !== sig) {
-        // One grid for the header and all three rows, so the columns line up and the whole table
-        // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
-        // against Received at 2:40 and never see that they had.
-        // The name column takes exactly what the longest name and its badge need — a pane called
-        // "Architect 1 [claude]" is not worth abbreviating, and the buckets are the half that can
-        // afford to scroll under it.
-        rows.style.gridTemplateColumns = `max-content repeat(${buckets.length}, minmax(46px, 1fr))`;
+        // One grid for the header and all rows, so the columns line up and the whole table
+        // scrolls as one.
+        // Column 1 is the name, column 2 is total historical completed usage, and columns 3..N are the time buckets.
+        rows.style.gridTemplateColumns = `max-content minmax(52px, max-content) repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -235,21 +233,19 @@
             start.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ';
           const range = day + `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
             end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
-          // Live is the interval still being filled, which only the collector knows: a record starts
-          // at the message that opened it, not on a clock boundary, so its time cannot be compared
-          // against one. The stack survives a reload and can hold days, so a column outside today
-          // says which day — HH:MM alone would read as this morning.
           return {range: range, live: b.at === liveAt,
             clock: day + `${String(start.getHours()).padStart(2, '0')}:` +
               `${String(start.getMinutes()).padStart(2, '0')}`};
         };
         rows.innerHTML =
           `<div class="bandwidth-head"><span class="bandwidth-label"></span>` +
+          `<span class="bandwidth-time bandwidth-hist-head" title="Total of all completed intervals (excludes live in-progress)">Hist</span>` +
           buckets.map(b => { const t = at(b);
             return `<span class="bandwidth-time${t.live ? ' now' : ''}" title="${t.range}">` +
               `${t.live ? 'now' : t.clock}</span>`; }).join('') + `</div>` +
           kinds.map(([, label]) =>
             `<div class="bandwidth-row"><span class="bandwidth-label">${label}</span>` +
+            `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${label}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${label}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
@@ -257,6 +253,7 @@
           panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
             `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
             `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${escapeHtml(paneLabel(a))}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
                 `title="${paneKind[1]}, ${t.range}${t.live ? ' (in progress)' : ''}"></span>`;
@@ -266,11 +263,15 @@
       // The numbers, written into the chips that are already there.
       const bars = rows.querySelectorAll('.bandwidth-row');
       kinds.forEach(([, , value], r) => {
-        const chips = bars[r].querySelectorAll('.bandwidth-chip');
+        const histChip = bars[r].querySelector('.bandwidth-chip.bandwidth-hist');
+        const histSum = bandwidth.filter(b => b && !b.empty && b.at !== liveAt).reduce((sum, b) => sum + value(b), 0);
+        if (histChip) histChip.textContent = formatBandwidth(histSum);
+        const chips = bars[r].querySelectorAll('.bandwidth-chips .bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
       });
       // Filled as the pane rows are read, so what is left over is exactly what they did not claim.
       const claimed = buckets.map(() => 0);
+      let claimedHist = 0;
       panes.forEach((a, i) => {
         const row = bars[i + kinds.length];
         const b = paneBandwidth[a.pane_id];
@@ -278,19 +279,33 @@
         dot.style.background = statusColor(a);
         dot.classList.toggle('pulse', a.status === 'working');
         row.querySelector('.pane-bandwidth-ping').textContent = b && b.ping ? ` · ${fmtAgo(new Date(b.ping))}` : '';
-        const byAt = Object.fromEntries((b ? b.buckets : []).map(entry => [entry.at, entry]));
-        const chips = row.querySelectorAll('.bandwidth-chip');
-        buckets.forEach((bucket, j) => { const entry = byAt[bucket.at];
+        const allBuckets = b ? b.buckets : [];
+        const paneHistSum = allBuckets.filter(entry => entry.at !== liveAt).reduce((sum, entry) => sum + paneKind[2](entry), 0);
+        claimedHist += paneHistSum;
+        const histChip = row.querySelector('.bandwidth-chip.bandwidth-hist');
+        if (histChip) histChip.textContent = formatBandwidth(paneHistSum);
+
+        const byAt = Object.fromEntries(allBuckets.map(entry => [entry.at, entry]));
+        const chips = row.querySelectorAll('.bandwidth-chips .bandwidth-chip');
+        buckets.forEach((bucket, j) => {
+          const entry = byAt[bucket.at];
           if (entry) claimed[j] += paneKind[2](entry);
-          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : ''; });
+          chips[j].textContent = entry ? formatBandwidth(paneKind[2](entry)) : '';
+        });
       });
       const otherRow = panes.length ? bars[kinds.length + panes.length] : null;
       if (otherRow) {
-        const chips = otherRow.querySelectorAll('.bandwidth-chip');
+        const globalHistTotal = bandwidth.filter(b => b && !b.empty && b.at !== liveAt).reduce((sum, b) => sum + paneKind[2](b), 0);
+        const otherHistChip = otherRow.querySelector('.bandwidth-chip.bandwidth-hist');
+        if (otherHistChip) otherHistChip.textContent = formatBandwidth(Math.max(0, globalHistTotal - claimedHist));
+
+        const chips = otherRow.querySelectorAll('.bandwidth-chips .bandwidth-chip');
         // Clamped: a pane row is written from its own record and the total from another, and a
         // number below zero would be the panel reporting a rounding difference as traffic.
-        buckets.forEach((b, j) => { chips[j].textContent = b.empty ? '' :
-          formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j])); });
+        buckets.forEach((b, j) => {
+          chips[j].textContent = b.empty ? '' :
+            formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j]));
+        });
       }
     }
 
