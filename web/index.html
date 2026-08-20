@@ -3815,6 +3815,52 @@
 
     .hang-solo[hidden] { display: none; }
 
+    /* Same shape and the same place as .hang-solo: both are one short sentence about the state of
+       the thread underneath, so they read as one kind of thing rather than two. */
+    .hang-pill {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 12px;
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--border));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--blue) 14%, var(--surface));
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 6px 16px rgba(0, 0, 0, 0.35);
+      font-size: 0.72rem;
+      color: var(--text);
+      white-space: nowrap;
+      pointer-events: none;
+      animation: hang-pill-in 140ms ease-out;
+    }
+
+    /* Solo owns the centre when it is up, so the pill takes the line under it rather than the two
+       overlapping. One row of a hang button plus its gaps, the same step .hang-working uses. */
+    #convViewSolo:not([hidden]) ~ .hang-pill { top: calc(6px + 28px + 6px); }
+
+    .conv-view-top .hang-pill { top: 100%; margin-top: 6px; }
+    .conv-view-top #convViewSolo:not([hidden]) ~ .hang-pill {
+      top: 100%;
+      margin-top: calc(6px + 28px + 6px);
+    }
+
+    .hang-pill[hidden] { display: none; }
+
+    /* It appears for a few hundred milliseconds at a time. Fading in stops that reading as a flash
+       of chrome over the text. */
+    @keyframes hang-pill-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .hang-pill { animation: none; }
+    }
+
     .solo-name {
       min-width: 0;
       overflow: hidden;
@@ -5450,6 +5496,10 @@
          with: solo hides most of a conversation on purpose, and the reader has to be able to see
          that it did and get back out in one tap. Hidden whenever the whole roster is on screen. -->
     <div class="hang-solo" id="convViewSolo" role="status" hidden></div>
+    <!-- Only while a question to the relay is in the air. It never says the opposite: the relay
+         answers a bounded window and reports no total, so "synced" is not a claim this app can
+         back. See convLiveSyncing. -->
+    <div class="hang-pill" id="convViewSyncing" role="status" hidden>Syncing…</div>
     <div class="hang-float">
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
@@ -5731,6 +5781,7 @@
       <button class="hang-btn hang-last hang-corner" id="paneLast" onclick="hangToLast()"
         aria-label="Jump to the newest message">↓ Last</button>
       <div class="hang-working" id="paneWorking" aria-live="polite"></div>
+      <div class="hang-pill" id="paneSyncing" role="status" hidden>Syncing…</div>
       <div class="hang-float">
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"

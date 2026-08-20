@@ -468,3 +468,41 @@ test('the first ask of a session is the window, and only then the delta', async 
     return page.evaluate(() => window.__asked.some(a => a.since_id > 0));
   }).toBe(true);
 });
+
+test('a question in the air is said over the thread, and nothing is said at rest',
+  async ({page}) => {
+    await open(page);
+    await joinAndThread(page);
+    await page.locator('#paneLive').click();
+
+    const pill = page.locator('#paneSyncing');
+    // At rest it says nothing. Not "synced": the relay answers a bounded window and reports no
+    // total, so this app cannot know it holds everything and must not claim it does.
+    await expect(pill).toBeHidden();
+
+    // A question that goes nowhere, so the state it puts the thread in can be looked at.
+    await page.evaluate(() => {
+      window.__send = ws.send.bind(ws);
+      ws.send = s => { if (!/conv_log/.test(s)) window.__send(s); };
+      convLiveInvalidate();
+      convLiveFetch([convMemberKey(paneOf(activePane))], true);
+    });
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveText(/Syncing/);
+    // Centred over the thread, clear of both floating corners.
+    const box = await pill.boundingBox();
+    const wrap = await page.locator('#termWrap').boundingBox();
+    expect(Math.abs((box.x + box.width / 2) - (wrap.x + wrap.width / 2))).toBeLessThan(2);
+
+    // The answer puts it out again. The swallowed question would have been answered too, so it is
+    // settled here rather than left outstanding — a socket that really did eat it is the lapse
+    // case, and fifteen seconds is not something to sit through in a test.
+    await page.evaluate(() => {
+      ws.send = window.__send;
+      const key = convMemberKey(paneOf(activePane));
+      convLiveReceive({fingerprints: [convKeyFingerprint(key)], turns: []});
+      convLiveInvalidate();
+      convLiveFetch([key], true);
+    });
+    await expect(pill).toBeHidden();
+  });

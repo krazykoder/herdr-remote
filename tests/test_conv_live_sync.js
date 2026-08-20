@@ -40,6 +40,7 @@ const panes = {};
 let addressed = '';
 let recentIndex = [];
 const noted = [];
+let hangs = 0;
 
 const ctx = vm.createContext({
   console,
@@ -49,7 +50,10 @@ const ctx = vm.createContext({
   activePane: '',
   localStorage: {getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; }},
   ws: {readyState: 1, send: s => sent.push(JSON.parse(s))},
-  renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => {}, showToast: () => {},
+  renderConvView: () => {}, renderConvStandalone: () => {}, hangSync: () => { hangs++; }, showToast: () => {},
+  // The pill's own lapse timer. Never fired here — a test that wants the lapse moves the clock
+  // instead, which is the thing convLiveSyncing actually reads.
+  setTimeout: () => 0,
   escapeHtml: s => String(s),
   agentColor: agent => `var(--${agent || 'muted'})`,
   // The roster key builder, in the one spelling the rest of the app uses.
@@ -61,12 +65,14 @@ const ctx = vm.createContext({
 });
 
 const NAMES = ['convLiveFetch', 'convLiveReceive', 'convLiveEntries', 'convLiveInvalidate', 'convLiveWarmRecent',
+               'convLiveSyncing', 'convLiveNoteError', 'convLiveAskDone', 'CONV_LIVE_ASK_TIMEOUT',
                'convLiveEmptyHtml', 'convLiveCache', 'convFpKey', 'convGitRules', 'convLiveHydrate',
                'convCommitsReceive', 'convCommitsCache', 'toggleConvCommits', 'convCommitsOn',
                'syncBranchBadge', 'syncBranchBadges',
                'CONV_LIVE_ROWS', 'CONV_LIVE_EVERY'];
 vm.runInContext(src('conv_live.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {convLiveFetch, convLiveReceive, convLiveEntries, convLiveInvalidate, convLiveWarmRecent,
+       convLiveSyncing, convLiveNoteError, convLiveAskDone, CONV_LIVE_ASK_TIMEOUT,
        convLiveEmptyHtml, convLiveCache, convFpKey, convGitRules, convLiveHydrate,
        convCommitsReceive, convCommitsCache, toggleConvCommits, convCommitsOn,
        syncBranchBadge, syncBranchBadges,
@@ -84,6 +90,9 @@ const turn = (seq, fp, at, text) => ({
 
 function reset(roster) {
   sent.length = 0;
+  // The tests above ask the relay plenty and answer almost none of it, which is fine for what they
+  // check and would leave the pill lit for whoever runs next.
+  convLiveAskDone(true);
   noted.length = 0;
   convLiveCache.clear();
   ctx.agents.length = 0;
@@ -661,4 +670,63 @@ test('each member is still introduced by its own branch', () => {
   const other = convGitRules({...shared, key: KEY_B, branch: 'main', commit: 'a'.repeat(40)}, seen);
   assert.match(first.before, /main/);
   assert.match(other.before, /main/, 'the second member has not been introduced yet');
+});
+
+// --- "Syncing…", said only while a question is in the air ---
+//
+// The pill is the only thing telling a reader that a short thread is short because the answer has
+// not landed yet. Two ways to get it wrong, and both leave it lying: a counter that never comes
+// back down keeps it lit over a thread that is finished, and one that comes down on the first
+// answer of a refill puts it out while several panes are still outstanding.
+
+test('a question in the air is syncing; its answer settles it', async () => {
+  await convLiveHydrate();
+  reset();
+  assert.equal(convLiveSyncing(), false, 'nothing asked, nothing said');
+  convLiveFetch([KEY_A, KEY_B]);
+  assert.equal(convLiveSyncing(), true);
+  convLiveReceive({fingerprints: [FP_A, FP_B], turns: []});
+  assert.equal(convLiveSyncing(), false);
+});
+
+test('a refill is several questions, and each of them has to be answered', async () => {
+  await convLiveHydrate();
+  // Two panes of one agent in one directory: one fingerprint, so a truncated roster answer is
+  // asked again once per pane.
+  const paneA = JSON.stringify(['local', '%1', 'claude', '/work/a']);
+  const paneB = JSON.stringify(['local', '%9', 'claude', '/work/a']);
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([paneA, paneB]);
+  convLiveReceive({fingerprints: [FP_A], turns: [], truncated: true});
+  const refills = sent.filter(m => m.pane);
+  assert.equal(refills.length, 2, 'one narrowed question per pane');
+  assert.equal(convLiveSyncing(), true, 'the roster answer settled itself and opened two more');
+
+  convLiveReceive({fingerprints: [FP_A], pane: '%1', turns: []});
+  assert.equal(convLiveSyncing(), true, 'the second pane is still outstanding');
+  convLiveReceive({fingerprints: [FP_A], pane: '%9', turns: []});
+  assert.equal(convLiveSyncing(), false);
+});
+
+test('an answer that never comes lets it go out on its own', async () => {
+  await convLiveHydrate();
+  reset();
+  convLiveFetch([KEY_A]);
+  assert.equal(convLiveSyncing(), true);
+  // The socket died with the question in it. Nothing will ever answer, and a pill lit forever is
+  // worse than no pill at all.
+  vm.runInContext('convLiveAskedAt = Date.now() - CONV_LIVE_ASK_TIMEOUT - 1;', ctx);
+  assert.equal(convLiveSyncing(), false);
+  assert.equal(convLiveSyncing(), false, 'and it stays out');
+});
+
+test('the record being off answers every outstanding question at once', async () => {
+  await convLiveHydrate();
+  reset();
+  convLiveFetch([KEY_A, KEY_B]);
+  assert.equal(convLiveSyncing(), true);
+  convLiveNoteError('conversation log is off');
+  assert.equal(convLiveSyncing(), false,
+               'no answer is coming for any of them, and the thread says why instead');
 });

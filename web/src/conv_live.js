@@ -39,6 +39,43 @@
     const convLiveCache = new Map();
     let convLiveTruncated = false, convLiveError = '';
 
+    // --- "Asking the relay", said only while it is true ---
+    //
+    // The record arrives in windows and in deltas, so a thread can be on screen and still be short
+    // of what the relay holds. A reader cannot tell that apart from a thread that is simply
+    // finished, and the difference is between waiting a moment and going to look for a bug.
+    //
+    // Transient, and it never says the opposite. A resting "synced" would be a claim this client
+    // has no way to back: the relay answers a bounded window and reports no total, so "everything
+    // is here" is not something the answer contains. Saying nothing at rest is the honest state.
+    let convLiveAsking = 0, convLiveAskedAt = 0;
+
+    // A socket that dies with a question in it never answers. Past this the ask is presumed lost —
+    // a pill that stays lit forever is worse than no pill.
+    const CONV_LIVE_ASK_TIMEOUT = 15000;
+
+    function convLiveSyncing() {
+      if (convLiveAsking <= 0) return false;
+      if (Date.now() - convLiveAskedAt > CONV_LIVE_ASK_TIMEOUT) { convLiveAsking = 0; return false; }
+      return true;
+    }
+
+    function convLiveAskSent(n) {
+      convLiveAsking += n;
+      convLiveAskedAt = Date.now();
+      if (typeof hangSync === 'function') {
+        hangSync();
+        // Nothing else redraws on a timeout expiring, and the pill has to be able to go out on its
+        // own when the answer never comes.
+        setTimeout(hangSync, CONV_LIVE_ASK_TIMEOUT + 100);
+      }
+    }
+
+    function convLiveAskDone(all) {
+      convLiveAsking = all ? 0 : Math.max(0, convLiveAsking - 1);
+      if (typeof hangSync === 'function') hangSync();
+    }
+
     // One host has two spellings: the relay's snapshot and the record both name the local host
     // `local`, but a pane that reached this app with no host at all is keyed under ''. Folded here
     // so a bucket is not filled under one spelling and read under the other.
@@ -283,6 +320,7 @@
       // by nothing else.
       if (!force && syncedTo > 0 && syncedTo !== Infinity) payload.since_id = syncedTo;
       ws.send(JSON.stringify(payload));
+      convLiveAskSent(1);
     }
 
     // A fresh browser starts with no transcript cache, so a landing page of conversations it has
@@ -352,11 +390,13 @@
         ws.send(JSON.stringify(
           { type: 'conv_log', fingerprints: [fp], pane: pane, last: CONV_LIVE_ROWS }));
       }
+      if (sent.size) convLiveAskSent(sent.size);
     }
 
     // The relay answering. Addressed to the client that asked and never broadcast, so this arrives
     // only where someone turned the toggle on.
     function convLiveReceive(msg) {
+      convLiveAskDone();
       convLiveError = '';
       convLiveTruncated = !!msg.truncated;
       const turns = Array.isArray(msg.turns) ? msg.turns : [];
@@ -436,6 +476,7 @@
       convLiveError = text === 'conversation log is off'
         ? 'The relay is not recording. Set HERDR_CONV_LOG=1 and restart it.' : text;
       convLiveCache.clear();
+      convLiveAskDone(true);
       if (convLiveOn()) renderConvView();
     }
 
