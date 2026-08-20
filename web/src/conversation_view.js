@@ -195,8 +195,18 @@
     const CONV_AUTO_SEEN_MAX = 500;
     const CONV_LANDING_AUTO_KEY = 'herdr_conv_landing_auto', CONV_LANDING_AUTO_MAX = 10;
 
+    // The toggle exists so auto conversations cannot bury the named ones, which is a question
+    // about this reader's screen and not about the agents — so it is not one of the four synced
+    // documents. But its default was "hide", and a browser that has just adopted a wholly
+    // automatic index then draws an empty Conversations section: the sync worked, landed in
+    // localStorage, and showed nothing. That reads as the sync having failed. With no named
+    // conversation there is nothing to bury, so until the reader chooses, an all-auto index shows.
     function convLandingAutoOn() {
-      try { return localStorage.getItem(CONV_LANDING_AUTO_KEY) === 'on'; }
+      try {
+        const set = localStorage.getItem(CONV_LANDING_AUTO_KEY);
+        if (set) return set === 'on';
+        return !loadConvIndex().some(c => c && !c.auto);
+      }
       catch (e) { return false; }
     }
 

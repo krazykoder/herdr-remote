@@ -115,6 +115,11 @@ test('a browser that has never connected adopts the conversations rather than mi
   // And the first browser still has what it had. This is the half that made the bug destructive
   // rather than merely wasteful: the fabricated index was written back over the shared one.
   expect(await convIds(page)).toEqual(mine);
+
+  // Adopted into localStorage is not the same as arriving. Every conversation here is an auto one,
+  // and the landing section used to hide those until the reader pressed a per-browser toggle — so
+  // a sync that worked in 1.1 s drew an empty section and read as one that never happened.
+  await expect(fresh.page.locator('#conversations .conversation-card')).toHaveCount(mine.length);
   await fresh.context.close();
 });
 
