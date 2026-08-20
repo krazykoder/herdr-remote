@@ -312,6 +312,42 @@ class ReadOnly(Log):
         self.assertEqual(rows_none, [])
         conn.close()
 
+    def test_until_id_returns_strictly_older_turns(self):
+        # The way back through a record longer than one window. A reader who holds the newest 200
+        # asks for the 200 before them by naming the oldest one they have.
+        id1 = self.add(text="first")
+        id2 = self.add(text="second")
+        id3 = self.add(text="third")
+        conn = open_ro(self.path)
+        rows, _ = query(conn, until_id=id3)
+        self.assertEqual([r["id"] for r in rows], [id1, id2])
+        rows_none, _ = query(conn, until_id=id1)
+        self.assertEqual(rows_none, [])
+        conn.close()
+
+    def test_until_id_walks_back_one_window_at_a_time(self):
+        # Three pages of one row each, taken by feeding the oldest id back in. The pages must not
+        # overlap and must not skip: an off-by-one either way is a repeated bubble or a lost turn,
+        # and neither is visible as anything but a slightly wrong thread.
+        ids = [self.add(text=f"turn {i}") for i in range(5)]
+        conn = open_ro(self.path)
+        seen, cursor = [], None
+        while True:
+            rows, _ = query(conn, until_id=cursor, last=2)
+            if not rows:
+                break
+            seen = [r["id"] for r in rows] + seen
+            cursor = rows[0]["id"]
+        self.assertEqual(seen, ids)
+        conn.close()
+
+    def test_until_id_and_since_id_bound_the_same_window(self):
+        ids = [self.add(text=f"turn {i}") for i in range(5)]
+        conn = open_ro(self.path)
+        rows, _ = query(conn, since_id=ids[0], until_id=ids[4])
+        self.assertEqual([r["id"] for r in rows], ids[1:4])
+        conn.close()
+
     def test_a_missing_record_is_a_different_answer_from_an_empty_one(self):
         with self.assertRaises(FileNotFoundError):
             open_ro(str(Path(self.dir.name) / "not-there.sqlite3"))

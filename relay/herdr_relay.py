@@ -1730,7 +1730,7 @@ async def handle_client(ws, listener="lan"):
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
                         since=since, until=until,
-                        since_id=msg.get("since_id"),
+                        since_id=msg.get("since_id"), until_id=msg.get("until_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
@@ -1748,6 +1748,13 @@ async def handle_client(ws, listener="lan"):
                 # a watermark for every pane sharing the fingerprint, and the rest go quiet.
                 if msg.get("pane"):
                     out_msg["pane"] = msg.get("pane")
+                # Echoed for a third reason, and the sharpest one: a backfill answer is the window
+                # *before* what the client holds, so its highest id is older than the client's
+                # watermark. Taken as a watermark it would wind that client backwards and make the
+                # next delta re-fetch everything between. The client checks for this before it
+                # moves anything.
+                if msg.get("until_id") is not None:
+                    out_msg["until_id"] = msg.get("until_id")
                 await ws.send(json.dumps(out_msg))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
