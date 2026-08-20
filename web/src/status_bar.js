@@ -223,9 +223,15 @@
         panes.map(a => a.pane_id)).join(',');
       if (rows.dataset.sig !== sig) {
         // One grid for the header and all rows, so the columns line up and the whole table
-        // scrolls as one.
-        // Column 1 is the name, column 2 is total historical completed usage, and columns 3..N are the time buckets.
-        rows.style.gridTemplateColumns = `max-content minmax(52px, max-content) repeat(${buckets.length}, minmax(46px, 1fr))`;
+        // scrolls as one — three scrollers of their own would let a reader compare Sent at 3:05
+        // against Received at 2:40 and never see that they had.
+        // The name column takes exactly what the longest name and its badge need — a pane called
+        // "Architect 1 [claude]" is not worth abbreviating, and the buckets are the half that can
+        // afford to scroll under it. Then the historical total, which is sticky beside the name:
+        // it is the one number a reader scrolling back through the hours is comparing against, and
+        // a summary that leaves the screen when the detail is reached is a summary nobody reads.
+        rows.style.gridTemplateColumns =
+          `max-content minmax(52px, max-content) repeat(${buckets.length}, minmax(46px, 1fr))`;
         const at = b => {
           if (b.empty) return {range: 'No data', live: false, clock: '—'};
           const start = new Date(b.at), end = new Date(b.at + size);
@@ -233,6 +239,10 @@
             start.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ';
           const range = day + `${start.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}–` +
             end.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+          // Live is the interval still being filled, which only the collector knows: a record starts
+          // at the message that opened it, not on a clock boundary, so its time cannot be compared
+          // against one. The stack survives a reload and can hold days, so a column outside today
+          // says which day — HH:MM alone would read as this morning.
           return {range: range, live: b.at === liveAt,
             clock: day + `${String(start.getHours()).padStart(2, '0')}:` +
               `${String(start.getMinutes()).padStart(2, '0')}`};
@@ -264,7 +274,11 @@
       const bars = rows.querySelectorAll('.bandwidth-row');
       kinds.forEach(([, , value], r) => {
         const histChip = bars[r].querySelector('.bandwidth-chip.bandwidth-hist');
-        const histSum = bandwidth.filter(b => b && !b.empty && b.at !== liveAt).reduce((sum, b) => sum + value(b), 0);
+        // Every closed interval the stack still holds, not only the ones with a column: the panel
+        // shows the last few hours and this is the whole of what was kept. `liveAt` is 0 when
+        // nothing is open, and no bucket is at 0, so that case excludes nothing — which is right.
+        const histSum = bandwidth.filter(b => b && !b.empty && b.at !== liveAt)
+          .reduce((sum, b) => sum + value(b), 0);
         if (histChip) histChip.textContent = formatBandwidth(histSum);
         const chips = bars[r].querySelectorAll('.bandwidth-chips .bandwidth-chip');
         buckets.forEach((b, i) => { chips[i].textContent = b.empty ? '' : formatBandwidth(value(b)); });
@@ -306,6 +320,17 @@
           chips[j].textContent = b.empty ? '' :
             formatBandwidth(Math.max(0, paneKind[2](b) - claimed[j]));
         });
+      }
+
+      // What the name column ended up being, handed back to the stylesheet so the Hist column can
+      // stick to its right edge. Only the browser knows it — the column is sized to its contents.
+      // Last, after every name is written: a pane's "last seen" is appended to its label above, and
+      // measured before that the column comes out narrower than it ends up. Re-read every draw
+      // rather than once per layout — a rename, or the panel first opened while it was hidden and
+      // measured as zero, both change it without changing the signature.
+      const nameW = getComputedStyle(rows).gridTemplateColumns.split(' ')[0];
+      if (parseFloat(nameW) > 0 && rows.style.getPropertyValue('--bandwidth-name-w') !== nameW) {
+        rows.style.setProperty('--bandwidth-name-w', nameW);
       }
     }
 
@@ -373,13 +398,18 @@
       const totalMsgs = convAnalyticsData.reduce((acc, c) => acc + (c.msgCount || 0), 0);
       const totalLiveBytes = convAnalyticsData.reduce((acc, c) => acc + (c.liveBytes || 0), 0);
       const totalRecordedBytes = convAnalyticsData.reduce((acc, c) => acc + (c.recordedBytes || 0), 0);
-      const totalBytes = totalLiveBytes + totalRecordedBytes;
+      const totalIndexBytes = convAnalyticsData.reduce((acc, c) => acc + (c.indexBytes || 0), 0);
+      const totalBytes = totalLiveBytes + totalRecordedBytes + totalIndexBytes;
 
       if (totalEl) {
         const n = convAnalyticsData.length;
+        // The two transcript halves in the line, the index only in the tooltip: it is a rounding
+        // error beside them, and a third figure on a line read at a glance buys nothing.
         totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'} · ` +
           `${formatConvSize(totalBytes)} (Live: ${formatConvSize(totalLiveBytes)} · Recorded: ${formatConvSize(totalRecordedBytes)})`;
-        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Live: ${totalLiveBytes.toLocaleString()} B · Recorded: ${totalRecordedBytes.toLocaleString()} B)`;
+        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Live: ` +
+          `${totalLiveBytes.toLocaleString()} B · Recorded: ${totalRecordedBytes.toLocaleString()} B · ` +
+          `Index: ${totalIndexBytes.toLocaleString()} B)`;
       }
 
       if (!convAnalyticsData.length) {
@@ -401,8 +431,12 @@
       const rowsHtml = sorted.map(c => {
         const liveSize = formatConvSize(c.liveBytes);
         const recSize = formatConvSize(c.recordedBytes);
+        const idxSize = formatConvSize(c.indexBytes);
         const totalSize = formatConvSize(c.totalBytes);
-        const titleTip = `${escapeHtml(c.name)} · Live: ${(c.liveBytes || 0).toLocaleString()} B · Recorded: ${(c.recordedBytes || 0).toLocaleString()} B · Total: ${(c.totalBytes || 0).toLocaleString()} B`;
+        const titleTip = `${escapeHtml(c.name)} · Live: ${(c.liveBytes || 0).toLocaleString()} B · ` +
+          `Recorded: ${(c.recordedBytes || 0).toLocaleString()} B · ` +
+          `Index: ${(c.indexBytes || 0).toLocaleString()} B · ` +
+          `Total: ${(c.totalBytes || 0).toLocaleString()} B`;
         return `<tr>` +
           `<td><button type="button" class="conv-analytics-name-btn" data-id="${escapeHtml(c.id)}" ` +
           `onclick="openConversation(this.dataset.id)" title="Open ${escapeHtml(c.name)}">` +
@@ -410,6 +444,7 @@
           `<td class="conv-analytics-num">${c.msgCount.toLocaleString()}</td>` +
           `<td class="conv-analytics-num" title="${(c.liveBytes || 0).toLocaleString()} bytes">${liveSize}</td>` +
           `<td class="conv-analytics-num" title="${(c.recordedBytes || 0).toLocaleString()} bytes">${recSize}</td>` +
+          `<td class="conv-analytics-num" title="${(c.indexBytes || 0).toLocaleString()} bytes">${idxSize}</td>` +
           `<td class="conv-analytics-num" title="${titleTip}">${totalSize}</td>` +
           `</tr>`;
       }).join('');
@@ -419,6 +454,7 @@
         `<td class="conv-analytics-num"><strong>${totalMsgs.toLocaleString()}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalLiveBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalLiveBytes)}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalRecordedBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalRecordedBytes)}</strong></td>` +
+        `<td class="conv-analytics-num" title="${totalIndexBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalIndexBytes)}</strong></td>` +
         `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes"><strong>${formatConvSize(totalBytes)}</strong></td>` +
         `</tr></tfoot>`;
 
@@ -428,6 +464,9 @@
         th('msgCount', 'Messages', true) +
         th('liveBytes', 'Live IDB', true) +
         th('recordedBytes', 'Recorded IDB', true) +
+        // The row that names the conversation is in IndexedDB too, and the three columns have to
+        // add up to the fourth or the table reads as one of them being wrong.
+        th('indexBytes', 'Index', true) +
         th('totalBytes', 'Total IDB', true) +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +

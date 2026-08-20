@@ -593,17 +593,27 @@
       }
     }
 
-    // Total IDB storage footprint and statistics per conversation across live and recorded pane transcripts.
+    // What a conversation costs in IndexedDB, split the way the reader can act on it: transcripts
+    // of panes still running, transcripts of panes that have ended, and the index row that names
+    // the conversation itself. The split matters because only one of the three is finished — a
+    // live pane's transcript is still growing, and a recorded one is exactly as big as it will
+    // ever be.
+    //
+    // `liveAgents` is whatever the caller has: the agents array, or a set of member keys already
+    // worked out. Anything else counts as nothing live rather than as an error — this measures
+    // storage, and a wrong split is better than a panel that will not draw.
     function calcConvAnalytics(convs, recordsMap, liveAgents) {
       const list = convs || [];
       const records = (recordsMap && typeof recordsMap.get === 'function')
         ? recordsMap
         : new Map(Object.entries(recordsMap || {}));
-      const liveKeySet = new Set(
-        Array.isArray(liveAgents)
-          ? liveAgents.map(a => a ? (a.key || (typeof convMemberKey === 'function' ? convMemberKey(a) : '') || a.pane_id || '') : '').filter(Boolean)
-          : (liveAgents instanceof Set ? liveAgents : [])
-      );
+      const memberKey = a => a &&
+        (a.key || (typeof convMemberKey === 'function' ? convMemberKey(a) : '') || a.pane_id || '');
+      // Anything with `has` is taken as the set of keys itself — duck-typed rather than
+      // `instanceof Set`, which is false for a Set made in another realm.
+      const liveKeySet = (liveAgents && typeof liveAgents.has === 'function')
+        ? liveAgents
+        : new Set(Array.from(liveAgents || [], memberKey).filter(Boolean));
       return list.map(c => {
         const members = c.members || [];
         let msgCount = 0;
@@ -628,7 +638,14 @@
             }
           }
         }
-        const totalBytes = liveBytes + recordedBytes;
+        // The index row is in IndexedDB too, and a column called Total that left it out would be
+        // under-reporting by exactly the thing it names. It is small — a name, a member list — but
+        // it is the only part a conversation with no transcripts at all still costs.
+        let indexBytes = 0;
+        try {
+          indexBytes = JSON.stringify(c).length;
+        } catch (e) { /* a cycle in the index row: the transcripts are still worth reporting */ }
+        const totalBytes = liveBytes + recordedBytes + indexBytes;
         const sizeMb = totalBytes / (1024 * 1024);
 
         return {
@@ -639,6 +656,7 @@
           msgCount: msgCount,
           liveBytes: liveBytes,
           recordedBytes: recordedBytes,
+          indexBytes: indexBytes,
           totalBytes: totalBytes,
           sizeMb: sizeMb,
           touched: c.touched || 0,
@@ -653,19 +671,12 @@
         if (col === 'name') {
           return d * (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true });
         }
-        if (col === 'msgCount') {
-          return d * ((a.msgCount || 0) - (b.msgCount || 0));
-        }
-        if (col === 'panes') {
-          return d * ((a.panes || 0) - (b.panes || 0));
-        }
-        if (col === 'liveBytes') {
-          return d * ((a.liveBytes || 0) - (b.liveBytes || 0));
-        }
-        if (col === 'recordedBytes') {
-          return d * ((a.recordedBytes || 0) - (b.recordedBytes || 0));
-        }
-        return d * ((a.totalBytes || 0) - (b.totalBytes || 0));
+        // Every other column is a number on the row, so the column id is the field name and a new
+        // column needs a header rather than a branch here. Anything not on the list sorts by total,
+        // which is the table's default and the one column a row always has.
+        const numeric = ['msgCount', 'panes', 'liveBytes', 'recordedBytes', 'indexBytes', 'totalBytes'];
+        const f = numeric.indexOf(col) === -1 ? 'totalBytes' : col;
+        return d * ((a[f] || 0) - (b[f] || 0));
       });
     }
 

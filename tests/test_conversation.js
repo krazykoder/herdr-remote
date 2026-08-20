@@ -853,7 +853,8 @@ test('calcConvAnalytics accurately aggregates message count, panes, and total si
   const stats = calcConvAnalytics(convs, recordsMap, liveAgents);
   assert.strictEqual(stats.length, 2);
 
-  // c1: 2 members/panes, 2 + 1 = 3 messages, liveBytes > 0, recordedBytes > 0, totalBytes = liveBytes + recordedBytes
+  // c1: 2 members/panes, 2 + 1 = 3 messages, and a total that is the three parts added up — the
+  // index row counts too, or a column called Total leaves out the one thing it names.
   assert.strictEqual(stats[0].id, 'c1');
   assert.strictEqual(stats[0].name, 'Alpha Plan');
   assert.strictEqual(stats[0].auto, false);
@@ -861,23 +862,48 @@ test('calcConvAnalytics accurately aggregates message count, panes, and total si
   assert.strictEqual(stats[0].msgCount, 3);
   assert.ok(stats[0].liveBytes > 0);
   assert.ok(stats[0].recordedBytes > 0);
-  assert.strictEqual(stats[0].totalBytes, stats[0].liveBytes + stats[0].recordedBytes);
+  assert.ok(stats[0].indexBytes > 0);
+  assert.strictEqual(stats[0].totalBytes,
+    stats[0].liveBytes + stats[0].recordedBytes + stats[0].indexBytes);
   assert.ok(stats[0].sizeMb > 0);
 
-  // c2: 1 member, 0 messages, empty transcript
+  // c2: 1 member, 0 messages, empty transcript — and still not free, because the index row that
+  // names it is itself in IndexedDB.
   assert.strictEqual(stats[1].id, 'c2');
   assert.strictEqual(stats[1].name, 'Beta Review');
   assert.strictEqual(stats[1].auto, true);
   assert.strictEqual(stats[1].panes, 1);
   assert.strictEqual(stats[1].msgCount, 0);
-  assert.strictEqual(stats[1].totalBytes, stats[1].liveBytes + stats[1].recordedBytes);
+  assert.ok(stats[1].indexBytes > 0);
+  assert.strictEqual(stats[1].totalBytes,
+    stats[1].liveBytes + stats[1].recordedBytes + stats[1].indexBytes);
+});
+
+test('calcConvAnalytics takes a set of member keys as well as an agents array', () => {
+  const convs = [{ id: 'c1', name: 'Alpha', members: [{ key: 'm1' }, { key: 'm2' }] }];
+  const recordsMap = new Map([
+    ['m1', { key: 'm1', entries: [{ who: 'agent', text: 'live one' }] }],
+    ['m2', { key: 'm2', entries: [{ who: 'agent', text: 'ended one' }] }],
+  ]);
+
+  const fromArray = calcConvAnalytics(convs, recordsMap, [{ key: 'm1' }])[0];
+  const fromSet = calcConvAnalytics(convs, recordsMap, new Set(['m1']))[0];
+  assert.ok(fromArray.liveBytes > 0 && fromArray.recordedBytes > 0);
+  assert.strictEqual(fromSet.liveBytes, fromArray.liveBytes);
+  assert.strictEqual(fromSet.recordedBytes, fromArray.recordedBytes);
+
+  // Nothing usable for the split still measures: everything counts as recorded rather than the
+  // panel refusing to draw.
+  const none = calcConvAnalytics(convs, recordsMap, null)[0];
+  assert.strictEqual(none.liveBytes, 0);
+  assert.strictEqual(none.totalBytes, fromArray.totalBytes);
 });
 
 test('sortConvAnalyticsRows sorts rows by column and direction', () => {
   const rows = [
-    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, liveBytes: 1000, recordedBytes: 4000, totalBytes: 5000 },
-    { id: '2', name: 'Beta', msgCount: 50, panes: 3, liveBytes: 15000, recordedBytes: 5000, totalBytes: 20000 },
-    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, liveBytes: 200, recordedBytes: 800, totalBytes: 1000 },
+    { id: '1', name: 'Zeta', msgCount: 10, panes: 1, liveBytes: 1000, recordedBytes: 4000, indexBytes: 60, totalBytes: 5060 },
+    { id: '2', name: 'Beta', msgCount: 50, panes: 3, liveBytes: 15000, recordedBytes: 5000, indexBytes: 40, totalBytes: 20040 },
+    { id: '3', name: 'Alpha', msgCount: 5, panes: 2, liveBytes: 200, recordedBytes: 800, indexBytes: 90, totalBytes: 1090 },
   ];
 
   // Sort by size (totalBytes) descending
@@ -895,6 +921,10 @@ test('sortConvAnalyticsRows sorts rows by column and direction', () => {
   // Sort by recordedBytes descending
   const byRecDesc = sortConvAnalyticsRows(rows, 'recordedBytes', 'desc');
   assert.deepStrictEqual(byRecDesc.map(r => r.name), ['Beta', 'Zeta', 'Alpha']);
+
+  // Sort by indexBytes descending — a column is only sortable if the sorter knows it.
+  const byIdxDesc = sortConvAnalyticsRows(rows, 'indexBytes', 'desc');
+  assert.deepStrictEqual(byIdxDesc.map(r => r.name), ['Alpha', 'Zeta', 'Beta']);
 
   // Sort by name ascending
   const byNameAsc = sortConvAnalyticsRows(rows, 'name', 'asc');

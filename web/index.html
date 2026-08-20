@@ -756,7 +756,25 @@
     }
 
     .bandwidth-time.now { color: var(--green); }
-    .bandwidth-hist-head { font-weight: 600; color: var(--text); }
+
+    /* The historical total stays put alongside the name. It is the number every bucket is being
+       compared against, and a total that scrolls off the moment the reader goes looking for the
+       hour that produced it is a total nobody can use. Its offset is the name column's own width,
+       measured after layout (see renderBandwidth) because that column is sized to its contents.
+       Offset by exactly that width, so it lands flush against the name and covers the column gap
+       the buckets would otherwise be seen sliding through. */
+    .bandwidth-hist-head,
+    .bandwidth-chip.bandwidth-hist {
+      position: sticky;
+      left: var(--bandwidth-name-w, 0px);
+      z-index: 1;
+    }
+
+    .bandwidth-hist-head {
+      font-weight: 600;
+      color: var(--text);
+      background: var(--bg);
+    }
 
     .bandwidth-chip {
       padding: 3px 4px;

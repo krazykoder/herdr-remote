@@ -5110,7 +5110,17 @@ test('conversation storage analytics displays live, recorded, and total IDB brea
   });
   await expect(page.locator('#convAnalyticsWrap .conv-analytics-table')).toBeVisible();
   const headers = await page.locator('#convAnalyticsWrap .conv-analytics-table th').allInnerTexts();
-  expect(headers).toEqual(['CONVERSATION', 'MESSAGES', 'LIVE IDB', 'RECORDED IDB', 'TOTAL IDB']);
+  expect(headers).toEqual(['CONVERSATION', 'MESSAGES', 'LIVE IDB', 'RECORDED IDB', 'INDEX', 'TOTAL IDB']);
   await expect(page.locator('#convAnalyticsWrap .conv-analytics-table tfoot td').first()).toContainText('Total');
+
+  // The three parts have to add up to the fourth. The sizes are rendered rounded, so the check is
+  // against the byte counts in the tooltips — a table whose columns do not reconcile reads as one
+  // of them being wrong, whichever one is.
+  const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot td');
+  const bytes = async i => Number((await foot.nth(i).getAttribute('title')).replace(/[^0-9]/g, ''));
+  const [live, recorded, index, total] =
+    [await bytes(2), await bytes(3), await bytes(4), await bytes(5)];
+  expect(index).toBeGreaterThan(0);
+  expect(live + recorded + index).toBe(total);
 });
 

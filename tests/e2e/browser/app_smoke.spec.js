@@ -124,6 +124,42 @@ test('Activity tracks local WebSocket payload bytes in a newest-first interval s
   expect(await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at))).toEqual(
     await page.evaluate(() => bandwidthBuckets().filter(b => !b.empty).map(b => b.at).slice().sort((a, b) => b - a)));
 
+  // Hist is every closed interval added up, so it is what the row's own chips come to once the
+  // one still being filled is left out — a running column has no business in a completed total.
+  const hist = await page.locator('#bandwidthRows').evaluate(rows => {
+    const bytes = t => { const [n, unit] = (t || '0 B').split(' ');
+      return Number(n) * (unit === 'MB' ? 1024 * 1024 : unit === 'KB' ? 1024 : 1); };
+    const row = rows.querySelector('.bandwidth-row');
+    const closed = [...row.querySelectorAll('.bandwidth-chips .bandwidth-chip')]
+      .filter(c => !c.classList.contains('now'));
+    return [bytes(row.querySelector('.bandwidth-chip.bandwidth-hist').textContent),
+      closed.reduce((n, c) => n + bytes(c.textContent), 0)];
+  });
+  expect(Math.abs(hist[0] - hist[1])).toBeLessThanOrEqual(hist[0] * 0.02 + 64);
+
+  // And it stays beside the name when the hours scroll past: the total is what every bucket is
+  // being compared against, so it has to still be on screen when the bucket is reached.
+  // Narrowed to a phone's worth of table, because on a desktop the whole hour fits and nothing is
+  // sticky until something scrolls. Wide enough for the name and the total together — narrower
+  // than the two of them, a browser clamps the sticky column back inside the scrollport and there
+  // is nothing left to hold still. Drawn again at that width: the offset is measured as the table
+  // is written, so a resize is only picked up on the next draw.
+  await page.evaluate(() => {
+    document.getElementById('bandwidthRows').style.maxWidth = '420px';
+    renderBandwidth();
+  });
+  const stuck = await page.locator('#bandwidthRows').evaluate(rows => {
+    rows.scrollLeft = rows.scrollWidth;
+    const row = rows.querySelector('.bandwidth-row');
+    const name = row.querySelector('.bandwidth-label').getBoundingClientRect();
+    const h = row.querySelector('.bandwidth-chip.bandwidth-hist').getBoundingClientRect();
+    const at = [h.left - name.right, h.left - rows.getBoundingClientRect().left];
+    rows.style.maxWidth = '';
+    return at;
+  });
+  expect(Math.abs(stuck[0])).toBeLessThan(1);  // flush against the name, no gap to show through
+  expect(stuck[1]).toBeGreaterThan(0);
+
   // A second tap on Activity leaves it, which is what every other panel button does.
   await page.locator('#navTimeline').click();
   await expect(page.locator('#timelineView')).toBeHidden();
