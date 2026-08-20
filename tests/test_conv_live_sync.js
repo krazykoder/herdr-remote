@@ -293,6 +293,78 @@ test('a commits field that is not a list is not trusted', () => {
   assert.deepEqual(convLiveEntries([KEY_A])[0].commits, []);
 });
 
+// --- One fingerprint, several panes ---
+//
+// A fingerprint is `[host, agent, cwd]`, and that is deliberate: it is what survives herdr
+// renumbering every pane on restart. It is also not a pane. Four claude sessions in one repository
+// are one fingerprint, and the relay answers a fingerprint with the newest 200 rows across all of
+// them — cut further by a byte bound. Whoever spoke most recently takes the window, and a pane with
+// its own long history renders a handful of rows while the record holds hundreds.
+
+// KEY_A2 and paneTurn above are the second pane sharing FP_A's agent and directory: same
+// fingerprint, one pane apart, which is the whole subject of this section.
+
+test('an answer that did not fit is asked again for each pane the roster names', () => {
+  reset();
+  convLiveFetch([KEY_A, KEY_A2]);
+  const roster = asked();
+  assert.deepEqual(new Set(roster.fingerprints.map(f => f.join('|'))),
+                   new Set([FP_A.join('|')]), 'both members are one fingerprint');
+  assert.equal(roster.pane, undefined, 'the roster question is not scoped to a pane');
+
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(1, '%9', 100, 'the busy neighbour')],
+                   fingerprints: [FP_A], truncated: true});
+  assert.deepEqual(sent.map(m => m.pane), ['%1', '%9'],
+                   'each pane gets a window of its own');
+  for (const m of sent) assert.deepEqual(m.fingerprints, [FP_A]);
+});
+
+test('an answer that fitted is not asked again', () => {
+  reset();
+  convLiveFetch([KEY_A, KEY_A2]);
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(1, '%1', 100, 'all of it')], fingerprints: [FP_A]});
+  assert.deepEqual(sent, [], 'nothing was left out, so there is nothing narrower to ask');
+});
+
+test('a pane-scoped answer does not stand as the fingerprint’s watermark', () => {
+  // The bug this guards: the narrow answer carries one pane's rows, and its highest id taken as
+  // the watermark would tell the next delta that every other pane sharing the fingerprint is
+  // current through an id it was never asked about. Their turns would never arrive again.
+  reset();
+  convLiveFetch([KEY_A]);
+  sent.length = 0;
+  convLiveReceive({turns: [paneTurn(9, '%1', 100, 'narrow')], fingerprints: [FP_A], pane: '%1'});
+  convLiveInvalidate();
+  convLiveFetch([KEY_A], true);
+  assert.equal(asked().since_id, undefined);
+
+  // And the roster answer that does settle it is the one with no pane on it.
+  convLiveReceive({turns: [paneTurn(9, '%1', 100, 'narrow')], fingerprints: [FP_A]});
+  convLiveInvalidate();
+  convLiveFetch([KEY_A]);
+  assert.equal(asked().since_id, 9);
+});
+
+test('the ceiling is counted per pane, not over the fingerprint', () => {
+  // Over the fingerprint, the busiest pane evicts the quiet one down to nothing: the reader opens
+  // a pane with a long history behind it and is shown whatever is left after its neighbours took
+  // their share of one number.
+  // Both panes live, so each row is claimed by the pane that made it — the inheritance rule that
+  // hands an ended pane's rows to whoever holds the fingerprint is a different question.
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'},
+         {host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  const turns = [];
+  for (let i = 1; i <= CONV_LIVE_ROWS; i++) turns.push(paneTurn(i, '%1', i, 'mine ' + i));
+  for (let i = 1; i <= CONV_LIVE_ROWS; i++) {
+    turns.push(paneTurn(CONV_LIVE_ROWS + i, '%9', CONV_LIVE_ROWS + i, 'theirs ' + i));
+  }
+  convLiveReceive({turns, fingerprints: [FP_A]});
+  assert.equal(convLiveEntries([KEY_A]).length, CONV_LIVE_ROWS,
+               'the quiet pane keeps its own window');
+  assert.equal(convLiveEntries([KEY_A2]).length, CONV_LIVE_ROWS);
+});
 
 // --- Branch changes and commits, as events in the thread ---
 //

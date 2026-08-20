@@ -210,6 +210,11 @@
       } catch (e) { return null; }
     }
 
+    // The member keys the last roster ask was made for. A fingerprint is `[host, agent, cwd]` and
+    // several panes can share one — four claude panes in one repository do — so an answer that came
+    // back truncated has to be refilled pane by pane, and this is what says which panes those are.
+    let convLiveAsked = [];
+
     // "Ask the relay again on the way through." Called where something has happened that the record
     // already knows about and this cache does not — a turn ending, or a reader pressing ⟳. It drops
     // the cadence rather than the rows: the next render re-asks, and asks only for what is new.
@@ -264,6 +269,7 @@
 
       for (const fp of fps) convLiveBucket(convFpKey(fp)).lastFetch = now;
 
+      convLiveAsked = (keys || []).slice();
       const payload = { type: 'conv_log', fingerprints: fps, last: CONV_LIVE_ROWS };
       // A delta only when every member is proven current through the same id. `force` still asks
       // for the window, because the reader pressing ⟳ is asking for the record and not for the
@@ -271,6 +277,56 @@
       // by nothing else.
       if (!force && syncedTo > 0 && syncedTo !== Infinity) payload.since_id = syncedTo;
       ws.send(JSON.stringify(payload));
+    }
+
+    // The newest CONV_LIVE_ROWS of each pane, in reading order. Pure.
+    function convLiveTrim(turns) {
+      const kept = [];
+      const seen = new Map();
+      // Backwards: the newest end is the end that is kept, which is the same end the relay's own
+      // window keeps.
+      for (let i = turns.length - 1; i >= 0; i--) {
+        const t = turns[i];
+        const pane = t.pane_id || '';
+        const n = seen.get(pane) || 0;
+        if (n >= CONV_LIVE_ROWS) continue;
+        seen.set(pane, n + 1);
+        kept.push(t);
+      }
+      return kept.reverse();
+    }
+
+    // A window that did not reach the end, spent again on one pane at a time.
+    //
+    // The record is asked by fingerprint, because that is what survives herdr renumbering every
+    // pane on restart. But a fingerprint is an agent in a directory, not a pane: four claude panes
+    // in one repository are one fingerprint and 400 turns, and the relay answers the newest 200 of
+    // them — cut further by a 64 KB bound. Whoever spoke most recently takes the whole window, and
+    // a pane with 181 turns of its own renders a handful. Which is not "the relay has nothing for
+    // this pane"; it is this client asking a question whose answer it then throws most of away.
+    //
+    // So when the answer says it was truncated, ask again for each pane the roster actually names.
+    // `pane` narrows the same query, so each of those windows is spent on one pane. Once only, per
+    // fingerprint per cadence — a pane-scoped answer never triggers another round.
+    function convLiveRefill(fingerprints) {
+      if (!ws || ws.readyState !== 1) return;
+      const wanted = new Set((fingerprints || []).map(convFpKey));
+      const now = Date.now();
+      const sent = new Set();
+      for (const key of convLiveAsked) {
+        const fp = convKeyFingerprint(key);
+        if (!fp) continue;
+        const fpKey = convFpKey(fp);
+        if (!wanted.has(fpKey)) continue;
+        let pane = '';
+        try { pane = (JSON.parse(key) || [])[1] || ''; } catch (e) { continue; }
+        if (!pane || sent.has(pane)) continue;
+        sent.add(pane);
+        const bucket = convLiveBucket(fpKey);
+        bucket.refilled = now;
+        ws.send(JSON.stringify(
+          { type: 'conv_log', fingerprints: [fp], pane: pane, last: CONV_LIVE_ROWS }));
+      }
     }
 
     // The relay answering. Addressed to the client that asked and never broadcast, so this arrives
@@ -301,11 +357,17 @@
       for (const fp of (Array.isArray(msg.fingerprints) ? msg.fingerprints : [])) {
         const fpKey = convFpKey(fp);
         const bucket = convLiveBucket(fpKey);
-        bucket.lastFetch = now;
-        bucket.answered = true;
         // Heard from, this session, against this relay: the next ask for it can be a delta.
-        convLiveVerified.add(fpKey);
-        if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
+        // Not for a pane-scoped answer, which carries one pane out of the fingerprint's several —
+        // taking its highest id as the watermark would tell the next delta that every *other*
+        // pane sharing this fingerprint is current through an id it was never asked about, and
+        // their rows would never arrive at all.
+        if (!msg.pane) {
+          convLiveVerified.add(fpKey);
+          if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
+          bucket.lastFetch = now;
+          bucket.answered = true;
+        }
         touched.add(fpKey);
       }
 
@@ -314,10 +376,18 @@
         bucket.turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || 0) - (b.seq || 0));
         // The same ceiling a single query carries, held across the deltas that follow it: without
         // this a session left open all day grows a bucket without bound.
-        if (bucket.turns.length > CONV_LIVE_ROWS) {
-          bucket.turns.splice(0, bucket.turns.length - CONV_LIVE_ROWS);
-        }
+        //
+        // Counted per pane rather than over the bucket, because the bucket is a fingerprint and the
+        // thread is a pane. Over the bucket, the busiest pane sharing a fingerprint evicts the
+        // quiet one's history down to nothing — the reader opens a pane with 181 turns behind it
+        // and is shown whatever is left of 200 after its neighbours took theirs.
+        bucket.turns = convLiveTrim(bucket.turns);
       }
+
+      // A roster answer that did not fit is asked again, pane by pane. Never off a pane-scoped
+      // answer: that one being truncated means the pane alone has more than a window, and there is
+      // no narrower question left to ask.
+      if (convLiveTruncated && !msg.pane) convLiveRefill(msg.fingerprints);
 
       // Kept, so the next session starts where this one got to. Not awaited: the thread below is
       // drawn from memory and a disk write is not something a reader should wait behind.

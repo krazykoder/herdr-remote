@@ -1742,6 +1742,12 @@ async def handle_client(ws, listener="lan"):
                 }
                 if "fingerprints" in msg:
                     out_msg["fingerprints"] = msg.get("fingerprints")
+                # Echoed for the same reason: a fingerprint is an agent in a directory and several
+                # panes can share one, so a client that narrowed to a pane has to be able to tell
+                # that answer from the roster's. Without it the narrow answer's highest id reads as
+                # a watermark for every pane sharing the fingerprint, and the rest go quiet.
+                if msg.get("pane"):
+                    out_msg["pane"] = msg.get("pane")
                 await ws.send(json.dumps(out_msg))
             elif msg_type == "read_pane":
                 pane_id = msg["pane_id"]
