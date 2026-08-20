@@ -143,6 +143,11 @@
     // something the user chose to keep and marked dangerous if it was; this list keeps whatever
     // was typed, including the things that were typed once on purpose. A history that re-runs on
     // one tap is a mis-tap away from running it again.
+    //
+    // Filled but not focused. On a phone a focus summons the keyboard over the terminal the reader
+    // is picking a command *against*, and the next tap is as likely to be another entry as it is
+    // to be Send — the same reason the command palette stopped autofocusing its search on touch.
+    // The field is one tap away when they do want to edit it.
     function useTermCommand(i) {
       const text = termHistory[i];
       if (!text) return;
@@ -150,7 +155,6 @@
       if (!input) return;
       input.value = text;
       autoGrow(input);
-      input.focus();
     }
 
     function renderTermHistory() {
