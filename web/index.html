@@ -4132,14 +4132,11 @@
     }
 
     /* Shown by the pane's kind rather than the scroll position, so it does not carry .on like the
-       rest of the row — a terminal always has a history worth reaching. Bare until it is opened:
-       collapsed, this is a signpost rather than an action, and a fourth bordered chip in a row of
-       three would read as one more thing to press. Opening it makes it a control and it takes the
-       chrome to say so. */
+       rest of the row — over a terminal this is always there, whether anything has been typed yet
+       or not. Drawn as the chips beside it are: it is the same kind of control in the same row,
+       and the `$` is set in the terminal's own face because that is what it is a sign for. */
     .hang-hist .hang-btn {
       display: inline-flex;
-      border-color: transparent;
-      background: transparent;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 15px;
     }
@@ -4147,7 +4144,6 @@
     .hang-hist.open .hang-hist-btn {
       color: var(--blue);
       border-color: var(--blue);
-      background: var(--surface);
     }
 
     .hist-list {
@@ -4173,10 +4169,25 @@
       box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
     }
 
+    /* `display: flex` above outranks the `hidden` attribute's `display: none`, and an empty
+       padded, bordered, rounded box is exactly the stray circle that leaves under the button. */
+    .hist-list[hidden] {
+      display: none;
+    }
+
     .hist-item {
       display: flex;
       align-items: center;
       gap: 2px;
+    }
+
+    /* An empty list is now reachable — the button no longer waits for a first command — so it has
+       to say why it is empty rather than open as a blank box. */
+    .hist-empty {
+      padding: 4px 6px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
     }
 
     /* Monospace and small, because it is a command and it is being recognised rather than read —

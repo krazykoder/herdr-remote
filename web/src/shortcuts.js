@@ -139,38 +139,52 @@
       renderTermHistory();
     }
 
-    // Into the composer, not onto the wire. The $ palette sends because everything in it is
-    // something the user chose to keep and marked dangerous if it was; this list keeps whatever
-    // was typed, including the things that were typed once on purpose. A history that re-runs on
-    // one tap is a mis-tap away from running it again.
+    // Runs it, the same as picking from the $ palette: this is a list of commands that already
+    // ran at this prompt, and the reader who opened it opened it to run one again.
     //
-    // Filled but not focused. On a phone a focus summons the keyboard over the terminal the reader
-    // is picking a command *against*, and the next tap is as likely to be another entry as it is
-    // to be Send — the same reason the command palette stopped autofocusing its search on touch.
-    // The field is one tap away when they do want to edit it.
+    // The composer is filled as well, and that is not a fallback — it is what makes the run
+    // reviewable. What was sent stays visible in the field afterwards, so a command that turned
+    // out to be the wrong one is edited and sent again rather than retyped.
+    //
+    // Filled but never focused. On a phone a focus summons the keyboard over the terminal the
+    // reader is watching the command run in, which is the one thing they wanted to see. Same
+    // reason the command palette stopped autofocusing its search on touch.
     function useTermCommand(i) {
       const text = termHistory[i];
-      if (!text) return;
+      if (!text || !ws || !activePane) return;
       const input = document.getElementById('termInput');
-      if (!input) return;
-      input.value = text;
-      autoGrow(input);
+      if (input) { input.value = text; autoGrow(input); }
+      if (!submitText(activePane, text)) return;
+      // Straight to the end of the list rather than staying where it was, for the same reason a
+      // typed repeat does: the list is ordered by when a command was last useful.
+      noteTermCommand(text);
+      if (window.cue) cue('success');
+      burstPoll();
     }
 
     function renderTermHistory() {
       const wrap = document.getElementById('paneHistWrap');
       if (!wrap) return;
-      // Terminals only. Over an agent this is a list of shell commands that pane cannot run.
-      const offered = !!activePane && isShell(activePane) && termHistory.length > 0;
+      // Terminals only, and over every one of them — including a browser that has not typed
+      // anything yet. Waiting for a first command hid the control from the reader most likely to
+      // be looking for it: history is this browser's own, so a second device starts empty and had
+      // no way to learn the button existed. Over an agent it stays hidden, where it would be a
+      // list of shell commands that pane cannot run.
+      const offered = !!activePane && isShell(activePane);
       wrap.hidden = !offered;
       if (!offered) return;
       const btn = document.getElementById('paneHistBtn');
       wrap.classList.toggle('open', termHistoryOpen);
       btn.setAttribute('aria-expanded', String(termHistoryOpen));
       btn.title = termHistoryOpen ? 'Hide recent commands' : `Recent commands (${termHistory.length})`;
+      btn.setAttribute('aria-label', `Recent commands (${termHistory.length})`);
       const list = document.getElementById('paneHistList');
       list.hidden = !termHistoryOpen;
       if (!termHistoryOpen) { list.innerHTML = ''; return; }
+      if (!termHistory.length) {
+        list.innerHTML = '<div class="hist-empty">Commands you run here appear here.</div>';
+        return;
+      }
       list.innerHTML = termHistory.map((t, i) => `
         <div class="hist-item">
           <button class="hist-run" onclick="useTermCommand(${i})"
