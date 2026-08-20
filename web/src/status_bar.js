@@ -419,10 +419,10 @@
         // error beside them, and a third figure on a line read at a glance buys nothing.
         totalEl.textContent = `Total: ${n} ${n === 1 ? 'conversation' : 'conversations'}` +
           (unfiled.count ? ` + ${unfiledLabel}` : '') + ` · ` +
-          `${formatConvSize(totalBytes)} (Live: ${formatConvSize(totalLiveBytes)} · Recorded: ` +
+          `${formatConvSize(totalBytes)} (Open: ${formatConvSize(totalLiveBytes)} · Ended: ` +
           `${formatConvSize(totalRecordedBytes + unfiled.bytes)})`;
-        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Live: ` +
-          `${totalLiveBytes.toLocaleString()} B · Recorded: ${totalRecordedBytes.toLocaleString()} B · ` +
+        totalEl.title = `${totalBytes.toLocaleString()} bytes in IndexedDB (Open panes: ` +
+          `${totalLiveBytes.toLocaleString()} B · Ended panes: ${totalRecordedBytes.toLocaleString()} B · ` +
           `Index: ${totalIndexBytes.toLocaleString()} B · Unfiled: ${unfiled.bytes.toLocaleString()} B)`;
       }
 
@@ -445,8 +445,12 @@
       const arrow = col => convAnalyticsSort.col === col ? `<span class="sort-arrow">${convAnalyticsSort.dir === 'asc' ? '▲' : '▼'}</span>` : '';
       const ariaSort = col => convAnalyticsSort.col === col ? (convAnalyticsSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
 
-      const th = (col, label, alignRight) =>
-        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')" style="${alignRight ? 'text-align:right;' : ''}">` +
+      // Every column is transcripts in IndexedDB — the split is which pane each one belongs to, not
+      // two kinds of storage. The tooltip is the whole of that distinction, so it is not optional:
+      // "Live" was read as the relay-backed thread (conv_live.js), which costs this browser nothing.
+      const th = (col, label, alignRight, tip) =>
+        `<th scope="col" aria-sort="${ariaSort(col)}" onclick="sortConvAnalytics('${col}')"` +
+        `${tip ? ` title="${escapeHtml(tip)}"` : ''} style="${alignRight ? 'text-align:right;' : ''}">` +
         `<button type="button" class="conv-analytics-th-btn" style="${alignRight ? 'justify-content:flex-end;margin-left:auto;' : ''}">${escapeHtml(label)}${arrow(col)}</button></th>`;
 
       const rowsHtml = sorted.map(c => {
@@ -454,8 +458,8 @@
         const recSize = formatConvSize(c.recordedBytes);
         const idxSize = formatConvSize(c.indexBytes);
         const totalSize = formatConvSize(c.totalBytes);
-        const titleTip = `${escapeHtml(c.name)} · Live: ${(c.liveBytes || 0).toLocaleString()} B · ` +
-          `Recorded: ${(c.recordedBytes || 0).toLocaleString()} B · ` +
+        const titleTip = `${escapeHtml(c.name)} · Open panes: ${(c.liveBytes || 0).toLocaleString()} B · ` +
+          `Ended panes: ${(c.recordedBytes || 0).toLocaleString()} B · ` +
           `Index: ${(c.indexBytes || 0).toLocaleString()} B · ` +
           `Total: ${(c.totalBytes || 0).toLocaleString()} B`;
         return `<tr>` +
@@ -495,12 +499,18 @@
         `<thead><tr>` +
         th('name', 'Conversation', false) +
         th('msgCount', 'Messages', true) +
-        th('liveBytes', 'Live IDB', true) +
-        th('recordedBytes', 'Recorded IDB', true) +
+        th('liveBytes', 'Open panes', true,
+          'Transcripts recorded in this browser for members whose pane is still running. '
+          + 'They are on disk like the rest — this column is the part still growing.') +
+        th('recordedBytes', 'Ended panes', true,
+          'Transcripts recorded in this browser for members whose session has ended. '
+          + 'Finished: nothing will be added to them.') +
         // The row that names the conversation is in IndexedDB too, and the three columns have to
         // add up to the fourth or the table reads as one of them being wrong.
-        th('indexBytes', 'Index', true) +
-        th('totalBytes', 'Total IDB', true) +
+        th('indexBytes', 'Index', true,
+          'The conversation row itself — its name and its member list.') +
+        th('totalBytes', 'Total IDB', true,
+          'Everything this conversation costs in IndexedDB.') +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +
         footHtml +

@@ -5110,7 +5110,12 @@ test('conversation storage analytics displays live, recorded, and total IDB brea
   });
   await expect(page.locator('#convAnalyticsWrap .conv-analytics-table')).toBeVisible();
   const headers = await page.locator('#convAnalyticsWrap .conv-analytics-table th').allInnerTexts();
-  expect(headers).toEqual(['CONVERSATION', 'MESSAGES', 'LIVE IDB', 'RECORDED IDB', 'INDEX', 'TOTAL IDB']);
+  // The two transcript columns are named for the pane, not for a kind of storage: every byte in
+  // this table is a transcript in IndexedDB, and "Live" was read as the relay-backed thread.
+  expect(headers).toEqual(
+    ['CONVERSATION', 'MESSAGES', 'OPEN PANES', 'ENDED PANES', 'INDEX', 'TOTAL IDB']);
+  await expect(page.locator('#convAnalyticsWrap th', {hasText: 'Open panes'}))
+    .toHaveAttribute('title', /still running/);
   // Last row of the foot: an unfiled line can sit above it, and the total is always the bottom.
   const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr:last-child td');
   await expect(foot.first()).toContainText('Total');
