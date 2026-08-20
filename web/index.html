@@ -1004,7 +1004,7 @@
       color: var(--green);
     }
 
-    /* Nothing in this column is on disk, and it is drawn as the aside it is. */
+    /* A second source for the same conversation, drawn as the aside it is. */
     .conv-analytics-cached {
       color: var(--muted);
     }
@@ -5334,6 +5334,19 @@
       <button class="nav-key" onclick="clearBandwidth()">Clear recorded data</button>
       <div class="hint">Turning tracking off stops collecting; what was already recorded stays on
         this device until this throws it away. Per-pane totals go with it.</div>
+    </div>
+
+    <div class="setting-group">
+      <label>The relay's record, kept here</label>
+      <div class="hint">The Live toggle reads the relay's own record — every turn it wrote, watched
+        or not. What this browser has read of it is now kept on this device, so it is there after a
+        refresh, after a week away, and while the relay is unreachable. Only what was already read
+        is kept: this fetches nothing on its own, and the pane's own transcript is separate and
+        untouched.</div>
+      <button class="nav-key" onclick="forgetLiveRecord()">Forget the kept record</button>
+      <div class="hint" id="liveKeptHint">Everything kept is on the relay too, so this costs history
+        only where the relay has since pruned it. It is read again the next time a thread is
+        opened.</div>
     </div>
 
     <div class="setting-group">

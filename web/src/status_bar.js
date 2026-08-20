@@ -372,6 +372,9 @@
       }
       convAnalyticsIndexBytes = typeof calcConvIndexBytes === 'function'
         ? calcConvIndexBytes(convs) : 0;
+      // The kept copy of the relay's record is on disk too, so the panel waits for it rather than
+      // reporting zero for a store it has not opened yet.
+      if (typeof convLiveHydrate === 'function') await convLiveHydrate();
       const liveCache = typeof convLiveCacheBytes === 'function' ? convLiveCacheBytes() : new Map();
       return typeof calcPaneStorage === 'function'
         ? calcPaneStorage(convs, recordsMap, typeof agents !== 'undefined' ? agents : [], liveCache)
@@ -409,7 +412,7 @@
       const openBytes = convAnalyticsData.reduce((acc, r) => acc + (r.open ? r.bytes || 0 : 0), 0);
       const transcriptBytes = convAnalyticsData.reduce((acc, r) => acc + (r.bytes || 0), 0);
       const indexBytes = convAnalyticsIndexBytes || 0;
-      // A fingerprint's cache is shared by every pane of one agent in one directory, so summing the
+      // A fingerprint's copy is shared by every pane of one agent in one directory, so summing the
       // rows would count it once per pane. Summed over the distinct buckets instead.
       const cachedBytes = Array.from(
         new Map(convAnalyticsData.map(r => [r.fp || r.key, r.liveBytes || 0])).values())
@@ -417,19 +420,19 @@
       // The database plus the index that names parts of it: everything this app has put on this
       // device. The two are in different stores — IndexedDB and localStorage — and the tooltip is
       // where that is said, because the reader's question is what it all costs.
-      const totalBytes = transcriptBytes + indexBytes;
+      const totalBytes = transcriptBytes + indexBytes + cachedBytes;
 
       if (totalEl) {
         const n = convAnalyticsData.length;
         totalEl.textContent = `Total: ${n} ${n === 1 ? 'transcript' : 'transcripts'} · ` +
           `${formatConvSize(totalBytes)} stored` +
-          (cachedBytes ? ` · ${formatConvSize(cachedBytes)} cached` : '');
+          (cachedBytes ? ` (${formatConvSize(cachedBytes)} of it the relay's record)` : '');
         totalEl.title = `${transcriptBytes.toLocaleString()} bytes of transcripts in IndexedDB ` +
           `(Open panes: ${openBytes.toLocaleString()} B · Ended panes: ` +
           `${(transcriptBytes - openBytes).toLocaleString()} B), plus ` +
           `${indexBytes.toLocaleString()} B of conversation index in localStorage. ` +
-          `${cachedBytes.toLocaleString()} B of the relay's own record is cached in memory for this ` +
-          `session and is not stored here at all.`;
+          `${cachedBytes.toLocaleString()} B is this browser's kept copy of the relay's own record, ` +
+          `in IndexedDB beside the transcripts.`;
       }
 
       if (!convAnalyticsData.length) {
@@ -474,13 +477,13 @@
           `<td class="conv-analytics-num" title="${(r.bytes || 0).toLocaleString()} bytes">` +
           `${formatConvSize(r.bytes)}</td>` +
           `<td class="conv-analytics-num conv-analytics-cached" ` +
-          `title="${(r.liveBytes || 0).toLocaleString()} bytes held in memory for this session">` +
+          `title="${(r.liveBytes || 0).toLocaleString()} bytes of the relay's record, kept here">` +
           `${r.liveBytes ? formatConvSize(r.liveBytes) : '—'}</td>` +
           `</tr>`;
       }).join('');
 
       // The index is not a transcript and has no row of its own above; it is named here because the
-      // reader's question is what the app costs in total, and the two stores answer it together.
+      // reader's question is what the app costs in total, and the three stores answer it together.
       const footHtml = `<tfoot><tr>` +
         `<td><strong>Total (${convAnalyticsData.length})</strong></td>` +
         `<td title="${indexBytes.toLocaleString()} bytes of conversation index, in localStorage">` +
@@ -490,7 +493,7 @@
         `<td class="conv-analytics-num" title="${totalBytes.toLocaleString()} bytes, transcripts and index">` +
         `<strong>${formatConvSize(totalBytes)}</strong></td>` +
         `<td class="conv-analytics-num conv-analytics-cached" ` +
-        `title="${cachedBytes.toLocaleString()} bytes of the relay's record, in memory only">` +
+        `title="${cachedBytes.toLocaleString()} bytes of the relay's record, kept on this device">` +
         `${cachedBytes ? formatConvSize(cachedBytes) : '—'}</td>` +
         `</tr></tfoot>`;
 
@@ -506,9 +509,10 @@
         th('bytes', 'Stored (IDB)', true, 'What this transcript costs in IndexedDB — the words this '
           + 'browser captured from the pane. Every byte the app stores on this device is one of '
           + 'these rows, plus the index named in the footer.') +
-        th('liveBytes', 'Live (cached)', true, 'The relay\'s own record for this pane, fetched by '
-          + 'the Live toggle and held in memory for this session only. It is stored on the relay '
-          + 'host, not in this browser, and it is gone on reload — so it costs no disk here.') +
+        th('liveBytes', 'Relay copy', true, 'What this browser has kept of the relay\'s own record '
+          + 'for this pane — read by the Live toggle and now stored, so it is there after a refresh '
+          + 'and while the relay is unreachable. A second source for the same conversation, never '
+          + 'folded into the transcript beside it.') +
         `</tr></thead>` +
         `<tbody>${rowsHtml}</tbody>` +
         footHtml +

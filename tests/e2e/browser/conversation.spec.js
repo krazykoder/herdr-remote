@@ -5118,7 +5118,7 @@ test('storage analytics gives every pane transcript a row, whatever it is filed 
   // Per pane, not per conversation: the database is keyed by pane, one pane can be in several
   // conversations and one transcript in none, so a per-conversation sum double-counts and
   // under-reports at once.
-  expect(headers).toEqual(['PANE', 'IN', 'STATE', 'MESSAGES', 'STORED (IDB)', 'LIVE (CACHED)']);
+  expect(headers).toEqual(['PANE', 'IN', 'STATE', 'MESSAGES', 'STORED (IDB)', 'RELAY COPY']);
   await expect(page.locator('#convAnalyticsWrap th', {hasText: 'State'}))
     .toHaveAttribute('title', /running right now/);
 
@@ -5131,15 +5131,15 @@ test('storage analytics gives every pane transcript a row, whatever it is filed 
 });
 
 // The confusion this column exists to end: the Live thread and the recorded one look identical on
-// screen, so a reader seeing the relay's record assumes the browser stored it. It did not — that
-// one is a Map that dies with the page, and only the Stored column is on disk.
-test('the relay record is reported as cached, and never as stored', async ({page}) => {
+// screen, so a reader seeing the relay's record cannot tell which store it came from. Both are on
+// disk now, and they are two sources for one conversation — so they are two columns, never a sum.
+test('the relay record is kept in its own column, beside the transcript it is not', async ({page}) => {
   await open(page);
   await joinBoth(page);
   await read(page);
   const stored = await page.evaluate(async () => {
     const bucket = convLiveBucket(convFpKey(convKeyFingerprint(convMemberKey(paneOf(activePane)))));
-    bucket.turns = [{id: 1, text: 'x'.repeat(3000), kind: 'agent'}];
+    bucket.turns = [{id: 1, seq: 1, text: 'x'.repeat(3000), kind: 'agent'}];
     const view = document.getElementById('timelineView');
     if (view) view.style.display = 'block';
     await renderConvAnalytics();
@@ -5150,11 +5150,14 @@ test('the relay record is reported as cached, and never as stored', async ({page
   const bytes = async loc => Number((await loc.getAttribute('title')).replace(/[^0-9]/g, ''));
   expect(await bytes(row.locator('td').nth(5))).toBeGreaterThan(3000);
 
-  // The stored total is untouched by it: what the relay holds is not on this device.
+  // The transcript column is untouched by it — the two sources are never folded — and the footer
+  // total is transcripts, index and relay copy together, which is what the device is holding.
   const foot = page.locator('#convAnalyticsWrap .conv-analytics-table tfoot tr td');
-  expect(await bytes(foot.nth(4))).toBe(stored + await bytes(foot.nth(1)));
-  expect(await bytes(foot.nth(5))).toBeGreaterThan(3000);
-  await expect(page.locator('#convAnalyticsTotal')).toContainText('cached');
+  const [transcripts, index, relay] =
+    [stored, await bytes(foot.nth(1)), await bytes(foot.nth(5))];
+  expect(relay).toBeGreaterThan(3000);
+  expect(await bytes(foot.nth(4))).toBe(transcripts + index + relay);
+  await expect(page.locator('#convAnalyticsTotal')).toContainText("the relay's record");
 });
 
 // The bug this covers: a browser that had been running agents for weeks showed Recorded IDB as 0

@@ -20,6 +20,13 @@
     }
 
     const CONV_DB_NAME = 'herdr', CONV_DB_STORE = 'transcripts';
+    // The relay's own record, kept beside the transcripts rather than mixed into them. They are two
+    // sources for one conversation and they must never be folded together: one is what this browser
+    // witnessed, the other is what the relay wrote for every pane whether anyone was watching. Its
+    // own store, keyed by fingerprint rather than by pane, because that is what the record is
+    // addressed by — see conv_live.js.
+    const CONV_LIVE_STORE = 'live';
+    const CONV_DB_VERSION = 2;
     const CONV_INDEX_KEY = 'herdr_conversations', CONV_FALLBACK_KEY = 'herdr_transcripts';
     // What the fallback keeps instead. It is sharing one 5 MB cap with everything else this app
     // stores, so it holds hours of history rather than months — and says so.
@@ -40,12 +47,19 @@
       if (convDBOpened) return convDBOpened;
       convDBOpened = new Promise(res => {
         let req;
-        try { req = indexedDB.open(CONV_DB_NAME, 1); } catch (e) { return res(null); }
+        try { req = indexedDB.open(CONV_DB_NAME, CONV_DB_VERSION); } catch (e) { return res(null); }
+        // Runs for a fresh database and for one already holding transcripts at version 1, which is
+        // every browser that has used this app before today: both branches are guarded by name, so
+        // the upgrade adds the live store and touches nothing that is already there.
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(CONV_DB_STORE)) {
             const s = db.createObjectStore(CONV_DB_STORE, { keyPath: 'key' });
             s.createIndex('touched', 'touched');   // so eviction can range-scan by age
+          }
+          if (!db.objectStoreNames.contains(CONV_LIVE_STORE)) {
+            const s = db.createObjectStore(CONV_LIVE_STORE, { keyPath: 'fp' });
+            s.createIndex('touched', 'touched');
           }
         };
         req.onsuccess = () => res(req.result);

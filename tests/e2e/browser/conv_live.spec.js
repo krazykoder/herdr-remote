@@ -379,3 +379,75 @@ test('a commit badge is painted in its agent\u2019s colour on a neutral fill', a
   // And the fill stays out of the way rather than washing with the same colour.
   expect(paint.fill).not.toBe(paint.sha);
 });
+
+// The point of keeping it: the record is on this device, so a reload does not re-ask for a window
+// this browser already has, and a relay that cannot be reached is a thread that is behind rather
+// than a thread that is blank.
+test('the relay record is kept across a reload, and reads with the socket down', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  // On disk, under the fingerprint the record is addressed by — not under a pane id, which herdr
+  // renumbers on every restart.
+  const kept = await page.evaluate(async () => {
+    const db = await openConvDB();
+    const all = await idbReq(
+      db.transaction(CONV_LIVE_STORE, 'readonly').objectStore(CONV_LIVE_STORE).getAll());
+    return all.map(r => ({fp: r.fp, turns: (r.turns || []).length, syncedTo: r.syncedTo}));
+  });
+  expect(kept.length).toBeGreaterThan(0);
+  expect(kept[0].turns).toBeGreaterThan(0);
+  expect(kept[0].syncedTo).toBeGreaterThan(0);
+
+  await page.reload();
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+  const drawn = await page.locator('#convThread .conv-msg').count();
+
+  // Socket shut under a thread that is already up. Nothing can arrive now, and what stays on screen
+  // is this browser's own copy — where before it was the "cannot be read right now" empty state.
+  await page.evaluate(() => { ws.close(); convLiveInvalidate(); renderConvView(); });
+  await expect(page.locator('#convThread .conv-msg')).toHaveCount(drawn);
+  await expect(page.locator('#convThread')).not.toContainText('cannot be read right now');
+});
+
+// A watermark restored from disk names a row id in a database this session has never spoken to. If
+// the relay's record was reset or replaced, a delta from that id is answered with silence and the
+// thread freezes at whatever it had. One full window per fingerprint per session is the answer.
+test('the first ask of a session is the window, and only then the delta', async ({page}) => {
+  await open(page);
+  await joinAndThread(page);
+  await page.locator('#paneLive').click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  // Tapped before the page loads: the first ask goes out with the first render, well before an
+  // evaluate could reach the socket.
+  await page.addInitScript(() => {
+    window.__asked = [];
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (m) {
+      try { const d = JSON.parse(m); if (d.type === 'conv_log') window.__asked.push(d); } catch (e) {}
+      return send.call(this, m);
+    };
+  });
+  await page.reload();
+  await page.locator('#agents .agent', {hasText: AGENT}).click();
+  await expect(page.locator('#convThread .conv-msg')).not.toHaveCount(0);
+
+  await expect.poll(() => page.evaluate(() => window.__asked.length)).toBeGreaterThan(0);
+  const asked = await page.evaluate(() => window.__asked);
+  // The first one carries no watermark, whatever was restored from disk.
+  expect(asked[0].since_id).toBeUndefined();
+  expect(asked[0].last).toBe(200);
+
+  // And once the relay has answered this session, the ask becomes the delta the feature exists for.
+  // Polled rather than asked once: the thread is drawn from disk immediately, so the first render
+  // can happen before the answer that proves this session is talking to the same record.
+  await page.evaluate(() => { window.__asked = []; });
+  await expect.poll(async () => {
+    await page.evaluate(() => { convLiveInvalidate(); renderConvView(); });
+    return page.evaluate(() => window.__asked.some(a => a.since_id > 0));
+  }).toBe(true);
+});

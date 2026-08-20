@@ -63,18 +63,121 @@
       return bucket;
     }
 
-    // What the relay's record is costing, per fingerprint, for the storage panel.
+    // What this browser is keeping of the relay's record, per fingerprint, for the storage panel.
     //
-    // Nothing here is stored: this cache is a Map that dies with the page, and the durable copy of
-    // these turns is the relay's own SQLite on its host. It is reported beside the transcripts
-    // precisely because the two are constantly confused — the thread the Live toggle draws looks
-    // exactly like the recorded one and costs this browser no disk at all.
+    // Measured off the in-memory buckets rather than by reading the store back: they are written
+    // through, so they are what is on disk, and the panel must not open a second transaction per
+    // draw to learn what it already has.
     function convLiveCacheBytes() {
       const out = new Map();
       for (const [fpKey, bucket] of convLiveCache) {
         try { out.set(fpKey, JSON.stringify(bucket.turns || []).length); } catch (e) { /* skip */ }
       }
       return out;
+    }
+
+    // --- Kept on disk ---
+    //
+    // The record survives a refresh, a closed tab, and a week away, and reads with the relay down.
+    // Two things follow from persisting it, and both are the point:
+    //
+    //   * the delta spans sessions. `syncedTo` was a session variable, so every reload re-asked for
+    //     the window this feature exists to avoid re-asking for.
+    //   * it outlives the relay's own pruning. The relay drops its oldest rows at
+    //     HERDR_CONV_LOG_MAX, and what a client already holds is not dropped with them.
+    //
+    // Kept in its own store and never folded into a transcript: the two are different sources for
+    // one conversation, and the whole value of the toggle is being able to tell them apart.
+    const CONV_LIVE_KEEP = 400;      // fingerprints kept on disk, oldest touched evicted first
+
+    // The buckets read back from disk, once per page. Everything that reads the cache awaits it, so
+    // a render arriving before the disk does draws the record rather than an empty thread.
+    let convLiveLoaded = null;
+    // Fingerprints this session has heard the relay answer for. The first ask for each is the whole
+    // window rather than a delta: a watermark restored from disk names an id in a database this
+    // session has never spoken to, and a relay whose record was reset or moved would answer that
+    // delta with silence forever. One window per fingerprint per session settles it.
+    const convLiveVerified = new Set();
+
+    function convLiveHydrate() {
+      if (convLiveLoaded) return convLiveLoaded;
+      convLiveLoaded = (async () => {
+        if (typeof openConvDB !== 'function') return;
+        const db = await openConvDB();
+        if (!db) return;
+        try {
+          const read = db.transaction(CONV_LIVE_STORE, 'readonly').objectStore(CONV_LIVE_STORE);
+          for (const rec of (await idbReq(read.getAll())) || []) {
+            if (!rec || !rec.fp || convLiveCache.has(rec.fp)) continue;
+            convLiveCache.set(rec.fp, {
+              turns: rec.turns || [], syncedTo: rec.syncedTo || 0, lastFetch: 0,
+              // Answered by the relay once, on a previous day. Without this the thread would say
+              // "Reading the relay's record…" over rows it is already drawing.
+              answered: true,
+            });
+          }
+        } catch (e) { /* the session keeps its own copy in memory */ }
+      })();
+      return convLiveLoaded;
+    }
+
+    // Write-through, per fingerprint, after the answer that changed it. Failures are silent by
+    // design: a full quota costs this session's durability and nothing else, and the thread on
+    // screen is already drawn from memory.
+    async function convLivePersist(fpKeys) {
+      if (typeof openConvDB !== 'function') return;
+      const db = await openConvDB();
+      if (!db) return;
+      const now = Date.now();
+      try {
+        const store = db.transaction(CONV_LIVE_STORE, 'readwrite').objectStore(CONV_LIVE_STORE);
+        await Promise.all(Array.from(fpKeys || [], fpKey => {
+          const bucket = convLiveCache.get(fpKey);
+          if (!bucket) return null;
+          return idbReq(store.put({ fp: fpKey, turns: bucket.turns || [],
+            syncedTo: bucket.syncedTo || 0, touched: now }));
+        }).filter(Boolean));
+      } catch (e) { return; }
+      await convLiveEvict(db);
+    }
+
+    // The store's own ceiling. The per-fingerprint cap (CONV_LIVE_ROWS) bounds one pane; this bounds
+    // how many panes are kept at all, so a machine that has run hundreds of sessions does not carry
+    // every one of them forever. Oldest touched first, which is the same rule the transcripts use.
+    async function convLiveEvict(db) {
+      try {
+        const read = db.transaction(CONV_LIVE_STORE, 'readonly').objectStore(CONV_LIVE_STORE);
+        const count = await idbReq(read.count());
+        if (count <= CONV_LIVE_KEEP) return;
+        const byAge = db.transaction(CONV_LIVE_STORE, 'readwrite').objectStore(CONV_LIVE_STORE);
+        const stale = (await idbReq(byAge.index('touched').getAllKeys())) || [];
+        for (const key of stale.slice(0, count - CONV_LIVE_KEEP)) byAge.delete(key);
+      } catch (e) { /* the cap is a tidy-up, not a correctness property */ }
+    }
+
+    // Everything this browser is keeping of the relay's record, dropped in one go. The transcripts
+    // are untouched: this is the copy that can always be fetched again.
+    async function convLiveForget() {
+      convLiveCache.clear();
+      convLiveVerified.clear();
+      if (typeof openConvDB !== 'function') return;
+      const db = await openConvDB();
+      if (!db) return;
+      try {
+        await idbReq(db.transaction(CONV_LIVE_STORE, 'readwrite')
+          .objectStore(CONV_LIVE_STORE).clear());
+      } catch (e) { /* nothing to do about it, and nothing lost that cannot be re-read */ }
+    }
+
+    // The Settings button. Confirmed, because it is a delete — and worded as what it costs, which
+    // is nothing except where the relay has pruned what this browser still had.
+    async function forgetLiveRecord() {
+      if (!confirm('Forget the relay record kept on this device? It is read again the next time a '
+        + 'thread is opened, except for anything the relay has since pruned.')) return;
+      await convLiveForget();
+      if (typeof renderConvView === 'function') renderConvView();
+      if (typeof renderConvAnalytics === 'function') renderConvAnalytics();
+      showToast('Forgot the kept copy of the relay’s record');
     }
 
     function convLiveOn() {
@@ -127,12 +230,26 @@
       if (!convLiveOn()) return;
       const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
       if (!fps.length) return;
+      // Whatever is on disk, before deciding anything: the watermark that says what to ask for
+      // lives there now, and asking without it would re-fetch a window this browser already holds.
+      // The render that follows draws from the same buckets, so a thread is on screen either way.
+      if (!convLiveLoaded) { convLiveHydrate().then(() => renderConvView()); return; }
       if (!ws || ws.readyState !== 1) {
-        convLiveError = 'Not connected — the relay’s record cannot be read right now.';
+        // Only when there is nothing to show. With the record on disk, a relay that is down or a
+        // phone with no signal is a thread that is behind, not a thread that is empty — and saying
+        // "cannot be read right now" over rows the reader is looking at is simply false.
+        const held = fps.some(fp => (convLiveCache.get(convFpKey(fp)) || {}).turns?.length);
+        convLiveError = held ? '' : 'Not connected — the relay’s record cannot be read right now.';
         return;
       }
       const now = Date.now();
       let needsFetch = !!force;
+      // A fingerprint restored from disk carries a watermark from another session, possibly from
+      // another copy of the relay's database. Its first ask is the window, and it is a delta after
+      // that — see convLiveVerified.
+      for (const fp of fps) {
+        if (!convLiveVerified.has(convFpKey(fp))) { force = true; needsFetch = true; }
+      }
       // The floor over the roster, not the ceiling: the buckets were last answered by different
       // queries, so the only id every member is proven current through is the lowest of them. A
       // member with no bucket has been answered through nothing, and the query goes out whole.
@@ -182,10 +299,14 @@
       // echoes the request back for exactly this: without it an empty answer is indistinguishable
       // from one that was never asked, and a quiet pane would never come up to date.
       for (const fp of (Array.isArray(msg.fingerprints) ? msg.fingerprints : [])) {
-        const bucket = convLiveBucket(convFpKey(fp));
+        const fpKey = convFpKey(fp);
+        const bucket = convLiveBucket(fpKey);
         bucket.lastFetch = now;
         bucket.answered = true;
+        // Heard from, this session, against this relay: the next ask for it can be a delta.
+        convLiveVerified.add(fpKey);
         if (answeredThrough > bucket.syncedTo) bucket.syncedTo = answeredThrough;
+        touched.add(fpKey);
       }
 
       for (const fpKey of touched) {
@@ -197,6 +318,10 @@
           bucket.turns.splice(0, bucket.turns.length - CONV_LIVE_ROWS);
         }
       }
+
+      // Kept, so the next session starts where this one got to. Not awaited: the thread below is
+      // drawn from memory and a disk write is not something a reader should wait behind.
+      convLivePersist(touched);
 
       if (!convLiveOn()) return;
       renderConvView();
