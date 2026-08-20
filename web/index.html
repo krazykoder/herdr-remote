@@ -4117,6 +4117,103 @@
       z-index: 5;
     }
 
+    /* The terminal's own history, in the column the other floating controls are in. Anchored to
+       the bottom so the list grows upward into the pane it belongs to: a list that grew downward
+       would leave the button it opened from at the top and the newest command off the screen.
+       10px + 28px (Last) + 6px — Last's own extent, so the two read as one column rather than as
+       two buttons that nearly collided. */
+    .hang-hist {
+      position: absolute;
+      right: var(--hang-right, 36px);
+      bottom: 44px;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    /* Shown by the pane's kind rather than the scroll position, so it does not carry .on like the
+       rest of the row — a terminal always has a history worth reaching. */
+    .hang-hist .hang-btn {
+      display: inline-flex;
+    }
+
+    .hang-hist.open .hang-hist-btn {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* Half the pane at most, and scrolling inside itself past that: ten commands at this size fit
+       comfortably, but ten *long* ones wrap, and a list that grew past the top of the terminal
+       would hide the output the reader opened it to compare against. */
+    .hist-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: min(280px, 70vw);
+      max-height: 45%;
+      overflow-y: auto;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+    }
+
+    .hist-item {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    /* Monospace and small, because it is a command and it is being recognised rather than read —
+       the shape of `git log --oneline -10` is what identifies it, and a proportional face at this
+       size makes every entry the same grey smear. */
+    .hist-run {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 3px 6px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    .hist-run:hover {
+      background: var(--bg);
+    }
+
+    /* A destructive control in a list of one-tap rows, so it is the quiet one until it is aimed
+       at: same width as a fingertip, but drawn as punctuation rather than as a red button beside
+       every entry. */
+    .hist-x {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .hist-x:hover {
+      color: var(--red);
+      background: var(--bg);
+    }
+
     /* The same corner in a view that scrolls as a whole: a zero-height sticky layer costs no
        layout and does not scroll away with the text. */
     .hang-layer {
@@ -5854,6 +5951,15 @@
            the text — bottom right, where a thumb already is. -->
       <button class="hang-btn hang-last hang-corner" id="paneLast" onclick="hangToLast()"
         aria-label="Jump to the newest message">↓ Last</button>
+      <!-- What was typed at this terminal, over the terminal. Anchored above Last at a fixed
+           offset rather than stacked on it: Last comes and goes with the scroll position, and a
+           button that moves 34px whenever the reader scrolls is one they have to find again every
+           time. See .hang-hist. -->
+      <div class="hang-hist" id="paneHistWrap" hidden>
+        <div class="hist-list" id="paneHistList" hidden></div>
+        <button class="hang-btn hang-hist-btn" id="paneHistBtn" onclick="toggleTermHistory()"
+          aria-expanded="false" aria-label="Recent commands">$</button>
+      </div>
       <div class="hang-working" id="paneWorking" aria-live="polite"></div>
       <div class="hang-pill" id="paneSyncing" role="status" hidden>Syncing…</div>
       <div class="hang-float">

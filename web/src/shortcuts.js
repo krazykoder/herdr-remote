@@ -22,6 +22,9 @@
       const btn = document.getElementById('promptsBtn');
       btn.textContent = shell ? '$' : '@';
       btn.setAttribute('aria-label', shell ? 'Commands' : 'Prompts');
+      // The same question — is this pane a shell — decides whether the history floats over it, and
+      // this is the one path every snapshot and every pane switch already goes through.
+      renderTermHistory();
     }
 
     // herdr reports no process lifetime, so "has it finished" can only be answered by looking.
@@ -84,6 +87,96 @@
       termShortcuts.splice(i, 1);
       saveTermShortcuts();
       refreshPalette();
+    }
+
+    // --- The terminal's own history, floating over the pane ---
+    //
+    // Over the pane and not in the $ palette, because the two answer different questions. The
+    // palette is a decision — which of my saved commands do I want — and it covers the screen to
+    // ask it. This is a glance at what was just run, and covering the terminal to see what was
+    // typed into it defeats the reason for looking.
+    //
+    // Open or shut is remembered globally rather than per pane: it is a preference about how much
+    // of the terminal the reader wants covered, and it does not change because they switched
+    // panes. Same store as the list, so one write keeps both.
+    let termHistory = [], termHistoryOpen = false;
+
+    function loadTermHistory() {
+      const raw = localStorage.getItem(TERM_HIST_KEY);
+      termHistory = parseTermHistory(raw);
+      let data = null;
+      try { data = JSON.parse(raw); } catch (e) { /* corrupt: shut, same as a first run */ }
+      termHistoryOpen = !!(data && data.open);
+    }
+
+    function saveTermHistory() {
+      try {
+        localStorage.setItem(TERM_HIST_KEY, JSON.stringify(
+          { version: TERM_HIST_VERSION, items: termHistory, open: termHistoryOpen }));
+      } catch (e) { /* private mode: session-only */ }
+    }
+
+    // Called once the wire has taken the text, for the same reason noteSent is: a history that
+    // records a send the socket dropped is a list of commands that never ran.
+    function noteTermCommand(text) {
+      const next = pushTermHistory(termHistory, text);
+      if (next.length === termHistory.length && next.every((t, i) => t === termHistory[i])) return;
+      termHistory = next;
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    function toggleTermHistory() {
+      termHistoryOpen = !termHistoryOpen;
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    function deleteTermCommand(i) {
+      if (i < 0 || i >= termHistory.length) return;
+      termHistory.splice(i, 1);
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    // Into the composer, not onto the wire. The $ palette sends because everything in it is
+    // something the user chose to keep and marked dangerous if it was; this list keeps whatever
+    // was typed, including the things that were typed once on purpose. A history that re-runs on
+    // one tap is a mis-tap away from running it again.
+    function useTermCommand(i) {
+      const text = termHistory[i];
+      if (!text) return;
+      const input = document.getElementById('termInput');
+      if (!input) return;
+      input.value = text;
+      autoGrow(input);
+      input.focus();
+    }
+
+    function renderTermHistory() {
+      const wrap = document.getElementById('paneHistWrap');
+      if (!wrap) return;
+      // Terminals only. Over an agent this is a list of shell commands that pane cannot run.
+      const offered = !!activePane && isShell(activePane) && termHistory.length > 0;
+      wrap.hidden = !offered;
+      if (!offered) return;
+      const btn = document.getElementById('paneHistBtn');
+      wrap.classList.toggle('open', termHistoryOpen);
+      btn.setAttribute('aria-expanded', String(termHistoryOpen));
+      btn.title = termHistoryOpen ? 'Hide recent commands' : `Recent commands (${termHistory.length})`;
+      const list = document.getElementById('paneHistList');
+      list.hidden = !termHistoryOpen;
+      if (!termHistoryOpen) { list.innerHTML = ''; return; }
+      list.innerHTML = termHistory.map((t, i) => `
+        <div class="hist-item">
+          <button class="hist-run" onclick="useTermCommand(${i})"
+            title="${escapeHtml(t)}">${escapeHtml(t)}</button>
+          <button class="hist-x" onclick="deleteTermCommand(${i})"
+            aria-label="Forget this command">&times;</button>
+        </div>`).join('');
+      // Newest is at the bottom and the list grows upward, so the end is what an opening list
+      // should be showing — a scrollTop of 0 would open it on the oldest thing in it.
+      list.scrollTop = list.scrollHeight;
     }
 
     // The ceiling lives in CSS (max-height) and the floor in min-height, so this only has to
