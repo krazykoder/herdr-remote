@@ -3145,6 +3145,43 @@
       }
     }
 
+    /* --- The bottom sheets ---
+       Six of these carried the same inline style, which is how all six came to sit behind the
+       on-screen keyboard: they are `position: fixed`, so they are laid out against the *layout*
+       viewport, and Safari does not shrink that when the keyboard comes up. The app's own fix for
+       everything else — shrinking `document.body` to the visual viewport, see utils.js — cannot
+       reach a fixed element, so a sheet with a search field in it summoned a keyboard and then
+       hid under it.
+       A class and not six inline styles, because an inline `bottom` outranks every rule here and
+       the next sheet would be copied from the same line. */
+    .sheet {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
+      padding-bottom: env(safe-area-inset-bottom, 8px);
+      /* The keyboard's height on Safari, 0 everywhere the layout viewport already shrank. */
+      bottom: var(--kb-inset, 0px);
+      /* And never taller than what is left above it. The sheet's own share of the screen is the
+         first term; the second is the hard ceiling once a keyboard has taken most of it. */
+      max-height: min(var(--sheet-max, 80dvh),
+                      calc(var(--vv-height, 100dvh) - 56px));
+      overflow-y: auto;
+      /* A keyboard appearing moves this; without a transition it jumps. */
+      transition: bottom 120ms ease-out;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .sheet { transition: none; }
+    }
+
     /* A class rather than the inline styles it used to carry: an inline background outranks every
        rule, including the armed one. */
     .palette-del {
@@ -6011,7 +6048,7 @@
   <div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closePalette()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:50dvh;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet" style="--sheet-max:50dvh;overflow:hidden">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <span id="paletteTitle" style="font-size:0.8rem;font-weight:600;flex:1">Commands</span>
         <button onclick="closePalette()" aria-label="Close"
@@ -6029,7 +6066,7 @@
   <div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <!-- The Project is a fact about what is being started, so it is the same @badge it is on a
              pane header and in the row below — not a title joined to another title by a dot. -->
@@ -6119,7 +6156,7 @@
   <div id="convSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeConvDialog()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <span style="font-size:0.8rem;font-weight:600;flex:1">Conversation · <span id="convSource"></span></span>
         <button onclick="closeConvDialog()" aria-label="Close"
@@ -6192,7 +6229,7 @@
   <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Recent panes"
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <span style="font-size:0.8rem;font-weight:600;flex:1">Recent</span>
         <button onclick="closeRecentSheet()" aria-label="Close"
@@ -6206,7 +6243,7 @@
   <div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet">
       <!-- The destination, centred and on its own line rather than folded into a header. This is
            one agent's output entering another's context, and "which agent" is the fact the reader
            has to be sure of before anything else on this sheet matters. -->
@@ -6234,7 +6271,7 @@
   <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeOrder()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div id="orderPanel"
-      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      class="sheet">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <span style="font-size:0.8rem;font-weight:600;flex:1">Tab order</span>
         <button onclick="closeOrder()" aria-label="Close"
