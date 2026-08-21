@@ -251,6 +251,10 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     // Both clocks off unless the form was asked for them: a trigger nobody chose is an
     // unattended loop spending budget on a conversation that had stopped on purpose.
     triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0},
+    // The three hard stops, at their defaults — the form always sends them, because a session is
+    // stopped by whichever it spends first and "whatever the relay felt like" is not an answer a
+    // person can plan around.
+    budget: {max_steps: 8, max_consecutive: 8, max_wall_clock_ms: 45 * 60000},
     // Briefed and armed, which is the default. `Brief only` is the other half of that badge pair.
     paused: false,
   }]);
@@ -1163,4 +1167,67 @@ test('a conversation that spans two projects says so instead of offering a sessi
 test('with no projects configured every free pane is still a candidate', () => {
   const {g} = ctx();
   assert.deepEqual(g.arbCandidates(CONV).map(x => x.pane_id), ['w1:p3']);
+});
+
+// --- the hard stops -------------------------------------------------------------------
+//
+// The three budgets are the only thing on this form that can stop a session dead, and until the
+// dialog carried them the answer to a spent one was to throw the session away and start another.
+
+test('starting a session sends the limits the form is holding', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbSteps').value = '20';
+  g.arbStart();
+  const msg = sent.find(m => m.type === 'arb_start');
+  // Untouched fields are the defaults, not absent: the relay fills what it is not sent, and a
+  // form that shows 8 and sends nothing is a form that lied about what it was starting.
+  assert.deepEqual(msg.budget,
+                   {max_steps: 20, max_consecutive: 8, max_wall_clock_ms: 45 * 60000});
+});
+
+test('a limit past what the relay accepts is held at the cap', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbSteps').value = '9999';
+  g.document.getElementById('arbMinutes').value = '0';
+  g.arbStart();
+  const msg = sent.find(m => m.type === 'arb_start');
+  assert.equal(msg.budget.max_steps, 50, 'BUDGET_MAX, not a refusal from the relay');
+  assert.equal(msg.budget.max_wall_clock_ms, 45 * 60000, 'and nothing is a budget of nothing');
+});
+
+test('editing a session opens on the limits it has, and sends only what moved', () => {
+  const s = {...SESSION, budget: {steps_left: 0, consecutive_left: 0, minutes_left: 12,
+                                  max_steps: 8, max_consecutive: 8, max_minutes: 45}};
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [s]});
+  g.arbEditHere();
+  // The maximum, not what is left of it — this form sets limits, and a session with no steps left
+  // must not redraw itself as a session that was given none.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbSteps"[\s\S]*?value="8"/);
+  // The fields as the dialog drew them. The stub document does not render, so what a real browser
+  // would be holding after that redraw is set here by hand.
+  Object.entries({arbScope: s.scope, arbWho: 'w1:p3', arbFirst: 'w1:p1', arbSecond: 'w1:p2',
+                  arbSteps: '8', arbRuns: '8', arbMinutes: '45'})
+    .forEach(([id, v]) => { g.document.getElementById(id).value = v; });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'), [], 'nothing moved');
+
+  g.arbEditHere();
+  g.document.getElementById('arbSteps').value = '24';
+  g.arbSave();
+  const msg = sent.find(m => m.type === 'arb_edit');
+  assert.deepEqual(Object.keys(msg).sort(), ['budget', 'session', 'type']);
+  assert.equal(msg.budget.max_steps, 24);
 });

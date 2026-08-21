@@ -567,11 +567,20 @@
           // turn ending — a member that went quiet, and one that has been working long enough to
           // be stuck. Both are `Never` until somebody goes looking for them, and two selects
           // saying Never are two rows of a dialog spent on nothing.
-          '<details class="arb-more"><summary>Also decide on a clock</summary>' +
+          '<details class="arb-more"><summary>Clocks and limits</summary>' +
           '<label>If a member goes quiet<select id="arbIdle">' +
           arbClockOptions(ARB_IDLE_CHOICES, at.arbIdle) + '</select></label>' +
           '<label>If a member works without stopping<select id="arbRuntime">' +
-          arbClockOptions(ARB_RUNTIME_CHOICES, at.arbRuntime) + '</select></label></details>') +
+          arbClockOptions(ARB_RUNTIME_CHOICES, at.arbRuntime) + '</select></label>' +
+          // The three hard stops, editable here and nowhere else. A session that spends one is
+          // paused until a person raises it, and until this dialog carried them the only answer
+          // to that was to throw the session away and start another.
+          arbLimitField('arbSteps', 'Stop after this many sends', at.arbSteps,
+                        ARB_LIMITS.arbSteps) +
+          arbLimitField('arbRuns', 'Stop after this many in a row with nobody joining in',
+                        at.arbRuns, ARB_LIMITS.arbRuns) +
+          arbLimitField('arbMinutes', 'Stop after this many minutes', at.arbMinutes,
+                        ARB_LIMITS.arbMinutes) + '</details>') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
@@ -619,7 +628,7 @@
     function arbReadSetup() {
       const at = {};
       ['arbScope', 'arbWho', 'arbFirst', 'arbSecond', 'arbRoleFirst', 'arbRoleSecond',
-       'arbIdle', 'arbRuntime'].forEach(id => {
+       'arbIdle', 'arbRuntime', 'arbSteps', 'arbRuns', 'arbMinutes'].forEach(id => {
         at[id] = (document.getElementById(id) || {}).value || '';
       });
       return at;
@@ -691,13 +700,18 @@
     // two shapes are converted into each other, so `arbSave` can send what moved by comparing the
     // form against this rather than against a session in a different shape.
     function arbSetupOf(s) {
-      const m = s.members || [], t = s.triggers || {};
+      const m = s.members || [], t = s.triggers || {}, b = s.budget || {};
       return {
         arbScope: s.scope || '',
         arbWho: (s.arbitrator || {}).pane_id || '',
         arbFirst: (m[0] || {}).pane_id || '', arbSecond: (m[1] || {}).pane_id || '',
         arbRoleFirst: (m[0] || {}).role || '', arbRoleSecond: (m[1] || {}).role || '',
         arbIdle: String((t.idle_ms || 0) / 60000), arbRuntime: String((t.runtime_ms || 0) / 60000),
+        // The maxima, not what is left of them: this form sets limits, and a session two sends
+        // from its stop would otherwise redraw itself as a session that may take two sends.
+        arbSteps: String(b.max_steps || ARB_LIMITS.arbSteps[0]),
+        arbRuns: String(b.max_consecutive || ARB_LIMITS.arbRuns[0]),
+        arbMinutes: String(b.max_minutes || ARB_LIMITS.arbMinutes[0]),
       };
     }
 
@@ -757,6 +771,11 @@
     // off is the default for both — a clock nobody asked for is an unattended loop spending budget.
     const ARB_IDLE_CHOICES = [0, 5, 15, 30];
     const ARB_RUNTIME_CHOICES = [0, 15, 30, 60];
+
+    // `[default, max]` for each hard stop, matching `DEFAULT_BUDGET` and `BUDGET_MAX` in
+    // relay/arbitration.py. Kept in step by hand, because the relay refuses anything over the max
+    // and a form that offers what will be refused is worse than one that never showed the field.
+    const ARB_LIMITS = {arbSteps: [8, 50], arbRuns: [8, 20], arbMinutes: [45, 480]};
 
     // The pills, and what each one writes. A tag is short enough to tap and the phrase is what the
     // arbitrator actually reads — `#no-code` is a slug a person has to decode first, "no code
@@ -855,6 +874,21 @@
         : 'Arbitration needs a third agent in this project to decide, and every other pane here ' +
           'is busy right now.';
       return why;
+    }
+
+    // A number, bounded. `type="number"` because the browser already knows how to draw a stepper
+    // and a phone already knows to show a numeric keypad for one.
+    function arbLimitField(id, label, value, range) {
+      return `<label>${escapeHtml(label)}<input id="${id}" type="number" class="arb-limit"` +
+        ` min="1" max="${range[1]}" value="${escapeHtml(String(value || range[0]))}"></label>`;
+    }
+
+    // What the field says, or the default — never NaN and never over the relay's cap, which is the
+    // one refusal this dialog can prevent rather than report.
+    function arbLimitValue(id) {
+      const range = ARB_LIMITS[id];
+      const n = parseInt((document.getElementById(id) || {}).value || '', 10);
+      return !(n > 0) ? range[0] : Math.min(n, range[1]);
     }
 
     function arbClockOptions(choices, selected) {
@@ -960,6 +994,11 @@
       return {
         scope: scope, picks: picks, who: who, roles: roles,
         idle: arbClockValue('arbIdle'), runtime: arbClockValue('arbRuntime'),
+        budget: {
+          max_steps: arbLimitValue('arbSteps'),
+          max_consecutive: arbLimitValue('arbRuns'),
+          max_wall_clock_ms: arbLimitValue('arbMinutes') * 60000,
+        },
       };
     }
 
@@ -975,6 +1014,7 @@
         members: got.picks.map((pane_id, i) => ({ pane_id: pane_id, role: got.roles[i] })),
         arbitrator: { pane_id: got.who },
         triggers: { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime },
+        budget: got.budget,
         paused: arbStartPaused,
       });
       // The dialog is done — it asked its questions. Nothing is drawn in its place, though: the
@@ -1003,6 +1043,11 @@
       if (got.who !== was.arbWho) msg.arbitrator = { pane_id: got.who };
       if (got.idle !== (t.idle_ms || 0) || got.runtime !== (t.runtime_ms || 0)) {
         msg.triggers = { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime };
+      }
+      if (String(got.budget.max_steps) !== was.arbSteps ||
+          String(got.budget.max_consecutive) !== was.arbRuns ||
+          String(got.budget.max_wall_clock_ms / 60000) !== was.arbMinutes) {
+        msg.budget = got.budget;
       }
       // Closed either way. Nothing moved is an answer to the question the dialog asked.
       if (Object.keys(msg).length > 2) arbSend(msg);

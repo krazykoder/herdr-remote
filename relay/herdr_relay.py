@@ -663,7 +663,12 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
                 headers=headers,
             )
         except Exception as e:
-            log.warning("Push failed for sub %d: %s", i, e)
+            # The body, not only the status. Every push to Apple has been failing `400 Bad Request`
+            # and `str(e)` says only that — which is the one part of a 400 that carries no
+            # information, since the reason is always in the response Apple sends with it.
+            detail = getattr(getattr(e, "response", None), "text", "") or ""
+            log.warning("Push failed for sub %d: %s%s", i, e,
+                        f" — {detail.strip()[:300]}" if detail.strip() else "")
             if "410" in str(e) or "404" in str(e):
                 dead.append(i)
     if dead:
@@ -1560,6 +1565,7 @@ def arb_session_message(session):
     """
     roster = arbitration.roster(session["id"])
     left = budget_left(session, arb_now())
+    limits = json.loads(session["budget_json"])
     last = arbitration.conn.execute(
         "SELECT sequence, gate, to_member, why, ambiguity, at FROM decisions "
         "WHERE session_id=? AND valid=1 ORDER BY id DESC LIMIT 1", (session["id"],)).fetchone()
@@ -1588,8 +1594,14 @@ def arb_session_message(session):
                 "host": arb_fp[0], "agent": arb_fp[1], "cwd": arb_fp[2],
                 "label": next((p.get("label") or "" for p in live_panes()
                                if p.get("pane_id") == arb_pane), "")},
+            # What is left, and what it is left *of*. A countdown alone cannot be edited back
+            # into a limit, so the dialog that raises a spent budget needs the maxima as they
+            # stand — the same reason the clocks are on this message.
             "budget": {"steps_left": left["steps"], "consecutive_left": left["consecutive"],
-                       "minutes_left": left["ms"] // 60000},
+                       "minutes_left": left["ms"] // 60000,
+                       "max_steps": limits["max_steps"],
+                       "max_consecutive": limits["max_consecutive"],
+                       "max_minutes": limits["max_wall_clock_ms"] // 60000},
             "last_decision": None if last is None else {
                 "sequence": last["sequence"], "gate": last["gate"], "to": last["to_member"],
                 "why": last["why"], "ambiguity": last["ambiguity"], "at": last["at"]},
@@ -2187,7 +2199,8 @@ async def handle_client(ws, listener="lan"):
                         session = await asyncio.to_thread(functools.partial(
                             arbitration.edit, msg["session"],
                             scope=msg.get("scope"), members=msg.get("members"),
-                            arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers")))
+                            arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers"),
+                            budget=msg.get("budget")))
                     elif msg_type == "arb_resume":
                         # `kick` is what happens first. Without it the loop is armed and waits for
                         # a trigger, which may be a very long time coming; with it the arbitrator is

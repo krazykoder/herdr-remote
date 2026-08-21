@@ -75,7 +75,10 @@ DEFAULT_GATES = [
 
 # Conservative on purpose, and raised only on evidence from real sessions. The maxima are the point:
 # a person who wants a longer loop can have one, and cannot have an unbounded one by typo.
-DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 3, "max_wall_clock_ms": 45 * 60 * 1000}
+# `max_consecutive` was 3, from before anything could lower it: `human_entered` was never called
+# and a resume did not clear the run, so the number was academic and a small one looked safe. Now
+# that both do, 3 is a leash a review loop trips on its first lap — ask, implement, ask is three.
+DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 8, "max_wall_clock_ms": 45 * 60 * 1000}
 BUDGET_MAX = {"max_steps": 50, "max_consecutive": 20, "max_wall_clock_ms": 8 * 60 * 60 * 1000}
 
 MAX_SCOPE = 4_000
@@ -978,7 +981,8 @@ class Arbitration:
         return self.edit(session_id, members=members)
 
     @session_change
-    def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None):
+    def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None,
+             budget=None):
         """Change a running session without starting a new one. Every field, one set of rules.
 
         §14.1 still fixes the roster at two, so a roster edit is a replacement of the whole thing
@@ -1004,6 +1008,11 @@ class Arbitration:
             next decision made against a sentence nobody is reading any more.
           * **triggers** — the relay's own clocks. The arbitrator is never told about them and
             there is nothing here to announce: it cannot act on a clock and never sees one.
+          * **budget** — the same: relay-side accounting, and the arbitrator already reads what is
+            left of it in every prompt. Editable because a session that stopped on a spent budget
+            had no way out at all — `resume` deliberately does not raise a limit it was not asked
+            to, so without this the only answer to `budget_steps` was to start a second session and
+            throw away everything the first one had decided.
           * **arbitrator** — not a field edit at all. A new pane has none of this session's
             context, so it is enrolled and then *briefed*, exactly as `reinit` briefs one: cleared,
             then given the starter prompt with the scope as it now stands. The pane it replaces is
@@ -1023,6 +1032,8 @@ class Arbitration:
                 raise ArbiterError("bad_scope")
         if triggers is not None:
             triggers = check_triggers(triggers)
+        if budget is not None:
+            budget = check_budget(budget)
 
         live = self.panes()
         was, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
@@ -1061,6 +1072,9 @@ class Arbitration:
         if triggers is not None:
             sets.append("triggers_json=?")
             args.append(json.dumps(triggers))
+        if budget is not None:
+            sets.append("budget_json=?")
+            args.append(json.dumps(budget))
         if swapped:
             sets.append("arbitrator_fp=?")
             args.append(json.dumps(fingerprint(chosen)))
@@ -1072,13 +1086,14 @@ class Arbitration:
         moved = ([m["pane_id"] for m in before.values()]
                  != [m["pane_id"] for m in roster.values()])
         reroled = [m["role"] for m in before.values()] != [m["role"] for m in roster.values()]
-        log.info("arbitration %s edited: roster %s%s%s%s", session_id,
+        log.info("arbitration %s edited: roster %s%s%s%s%s", session_id,
                  ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
                            f"{' [' + m['role'] + ']' if m.get('role') else ''}"
                            for mid, m in roster.items()),
                  f", arbitrator {was} -> {arb}" if swapped else "",
                  ", scope changed" if scope is not None else "",
-                 ", triggers changed" if triggers is not None else "")
+                 ", triggers changed" if triggers is not None else "",
+                 ", budget changed" if budget is not None else "")
 
         self._event(session_id, "edited", ", ".join(filter(None, [
             "roster " + ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
@@ -1086,13 +1101,14 @@ class Arbitration:
             "roles changed" if reroled else "",
             f"arbitrator {was} -> {arb}" if swapped else "",
             "scope changed" if scope is not None else "",
-            "clocks changed" if triggers is not None else ""])) or "nothing")
+            "clocks changed" if triggers is not None else "",
+            "budget changed" if budget is not None else ""])) or "nothing")
         if swapped:
             # A brief, not an announcement. The new pane was not here for any of this, so telling
             # it "the roster changed" would be telling it about a change from a state it never saw.
             return self._brief(session_id, arb, "arbitrator")
         if not moved and not reroled and scope is None:
-            return s                      # clocks only: nothing the arbitrator can act on
+            return s              # clocks or budget only: nothing the arbitrator can act on
         body = roster_prompt(roster, s["scope"], moved, reroled, scope is not None)
         self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
@@ -1198,17 +1214,28 @@ class Arbitration:
         stopped on `budget_steps` without raising the limit gets one more pause at the next trigger,
         which is honest, and the alternative is a Resume button that silently does nothing.
 
-        **`kick` is the answer to "what happens first".** Without it a resume arms the loop and
-        waits for a trigger — and a trigger is a member ending a turn or a clock, both of which can
-        be a very long time away: two idle members and no clocks is a session that is `active` and
-        will never do anything. Worse, a turn that ended *while it was paused* was dropped as a
-        trigger by `turn_ended`, so the very work the person paused to look at is not what wakes it
-        up again.
+        **A resume picks up where the session stopped, and there are three places that can be.**
+        Pausing is the control a person uses constantly, so what it costs must not depend on which
+        millisecond it landed in:
 
-        With `kick`, resuming asks for a decision immediately. The record kept recording throughout
-        the pause, so that prompt carries what happened while it was stopped — which closes the
-        dropped trigger as content even though the wake-up itself was lost — and a note saying what
-        stopped it, because two of those reasons change what the next decision may safely be.
+          1. **A decision was written and never read.** `collect` only ever runs off the arbitrator
+             ending a turn (§12.1 step 4). If the relay died — or a person paused — in the window
+             between the write and the read, that turn end is gone and nothing will ever ask again:
+             the file sits in the drop box for ever, and the next prompt bumps the sequence and
+             unlinks a different path. So a resume reads the drop box *first*, and when it holds
+             bytes nobody has judged this call is a collection rather than an arming. Nothing is
+             re-decided: `collect` compares the content hash, so a record already judged is left
+             alone.
+          2. **A member finished while it was stopped.** `turn_ended` drops that trigger — the
+             session was not armed — and records it on the path. A resume that only armed the loop
+             would then sit there for ever waiting for a wake-up that has already been and gone, so
+             an unhandled trigger since the last stop is asked now, whether or not `kick` was given.
+          3. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`, which asks
+             for a decision immediately. Two idle members and no clocks is a session that is
+             `active` and will never do anything, and `kick` is the way out of that.
+
+        Cases 2 and 3-with-`kick` carry a note saying what stopped the session, because two of
+        those reasons change what the next decision may safely be.
 
         Both forms refuse an arbitrator that is gone. Resuming a session whose decider has exited
         used to succeed and then die at the next trigger with `send_unconfirmed`, which reads like
@@ -1234,13 +1261,34 @@ class Arbitration:
         # The wall clock already renews on a resume for the same reason. Steps do not: that is the
         # hard cap on how much a session may do at all, and a person who wants more says so by
         # starting one.
+        sequence = session["sequence"]
+        pending = self._unread_decision(session_id, sequence)
+        dropped = session["state"] == "paused" and self._dropped_trigger(session_id)
+        # Back to `awaiting` when there is an answer on disk: `collect` refuses to read anything in
+        # any other state, and this is the state the session was in when it was written.
         self.conn.execute(
-            "UPDATE sessions SET state='active', pause_reason=NULL, window_at=?, consecutive=0, "
-            "arbitrator_pane=? WHERE id=?", (self.clock(), arb, session_id))
+            "UPDATE sessions SET state=?, pause_reason=NULL, window_at=?, consecutive=0, "
+            "arbitrator_pane=? WHERE id=?",
+            ("awaiting" if pending else "active", self.clock(), arb, session_id))
         self.conn.commit()
         self._event(session_id, "resumed",
-                    "asked for a decision now" if kick else "armed, waiting for a trigger")
-        if kick:
+                    f"reading the decision written for #{sequence} before the stop" if pending
+                    else "a turn ended while it was stopped — asking for a decision now" if dropped
+                    else "asked for a decision now" if kick
+                    else "armed, waiting for a trigger")
+        if pending:
+            try:
+                self.collect(session_id, pending)
+            except (ArbiterError, sqlite3.Error, OSError) as e:
+                # The same swallow `arbitrator_finished` makes, for the same reason: a drop box
+                # that cannot be read must not turn a resume into an exception, and the session is
+                # armed either way. Said out loud, because this is where a decision goes missing.
+                log.warning("arbitration %s: reading the drop box on a resume raised: %r",
+                            session_id, e)
+                self._event(session_id, "error", f"reading the drop box on a resume: {e!r}",
+                            sequence=sequence)
+            return self.session(session_id)
+        if kick or dropped:
             entries = []
             if self.entries:
                 try:
@@ -1251,8 +1299,46 @@ class Arbitration:
                     # a worse prompt and still a live session, unlike refusing to resume at all.
                     log.warning("arbitration %s: reading the record for a resume raised: %r",
                                 session_id, e)
-            self.prompt(session_id, "resume", entries, note=resume_note(session["pause_reason"]))
+            try:
+                self.prompt(session_id, "resume", entries,
+                            note=resume_note(session["pause_reason"]))
+            except ArbiterError:
+                # `prompt` pauses before it raises, so the session already says why — and a resume
+                # the person did not ask to trigger must not fail because the trigger it inherited
+                # could not be spent. A `kick` was asked for by hand and is reported by hand.
+                if kick:
+                    raise
         return self.session(session_id)
+
+    def _unread_decision(self, session_id, sequence):
+        """The prompt id an unjudged decision file answers, or None. See `resume`, case 1."""
+        if not sequence:
+            return None
+        row = self.conn.execute(
+            "SELECT id FROM prompts WHERE session_id=? AND sequence=? ORDER BY id DESC LIMIT 1",
+            (session_id, sequence)).fetchone()
+        if row is None:
+            return None
+        raw, sha = self.read_dropbox(session_id, sequence)
+        if raw is None:
+            return None
+        prior = self.conn.execute(
+            "SELECT raw_sha256 FROM decisions WHERE session_id=? AND sequence=? "
+            "ORDER BY id DESC LIMIT 1", (session_id, sequence)).fetchone()
+        return None if prior and prior["raw_sha256"] == sha else row["id"]
+
+    def _dropped_trigger(self, session_id):
+        """Did a member finish a turn since this session last stopped? See `resume`, case 2.
+
+        Read off the path rather than a column of its own: `turn_ended` already writes the row, and
+        a second place recording the same fact is a second place for it to be wrong. Anything that
+        would have consumed a trigger — the pause itself, a prompt going out, an earlier resume —
+        is the watermark, so only a trigger nobody has answered counts.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM events WHERE session_id=? AND kind='trigger' AND id > COALESCE("
+            "(SELECT MAX(id) FROM events WHERE session_id=? AND kind IN ('paused','asked',"
+            "'resumed')), 0) LIMIT 1", (session_id, session_id)).fetchone() is not None
 
     def end(self, session_id, reason):
         session = self.session(session_id)
@@ -1280,7 +1366,7 @@ class Arbitration:
 
         `max_consecutive` is the budget that asks whether the loop is talking to itself. Every
         automated send raises the count and only this lowers it, so a session where nobody joins in
-        stops after three — which is the point. A session where somebody does join in should not,
+        stops after a run of them — which is the point. A session where somebody does join in should not,
         and until the relay called this, none of them could tell the difference.
         """
         self.conn.execute("UPDATE sessions SET consecutive=0 WHERE id=?", (session_id,))
