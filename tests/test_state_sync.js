@@ -78,10 +78,10 @@ test('the module evaluates with no localStorage, no socket and no DOM', () => {
 
 // --- the allowlist is the boundary ------------------------------------------
 
-test('exactly four documents sync, and none of them is a secret', () => {
+test('exactly five documents sync, and none of them is a secret', () => {
   const {STATE_DOCS} = boot();
   assert.deepEqual(Object.keys(STATE_DOCS).sort(),
-                   ['conv_hidden', 'conv_view', 'conversations', 'pairs']);
+                   ['conv_hidden', 'conv_view', 'conversations', 'launcher', 'pairs']);
   for (const [name, d] of Object.entries(STATE_DOCS)) {
     assert.match(d.key, /^herdr_/, `${name} should mirror a herdr_ key`);
     assert.doesNotMatch(d.key, /token|relay_url|theme|font/,
@@ -529,4 +529,53 @@ test('a reconnect adopts backend state before any new write', () => {
   s.stateSyncReceive(answer({pairs: doc(11, 'v0')}));
   assert.ok(!s.sent.some(m => m.type === 'state_put'));
   assert.equal(s.store.herdr_pairs, 'v0');
+});
+
+// --- the launcher, the fifth document ---------------------------------------
+
+const tileDoc = (...ids) =>
+  JSON.stringify({version: 1, items: ids.map(id => ({id, label: id, action: 'run'}))});
+const tileIdsOf = body => JSON.parse(body).items.map(t => t.id);
+
+test('launcher: a tile built offline survives the adopt, a stale one does not', () => {
+  const {stateMerge} = boot();
+  const server = tileDoc('theirs');
+  // The outbox is the whole difference. `mine` was made here and the relay has never seen it;
+  // `ghost` is a stale cache or a tile someone else deleted, and appending it would put a deleted
+  // tile back on every browser.
+  assert.deepEqual(tileIdsOf(stateMerge('launcher', server, tileDoc('mine'), pend('mine'))),
+                   ['theirs', 'mine']);
+  assert.equal(stateMerge('launcher', server, tileDoc('ghost'), pend()), server);
+});
+
+test('launcher: the relay copy of a shared id wins, so an edit elsewhere is not undone', () => {
+  const {stateMerge} = boot();
+  const server = JSON.stringify({version: 1, items: [{id: 't1', label: 'renamed there'}]});
+  const local = JSON.stringify({version: 1, items: [{id: 't1', label: 'stale here'}]});
+  const merged = stateMerge('launcher', server, local, pend('t1'));
+  assert.equal(JSON.parse(merged).items[0].label, 'renamed there');
+});
+
+test('launcher: a tile with no id is not carried, so it cannot duplicate on every connect', () => {
+  const {stateMerge} = boot();
+  const server = tileDoc('a');
+  const local = JSON.stringify({version: 1, items: [
+    {id: 'a', label: 'a', action: 'run'}, {label: 'nameless', action: 'run'}]});
+  assert.equal(stateMerge('launcher', server, local, pend()), server);
+});
+
+test('launcher: it round-trips through seed, ack and adopt like any other document', () => {
+  const s = boot({herdr_launcher: tileDoc('t1')});
+  s.stateSyncOpen();
+  // rev 0 with a local body is the "seed it" case — the relay holds nothing and this browser does.
+  s.stateSyncReceive(answer({launcher: doc(0, null)}));
+  s.tick();
+  const put = s.sent.find(m => m.type === 'state_put' && m.name === 'launcher');
+  assert.ok(put, 'a launcher this browser has and the relay does not must be uploaded');
+  assert.deepEqual(tileIdsOf(put.body), ['t1']);
+
+  // And a write from another browser is adopted over the local copy.
+  s.stateSyncAck({type: 'state_ack', name: 'launcher', rev: 1});
+  s.stateSyncReceive(answer({launcher: doc(2, tileDoc('t1', 't2'))}));
+  assert.deepEqual(tileIdsOf(s.store.herdr_launcher), ['t1', 't2']);
 });

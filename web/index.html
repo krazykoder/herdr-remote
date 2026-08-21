@@ -6871,6 +6871,10 @@
   <script src="src/utils.js"></script>
   <script src="src/state_sync.js"></script>
   <script src="src/pairs_pure.js"></script>
+  <!-- After pairs_pure.js, which owns SEND_TEXT_MAX — launcher_pure.js reads it to bound a
+       command. The store reads the pure block's constants at load, so the pair stays in order. -->
+  <script src="src/launcher_pure.js"></script>
+  <script src="src/launcher_store.js"></script>
   <script src="src/settings.js"></script>
   <script src="src/sound.js"></script>
   <script src="src/sections.js"></script>
