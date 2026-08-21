@@ -38,8 +38,12 @@ function sectionNode(id, html) {
 function sectionsCtx({stored, content = {}, landing = true} = {}) {
   const store = stored === undefined ? {} : {herdr_sections: stored};
   const el = id => sectionNode(id, content[id]);
-  const nodes = {agents: el('agents'), terminals: el('terminals'), pairs: el('pairs'), recents: el('recents'), conversations: el('conversations')};
+  // The launcher is empty unless a test says otherwise: renderLauncher writes '' when there are
+  // no tiles, which is what keeps a section nobody has used off the page. Defaulting it to
+  // content instead would put a launcher in front of every test that is about something else.
+  const nodes = {launcher: sectionNode('launcher', content.launcher === undefined ? '' : content.launcher), agents: el('agents'), terminals: el('terminals'), pairs: el('pairs'), recents: el('recents'), conversations: el('conversations')};
   const boxes = {
+    sectionLauncher: {checked: false, disabled: false},
     sectionAgents: {checked: false, disabled: false},
     sectionTerminals: {checked: false, disabled: false},
     sectionPairs: {checked: false, disabled: false},
@@ -88,11 +92,27 @@ const painted = nodes => Object.values(nodes)
   .sort((a, b) => Number(a.style.order) - Number(b.style.order))
   .map(n => n.id);
 
+// The launcher leads, and it is the one section whose default position was chosen rather than
+// inherited: a launcher under four lists of what is already running is a launcher nobody presses.
+// An install that predates it keeps its stored order untouched — see loadSections — so this is
+// what a *new* install sees, not what an upgrade does.
 test('an install that never opens Settings sees today’s layout', () => {
-  const {run, nodes} = sectionsCtx();
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  const {run, nodes} = sectionsCtx({content: {launcher: '<div>launcher</div>'}});
+  const all = ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations'];
+  assert.deepEqual(run('sectionOrder'), all);
   run('applySections()');
-  assert.deepEqual(painted(nodes), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(painted(nodes), all);
+});
+
+test('a stored order written before the launcher existed is left exactly as it is', () => {
+  // "Off" and "not offered yet" are the same shape in storage, so adopting at load time would
+  // undo a deliberate switch-off on every reload. The section is turned on when the first tile is
+  // saved instead — see ensureLauncherSection in launcher_store.js.
+  const stored = ['agents', 'terminals', 'pairs', 'recents', 'conversations'];
+  const {run, nodes} = sectionsCtx({stored: JSON.stringify(stored)});
+  assert.deepEqual(run('sectionOrder'), stored);
+  run('applySections()');
+  assert.deepEqual(painted(nodes), stored);
 });
 
 test('a stored order is honoured, and the checkboxes agree with it', () => {
@@ -118,15 +138,15 @@ test('off and on again is how a section is moved', () => {
   // replaces it. Documented in the settings hint, so it is worth a test that would catch a change.
   const {run} = sectionsCtx();
   run("toggleSection('agents', false)");
-  assert.deepEqual(run('sectionOrder'), ['terminals', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(run('sectionOrder'), ['launcher', 'terminals', 'pairs', 'recents', 'conversations']);
   run("toggleSection('agents', true)");
-  assert.deepEqual(run('sectionOrder'), ['terminals', 'pairs', 'recents', 'conversations', 'agents']);
+  assert.deepEqual(run('sectionOrder'), ['launcher', 'terminals', 'pairs', 'recents', 'conversations', 'agents']);
 });
 
 test('switching on something already on changes nothing', () => {
   const {run} = sectionsCtx();
   run("toggleSection('terminals', true)");
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents', 'conversations'], 'not moved, not doubled');
+  assert.deepEqual(run('sectionOrder'), ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations'], 'not moved, not doubled');
 });
 
 test('the last section on cannot be switched off', () => {
@@ -262,7 +282,7 @@ test('the row is the landing page’s own, and leaves with it', () => {
 test('a stored value that is not a list is ignored', () => {
   for (const bad of ['null', '"agents"', '{}', '7', 'not json at all']) {
     const {run} = sectionsCtx({stored: bad});
-    assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents', 'conversations'], `stored ${bad}`);
+    assert.deepEqual(run('sectionOrder'), ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations'], `stored ${bad}`);
   }
 });
 
@@ -273,21 +293,21 @@ test('unknown and repeated names are dropped rather than trusted', () => {
 
 test('a stored list with nothing usable in it falls back rather than blanking the page', () => {
   const {run} = sectionsCtx({stored: JSON.stringify(['nope', 'gone'])});
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(run('sectionOrder'), ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations']);
 });
 
 test('an unknown section name is refused', () => {
   const {run} = sectionsCtx();
   run("toggleSection('timeline', true)");
-  assert.deepEqual(run('sectionOrder'), ['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(run('sectionOrder'), ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations']);
 });
 
 test('a change is written back, and read on the next load', () => {
   const {run, store} = sectionsCtx();
   run("toggleSection('terminals', false)");
-  assert.deepEqual(JSON.parse(store.herdr_sections), ['agents', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(JSON.parse(store.herdr_sections), ['launcher', 'agents', 'pairs', 'recents', 'conversations']);
   const next = sectionsCtx({stored: store.herdr_sections});
-  assert.deepEqual(next.run('sectionOrder'), ['agents', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(next.run('sectionOrder'), ['launcher', 'agents', 'pairs', 'recents', 'conversations']);
 });
 
 test('private mode is session-only rather than an error', () => {
@@ -301,5 +321,5 @@ test('private mode is session-only rather than an error', () => {
   });
   vm.runInContext(SRC, ctx);
   vm.runInContext("toggleSection('agents', false)", ctx);
-  assert.deepEqual(vm.runInContext('sectionOrder', ctx), ['terminals', 'pairs', 'recents', 'conversations']);
+  assert.deepEqual(vm.runInContext('sectionOrder', ctx), ['launcher', 'terminals', 'pairs', 'recents', 'conversations']);
 });

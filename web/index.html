@@ -1168,8 +1168,117 @@
     .terminals,
     .pairs,
     .recents,
-    .conversations {
+    .conversations,
+    .launcher {
       padding: 0 12px 12px;
+    }
+
+    /* Tiles, not cards, and a grid at every width including a phone's — a launcher is a keypad,
+       and one column of full-width buttons wastes the half of the screen a thumb can still reach.
+       Its own minmax rather than the 300px the card sections share: a tile holds a name and a line
+       of payload, so it is a third of the width a pane card needs. */
+    .launcher {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    /* The header spans the grid at every width. The shared rule that does this only exists inside
+       the desktop media query, because the sections it was written for are single-column until
+       then and this one never is. */
+    .launcher .section-header {
+      grid-column: 1 / -1;
+    }
+
+    .launcher-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      min-height: 64px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .launcher-tile:hover:not([aria-disabled="true"]) {
+      border-color: var(--blue);
+    }
+
+    /* A tile stands in for a thing that will exist, so it carries the kind's colour the way an
+       agent card carries its agent's — the terminal green of a shell, the blue of a session. */
+    .launcher-tile .launcher-kind {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .launcher-tile[data-action="run"] .launcher-kind {
+      color: var(--green);
+    }
+
+    .launcher-tile[data-action="spawn"] .launcher-kind {
+      color: var(--blue);
+    }
+
+    .launcher-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    /* The payload, and the reason it is on the tile at all: a tile's text may have been written by
+       another browser, so the name is not evidence of what it does. Monospace because most of what
+       lands here is a command. Two lines, then an ellipsis — the confirm shows the whole of it. */
+    .launcher-payload {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.35;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+
+    /* Disabled, never hidden. A launcher that silently drops buttons teaches the reader not to
+       trust it; one that says which Project went missing is repairable. */
+    .launcher-tile[aria-disabled="true"] {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .launcher-badge {
+      align-self: flex-start;
+      margin-top: auto;
+      padding: 1px 5px;
+      border: 1px solid var(--orange);
+      border-radius: 4px;
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--orange);
+      white-space: nowrap;
+    }
+
+    .launcher-empty {
+      grid-column: 1 / -1;
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin: 0;
     }
 
     /* Side by side at every width, phone included: two agents working together is what a pair is,
@@ -5873,6 +5982,7 @@
 
     <div class="setting-group">
       <label>Main page sections</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionLauncher" onchange="toggleSection('launcher', this.checked)"> Launcher</label>
       <label class="toggle-option"><input type="checkbox" id="sectionAgents" onchange="toggleSection('agents', this.checked)"> Agents</label>
       <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
       <label class="toggle-option"><input type="checkbox" id="sectionPairs" onchange="toggleSection('pairs', this.checked)"> Pairs</label>
@@ -6020,6 +6130,9 @@
        each is rewritten wholesale on its own schedule, and each needs to be movable past the
        others without the one above it owning where it lands. -->
   <div class="view" id="agentListView">
+    <!-- Tiles that create things, so it leads: a launcher under four lists of what is already
+         running is a launcher nobody presses. -->
+    <div class="launcher" id="launcher" style="display:none"></div>
     <div class="agents" id="agents"></div>
     <!-- Shell panes. Was appended inside #agents; it is its own node now so it can be ordered. -->
     <div class="terminals" id="terminals" style="display:none"></div>
@@ -6882,6 +6995,9 @@
   <script src="src/status_bar.js"></script>
   <script src="src/start_dialog.js"></script>
   <script src="src/pairs_ui.js"></script>
+  <!-- After status_bar.js, which owns `projects`, `startOptions` and escapeHtml's callers, and
+       after sections.js, whose applySections it calls to take an empty section off screen. -->
+  <script src="src/launcher_ui.js"></script>
   <script src="src/summary_detect.js"></script>
   <script src="src/conversation_pure.js"></script>
   <script src="src/conversation_store.js"></script>

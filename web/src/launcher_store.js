@@ -31,13 +31,30 @@
       return kept;
     }
 
+    // A stored section order written before the launcher existed does not name it, and
+    // loadSections reads that absence as "switched off" — correctly, because it cannot tell the
+    // two apart. So the section is switched on at the one moment that says the user wants it: they
+    // just saved a tile. Causal rather than a migration, which is what lets a later switch-off
+    // stick instead of being undone on the next load.
+    //
+    // Only when there is nothing there yet — a second tile must not resurrect a section its owner
+    // deliberately turned off.
+    function ensureLauncherSection(had) {
+      if (had || typeof toggleSection !== 'function') return;
+      if (typeof sectionOrder !== 'undefined' && sectionOrder.includes('launcher')) return;
+      toggleSection('launcher', true);
+    }
+
     // One tile in, by id. Used by the editor for both add and edit, because "save this tile" is
     // one operation to the person doing it.
     function putLauncherTile(tile) {
       const items = loadLauncher();
+      const had = items.length;
       const at = items.findIndex(t => t.id === tile.id);
       if (at < 0) items.push(tile); else items[at] = tile;
-      return saveLauncher(items);
+      const kept = saveLauncher(items);
+      ensureLauncherSection(had);
+      return kept;
     }
 
     function removeLauncherTile(id) {

@@ -7,14 +7,25 @@
     // the terminals write rewrites each section's innerHTML on their own schedule, and a reorder
     // that moved DOM nodes would race all three.
     const SECTIONS_KEY = 'herdr_sections';
-    const SECTION_IDS = {agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents', conversations: 'conversations'};
+    const SECTION_IDS = {launcher: 'launcher', agents: 'agents', terminals: 'terminals', pairs: 'pairs', recents: 'recents', conversations: 'conversations'};
     const SECTION_KEYS = Object.keys(SECTION_IDS);
-    // Today's layout, so an install that never opens Settings sees no change at all.
-    const SECTION_DEFAULT = ['agents', 'terminals', 'pairs', 'recents', 'conversations'];
+    // Today's layout, so an install that never opens Settings sees no change at all — except for
+    // the launcher, which leads. That is the one deliberate departure: a section that defaults to
+    // invisible is a feature nobody finds, and it is one checkbox to undo. It also costs an
+    // install nothing until a tile exists, because an empty launcher renders '' and applySections
+    // takes the whole section off screen.
+    const SECTION_DEFAULT = ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations'];
     let sectionOrder = SECTION_DEFAULT.slice();
 
     // Anything unrecognised, duplicated or empty falls back to the default. This is a display
     // preference read from storage a user can edit, and a bad value must not blank the page.
+    //
+    // A stored order that predates the launcher stays exactly as it is, so an existing install
+    // still sees no change — the rule this file has always kept. That does leave the launcher off
+    // for those installs, and the answer is not a migration here but `ensureLauncherSection`,
+    // which switches it on at the moment the first tile is saved. Turning a section on because
+    // the user just put something in it needs no flag to tell it apart from a section they
+    // deliberately turned off, which a load-time adoption cannot do.
     function loadSections() {
       let v = null;
       try { v = JSON.parse(localStorage.getItem(SECTIONS_KEY)); } catch (e) { v = null; }
@@ -72,12 +83,12 @@
     // scrolling the four above it. Header-side and not a row of its own: "page layout does not
     // change" is the point — the landing page leaves the tab strip's space empty anyway.
     const SECTION_NAMES = {
-      agents: 'Agents', terminals: 'Terminals', pairs: 'Pairs',
+      launcher: 'Launcher', agents: 'Agents', terminals: 'Terminals', pairs: 'Pairs',
       recents: 'Recents', conversations: 'Conversations',
     };
     // Its own order, not the sections' and not Settings': this row is fixed so a button stays under
     // the same thumb whatever the page below is doing, and it leads with what is read most.
-    const SECTION_TABS = ['conversations', 'agents', 'terminals', 'pairs', 'recents'];
+    const SECTION_TABS = ['conversations', 'agents', 'terminals', 'pairs', 'recents', 'launcher'];
     const SECTION_GLYPHS = {
       // Drawn to the same 18-unit span as the bubble and the terminal beside it: a 16-wide box
       // between two 18s reads as the odd one out even though all three are on an 18px canvas.
@@ -92,6 +103,13 @@
       recents: '<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/>'
         + '<polyline points="12 7 12 12 15 14"/>',
       conversations: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+      // Four tiles, because that is what the section is. Deliberately *not* the lightning bolt:
+      // the composer's own quick dock already wears one, and two different things under one glyph
+      // in one app is how a reader learns the glyph means nothing.
+      launcher: '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
+        + '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+        + '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
+        + '<rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     };
 
     let sectionTabsHtml = '';

@@ -973,6 +973,10 @@
       const html = terminalsHtml();
       document.getElementById('terminals').innerHTML = html;
       document.getElementById('pairs').innerHTML = pairsHtml();
+      // After the snapshot has landed, because a tile's gate reads `projects` and `startOptions`:
+      // a launcher drawn before the relay has said what it starts would disable every tile and
+      // then need a second pass to undo it.
+      renderLauncher();
       renderConversations();
       // Live-ness is the one thing on the standalone view that this snapshot can change.
       renderConvStandalone(false);
