@@ -55,8 +55,13 @@ These are the rules everything else serves. Each has a test named in §16.
 - **N4 — Authorship is recorded, never inferred.** Every entry carries an explicit `origin`. Where
   the relay cannot know, it records `unknown` and does not guess.
 - **N5 — A decision names a target and prose. Never argv, a path, a cwd, an agent kind, or a check.**
-- **N6 — The roster is fixed at session start.** The set of addressable members never grows while a
-  session runs.
+- **N6 — The roster changes only by a person's hand, and never under an outstanding decision.**
+  *(Revised 2026-08-21. It read "the roster is fixed at session start"; see the decision log entry
+  for why that was too strong.)* A client may replace the roster of a running session — attach,
+  detach or swap — and when it does, the arbitrator is told on the same call, and the edit is
+  refused while the session is `awaiting`. What the original wording protected is what still holds:
+  the arbitrator is never handed a `to` it was not told about, and the set of addressable members
+  never changes as a consequence of anything an agent said.
 - **N7 — A working pane is never written to**, and a decision naming one is rejected, not held.
 - **N8 — Every automated send is visible in the thread**, with its badge, its gate and the
   arbitrator's `why`. Nothing happens off-screen.
@@ -792,7 +797,8 @@ resumes it or cancels it; the arbitrator has no way to end a session itself.
 
 ### 14.1 Session size
 
-v1 arbitrates **exactly two members** — three panes including the arbitrator. The store, schema and
+v1 arbitrates **exactly two members** — three panes including the arbitrator. Which two may change
+while the session runs (`arb_members`, §15.1); how many may not. The store, schema and
 prompt are written for N because writing them for two costs the same and closes the door; the
 *session* is what refuses more, until a two-member loop has been watched running for real.
 
@@ -840,6 +846,7 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
 | `arb_start` | `conversation`, `members[]` (2), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
+| `arb_members` | `session`, `members[]` (2) | Arbiter |
 | `arb_pause` | `session` | Arbiter |
 | `arb_resume` | `session` | Arbiter |
 | `arb_cancel` | `session`, `reason?` | Arbiter |

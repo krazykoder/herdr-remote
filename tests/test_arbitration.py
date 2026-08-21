@@ -942,5 +942,115 @@ class Restart(Harness):
         self.assertIsNone(self.arb.recover())
 
 
+class RosterEdits(Harness):
+    """Changing who a running session is watching, without losing the arbitrator.
+
+    This is the invariant that moved. N6 read "the roster is fixed at session start", and it does
+    not any more — a person may swap a member in place, which is the whole point: the arbitrator
+    keeps its pane, its brief, its budget and everything it has already decided, and only the two
+    agents underneath it change. What N6 was protecting is protected here instead by the
+    announcement and by the refusal while a decision is outstanding, both pinned below.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.p3 = pane("p3", agent="codex", cwd="/b", label="Reviewer 2")
+        self.live.append(self.p3)
+
+    def swap(self, session_id):
+        return self.arb.set_members(session_id, [self.live[0], self.p3])
+
+    def test_a_member_is_swapped_and_the_session_carries_on(self):
+        s = self.start()
+        before = self.arb.session(s["id"])
+        self.swap(s["id"])
+        after = self.arb.session(s["id"])
+        self.assertEqual(before["id"], after["id"], "edited, not replaced")
+        self.assertEqual("active", after["state"])
+        self.assertEqual(["p1", "p3"], [m["pane_id"] for m in self.arb.roster(s["id"]).values()])
+
+    def test_the_arbitrator_is_told_who_is_in_the_room_now(self):
+        s = self.start()
+        self.sent.clear()
+        self.swap(s["id"])
+        self.assertEqual(1, len(self.sent), "one announcement, to the arbitrator")
+        pane_id, text = self.sent[0]
+        self.assertEqual("pA", pane_id)
+        self.assertIn("Reviewer 2", text)
+        self.assertIn("member-2", text)
+        # And that it is not a trigger. An arbitrator that answered this with a decision record
+        # would be writing against a sequence nobody asked about.
+        self.assertIn("Do not write a decision record", text)
+
+    def test_an_edit_is_refused_while_a_decision_is_outstanding(self):
+        s = self.start()
+        self.step(s["id"])
+        self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+        with self.assertRaises(ArbiterError) as caught:
+            self.swap(s["id"])
+        self.assertEqual("not_editable", caught.exception.code)
+        self.assertEqual(["p1", "p2"],
+                         [m["pane_id"] for m in self.arb.roster(s["id"]).values()],
+                         "a refused edit changes nothing")
+
+    def test_a_paused_session_can_be_re_crewed_before_it_resumes(self):
+        # The ordinary repair: a member exited, the session paused saying so, and the way back is
+        # to put someone else in that seat rather than to start over.
+        s = self.start()
+        self.arb.pause(s["id"], "member_gone")
+        self.swap(s["id"])
+        self.assertEqual("paused", self.arb.session(s["id"])["state"], "still the person's call")
+        self.arb.resume(s["id"])
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_the_arbitrator_cannot_be_put_in_its_own_roster(self):
+        s = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.set_members(s["id"], [self.live[0], self.live[2]])
+        self.assertEqual("duplicate_participant", caught.exception.code)
+
+    def test_a_pane_that_is_not_live_is_refused(self):
+        s = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.set_members(s["id"], [self.live[0], pane("p9")])
+        self.assertEqual("participant_not_live", caught.exception.code)
+
+    def test_the_size_is_still_two(self):
+        s = self.start()
+        for roster in ([self.live[0]], [self.live[0], self.p3, self.live[1]]):
+            with self.assertRaises(ArbiterError) as caught:
+                self.arb.set_members(s["id"], roster)
+            self.assertEqual("member_count", caught.exception.code)
+
+    def test_a_busy_arbitrator_is_not_written_to(self):
+        # N7 where it is not about a member: the announcement is a keystroke like any other.
+        s = self.start()
+        self.live[2]["agent_status"] = "working"
+        with self.assertRaises(ArbiterError) as caught:
+            self.swap(s["id"])
+        self.assertEqual("arbitrator_busy", caught.exception.code)
+
+    def test_an_announcement_that_cannot_be_proven_pauses_the_session(self):
+        # The roster row is written by then, so the session is watching two agents its arbitrator
+        # may not know about. That is a stop, not a warning.
+        s = self.start()
+        self.arb.send = lambda pane_id, text: False
+        self.swap(s["id"])
+        s2 = self.arb.session(s["id"])
+        self.assertEqual(("paused", "send_unconfirmed"), (s2["state"], s2["pause_reason"]))
+
+    def test_the_new_member_is_addressable_where_the_old_one_was(self):
+        # The point of the whole thing: after the swap, a decision naming member-2 reaches the
+        # agent that took that seat, and not the one that left it.
+        s = self.start()
+        self.swap(s["id"])
+        handle = self.step(s["id"], trigger="turn_end — member-1")
+        self.write(s["id"], handle["sequence"], to="member-2")
+        out = self.arb.collect(s["id"], handle["prompt_id"])
+        self.assertEqual("sent", out["outcome"])
+        self.assertEqual("p3", out["pane_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

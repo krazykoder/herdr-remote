@@ -309,6 +309,28 @@ Choose call_human when ambiguity or decision complexity is high, when the scope
 does not cover what just happened, or when you would be guessing."""
 
 
+def roster_prompt(roster, scope):
+    """Sent when the person changes who is in the session. Announcement, not a trigger.
+
+    The arbitrator was told the roster once, in the starter prompt, and every trigger message
+    repeats it — so a roster edited underneath it would be discovered as a surprise in the next
+    trigger, with no way to tell a swap from a mistake. This says a person did it, on purpose.
+
+    No decision is asked for and no drop path is named: nothing has happened yet that needs one.
+    """
+    lines = ["The person running this session has changed who is in it.",
+             "", "The roster is now:"]
+    for member_id, m in roster.items():
+        lines.append(f"  {member_id}  {m.get('role') or '-'} / {m.get('agent') or '-'} / "
+                     f"{m.get('label') or '-'}")
+    lines += ["", "Anyone not listed above has left and can no longer be addressed. Member ids "
+                  "are positional, so one you have used before may now be a different agent — "
+                  "read the roster in each trigger message rather than remembering it.",
+              "", f"The scope is unchanged:", scope,
+              "", "Do not write a decision record for this message. Wait for the next trigger."]
+    return "\n".join(lines)
+
+
 def trigger_prompt(roster, trigger, entries, gates, left, sequence, drop_path):
     """Sent on every trigger. Only the changing context — §11.3.
 
@@ -515,6 +537,46 @@ class Arbitration:
             }
         return out
 
+    def _enrol(self, participants):
+        """Panes as the caller named them, re-read as the relay's own snapshot says they are.
+
+        Only `pane_id` and `role` are taken from the caller — the pane id is the selection and the
+        role is the person's own label for it. Everything a participant is *identified* by is read
+        back off the live snapshot, because a fingerprint the client supplies is a fingerprint the
+        client can get wrong: a stale payload naming a pane that has since been replaced would
+        enrol the new pane under the old pane's identity, and every later re-resolution would
+        follow the wrong one.
+
+        Raises the §9.2 participant codes, so starting a session and editing its roster refuse the
+        same things for the same reasons.
+        """
+        if not all(isinstance(p, dict) for p in participants):
+            raise ArbiterError("bad_participant")
+        ids = [p.get("pane_id") for p in participants]
+        if len(set(ids)) != len(ids) or not all(ids):
+            raise ArbiterError("duplicate_participant")
+        live_by_id = {p.get("pane_id"): p for p in self.panes()}
+        out = []
+        for p in participants:
+            actual = live_by_id.get(p.get("pane_id"))
+            if actual is None:
+                raise ArbiterError("participant_not_live", p.get("pane_id") or "")
+            # v1 is local-only (D13). A remote send is one ssh hop away and the recovery story for
+            # a half-delivered instruction over a dropped connection is not written yet.
+            #
+            # The *claimed* host is checked even though it is not trusted for anything else, and
+            # this is the one place it has to be. `panes()` is this machine's herdr, so everything
+            # it lists is local by construction and a check against the snapshot alone can never
+            # fail. But pane ids are per-host counters and collide across hosts — a client that
+            # meant `box`'s w1:p1 would otherwise silently enrol *this* machine's w1:p1 and start
+            # typing into the wrong agent's terminal. A claim is never identity; it is only ever a
+            # reason to refuse.
+            host = p.get("host") or actual.get("host") or "local"
+            if host != "local":
+                raise ArbiterError("remote_participant", host)
+            out.append({**actual, "role": p.get("role") or ""})
+        return out
+
     # --- lifecycle ---
 
     def start(self, *, conversation, members, arbitrator, scope, gates=None, budget=None,
@@ -536,35 +598,7 @@ class Arbitration:
             raise ArbiterError("session_running")
         if len(members) != MEMBERS_REQUIRED:
             raise ArbiterError("member_count", f"{len(members)}, expected {MEMBERS_REQUIRED}")
-        if not all(isinstance(p, dict) for p in [*members, arbitrator]):
-            raise ArbiterError("bad_participant")
-        panes = [*members, arbitrator]
-        ids = [p.get("pane_id") for p in panes]
-        if len(set(ids)) != len(ids) or not all(ids):
-            raise ArbiterError("duplicate_participant")
-        live = self.panes()
-        live_by_id = {p.get("pane_id"): p for p in live}
-        for p in panes:
-            actual = live_by_id.get(p.get("pane_id"))
-            if actual is None:
-                raise ArbiterError("participant_not_live", p.get("pane_id") or "")
-            # v1 is local-only (D13). A remote send is one ssh hop away and the recovery story for
-            # a half-delivered instruction over a dropped connection is not written yet.
-            #
-            # The *claimed* host is checked even though it is not trusted for anything else, and
-            # this is the one place it has to be. `panes()` is this machine's herdr, so everything
-            # it lists is local by construction and a check against the snapshot alone can never
-            # fail. But pane ids are per-host counters and collide across hosts — a client that
-            # meant `box`'s w1:p1 would otherwise silently enrol *this* machine's w1:p1 and start
-            # typing into the wrong agent's terminal. A claim is never identity; it is only ever a
-            # reason to refuse.
-            host = p.get("host") or actual.get("host") or "local"
-            if host != "local":
-                raise ArbiterError("remote_participant", host)
-        # Pane ID is the user's selection; its identity belongs to the relay snapshot. Accepting a
-        # client-provided fingerprint lets a stale or forged payload enrol one pane as another.
-        members = [{**live_by_id[p["pane_id"]], "role": p.get("role") or ""} for p in members]
-        arbitrator = live_by_id[arbitrator["pane_id"]]
+        *members, arbitrator = self._enrol([*members, arbitrator])
         # N7 in the one place it is not about a member: the starter prompt is the only thing that
         # tells the arbitrator what it is, and a pane mid-turn is where that goes missing. Checked
         # here as well as in the browser, because a direct client is not obliged to have a form.
@@ -592,13 +626,7 @@ class Arbitration:
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
              json.dumps(triggers),
              json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"], at, at))
-        for i, p in enumerate(members, start=1):
-            self.conn.execute(
-                "INSERT INTO members (session_id, member_id, host, agent, cwd, label, role, "
-                "pane_id, enrolled_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (session_id, f"member-{i}", p.get("host") or "local", p.get("agent") or "",
-                 p.get("cwd") or "", p.get("label") or "", p.get("role") or "",
-                 p["pane_id"], at))
+        self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
         if not self._send(arbitrator["pane_id"], starter_prompt(scope, gates, self._query_path())):
@@ -609,6 +637,82 @@ class Arbitration:
             # button. Failing the start leaves nothing behind and the person simply starts again.
             self.end(session_id, "send_unconfirmed")
             raise ArbiterError("send_unconfirmed", arbitrator["pane_id"])
+        return self.session(session_id)
+
+    def _write_members(self, session_id, members, at):
+        """The roster, replacing whatever was there. Ids are positional: member-1 is the first.
+
+        Positional and not sticky, so a roster edit cannot leave `member-2` meaning one agent in
+        the arbitrator's memory and another in the table. Which is exactly why the edit announces
+        itself — see `roster_prompt`.
+        """
+        self.conn.execute("DELETE FROM members WHERE session_id = ?", (session_id,))
+        for i, p in enumerate(members, start=1):
+            self.conn.execute(
+                "INSERT INTO members (session_id, member_id, host, agent, cwd, label, role, "
+                "pane_id, enrolled_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (session_id, f"member-{i}", p.get("host") or "local", p.get("agent") or "",
+                 p.get("cwd") or "", p.get("label") or "", p.get("role") or "",
+                 p["pane_id"], at))
+
+    def set_members(self, session_id, members):
+        """Change who a running session is arbitrating between. Attach, detach and swap, one verb.
+
+        §14.1 still fixes the size at two, so every edit is a replacement of the whole roster
+        rather than an add and a remove: "swap the reviewer", "put these two in" and "take that one
+        out and this one in" are one operation with one set of preconditions to get right.
+
+        **This is the change to N6.** The roster used to be fixed at session start, and it is not
+        any more. What N6 was protecting — that the arbitrator can never be handed a `to` it was
+        never told about — is now protected by two things instead: the edit is announced to the
+        arbitrator on this same call, and it is refused while a decision is outstanding.
+
+        Refused while `awaiting` for that second reason. A prompt is already with the arbitrator
+        naming the roster as it was; a decision answering it that names a member who left in the
+        meantime would be rejected as an unknown member, which reads in the record as the
+        arbitrator's mistake and is the person's edit. Pause it or let the decision land.
+
+        The reused arbitrator is the point: its pane, its brief and the session's budget and
+        history all stay, and only the two it is watching change.
+        """
+        s = self.session(session_id)
+        if s is None:
+            raise ArbiterError("no_session")
+        if s["state"] not in ("active", "paused"):
+            raise ArbiterError("not_editable", s["state"])
+        if len(members) != MEMBERS_REQUIRED:
+            raise ArbiterError("member_count", f"{len(members)}, expected {MEMBERS_REQUIRED}")
+        arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
+        if arb is None:
+            raise ArbiterError("arbitrator_gone")
+        if arb in [p.get("pane_id") for p in members]:
+            raise ArbiterError("duplicate_participant", arb)
+        enrolled = self._enrol(members)
+        # N7, and the same refusal `start` makes: the announcement is a keystroke, and a pane
+        # mid-turn is where a keystroke goes missing. Refused rather than paused — nothing has
+        # changed yet, and the person can do it a moment later.
+        arb_status = next((p.get("agent_status") or "" for p in self.panes()
+                           if p.get("pane_id") == arb), "")
+        if arb_status in BUSY:
+            raise ArbiterError("arbitrator_busy", arb)
+
+        at = self.clock()
+        self._write_members(session_id, enrolled, at)
+        self.conn.execute("UPDATE sessions SET arbitrator_pane=? WHERE id=?", (arb, session_id))
+        self.conn.commit()
+        roster = self.roster(session_id)
+        log.info("arbitration %s roster set to %s", session_id,
+                 ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
+                           for mid, m in roster.items()))
+        self.conn.execute(
+            "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
+            (session_id, s["sequence"], "roster", roster_prompt(roster, s["scope"]), at))
+        self.conn.commit()
+        if not self._send(arb, roster_prompt(roster, s["scope"])):
+            # The roster is already changed — it is a row, and the row is written. What could not
+            # be proven is that the arbitrator was *told*, and an arbitrator deciding against a
+            # roster it does not know about is the one thing this whole call exists to prevent.
+            return self.pause(session_id, "send_unconfirmed")
         return self.session(session_id)
 
     def pause(self, session_id, reason):

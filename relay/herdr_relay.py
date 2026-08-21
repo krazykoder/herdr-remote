@@ -2074,6 +2074,12 @@ async def handle_client(ws, listener="lan"):
                                 scope=msg.get("scope") or "",
                                 gates=msg.get("gates"), budget=msg.get("budget"),
                                 triggers=msg.get("triggers")))
+                    elif msg_type == "arb_members":
+                        # Attach, detach and swap are one edit: §14.1 fixes the size at two, so
+                        # the roster is always replaced whole. The arbitrator is told on this same
+                        # call — see `set_members` for what that replaces about N6.
+                        session = await asyncio.to_thread(
+                            arbitration.set_members, msg["session"], msg.get("members") or [])
                     elif msg_type == "arb_pause":
                         # `user`, always: this is the one pause a person asks for by hand, and
                         # letting a client name the reason would let it forge a budget stop.
