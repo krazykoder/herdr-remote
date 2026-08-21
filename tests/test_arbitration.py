@@ -1380,5 +1380,169 @@ class Rebrief(Harness):
         self.assertIn("reinit", triggers)
 
 
+class Resuming(Harness):
+    """What a session does first when it comes back.
+
+    A resume used to arm the loop and stop there, which is correct and can be nothing at all: the
+    triggers are a member ending a turn and two clocks that default to `Never`, so two idle members
+    and no clocks is a session that reads as `active` and will never act. Worse, a turn that ended
+    while it was paused was dropped as a trigger — so the very work a person paused to look at was
+    not what woke it up again.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.arb.entries = lambda sid: [{"label": "member-1", "text": "Landed the fix."}]
+
+    def test_a_plain_resume_arms_the_loop_and_says_nothing(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"])
+        self.assertEqual("active", back["state"])
+        self.assertEqual([], self.sent, "armed, not asked")
+
+    def test_a_resume_that_triggers_asks_for_a_decision_now(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"], kick=True)
+        self.assertEqual("awaiting", back["state"], "a decision is out")
+        self.assertEqual(1, len(self.sent))
+        pane_id, body = self.sent[0]
+        self.assertEqual("pA", pane_id)
+        self.assertIn("Trigger: resume", body)
+        # The turns the record kept while it was stopped, which is what closes the dropped trigger.
+        self.assertIn("Landed the fix.", body)
+
+    def test_the_prompt_says_what_stopped_it(self):
+        s = self.start()
+        self.arb.pause(s["id"], "send_unconfirmed")
+        self.sent.clear()
+        self.arb.resume(s["id"], kick=True)
+        body = self.sent[0][1]
+        # The exactly-once problem, handed to the one reader that can settle it by looking.
+        self.assertIn("could not confirm", body)
+        self.assertIn("before repeating", body)
+
+    def test_a_reason_nobody_wrote_a_note_for_is_still_named(self):
+        s = self.start()
+        self.arb.pause(s["id"], "member_gone")
+        self.sent.clear()
+        self.arb.resume(s["id"], kick=True)
+        self.assertIn("member gone", self.sent[0][1])
+
+    def test_a_record_that_cannot_be_read_is_not_a_refusal_to_resume(self):
+        s = self.start()
+        self.arb.entries = lambda sid: (_ for _ in ()).throw(RuntimeError("no log"))
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        self.assertEqual("awaiting", self.arb.resume(s["id"], kick=True)["state"])
+        self.assertEqual(1, len(self.sent), "thin, and still a live session")
+
+    def test_a_session_whose_arbitrator_left_is_not_resumed(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.live = [p for p in self.live if p["pane_id"] != "pA"]
+        # It used to resume, then die at the next trigger reporting send_unconfirmed — which reads
+        # as a delivery problem and is not one.
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.resume(s["id"])
+        self.assertEqual("arbitrator_gone", caught.exception.code)
+
+    def test_a_trigger_is_not_typed_at_an_arbitrator_mid_turn(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.live[2]["agent_status"] = "working"
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.resume(s["id"], kick=True)
+        self.assertEqual("arbitrator_busy", caught.exception.code)
+        # And the plain resume is still allowed: it types nothing.
+        self.assertEqual("active", self.arb.resume(s["id"])["state"])
+
+
+class Edits(Harness):
+    """Changing a session instead of starting a new one.
+
+    The roster half is `RosterEdits`; this is everything else a person can change about a session
+    that is already running, and what the arbitrator is told about each.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cleared = []
+        self.arb.clear = self.cleared.append
+        self.spare = pane("pB", agent="claude", cwd="/arb")
+        self.live.append(self.spare)
+
+    def test_a_new_scope_is_written_and_announced(self):
+        s = self.start()
+        self.sent.clear()
+        after = self.arb.edit(s["id"], scope="Get the header reviewed instead.")
+        self.assertEqual("Get the header reviewed instead.", after["scope"])
+        body = self.sent[0][1]
+        self.assertIn("The scope is now:", body)
+        self.assertIn("Get the header reviewed instead.", body)
+        self.assertIn("changed what it is for", body)
+
+    def test_an_empty_scope_is_refused(self):
+        s = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.edit(s["id"], scope="   ")
+        self.assertEqual("bad_scope", caught.exception.code)
+
+    def test_the_clocks_are_the_relay_s_own_and_are_not_announced(self):
+        s = self.start()
+        self.sent.clear()
+        after = self.arb.edit(s["id"], triggers={"idle_ms": 900000})
+        self.assertEqual(900000, json.loads(after["triggers_json"])["idle_ms"])
+        self.assertEqual([], self.sent, "an arbitrator cannot act on a clock and never sees one")
+
+    def test_a_new_arbitrator_is_briefed_rather_than_told_what_changed(self):
+        s = self.start()
+        opening = self.sent[0][1]
+        self.sent.clear()
+        after = self.arb.edit(s["id"], arbitrator={"pane_id": "pB"})
+        self.assertEqual("pB", after["arbitrator_pane"])
+        self.assertEqual(["pB"], self.cleared, "and the pane it replaces is left alone")
+        self.assertEqual([("pB", opening)], self.sent,
+                         "the brief the session opened with — it was not here for any of this")
+        # Identity, not just the pane: the fingerprint is what every later re-resolution follows.
+        self.assertEqual("claude", json.loads(after["arbitrator_fp"])[1])
+
+    def test_a_swap_carries_the_scope_as_it_now_stands(self):
+        s = self.start()
+        self.arb.edit(s["id"], scope="Get the header reviewed instead.")
+        self.sent.clear()
+        self.arb.edit(s["id"], arbitrator={"pane_id": "pB"})
+        self.assertIn("Get the header reviewed instead.", self.sent[0][1])
+
+    def test_the_roster_and_the_scope_change_in_one_announcement(self):
+        s = self.start()
+        p3 = pane("p3", agent="codex", cwd="/a", label="Reviewer 2")
+        self.live.append(p3)
+        self.sent.clear()
+        self.arb.edit(s["id"], scope="Review the header.", members=[self.live[0], p3])
+        self.assertEqual(1, len(self.sent), "one send, not two")
+        body = self.sent[0][1]
+        self.assertIn("changed who is in it", body)
+        self.assertIn("Review the header.", body)
+
+    def test_nothing_is_edited_while_a_decision_is_outstanding(self):
+        s = self.start()
+        self.step(s["id"])
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.edit(s["id"], scope="Something else.")
+        self.assertEqual("not_editable", caught.exception.code)
+
+    def test_a_pane_another_session_holds_is_refused_as_an_arbitrator(self):
+        first = self.start()
+        second = self.start_other()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.edit(first["id"], arbitrator={"pane_id": self.other[2]["pane_id"]})
+        self.assertEqual("participant_in_session", caught.exception.code)
+        self.assertEqual(second["id"], str(caught.exception).split()[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

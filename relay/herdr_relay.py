@@ -1515,6 +1515,16 @@ def arbitration_entries(pane):
     session_id = arbitration.session_of_pane(pane.get("pane_id"))
     if session_id is None:
         return []
+    return arbitration_entries_of(session_id)
+
+
+def arbitration_entries_of(session_id):
+    """The same digest, for a session rather than for the pane that woke it.
+
+    A resume has no pane behind it — nobody finished a turn, a person pressed a button — and what
+    it needs to show is exactly what a turn end shows: the roster's recent turns, which for a
+    session coming back from a pause is the work done while it was stopped.
+    """
     members = arbitration.members(session_id)
     fingerprints = [[m["host"], m["agent"], m["cwd"]] for m in members]
     # The pane's own label, and never the role: a role is what a member is *for* and several
@@ -1548,6 +1558,9 @@ def arb_session_message(session):
             "id": session["id"], "state": session["state"],
             "pause_reason": session["pause_reason"],
             "conversation": session["conversation"], "scope": session["scope"],
+            # The clocks, so the dialog that edits a session can show them as they are. Relay-side
+            # policy, never anything the arbitrator sees — it cannot act on a clock.
+            "triggers": json.loads(session["triggers_json"]),
             "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
                          "pane_id": m["pane_id"], "status": m["status"]}
                         for mid, m in roster.items()],
@@ -2141,8 +2154,20 @@ async def handle_client(ws, listener="lan"):
                         # letting a client name the reason would let it forge a budget stop.
                         session = await asyncio.to_thread(
                             arbitration.pause, msg["session"], "user")
+                    elif msg_type == "arb_edit":
+                        # Every field of a running session, one set of rules — see
+                        # `Arbitration.edit`. Absent means unchanged, which is what lets a client
+                        # send only what the person touched.
+                        session = await asyncio.to_thread(functools.partial(
+                            arbitration.edit, msg["session"],
+                            scope=msg.get("scope"), members=msg.get("members"),
+                            arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers")))
                     elif msg_type == "arb_resume":
-                        session = await asyncio.to_thread(arbitration.resume, msg["session"])
+                        # `kick` is what happens first. Without it the loop is armed and waits for
+                        # a trigger, which may be a very long time coming; with it the arbitrator is
+                        # asked now, and told what stopped the session — see `Arbitration.resume`.
+                        session = await asyncio.to_thread(functools.partial(
+                            arbitration.resume, msg["session"], kick=bool(msg.get("kick"))))
                     elif msg_type == "arb_cancel":
                         session = await asyncio.to_thread(
                             arbitration.end, msg["session"], msg.get("reason") or "cancelled")
@@ -2511,7 +2536,8 @@ async def main():
         # it needs the running loop to reach them from the thread a session runs on.
         arbitration = Arbitration(CONV_LOG_DB, send=arbitration_send, panes=live_panes,
                                   log=conv_log, notify=arbitration_paused,
-                                  clear=arbitration_clear)
+                                  clear=arbitration_clear,
+                                  entries=arbitration_entries_of)
         # A session that was running when the relay stopped is paused, never resumed (§9.4): the
         # relay cannot promise exactly-once delivery into a terminal, and re-sending a phase's
         # instructions is worse than stopping and showing the person the last one.

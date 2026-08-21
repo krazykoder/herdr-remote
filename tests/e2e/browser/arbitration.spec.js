@@ -216,8 +216,34 @@ test('a paused session says why, and offers the way back', async ({page}) => {
   const strip = page.locator('#arbStrip .arb-strip');
   await expect(strip).toContainText('Paused — budget steps');
   await captureSends(page);
-  await strip.getByRole('button', {name: 'Resume'}).click();
+  await strip.getByRole('button', {name: 'Resume', exact: true}).click();
   expect(await sent(page)).toEqual([{type: 'arb_resume', session: 's-20260817-1103'}]);
+
+  // And the other way back, for a session whose members are all sitting idle: arming alone would
+  // wait for a turn that is never going to end.
+  await page.evaluate(() => { window.__sent = []; });
+  await strip.getByRole('button', {name: 'Resume and trigger'}).click();
+  expect(await sent(page)).toEqual([
+    {type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
+});
+
+test('a running session is edited through the form that appointed it', async ({page}) => {
+  await openConv(page);
+  await broadcast(page, session());
+  await captureSends(page);
+  // The roster on the strip is the way in — the same dialog, opened on the answers it already has.
+  await page.locator('#arbStrip').getByRole('button', {name: /Change this session/}).click();
+  await expect(page.locator('#arbScope')).toHaveValue('Get the footer reviewed.');
+  await expect(page.locator('#arbWho')).toHaveValue('w1:p2');
+  await expect(page.locator('#arbSetupBody')).not.toContainText('On start');
+
+  await page.locator('#arbScope').fill('Get the footer reviewed, then stop.');
+  await page.locator('#arbSetupBody .arb-btn.go').click();
+  await expect(page.locator('#arbModal')).toBeHidden();
+  // Only the scope: the roster and the clocks were not touched, and naming them would re-announce
+  // a change nobody made.
+  expect(await sent(page)).toEqual([{type: 'arb_edit', session: 's-20260817-1103',
+                                     scope: 'Get the footer reviewed, then stop.'}]);
 });
 
 test('ending is asked twice, and the strip goes with the session', async ({page}) => {

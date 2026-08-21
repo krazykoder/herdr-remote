@@ -823,7 +823,7 @@ resumes it or cancels it; the arbitrator has no way to end a session itself.
 ### 14.1 Session size
 
 v1 arbitrates **exactly two members** — three panes including the arbitrator. Which two may change
-while the session runs (`arb_members`, §15.1); how many may not. The store, schema and
+while the session runs (`arb_edit`, §14.7); how many may not. The store, schema and
 prompt are written for N because writing them for two costs the same and closes the door; the
 *session* is what refuses more, until a two-member loop has been watched running for real.
 
@@ -883,7 +883,7 @@ repeated in full in every trigger message rather than remembered.
 A role is **not a permission**. It never stops the arbitrator addressing a member; it tells it who
 the person meant to do this. §11.2 says so in those words, and §11.3's roster line carries it.
 
-**Roles change with the roster** (§15.1 `arb_members`), under the same preconditions and the same
+**Roles change with the roster** (§14.7 `arb_edit`), under the same preconditions and the same
 announcement — a role-only edit is refused while a decision is outstanding, exactly as a swap is.
 The announcement says *which* of the two changed: a pane that moved invalidates what the arbitrator
 remembers about a member id, and a role that changed does not.
@@ -950,6 +950,58 @@ like any other send, and an unconfirmed one pauses the session.
 | `HERDR_ARBITER_DB` | Override the database path. Default `$LOG_DIR/arbitration.sqlite3` |
 | `HERDR_CONV_LOG_MAX` | Entries kept per session before pruning. Default 20 000 |
 
+### 14.7 Editing a running session
+
+Everything a person answered when the session opened can be answered again: the scope, which two
+panes are being arbitrated, what each of them is for, which pane decides, and the clocks. One
+message (`arb_edit`, §15.1) carrying only the fields that moved — a field that is not named is not
+touched, so a scope edit does not re-announce a roster nobody changed.
+
+The preconditions are the roster edit's, because they are the same hazard: refused while a decision
+is outstanding (N6 — a roster the arbitrator is currently deciding against is one it would be
+answering about panes that no longer exist), refused when a named pane is enrolled in another
+session (`participant_in_session`), refused at a busy arbitrator (N7), refused when the three do
+not share a project (`project_mismatch`).
+
+What the session tells its participants depends on what moved:
+
+* **members or roles** — the roster announcement of §11.3, which says *which* of the two changed: a
+  pane that moved invalidates what the arbitrator remembers about a member id, a role that changed
+  does not. A scope changed in the same message is announced with it, in one send rather than two.
+* **the arbitrator** — the *opening* brief, not an announcement: a pane that has never been briefed
+  cannot be told the roster changed, because it does not know there was one. The new pane is
+  cleared and given the same starter prompt the session opened with, carrying the current scope and
+  the current roster. This is `arb_reinit` (§14.6) pointed at a different pane, and it is the same
+  code path.
+* **the clocks alone** — nothing is sent. A trigger is the loop's business and not the
+  arbitrator's.
+
+The front end asks all of it through the dialog that appointed the session (§15.3), so the
+questions and their answers have one shape and one place to disagree.
+
+### 14.8 Resuming
+
+A paused session is armed by `arb_resume`. Armed is all that is: the loop waits for a trigger, and
+with two idle members and both clocks off (§10, their default) there is no trigger coming — a
+session that reads as running and never acts.
+
+So there are two ways back, and the person picks:
+
+* **Resume** — arm it and wait. Right after a pause a person took to type at a member themselves:
+  that member's turn will end, and that is the trigger.
+* **Resume and trigger** (`kick: true`) — arm it and ask for a decision now. The prompt is the
+  ordinary trigger prompt of §11.3, over the turns since the session last looked, with one extra
+  line under `Trigger:` saying what stopped it and that a person has started it again. Refused at a
+  busy arbitrator (N7); plain Resume is not, because it writes nothing.
+
+Both refuse an arbitrator whose pane is gone (`arbitrator_gone`) — a session armed over a dead
+arbitrator is one that spends its next trigger discovering that.
+
+The note matters because the reasons read differently to something that has forgotten the last few
+minutes. `send_unconfirmed` says the send may or may not have landed and to look before repeating
+it; `call_human` says a person was asked and has answered; `restart` says the relay went down and
+nothing was decided while it was.
+
 ## 15. Wire protocol
 
 Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
@@ -960,10 +1012,11 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
 | `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `paused?` | Arbiter |
-| `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) | Arbiter |
+| `arb_edit` | `session`, and any of `scope`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `triggers` — what is not named does not move | Arbiter |
+| `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) — the roster half of `arb_edit`, kept for clients that only ever ask for that | Arbiter |
 | `arb_reinit` | `session` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
-| `arb_resume` | `session` | Arbiter |
+| `arb_resume` | `session`, `kick?` — `true` asks for a decision now rather than waiting for the next trigger | Arbiter |
 | `arb_cancel` | `session`, `reason?` | Arbiter |
 | `arb_detail` | `session` | Arbiter |
 
@@ -989,6 +1042,7 @@ the same reason: every path is derived from it.
                "role": "Architect", "pane_id": "…", "status": "idle"}],
   "arbitrator": {"pane_id": "…", "label": "Arbitrator", "status": "idle"},
   "budget": {"steps_left": 7, "consecutive_left": 3, "minutes_left": 44},
+  "triggers": {"on_turn_end": true, "idle_ms": 0, "runtime_ms": 0},
   "last_decision": {"sequence": 7, "gate": "review", "to": "member-2",
                     "why": "…", "ambiguity": "low", "at": 1755423862000}
 }}
@@ -1017,6 +1071,12 @@ No second product. The existing conversation thread, plus:
   is asking. Which project the roster must share is read off the **two members picked**, never off
   the conversation around them: the relay refuses `project_mismatch` over participants and asks
   nothing about anyone else.
+- The **same dialog edits a running session**, opened from the roster on the strip and prefilled
+  with what that session already says: scope, both panes, both roles, the arbitrator and the
+  clocks. Only what the person moved is sent (§14.7). The arming choice is not shown — a running
+  session has been armed or not already, and Pause and Resume on the strip are where that changes.
+- A paused session's strip offers **both ways back** (§14.8): `Resume`, and `Resume and trigger`
+  for the case where nothing is going to end a turn on its own.
 - ⚖ over a thread has two states and no third: lit, it opens the arbitrator's own pane; plain, it
   opens that dialog. It never reaches a session belonging to another conversation.
 - Each of the three slots can **start its own agent**, through the New agent dialog. The new pane

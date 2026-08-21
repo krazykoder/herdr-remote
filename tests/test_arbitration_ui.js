@@ -146,6 +146,22 @@ test('a paused session says why, and offers Resume instead of Pause', () => {
   assert.ok(!html.includes('arb_pause'), html);
 });
 
+test('a paused session is resumed quietly, or with a decision asked for now', () => {
+  // The two ways back, because a paused loop has two shapes: one waiting on a turn that will end
+  // on its own, and one whose members are all sitting idle — where arming alone is a session that
+  // never moves again.
+  const {g, sent} = ctx();
+  const paused = {...SESSION, state: 'paused', pause_reason: 'user'};
+  const html = g.arbStripHtml(paused, CONV, true);
+  assert.match(html, /arbCommand\('arb_resume'\)/);
+  assert.match(html, /arbCommand\('arb_resume', \{kick: true\}\)/);
+
+  g.arbReceiveSession({session: paused});
+  g.arbCommand('arb_resume', {kick: true});
+  assert.deepEqual(sent.filter(m => m.type === 'arb_resume'),
+                   [{type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
+});
+
 test('the last decision is shown by gate, target and why — never its instruction', () => {
   const {g} = ctx();
   const s = {...SESSION, last_decision: {sequence: 1, gate: 'review', to: 'member-2',
@@ -408,11 +424,12 @@ test('a pane another session already holds is not offered, and not sent', () => 
 test('the session being edited is not treated as a conflict with itself', () => {
   const {g, els} = ctx();
   g.arbReceiveSessions({type: 'arb_sessions', sessions: [SESSION]});
-  g.arbToggleCrew();
-  // Its own two members are the answer to "who is this session watching", not a clash with it —
-  // the picker that opened empty was the bug hiding taken panes would otherwise have introduced.
-  assert.match(els.arbStrip.innerHTML, /id="arbCrewA"[\s\S]*?value="w1:p1"/);
-  assert.match(els.arbStrip.innerHTML, /value="w1:p2"/);
+  g.arbEditHere();
+  // Its own three panes are the answer to "who is this session watching", not a clash with it —
+  // the form that opened with an empty arbitrator list was the bug hiding taken panes would
+  // otherwise have introduced.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbFirst"[\s\S]*?value="w1:p1"/);
+  assert.match(els.arbSetupBody.innerHTML, /id="arbWho"[\s\S]*?value="w1:p3" selected/);
 });
 
 test('an arbitrator that is not a live candidate is refused', () => {
@@ -699,25 +716,70 @@ const CREW_SESSION = Object.assign({}, SESSION, {
   arbitrator: {pane_id: 'w1:p3', status: 'idle', label: 'Arbiter', agent: 'claude'},
 });
 
-test('the crew of a running session is replaced whole, and the session is not', () => {
+test('a running session is edited through the form that appointed it', () => {
   const PANE_D = {pane_id: 'w1:p4', label: 'Architect 2', agent: 'claude', cwd: '/d', host: 'local'};
   const three = {id: 'c-1', name: 'Footer',
                  members: [{key: key(PANE_A)}, {key: key(PANE_B)}, {key: key(PANE_D)}]};
   const {g, els, sent} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [three]});
   g.arbReceiveSession({session: CREW_SESSION});
-  g.arbToggleCrew();
+  g.arbEditHere();
 
-  const html = g.arbStripHtml(CREW_SESSION, three, true, g.arbLiveMembers(three));
-  assert.match(html, /id="arbCrewA"/);
-  assert.match(html, /id="arbCrewB"/);
+  const html = els.arbSetupBody.innerHTML;
+  // The same three questions, opened on the answers the session already has — and its own panes
+  // are still choosable in it, because a session is not a conflict with itself.
+  assert.match(html, /Get the footer reviewed\./);
+  assert.match(html, /id="arbWho"[\s\S]*?value="w1:p3" selected/);
+  assert.match(html, /id="arbSecond"[\s\S]*?value="w1:p2" selected/);
+  assert.match(html, /onclick="arbSave\(\)"/);
+  // Not the arming choice: a running session has been armed or not already, and Pause and Resume
+  // on the strip are where that is changed.
+  assert.equal(/On start/.test(html), false);
 
-  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
-  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p4'};
-  g.arbSetCrew();
-  const edit = sent.filter(m => m.type === 'arb_members');
-  assert.deepEqual(edit, [{type: 'arb_members', session: 's-20260817-1103',
-                           members: [{pane_id: 'w1:p1', role: ''},
-                                     {pane_id: 'w1:p4', role: ''}]}]);
+  Object.assign(els, {
+    arbScope: {value: 'Get the footer reviewed.'}, arbWho: {value: 'w1:p3'},
+    arbFirst: {value: 'w1:p1'}, arbSecond: {value: 'w1:p4'},
+    arbRoleFirst: {value: 'review'}, arbRoleSecond: {value: 'fix-code'},
+    arbIdle: {value: '0'}, arbRuntime: {value: '0'},
+  });
+  g.arbSave();
+  // Only the roster: the scope and the clocks were not touched, and naming them would re-announce
+  // a change nobody made.
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'),
+                   [{type: 'arb_edit', session: 's-20260817-1103',
+                     members: [{pane_id: 'w1:p1', role: 'review'},
+                               {pane_id: 'w1:p4', role: 'fix-code'}]}]);
+});
+
+test('what a session is for can be rewritten, and a new arbitrator appointed', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSession({session: CREW_SESSION});
+  g.arbEditHere();
+  Object.assign(els, {
+    arbScope: {value: 'Get the footer reviewed, then stop.'}, arbWho: {value: 'w1:p3'},
+    arbFirst: {value: 'w1:p1'}, arbSecond: {value: 'w1:p2'},
+    arbRoleFirst: {value: 'review'}, arbRoleSecond: {value: 'fix-code'},
+    arbIdle: {value: '15'}, arbRuntime: {value: '0'},
+  });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'),
+                   [{type: 'arb_edit', session: 's-20260817-1103',
+                     scope: 'Get the footer reviewed, then stop.',
+                     triggers: {on_turn_end: true, idle_ms: 900000, runtime_ms: 0}}]);
+});
+
+test('a form nobody changed sends nothing, and still closes', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSession({session: CREW_SESSION});
+  g.arbEditHere();
+  Object.assign(els, {
+    arbScope: {value: 'Get the footer reviewed.'}, arbWho: {value: 'w1:p3'},
+    arbFirst: {value: 'w1:p1'}, arbSecond: {value: 'w1:p2'},
+    arbRoleFirst: {value: 'review'}, arbRoleSecond: {value: 'fix-code'},
+    arbIdle: {value: '0'}, arbRuntime: {value: '0'},
+  });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'), []);
+  assert.equal(els.arbModal.style.display, 'none');
 });
 
 test('what each member is for is asked, sent, and shown on the strip', () => {
@@ -850,28 +912,31 @@ test('a badge writes its phrase into the line, and a second tap takes it out aga
   assert.equal(els.arbRoleFirst.value, 'review only, minimal focused test');
 });
 
-test('a running session says what each member is for, and lets it be changed', () => {
+test('a running session says what each member is for, and the form opens on it', () => {
   const roled = Object.assign({}, CREW_SESSION, {members: [
     {id: 'member-1', pane_id: 'w1:p1', label: 'Architect 1', status: 'idle', role: 'review'},
     {id: 'member-2', pane_id: 'w1:p2', label: 'Reviewer 1', status: 'idle', role: 'fix-code'},
   ]});
   const {g, els, sent} = ctx();
   g.arbReceiveSession({session: roled});
-  assert.match(g.arbStripHtml(roled, CONV, true, null),
+  assert.match(g.arbStripHtml(roled, CONV, true),
                /Architect 1 \(review\) · Reviewer 1 \(fix-code\)/);
 
-  // The picker opens on what the roster already says, so an edit that only swaps a pane does not
+  // The form opens on what the roster already says, so an edit that only swaps a pane does not
   // quietly drop the roles the person typed the first time.
-  const crew = g.arbStripHtml(roled, CONV, true, g.arbLiveMembers(CONV));
-  assert.match(crew, /id="arbCrewRoleA"[^>]*value="review"/);
-  assert.match(crew, /id="arbCrewRoleB"[^>]*value="fix-code"/);
+  g.arbEditHere();
+  const html = els.arbSetupBody.innerHTML;
+  assert.match(html, /id="arbRoleFirst"[^>]*value="review"/);
+  assert.match(html, /id="arbRoleSecond"[^>]*value="fix-code"/);
 
-  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
-  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p2'};
-  els.arbCrewRoleA = {id: 'arbCrewRoleA', value: 'review'};
-  els.arbCrewRoleB = {id: 'arbCrewRoleB', value: 'plan, fix-code'};
-  g.arbSetCrew();
-  assert.deepEqual(sent.filter(m => m.type === 'arb_members')[0].members,
+  Object.assign(els, {
+    arbScope: {value: 'Get the footer reviewed.'}, arbWho: {value: 'w1:p3'},
+    arbFirst: {value: 'w1:p1'}, arbSecond: {value: 'w1:p2'},
+    arbRoleFirst: {value: 'review'}, arbRoleSecond: {value: 'plan, fix-code'},
+    arbIdle: {value: '0'}, arbRuntime: {value: '0'},
+  });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit')[0].members,
                    [{pane_id: 'w1:p1', role: 'review'},
                     {pane_id: 'w1:p2', role: 'plan, fix-code'}]);
 });
@@ -879,10 +944,15 @@ test('a running session says what each member is for, and lets it be changed', (
 test('one agent cannot be both halves of a conversation', () => {
   const {g, els, sent, toasts} = ctx();
   g.arbReceiveSession({session: CREW_SESSION});
-  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
-  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p1'};
-  g.arbSetCrew();
-  assert.deepEqual(sent.filter(m => m.type === 'arb_members'), []);
+  g.arbEditHere();
+  Object.assign(els, {
+    arbScope: {value: 'Get the footer reviewed.'}, arbWho: {value: 'w1:p3'},
+    arbFirst: {value: 'w1:p1'}, arbSecond: {value: 'w1:p1'},
+    arbRoleFirst: {value: 'review'}, arbRoleSecond: {value: 'fix-code'},
+    arbIdle: {value: '0'}, arbRuntime: {value: '0'},
+  });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'), []);
   assert.equal(toasts.length, 1);
 });
 
