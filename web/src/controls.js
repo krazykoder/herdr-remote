@@ -170,10 +170,13 @@
     function sendText() {
       const i = document.getElementById('termInput');
       if (!i.value || !ws || !activePane) return;
-      const paneId = activePane;
-      if (!sendTextTo(paneId, i.value)) return;
+      const paneId = activePane, text = i.value;
+      if (!sendTextTo(paneId, text)) return;
       i.value = ''; autoGrow(i);
       renderQuickActions();   // the pane has a last send now, so Resend has something to offer
+      // Only what was typed at a terminal, and only from this composer. A transfer, a shortcut and
+      // a resend all reach the wire by other paths, and none of them is the user typing a command.
+      if (isShell(paneId)) noteTermCommand(text);
       if (isShell(paneId)) burstPoll(paneId); else setTimeout(refreshPane, 500);
     }
 

@@ -22,6 +22,9 @@
       const btn = document.getElementById('promptsBtn');
       btn.textContent = shell ? '$' : '@';
       btn.setAttribute('aria-label', shell ? 'Commands' : 'Prompts');
+      // The same question — is this pane a shell — decides whether the history floats over it, and
+      // this is the one path every snapshot and every pane switch already goes through.
+      renderTermHistory();
     }
 
     // herdr reports no process lifetime, so "has it finished" can only be answered by looking.
@@ -84,6 +87,115 @@
       termShortcuts.splice(i, 1);
       saveTermShortcuts();
       refreshPalette();
+    }
+
+    // --- The terminal's own history, floating over the pane ---
+    //
+    // A disclosure in the pane's floating row, not the $ palette, because the two answer
+    // different questions. The palette is a decision — which of my saved commands do I want — and
+    // it covers the screen to ask it. This is a glance at what was just run, and covering the
+    // terminal to see what was typed into it defeats the reason for looking.
+    //
+    // Open or shut is remembered globally rather than per pane: it is a preference about how much
+    // of the terminal the reader wants covered, and it does not change because they switched
+    // panes. Same store as the list, so one write keeps both.
+    let termHistory = [], termHistoryOpen = false;
+
+    function loadTermHistory() {
+      const raw = localStorage.getItem(TERM_HIST_KEY);
+      termHistory = parseTermHistory(raw);
+      let data = null;
+      try { data = JSON.parse(raw); } catch (e) { /* corrupt: shut, same as a first run */ }
+      termHistoryOpen = !!(data && data.open);
+    }
+
+    function saveTermHistory() {
+      try {
+        localStorage.setItem(TERM_HIST_KEY, JSON.stringify(
+          { version: TERM_HIST_VERSION, items: termHistory, open: termHistoryOpen }));
+      } catch (e) { /* private mode: session-only */ }
+    }
+
+    // Called once the wire has taken the text, for the same reason noteSent is: a history that
+    // records a send the socket dropped is a list of commands that never ran.
+    function noteTermCommand(text) {
+      const next = pushTermHistory(termHistory, text);
+      if (next.length === termHistory.length && next.every((t, i) => t === termHistory[i])) return;
+      termHistory = next;
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    function toggleTermHistory() {
+      termHistoryOpen = !termHistoryOpen;
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    function deleteTermCommand(i) {
+      if (i < 0 || i >= termHistory.length) return;
+      termHistory.splice(i, 1);
+      saveTermHistory();
+      renderTermHistory();
+    }
+
+    // Runs it, the same as picking from the $ palette: this is a list of commands that already
+    // ran at this prompt, and the reader who opened it opened it to run one again.
+    //
+    // The composer is filled as well, and that is not a fallback — it is what makes the run
+    // reviewable. What was sent stays visible in the field afterwards, so a command that turned
+    // out to be the wrong one is edited and sent again rather than retyped.
+    //
+    // Filled but never focused. On a phone a focus summons the keyboard over the terminal the
+    // reader is watching the command run in, which is the one thing they wanted to see. Same
+    // reason the command palette stopped autofocusing its search on touch.
+    function useTermCommand(i) {
+      const text = termHistory[i];
+      if (!text || !ws || !activePane) return;
+      const input = document.getElementById('termInput');
+      if (input) { input.value = text; autoGrow(input); }
+      if (!submitText(activePane, text)) return;
+      // Straight to the end of the list rather than staying where it was, for the same reason a
+      // typed repeat does: the list is ordered by when a command was last useful.
+      noteTermCommand(text);
+      if (window.cue) cue('success');
+      burstPoll();
+    }
+
+    function renderTermHistory() {
+      const wrap = document.getElementById('paneHistWrap');
+      if (!wrap) return;
+      // Terminals only, and over every one of them — including a browser that has not typed
+      // anything yet. Waiting for a first command hid the control from the reader most likely to
+      // be looking for it: history is this browser's own, so a second device starts empty and had
+      // no way to learn the button existed. Over an agent it stays hidden, where it would be a
+      // list of shell commands that pane cannot run.
+      const offered = !!activePane && isShell(activePane);
+      wrap.hidden = !offered;
+      if (!offered) return;
+      const btn = document.getElementById('paneHistBtn');
+      wrap.classList.toggle('open', termHistoryOpen);
+      btn.setAttribute('aria-expanded', String(termHistoryOpen));
+      btn.title = termHistoryOpen ? 'Hide recent commands' : `Recent commands (${termHistory.length})`;
+      btn.setAttribute('aria-label', `Recent commands (${termHistory.length})`);
+      const list = document.getElementById('paneHistList');
+      list.hidden = !termHistoryOpen;
+      if (!termHistoryOpen) { list.innerHTML = ''; return; }
+      if (!termHistory.length) {
+        list.innerHTML = '<div class="hist-empty">Commands you run here appear here.</div>';
+        return;
+      }
+      list.innerHTML = termHistory.map((t, i) => `
+        <div class="hist-item">
+          <button class="hist-run" onclick="useTermCommand(${i})"
+            title="${escapeHtml(t)}">${escapeHtml(t)}</button>
+          <button class="hist-x" onclick="deleteTermCommand(${i})"
+            aria-label="Forget this command">&times;</button>
+        </div>`).join('');
+      // Newest is at the bottom, so a list long enough to scroll opens on the end of itself: the
+      // command most likely to be wanted again is the one just run, and a scrollTop of 0 would
+      // open on the oldest thing in it.
+      list.scrollTop = list.scrollHeight;
     }
 
     // The ceiling lives in CSS (max-height) and the floor in min-height, so this only has to

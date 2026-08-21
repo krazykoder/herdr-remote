@@ -29,8 +29,20 @@ command -v rsync >/dev/null || { echo "deploy: rsync not found" >&2; exit 1; }
 sha="$(git -C "$root" rev-parse --short HEAD)"
 # A dirty tree still deploys — that is often the point of a preview push — but the commit message
 # must not claim the pushed bytes are what that SHA contains.
+#
+# Everything the built page is made of, and not web/ alone: the version stamped into its meta tags
+# comes from herdr-plugin.toml and the inlining is scripts/build.py, so an uncommitted bump to
+# either changes the pushed bytes while web/ sits clean — which is exactly the claim above, made
+# falsely. Scoped rather than a bare `git status` because a dirty file in relay/ does not change
+# one byte of what is pushed.
+#
+# `status --porcelain` and not `diff HEAD`: a brand new module under web/src/ is untracked, gets
+# inlined, and is invisible to a diff.
 dirty=""
-git -C "$root" diff --quiet HEAD -- "$src" || dirty=" + uncommitted changes"
+if [ -n "$(git -C "$root" status --porcelain -- \
+             "$src" "$root/scripts/build.py" "$root/herdr-plugin.toml")" ]; then
+  dirty=" + uncommitted changes"
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

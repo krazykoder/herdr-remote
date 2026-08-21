@@ -175,6 +175,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
 | `HERDR_START_AGENTS` | Comma-separated allowlist of herdr agent *kinds* for Start session (default: `codex,claude,pi,agy`) |
 | `HERDR_ENABLE_TERMINAL` | `1` lists shell panes (panes with no agent) as Terminals and makes them readable and writable. Off means they are never parsed, so the wire is unchanged. Creating one also needs `HERDR_ENABLE_WRITE_EXT` |
+| `HERDR_TERMINAL_INIT` | One line run in a terminal **the app opened**, once its shell reaches a prompt (default: `RPROMPT=; clear`). herdr spawns the user's login shell, so a pane opened from a phone wears whatever prompt their rc files draw — usually most of a 40-column line. The environment cannot fix it: rc files run after it is set and overwrite `PROMPT`/`RPROMPT`. Never sent to an agent pane, and never to a shell the user opened themselves. `""` sends nothing |
 | `HERDR_VAPID_PUBLIC` / `HERDR_VAPID_PRIVATE` | Web Push keypair, from `relay/make-vapid.py`. Unset = no push is ever sent |
 | `HERDR_VAPID_SUBJECT` | Contact URI in the VAPID claim (default: `mailto:herdr@localhost`) |
 | `HERDR_PUSH_SUMMARY` | `1` makes a "finished" push carry the agent's closing message, read out of the pane by `relay/pane_summary.py`. Off by default: unset sends the last few lines of the pane, which is also what any pane with no readable message gets |
