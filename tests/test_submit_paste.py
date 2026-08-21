@@ -101,6 +101,15 @@ class SubmitPaste(unittest.TestCase):
         self.assertTrue(self.run_paste(["idle", "idle", "idle", "working"]))
         self.assertEqual(len(self.enters()), 3)
 
+    def test_a_slow_agent_is_still_watched_after_the_presses_are_spent(self):
+        # The presses are spent in under two seconds; SUBMIT_TIMEOUT is eight. An agent that takes
+        # longer than the presses to report `working` — antigravity does — was being called
+        # unconfirmed while its Enter was still being processed, which ended an arbitration session
+        # whose starter prompt had in fact landed. Pressing stops; watching does not.
+        idle_past_the_presses = ["idle"] * (herdr_relay.SUBMIT_TRIES + 4) + ["working"]
+        self.assertTrue(self.run_paste(idle_past_the_presses))
+        self.assertEqual(len(self.enters()), herdr_relay.SUBMIT_TRIES)
+
     def test_a_pane_that_never_moves_is_given_up_on_rather_than_hammered(self):
         took = self.run_paste(["idle"])
         self.assertFalse(took)

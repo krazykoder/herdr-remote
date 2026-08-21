@@ -1146,9 +1146,12 @@ async def submit_paste(pane_id, text, remote=None):
         first = False
         if status in SUBMIT_TOOK:
             return True
-        if status in SUBMIT_READY:
-            if presses >= SUBMIT_TRIES:
-                break
+        # Out of presses is not out of patience. The presses are spent in under two seconds, and
+        # an agent that takes longer than that to report `working` — antigravity is one — was
+        # being called unconfirmed while its Enter was still being processed. Stop pressing;
+        # keep watching until the deadline, which is the number that was always meant to decide
+        # this. A pane that really did not take it costs the full wait, which is what it is for.
+        if status in SUBMIT_READY and presses < SUBMIT_TRIES:
             await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
             presses += 1
         # Anything else is a pane herdr has no status for — `unknown` from a real pane list, or an
