@@ -966,12 +966,12 @@ class Restart(Harness):
 
     def test_an_active_session_is_paused_at_boot(self):
         s = self.start()
-        self.assertEqual("restart", self.arb.recover()["pause_reason"])
+        self.assertEqual("restart", self.arb.recover()[0]["pause_reason"])
 
     def test_an_awaiting_session_is_paused_at_boot(self):
         s = self.start()
         self.step(s["id"])
-        self.assertEqual("restart", self.arb.recover()["pause_reason"])
+        self.assertEqual("restart", self.arb.recover()[0]["pause_reason"])
 
     def test_recovery_replays_no_send(self):
         s = self.start()
@@ -983,7 +983,15 @@ class Restart(Harness):
         self.assertEqual(sends, self.sent)
 
     def test_recovery_on_a_quiet_relay_does_nothing(self):
-        self.assertIsNone(self.arb.recover())
+        self.assertEqual([], self.arb.recover())
+
+    def test_recovery_pauses_every_parallel_session(self):
+        # The bug: recovery paused the first running session and returned, so a restart left every
+        # other loop armed over a send the database may or may not have recorded.
+        first, second = self.start(), self.start_other()
+        recovered = self.arb.recover()
+        self.assertEqual({first["id"], second["id"]}, {s["id"] for s in recovered})
+        self.assertTrue(all(s["pause_reason"] == "restart" for s in recovered))
 
 
 class RosterEdits(Harness):

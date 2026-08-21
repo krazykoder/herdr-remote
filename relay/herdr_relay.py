@@ -2516,9 +2516,9 @@ async def main():
         # relay cannot promise exactly-once delivery into a terminal, and re-sending a phase's
         # instructions is worse than stopping and showing the person the last one.
         recovered = arbitration.recover()
-        if recovered:
+        for session in recovered:
             log.warning("arbitration: session %s paused after a relay restart — read its last "
-                        "send before resuming", recovered["id"])
+                        "send before resuming", session["id"])
     try:
         await loop.create_datagram_endpoint(UDPPlugin, local_addr=("127.0.0.1", 8376))
     except OSError:

@@ -1021,17 +1021,14 @@ class Arbitration:
         return self.session(session_id)
 
     def recover(self):
-        """At boot: a session that was running is paused, never resumed. §9.4.
+        """At boot: every running session is paused, never resumed. §9.4.
 
         The relay cannot promise exactly-once delivery into a terminal. If it died between the
         `pane run` and the row that records it, the send happened and the database does not know —
         so resuming could deliver a phase's instructions twice. Stopping and showing the person the
         last send is the only honest option.
         """
-        row = self.running()
-        if row is None:
-            return None
-        return self.pause(row["id"], "restart")
+        return [self.pause(row["id"], "restart") for row in self.running_all()]
 
     def human_entered(self, session_id):
         """A person put text into the conversation, which is what "not consecutive" means."""
