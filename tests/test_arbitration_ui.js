@@ -114,7 +114,12 @@ test('a session over another conversation does not stop this one starting its ow
   // Start button everywhere. Sessions are independent now: their own roster, arbitrator, budget
   // and drop directory, and no pane in two of them.
   const {g, els} = ctx();
-  const elsewhere = {...SESSION, conversation: 'c-2'};
+  // Over its own panes. Sessions share no pane by rule — the relay refuses one that is already
+  // enrolled — so a session elsewhere leaves this conversation's three alone.
+  const elsewhere = {...SESSION, conversation: 'c-2',
+                     members: [{id: 'member-1', pane_id: 'w9:p1'},
+                               {id: 'member-2', pane_id: 'w9:p2'}],
+                     arbitrator: {pane_id: 'w9:p3'}};
   g.arbReceiveSessions({type: 'arb_sessions', sessions: [elsewhere]});
   g.arbRender();
   assert.equal(els.arbStrip.innerHTML, '', 'no strip: that session is not this conversation’s');
@@ -258,7 +263,9 @@ test('⚖ goes to this conversation’s arbitrator, and never to another convers
   const {g, els, opened, sent} = ctx({convs: [CONV, other]});
   const here = {...SESSION, id: 's-here', arbitrator: {pane_id: 'w1:p2'}};
   const elsewhere = {...SESSION, id: 's-other', conversation: other.id, state: 'paused',
-                     arbitrator: {pane_id: 'w1:p3'}};
+                     members: [{id: 'member-1', pane_id: 'w9:p1'},
+                               {id: 'member-2', pane_id: 'w9:p2'}],
+                     arbitrator: {pane_id: 'w9:p3'}};
   g.arbReceiveSessions({type: 'arb_sessions', sessions: [elsewhere, here]});
   assert.match(els.convArbitrator.className, /live/, 'this conversation has one, so it is lit');
   g.arbOpenFromConv();
@@ -330,6 +337,82 @@ test('an empty scope is refused here rather than on the wire', () => {
   g.arbStart();
   assert.deepEqual(sent, []);
   assert.equal(toasts.length, 1);
+});
+
+test('a mixed-project roster is refused before it reaches the relay', () => {
+  // A slot can start an agent in whichever Project the New agent dialog was left on, so this is
+  // now reachable from inside the dialog rather than only by editing a conversation.
+  const live = [{...PANE_A, project_id: 'one'}, {...PANE_B, project_id: 'two'},
+                {...PANE_C, project_id: 'one'}];
+  const {g, els, sent, toasts} = ctx({live});
+  els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
+  els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbFirst = {id: 'arbFirst', value: 'w1:p1'};
+  els.arbSecond = {id: 'arbSecond', value: 'w1:p2'};
+  g.arbStart();
+  assert.deepEqual(sent, []);
+  assert.match(toasts[0], /same project/);
+});
+
+test('the roster is what has to agree on a project, not the conversation around it', () => {
+  // The refusal is about the three panes chosen, because that is what the relay checks. Measuring
+  // the conversation instead refused a roster it would have accepted — and, with no single
+  // project, left the arbitrator list empty and then reported the pick as busy.
+  const PANE_D = {pane_id: 'w1:p4', label: 'Elsewhere', agent: 'claude', cwd: '/d', host: 'local',
+                  project_id: 'two'};
+  const three = {id: 'c-1', name: 'Footer',
+                 members: [{key: key(PANE_A)}, {key: key(PANE_B)}, {key: key(PANE_D)}]};
+  const live = [{...PANE_A, project_id: 'one'}, {...PANE_B, project_id: 'one'},
+                {...PANE_C, project_id: 'one'}, PANE_D];
+  const {g, els, sent} = ctx({live, convs: [three]});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  // The two picked agree, so the third one's checkout is somebody else's business — and the
+  // arbitrator list is the one their project offers.
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  assert.deepEqual(g.arbCandidates(three, g.arbPickedProject(three, g.arbReadSetup()))
+    .map(x => x.pane_id), ['w1:p3']);
+  g.arbStart();
+  assert.equal(sent.length, 1, 'and the roster goes');
+  assert.equal(sent[0].arbitrator.pane_id, 'w1:p3');
+});
+
+test('a pane another session already holds is not offered, and not sent', () => {
+  // The relay refuses an enrolled pane (`participant_in_session`), a paused session included — a
+  // pause is not a release. Offering one here is offering a refusal, and two arbitrators over one
+  // terminal is the failure that rule exists to prevent.
+  const PANE_D = {pane_id: 'w1:p4', label: 'Spare', agent: 'claude', cwd: '/d', host: 'local'};
+  const {g, els, sent, toasts} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D]});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [
+    {...SESSION, id: 's-other', conversation: 'c-9', state: 'paused',
+     members: [{id: 'member-1', pane_id: 'w1:p1'}, {id: 'member-2', pane_id: 'w1:p2'}],
+     arbitrator: {pane_id: 'w1:p3'}}]});
+  g.openArbSetup();
+  assert.equal(/w1:p3/.test(els.arbSetupBody.innerHTML), false, 'nor its arbitrator');
+  assert.equal(/w1:p1/.test(els.arbSetupBody.innerHTML), false, 'nor its members');
+  assert.match(els.arbSetupBody.innerHTML, /w1:p4/, 'and the spare is still a choice');
+
+  // And said, not merely absent: a stale selection is what a form drawn seconds ago holds.
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p4';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.arbStart();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_start'), []);
+  assert.match(toasts.at(-1), /already in another arbitration/);
+});
+
+test('the session being edited is not treated as a conflict with itself', () => {
+  const {g, els} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [SESSION]});
+  g.arbToggleCrew();
+  // Its own two members are the answer to "who is this session watching", not a clash with it —
+  // the picker that opened empty was the bug hiding taken panes would otherwise have introduced.
+  assert.match(els.arbStrip.innerHTML, /id="arbCrewA"[\s\S]*?value="w1:p1"/);
+  assert.match(els.arbStrip.innerHTML, /value="w1:p2"/);
 });
 
 test('an arbitrator that is not a live candidate is refused', () => {

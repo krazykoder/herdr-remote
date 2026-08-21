@@ -229,16 +229,57 @@
       return ids.size === 1 ? (live[0].project_id || '') : null;
     }
 
-    // Everything live that is not in this conversation, and is in its project. The arbitrator is
-    // deliberately outside the conversation: it is not a participant in it, it is the thing
-    // deciding what happens in it — but it is in the same repository, or it cannot read the work.
-    function arbCandidates(conv) {
+    // Panes another session already holds, as the arbitrator or as a member. Two arbitrators
+    // typing into one terminal is the one thing independent sessions must not do to each other, and
+    // the relay refuses it at enrolment (`participant_in_session`) — for a paused session too,
+    // because a pause is not a release. Offered here, it is a choice that exists to be refused.
+    //
+    // `except` is the session whose own roster is being edited: its members are the answer to that
+    // question, not a conflict with it.
+    function arbTakenPanes(except) {
+      const out = new Set();
+      arbSessions.forEach(s => {
+        if (except && s.id === except) return;
+        const arb = (s.arbitrator || {}).pane_id;
+        if (arb) out.add(arb);
+        (s.members || []).forEach(m => { if (m.pane_id) out.add(m.pane_id); });
+      });
+      return out;
+    }
+
+    function arbUntaken(panes, except) {
+      const taken = arbTakenPanes(except);
+      return panes.filter(x => !taken.has(x.pane_id));
+    }
+
+    // The project the *roster* has to be in, which is not always the project the conversation is
+    // in. The relay refuses participants that span two (`project_mismatch`) and says nothing about
+    // anyone else — so once two members are picked, they are the answer. A third member sitting in
+    // another checkout is not a reason the two on screen cannot be arbitrated, and after a slot
+    // spawned an agent into a second project it was the reason the dialog offered no arbitrator at
+    // all and then called it busy.
+    //
+    // Before anything is picked there is nothing to read but the conversation, which is what the
+    // ⚖ button asks about.
+    function arbPickedProject(conv, at) {
+      const picked = [(at || {}).arbFirst, (at || {}).arbSecond]
+        .map(id => id && agents.find(x => x.pane_id === id)).filter(Boolean);
+      if (!picked.length) return arbProject(conv);
+      const ids = new Set(picked.map(x => x.project_id || ''));
+      return ids.size === 1 ? (picked[0].project_id || '') : null;
+    }
+
+    // Everything live that is not in this conversation, and is in the roster's project. The
+    // arbitrator is deliberately outside the conversation: it is not a participant in it, it is the
+    // thing deciding what happens in it — but it is in the same repository, or it cannot read the
+    // work.
+    function arbCandidates(conv, project) {
       const taken = new Set((conv.members || []).map(m => m.key));
-      const project = arbProject(conv);
+      if (project === undefined) project = arbProject(conv);
       if (project === null) return [];
-      return agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)) &&
+      return arbUntaken(agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)) &&
         (x.project_id || '') === project &&
-        x.status !== 'working' && x.status !== 'blocked');
+        x.status !== 'working' && x.status !== 'blocked'));
     }
 
     // Whether the thread shows what the arbitrator decided, as bubbles among the messages. A
@@ -556,8 +597,11 @@
     // was being written, and a pane started from a slot.
     function arbDrawSetup(conv, at) {
       const el = document.getElementById('arbSetupBody');
-      const free = arbWithPick(arbCandidates(conv), (at || {}).arbWho);
-      if (el) el.innerHTML = arbSetupHtml(arbLiveMembers(conv), free, at);
+      const free = arbWithPick(arbCandidates(conv, arbPickedProject(conv, at)), (at || {}).arbWho);
+      // Members too, and for the same reason: a member of another session is a pane that session
+      // is deciding about, and enrolling it here would put two arbitrators over one terminal.
+      const live = arbWithPick(arbUntaken(arbLiveMembers(conv)), (at || {}).arbFirst);
+      if (el) el.innerHTML = arbSetupHtml(arbWithPick(live, (at || {}).arbSecond), free, at);
       const name = document.getElementById('arbSetupConvName');
       if (name) name.textContent = conv.name || '';
       arbSetupConv = conv.id;
@@ -722,7 +766,10 @@
 
     function arbToggleCrew() {
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
-      arbCrew = arbCrew ? null : (conv ? arbLiveMembers(conv) : null);
+      const here = arbSessionHere();
+      arbCrew = arbCrew
+        ? null
+        : (conv ? arbUntaken(arbLiveMembers(conv), (here || {}).id) : null);
       arbRender();
     }
 
@@ -798,7 +845,7 @@
       if (!conv) return;
       const at = arbReadSetup();
       const who = at.arbWho;
-      const live = arbLiveMembers(conv), free = arbCandidates(conv);
+      const live = arbLiveMembers(conv), free = arbCandidates(conv, arbPickedProject(conv, at));
       const scope = at.arbScope.trim();
       const picks = [at.arbFirst, at.arbSecond];
       const roles = ['arbRoleFirst', 'arbRoleSecond'].map(arbRoleValue);
@@ -811,6 +858,21 @@
       }
       if (picks[0] === picks[1]) {
         showToast('Two different panes — one agent has nobody to talk to.');
+        return;
+      }
+      // A slot may have started an agent in another Project. Said here, about the three panes
+      // actually chosen — which is what the relay checks (`project_mismatch`) — rather than about
+      // the conversation, whose other members it does not ask about. Before this the roster went
+      // out to be refused, or worse came back called "busy": with no single project, there were no
+      // candidates at all and the arbitrator pick failed the liveness test below.
+      const taken = arbTakenPanes();
+      if ([picks[0], picks[1], who].some(id => taken.has(id))) {
+        showToast('One of those is already in another arbitration session.');
+        return;
+      }
+      const chosen = [picks[0], picks[1], who].map(id => agents.find(x => x.pane_id === id));
+      if (new Set(chosen.map(x => (x || {}).project_id || '')).size > 1) {
+        showToast('Arbitration needs every selected agent in the same project.');
         return;
       }
       // The frozen list is what was on screen; this is the live one. A pane that started working

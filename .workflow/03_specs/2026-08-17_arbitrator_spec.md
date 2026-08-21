@@ -1010,6 +1010,13 @@ No second product. The existing conversation thread, plus:
   for the arbitrator and the two members it decides between — a pane for each, the roles for the
   two, and whether the loop is armed on start or only briefed. The clocks of §10 are folded away,
   because both are `Never` until somebody goes looking for them.
+- Every list in that dialog leaves out what the relay would refuse: a pane already enrolled in
+  another unfinished session, a paused one included — `participant_in_session` is checked against
+  `open_sessions()`, and a pause is not a release. The roster picker of a *running* session
+  excludes that session from the check, because its own members are the answer to the question it
+  is asking. Which project the roster must share is read off the **two members picked**, never off
+  the conversation around them: the relay refuses `project_mismatch` over participants and asks
+  nothing about anyone else.
 - ⚖ over a thread has two states and no third: lit, it opens the arbitrator's own pane; plain, it
   opens that dialog. It never reaches a session belonging to another conversation.
 - Each of the three slots can **start its own agent**, through the New agent dialog. The new pane
