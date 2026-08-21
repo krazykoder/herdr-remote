@@ -14,6 +14,7 @@ relay that restarted — each one pauses and names a reason, and none of them pr
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -993,6 +994,36 @@ class RosterEdits(Harness):
                          [m["pane_id"] for m in self.arb.roster(s["id"]).values()],
                          "a refused edit changes nothing")
 
+    def test_a_new_decision_waits_for_a_roster_edit_to_finish(self):
+        # The window is real and it is seconds wide: an edit checks the state, then waits for a
+        # pane to confirm the announcement. A trigger landing in there moves the session to
+        # `awaiting` *after* the edit read it as `active` — which is the state the refusal above
+        # exists to prevent, arrived at by the back door. So the edit is held open by hand here
+        # and a trigger is fired into it.
+        s = self.start()
+        entered, release, done = threading.Event(), threading.Event(), threading.Event()
+        enrol = self.arb._enrol
+
+        def hold(participants):
+            entered.set()
+            release.wait(2)          # released below; the joins are what fail if it is not
+            return enrol(participants)
+
+        self.arb._enrol = hold
+        edit = threading.Thread(target=self.swap, args=(s["id"],), daemon=True)
+        edit.start()
+        self.assertTrue(entered.wait(2), "the roster edit never reached validation")
+        prompt = threading.Thread(target=lambda: (self.step(s["id"]), done.set()), daemon=True)
+        prompt.start()
+        # The one assertion that has to be a wait: "did not happen yet" cannot be observed any
+        # other way, and a lock that is not held is what makes it happen immediately.
+        self.assertFalse(done.wait(0.1), "a decision was issued against the roster being replaced")
+        release.set()
+        edit.join(2)
+        prompt.join(2)
+        self.assertTrue(done.is_set(), "and the trigger goes through once the edit is finished")
+        self.assertEqual(["p1", "p3"], [m["pane_id"] for m in self.arb.roster(s["id"]).values()])
+
     def test_a_paused_session_can_be_re_crewed_before_it_resumes(self):
         # The ordinary repair: a member exited, the session paused saying so, and the way back is
         # to put someone else in that seat rather than to start over.
@@ -1103,4 +1134,3 @@ class OneProject(Harness):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -22,6 +22,7 @@ The herdr-facing calls are injected rather than imported, which is what lets the
 tested without a pane, a relay or a subprocess: `send(pane_id, text)` delivers an instruction and
 `panes()` returns what herdr currently lists.
 """
+import functools
 import hashlib
 import json
 import logging
@@ -34,6 +35,29 @@ from arbitrator import MAX_INSTRUCTION, validate
 from pane_summary import ends_turn
 
 log = logging.getLogger("herdr-relay")
+
+
+def session_change(method):
+    """Serialise the two things that move a session's roster and its state together.
+
+    `prompt` runs on the poll thread and `set_members` on whichever thread took the client's
+    message, and between the edit's precondition check and the announcement reaching the
+    arbitrator there is a window several seconds wide — `_send` waits for a pane to confirm. A
+    trigger landing in it would move the session to `awaiting` after the edit had already read the
+    state as `active`, which is precisely the case the refusal exists to prevent.
+
+    Held across that send on purpose: what has to be indivisible is the edit *and* the arbitrator
+    being told about it, not the row write alone. Safe to hold it that long because every caller
+    reaches this class through `asyncio.to_thread` — the event loop is never the thread that
+    blocks, so the `on_loop(..., wait=True)` inside the send is always serviced.
+
+    Re-entrant, because a locked method may call another.
+    """
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._session_lock:
+            return method(self, *args, **kwargs)
+    return locked
 
 # The CRFN default. A gate is a name and a host-owned template; `{instruction}` is the only
 # substitution, and the arbitrator supplies prose, never a template. Shipping a different set is a
@@ -381,6 +405,7 @@ class Arbitration:
         # the same reason `send` is, and because a push that fails is not a reason to fail a pause.
         self.notify = notify
         self.clock = clock
+        self._session_lock = threading.RLock()
         # How long each member has been in the status it is in, for §10's clocks. Held in memory on
         # purpose: it is a fact about this relay's uptime, and a restart pauses the session anyway.
         self._since = {}
@@ -668,6 +693,7 @@ class Arbitration:
                  p.get("cwd") or "", p.get("label") or "", p.get("role") or "",
                  p["pane_id"], at))
 
+    @session_change
     def set_members(self, session_id, members):
         """Change who a running session is arbitrating between. Attach, detach and swap, one verb.
 
@@ -916,6 +942,7 @@ class Arbitration:
     def _query_path(self):
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "conv_query.py")
 
+    @session_change
     def prompt(self, session_id, trigger, entries):
         """Ask the arbitrator for the next decision. Moves the session to `awaiting`.
 
