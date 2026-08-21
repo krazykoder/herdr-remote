@@ -138,13 +138,6 @@
         (s.members || []).some(m => m.pane_id === paneId)) || null;
     }
 
-    // A session that would refuse a new start. Only `active` and `awaiting` do: a paused session
-    // is one a person can still resume, and the relay's own precondition ignores it — so a strip
-    // that hid Start on its account would refuse something the relay would have allowed.
-    function arbBlockingSession() {
-      return arbSessions.find(s => s.state === 'active' || s.state === 'awaiting') || null;
-    }
-
     // ⚖ over a thread. Shown only where it has somewhere to go, and lit only when that somewhere
     // is an arbitrator already at work — an always-on button that sometimes opens a form and
     // sometimes jumps to a terminal is one a person cannot predict.
@@ -179,8 +172,6 @@
       if (at) { openTerminal(at); return; }
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
       if (!conv) return;
-      const blocking = arbBlockingSession();
-      if (blocking) { showToast('One session at a time — end or pause the running one first.'); return; }
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
       // The same sentence the strip would have drawn. Said out loud here because this button is
       // reachable while the strip is scrolled away, and a tap that does nothing is the worst
@@ -440,7 +431,6 @@
           ` () => arbCommand('arb_cancel'))"` +
           ` aria-label="End this arbitration session">End</button></div>`;
       }
-      if (session) return '';   // running, but over some other conversation
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
       // Two *or more*: which two is the person's choice, not the conversation's size. Requiring
       // exactly two is what made a three-member conversation silently un-arbitratable.
@@ -469,9 +459,32 @@
         arbClockOptions(ARB_IDLE_CHOICES) + '</select></label>' +
         '<label>If a member works without stopping<select id="arbRuntime">' +
         arbClockOptions(ARB_RUNTIME_CHOICES) + '</select></label>' +
+        arbArmChoiceHtml() +
         '<div class="arb-form-actions">' +
         '<button class="arb-btn" onclick="arbToggleForm()">Cancel</button>' +
         '<button class="arb-btn go" onclick="arbStart()">Start</button></div></div>';
+    }
+
+    // Whether the loop is armed behind the brief. Two different things wearing one word until now:
+    // the starter prompt goes out either way — that is what makes an agent an arbitrator — and
+    // this decides only whether a turn ending starts costing budget. A person assembling a room
+    // wants the brief first and the loop when they say so.
+    let arbStartPaused = false;
+
+    function arbPickStartPaused(paused) {
+      arbStartPaused = paused;
+      arbRender();
+      if (window.cue) cue('tick');
+    }
+
+    function arbArmChoiceHtml() {
+      return '<div class="arb-role"><span class="arb-role-lede">On start</span>' +
+        '<div class="arb-roles">' +
+        badgeHtml('Start deciding', !arbStartPaused, 'arbPickStartPaused(false)',
+                  {proj: true, title: 'Brief the arbitrator and arm the loop'}) +
+        badgeHtml('Brief only', arbStartPaused, 'arbPickStartPaused(true)',
+                  {proj: true, title: 'Brief the arbitrator and leave it paused until you resume'}) +
+        '</div></div>';
     }
 
     // Minutes, because that is the unit a person thinks about a stuck agent in. `0` is off, and
@@ -637,18 +650,15 @@
       // A session attached to this conversation is the one its controls must operate on. The
       // primary session remains the fallback solely to suppress a second Start while another loop
       // is active — the relay is still the final authority for that refusal.
-      const here = conv ? arbSessionForConversation(conv.id) : null;
-      // The fallback draws nothing — `arbStripHtml` returns '' for a session over some other
-      // conversation — and that is its whole job: it suppresses a second Start while a loop is
-      // actually running. Only a running one, because only a running one is what the relay
-      // refuses on.
-      const session = here || arbBlockingSession();
+      // This conversation's session and no other. There is nothing to fall back to any more:
+      // sessions run in parallel, so another conversation having one says nothing about this one.
+      const session = conv ? arbSessionForConversation(conv.id) : null;
       if (arbFormPanes && (!conv || arbFormConv !== conv.id)) {
         arbFormPanes = null;
         arbFormConv = '';
       }
-      if (arbCrew && !(session && conv && session.conversation === conv.id)) arbCrew = null;
-      if (here) arbAskDetail(here);
+      if (arbCrew && !session) arbCrew = null;
+      if (session) arbAskDetail(session);
       const html = arbStripHtml(session, conv || null, arbOn, arbFormPanes, arbCrew);
       if (html !== arbHtmlLast) {
         // A redraw takes an armed button with it — the budget ticking down a minute is enough to
@@ -700,6 +710,7 @@
         arbitrator: { pane_id: who },
         triggers: { on_turn_end: true, idle_ms: arbClockValue('arbIdle'),
                     runtime_ms: arbClockValue('arbRuntime') },
+        paused: arbStartPaused,
       });
       // Nothing is drawn optimistically. The session exists when the relay says it does, and a
       // strip that appears before the starter prompt landed would be reporting a session that a

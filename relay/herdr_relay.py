@@ -1506,12 +1506,16 @@ def arbitration_entries(pane):
     and the pane that just finished is only one voice in that. Selected by fingerprint for the same
     reason everything else is: pane ids do not survive a restart.
 
+    Scoped to the session **this pane** is in, not to "the running one": several sessions run at
+    once, and handing one arbitrator another conversation's turns is the whole failure that
+    independence is supposed to rule out.
+
     Assembles prose; reads none of it (N1).
     """
-    session = arbitration.running()
-    if session is None:
+    session_id = arbitration.session_of_pane(pane.get("pane_id"))
+    if session_id is None:
         return []
-    members = arbitration.members(session["id"])
+    members = arbitration.members(session_id)
     fingerprints = [[m["host"], m["agent"], m["cwd"]] for m in members]
     # The pane's own label, and never the role: a role is what a member is *for* and several
     # members may carry the same one, so heading a turn with it would put two agents' words under
@@ -1580,8 +1584,11 @@ def arbitrate_turn_end(pane, pane_id):
     relay to stop telling everyone else what their agents are doing.
     """
     try:
-        session = arbitration.running()
-        if session is None:
+        # Which session, if any, this pane belongs to. Several run at once now — one per
+        # conversation — and a pane is in at most one of them, which is what makes this a lookup
+        # rather than a search.
+        session_id = arbitration.session_of_pane(pane_id)
+        if session_id is None:
             return
         acted = arbitration.arbitrator_finished(pane_id)
         if acted is None:
@@ -1590,7 +1597,7 @@ def arbitrate_turn_end(pane, pane_id):
             # Read back rather than reused: whatever just happened is very likely to have changed
             # the state, the budget or the last decision, and the strip above the thread is only
             # worth having if it says what is true now.
-            arb_broadcast(arbitration.session(session["id"]))
+            arb_broadcast(arbitration.session(session_id))
     except Exception as e:                       # noqa: BLE001 — see the docstring
         log.warning("arbitration: turn end for %s not handled: %s", pane_id, e)
 
@@ -1613,9 +1620,9 @@ def arbitrate_clocks(agents):
             acted = arbitration.turn_ended(item["pane_id"], arbitration_entries(pane),
                                            kind=item["trigger"])
             if acted is not None:
-                session = arbitration.running()
-                if session is not None:
-                    arb_broadcast(arbitration.session(session["id"]))
+                session_id = arbitration.session_of_pane(item["pane_id"])
+                if session_id is not None:
+                    arb_broadcast(arbitration.session(session_id))
     except Exception as e:                       # noqa: BLE001 — see arbitrate_turn_end
         log.warning("arbitration: clocks not handled: %s", e)
 
@@ -2115,7 +2122,10 @@ async def handle_client(ws, listener="lan"):
                                 arbitrator=msg.get("arbitrator") or {},
                                 scope=msg.get("scope") or "",
                                 gates=msg.get("gates"), budget=msg.get("budget"),
-                                triggers=msg.get("triggers")))
+                                triggers=msg.get("triggers"),
+                                # Briefed but not armed: "initialised" and "started" are two
+                                # things, and a person assembling a room wants the first.
+                                paused=bool(msg.get("paused"))))
                     elif msg_type == "arb_reinit":
                         # The same brief the session opened with, into a pane with nothing else in
                         # it. Nothing about the session moves — see Arbitration.reinit.

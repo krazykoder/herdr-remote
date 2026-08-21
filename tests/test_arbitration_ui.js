@@ -94,10 +94,15 @@ test('nothing is drawn until the relay offers the feature', () => {
   assert.ok(g.arbStripHtml(null, CONV, true, false).includes('Arbitrate'));
 });
 
-test('a session over another conversation draws nothing here', () => {
+test('a session over another conversation does not stop this one starting its own', () => {
+  // This used to draw nothing at all — one loop at a time, so a session anywhere suppressed the
+  // Start button everywhere. Sessions are independent now: their own roster, arbitrator, budget
+  // and drop directory, and no pane in two of them.
   const {g} = ctx();
   const elsewhere = {...SESSION, conversation: 'c-2'};
-  assert.equal(g.arbStripHtml(elsewhere, CONV, true, false), '');
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [elsewhere]});
+  g.arbRender();
+  assert.match(g.arbStripHtml(null, CONV, true, false), /⚖ Arbitrate/);
 });
 
 test('a running session shows its state, budget and one way to stop it', () => {
@@ -178,7 +183,26 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     // Both clocks off unless the form was asked for them: a trigger nobody chose is an
     // unattended loop spending budget on a conversation that had stopped on purpose.
     triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0},
+    // Briefed and armed, which is the default. `Brief only` is the other half of that badge pair.
+    paused: false,
   }]);
+});
+
+test('brief only starts the arbitrator paused, and says so on the badge', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  const form = () => g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null);
+  assert.match(form(), /aria-pressed="true"[^>]*>Start deciding</, 'armed by default');
+  g.arbPickStartPaused(true);
+  assert.match(form(), /aria-pressed="true"[^>]*>Brief only</);
+
+  els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
+  els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbFirst = {id: 'arbFirst', value: 'w1:p1'};
+  els.arbSecond = {id: 'arbSecond', value: 'w1:p2'};
+  g.arbStart();
+  assert.equal(sent[0].paused, true);
+  g.arbPickStartPaused(false);           // the badge is module state; leave it as it was found
 });
 
 test('the clocks are sent in the unit the relay counts in, not the one the form asks in', () => {

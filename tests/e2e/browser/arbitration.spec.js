@@ -88,6 +88,7 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   // A role each, empty because the form was left alone. Sent rather than omitted: an unroled
   // member is a fact about the roster.
   expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: ''}, {pane_id: 'w8:p1', role: ''}]);
+  expect(msgs[0].paused).toBe(false);   // briefed and armed, which is the default
   expect(msgs[0].arbitrator).toEqual({pane_id: 'w1:p2'});
 
   // Waited for, not merely allowed to happen: the fake herdr's board never moves, so the pane the

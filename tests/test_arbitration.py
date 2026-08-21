@@ -38,6 +38,11 @@ class Harness(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.live = [pane("p1", cwd="/a"), pane("p2", agent="codex", cwd="/a"),
                      pane("pA", agent="claude", cwd="/arb")]
+        # A second trio, for the tests that run two sessions side by side. Separate panes because
+        # that is the rule: no pane is in two sessions at once.
+        self.other = [pane("q1", cwd="/b"), pane("q2", agent="codex", cwd="/b"),
+                      pane("qA", agent="claude", cwd="/barb")]
+        self.live += self.other
         self.sent = []
         self.pushed = []
         self.now = 1_000_000
@@ -51,6 +56,13 @@ class Harness(unittest.TestCase):
     def start(self, **over):
         kwargs = dict(conversation="c1", members=[self.live[0], self.live[1]],
                       arbitrator=self.live[2], scope="Ship the footer change.")
+        kwargs.update(over)
+        return self.arb.start(**kwargs)
+
+    def start_other(self, **over):
+        """A second, independent session over the second trio."""
+        kwargs = dict(conversation="c2", members=[self.other[0], self.other[1]],
+                      arbitrator=self.other[2], scope="Fix the header.")
         kwargs.update(over)
         return self.arb.start(**kwargs)
 
@@ -88,7 +100,7 @@ class Lifecycle(Harness):
     def test_reconnect_lists_each_unfinished_session(self):
         first = self.start()
         self.arb.pause(first["id"], "user")
-        second = self.start(conversation="c2")
+        second = self.start_other()
         self.assertEqual([second["id"], first["id"]],
                          [s["id"] for s in self.arb.open_sessions()])
 
@@ -100,13 +112,14 @@ class Lifecycle(Harness):
             with self.assertRaises(ArbiterError):
                 action()
 
-    def test_a_paused_session_cannot_resume_over_a_new_running_one(self):
+    def test_a_paused_session_resumes_beside_a_running_one(self):
+        # This used to refuse. Sessions share nothing — their own roster, arbitrator, budget and
+        # drop directory each — so a second one running is not a reason the first cannot go on.
         first = self.start()
         self.arb.pause(first["id"], "user")
-        second = self.start()
-        with self.assertRaises(ArbiterError) as caught:
-            self.arb.resume(first["id"])
-        self.assertEqual("session_running", caught.exception.code)
+        second = self.start_other()
+        self.arb.resume(first["id"])
+        self.assertEqual("active", self.arb.session(first["id"])["state"])
         self.assertEqual("active", self.arb.session(second["id"])["state"])
 
 
@@ -209,27 +222,50 @@ class Start(Harness):
         self.assertEqual("pA", self.sent[0][0])
         self.assertIn("You are the arbitrator", self.sent[0][1])
 
-    def test_two_sessions_cannot_run_at_once(self):
-        # T7b, first half.
+    def test_two_sessions_run_at_once_over_different_panes(self):
+        first = self.start()
+        second = self.start_other()
+        self.assertEqual(["active", "active"],
+                         [self.arb.session(x["id"])["state"] for x in (first, second)])
+        self.assertEqual({first["id"], second["id"]},
+                         {x["id"] for x in self.arb.running_all()})
+
+    def test_a_pane_already_in_a_session_is_refused_by_the_next_one(self):
+        # The one thing independence must not allow: two arbitrators typing into one terminal,
+        # each deciding against half of what it said.
+        first = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.start(conversation="c2", members=[self.live[0], self.other[1]],
+                           arbitrator=self.other[2], scope="Fix the header.")
+        self.assertEqual("participant_in_session", caught.exception.code)
+        self.assertEqual(first["id"], caught.exception.detail)
+
+    def test_an_arbitrator_is_not_lent_to_a_second_session(self):
         self.start()
         with self.assertRaises(ArbiterError) as caught:
-            self.start()
-        self.assertEqual("session_running", caught.exception.code)
+            self.arb.start(conversation="c2", members=[self.other[0], self.other[1]],
+                           arbitrator=self.live[2], scope="Fix the header.")
+        self.assertEqual("participant_in_session", caught.exception.code)
 
-    def test_a_second_session_is_refused_while_the_first_is_awaiting(self):
-        # T7b, the half that matters: `awaiting` is still running, and it is the window a trigger
-        # is most likely to land in.
+    def test_a_second_session_starts_while_the_first_is_awaiting(self):
         s = self.start()
         self.step(s["id"])
         self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
-        with self.assertRaises(ArbiterError) as caught:
-            self.start()
-        self.assertEqual("session_running", caught.exception.code)
+        self.assertEqual("active", self.start_other()["state"])
 
-    def test_a_paused_session_does_not_block_a_new_one(self):
-        s = self.start()
-        self.arb.pause(s["id"], "user")
-        self.assertEqual("active", self.start()["state"])
+    def test_a_session_may_open_paused_and_still_be_briefed(self):
+        # "Initialised" and "started" are two things. The starter prompt is what makes an agent an
+        # arbitrator, so it goes out either way; `paused` decides only whether the loop behind it
+        # is armed, which is what a person wants when they are still assembling the room.
+        s = self.start(paused=True)
+        self.assertEqual("paused", s["state"])
+        self.assertEqual("not_started", s["pause_reason"])
+        self.assertEqual(1, len(self.sent), "briefed anyway")
+        self.assertIn("You are the arbitrator", self.sent[0][1])
+        # And it does not act until a person says so.
+        self.assertIsNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
+        self.arb.resume(s["id"])
+        self.assertIsNotNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
 
     def test_three_members_are_refused(self):
         with self.assertRaises(ArbiterError) as caught:
@@ -1011,10 +1047,10 @@ class RosterEdits(Harness):
         entered, release, done = threading.Event(), threading.Event(), threading.Event()
         enrol = self.arb._enrol
 
-        def hold(participants):
+        def hold(participants, session_id=None):
             entered.set()
             release.wait(2)          # released below; the joins are what fail if it is not
-            return enrol(participants)
+            return enrol(participants, session_id)
 
         self.arb._enrol = hold
         edit = threading.Thread(target=self.swap, args=(s["id"],), daemon=True)

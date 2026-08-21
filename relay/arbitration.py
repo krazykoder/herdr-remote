@@ -51,12 +51,15 @@ def session_change(method):
     reaches this class through `asyncio.to_thread` — the event loop is never the thread that
     blocks, so the `on_loop(..., wait=True)` inside the send is always serviced.
 
-    Re-entrant, because a locked method may call another.
+    Re-entrant, because a locked method may call another. **Per session**, not global: several
+    sessions run at once now, and one arbitrator taking eight seconds to confirm a send is not a
+    reason for another session's roster edit to wait on it. What has to be indivisible is one
+    session's edit against one session's prompt.
     """
     @functools.wraps(method)
-    def locked(self, *args, **kwargs):
-        with self._session_lock:
-            return method(self, *args, **kwargs)
+    def locked(self, session_id, *args, **kwargs):
+        with self._lock_for(session_id):
+            return method(self, session_id, *args, **kwargs)
     return locked
 
 # The CRFN default. A gate is a name and a host-owned template; `{instruction}` is the only
@@ -171,11 +174,13 @@ CREATE TABLE IF NOT EXISTS sends (
   at                INTEGER NOT NULL
 );
 
--- Running means `active` *or* `awaiting`. A session whose arbitrator is mid-decision is very much
--- still running, and an index over `active` alone would let a second one start in exactly that
--- window — which is the window a trigger is most likely to land in.
-CREATE UNIQUE INDEX IF NOT EXISTS one_running_session
-  ON sessions(state IN ('active','awaiting')) WHERE state IN ('active','awaiting');
+-- There used to be a unique index here that allowed exactly one `active`/`awaiting` session. It is
+-- dropped rather than merely unused: sessions share nothing — each has its own roster, arbitrator,
+-- budget and drop directory, and no pane is in two of them — so a second one running is not a
+-- state this store should refuse. What replaced the guarantee it was really making is the pane
+-- exclusivity check in `_enrol`, which is the one that matters: two arbitrators typing into one
+-- terminal is the failure, and two sessions over different panes never was.
+DROP INDEX IF EXISTS one_running_session;
 """
 
 
@@ -493,7 +498,10 @@ class Arbitration:
         # the same reason `send` is, and because a push that fails is not a reason to fail a pause.
         self.notify = notify
         self.clock = clock
-        self._session_lock = threading.RLock()
+        # One re-entrant lock per session, minted on first use and never reclaimed — a session id
+        # is small and a relay sees a few dozen of them in a lifetime.
+        self._session_locks = {}
+        self._locks_lock = threading.Lock()
         # How long each member has been in the status it is in, for §10's clocks. Held in memory on
         # purpose: it is a fact about this relay's uptime, and a restart pauses the session anyway.
         self._since = {}
@@ -566,6 +574,53 @@ class Arbitration:
         row = self.conn.execute(
             "SELECT * FROM sessions WHERE state IN ('active','awaiting')").fetchone()
         return dict(row) if row else None
+
+    def _lock_for(self, session_id):
+        with self._locks_lock:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = self._session_locks[session_id] = threading.RLock()
+            return lock
+
+    def running_all(self):
+        """Every session the loop should be driving, oldest first.
+
+        Sessions are independent: each has its own roster, arbitrator, budget and drop directory,
+        and no pane is in two of them (see `_enrol`). So there is nothing for one to wait on, and
+        the poll loop offers every turn end to all of them — the one that owns that pane acts.
+        """
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM sessions WHERE state IN ('active','awaiting') "
+            "ORDER BY created_at, rowid")]
+
+    def busy_panes(self, exclude=None, live=None):
+        """Panes already taking part in an unfinished session: `{pane_id: session_id}`.
+
+        A pane in two sessions is two arbitrators typing into one terminal, each deciding against
+        half of what it said. That is the one thing independent sessions must not be allowed to do
+        to each other, and it is checked at enrolment where it is still a refusal rather than a
+        mess.
+
+        Re-resolved rather than read off `members.pane_id`, because that column is a cache and
+        herdr mints new pane ids on every restart.
+        """
+        live = self.panes() if live is None else live
+        out = {}
+        for s in self.open_sessions():
+            if s["id"] == exclude:
+                continue
+            arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
+            if arb:
+                out[arb] = s["id"]
+            for m in self.members(s["id"]):
+                pane_id, _ = resolve((m["host"], m["agent"], m["cwd"]), m["pane_id"], live)
+                if pane_id:
+                    out[pane_id] = s["id"]
+        return out
+
+    def session_of_pane(self, pane_id):
+        """Which unfinished session this pane is in, or None. What the poll loop broadcasts by."""
+        return self.busy_panes().get(pane_id)
 
     def open(self):
         """Most recent session a person can still resume or end.
@@ -655,7 +710,7 @@ class Arbitration:
             }
         return out
 
-    def _enrol(self, participants):
+    def _enrol(self, participants, session_id=None):
         """Panes as the caller named them, re-read as the relay's own snapshot says they are.
 
         Only `pane_id` and `role` are taken from the caller — the pane id is the selection and the
@@ -673,7 +728,12 @@ class Arbitration:
         ids = [p.get("pane_id") for p in participants]
         if len(set(ids)) != len(ids) or not all(ids):
             raise ArbiterError("duplicate_participant")
-        live_by_id = {p.get("pane_id"): p for p in self.panes()}
+        live = self.panes()
+        live_by_id = {p.get("pane_id"): p for p in live}
+        # Sessions are independent, and this is what keeps them so: a pane in two of them is two
+        # arbitrators typing into one terminal, each deciding against half of what it said. Cheap
+        # to refuse here, and unrecoverable once it has happened.
+        taken = self.busy_panes(exclude=session_id, live=live)
         out = []
         for p in participants:
             actual = live_by_id.get(p.get("pane_id"))
@@ -692,6 +752,8 @@ class Arbitration:
             host = p.get("host") or actual.get("host") or "local"
             if host != "local":
                 raise ArbiterError("remote_participant", host)
+            if p.get("pane_id") in taken:
+                raise ArbiterError("participant_in_session", taken[p["pane_id"]])
             out.append({**actual, "role": check_roles(p.get("role"))})
         # One project for everyone. An arbitrator reading two agents in an unrelated checkout is
         # deciding about work it cannot see, and every instruction it writes then lands in the
@@ -711,7 +773,7 @@ class Arbitration:
     # --- lifecycle ---
 
     def start(self, *, conversation, members, arbitrator, scope, gates=None, budget=None,
-              triggers=None):
+              triggers=None, paused=False):
         """Enrol a roster and arm the loop. Preconditions in §9.2's order, each with its own code.
 
         `members` and `arbitrator` are panes as herdr lists them; the front end chose them, because
@@ -725,8 +787,6 @@ class Arbitration:
         that has since been replaced would enrol the new pane under the old pane's identity, and
         every later re-resolution would follow the wrong one.
         """
-        if self.running():
-            raise ArbiterError("session_running")
         if len(members) != MEMBERS_REQUIRED:
             raise ArbiterError("member_count", f"{len(members)}, expected {MEMBERS_REQUIRED}")
         *members, arbitrator = self._enrol([*members, arbitrator])
@@ -752,11 +812,15 @@ class Arbitration:
         session_id = f"s-{stamp}-{os.urandom(2).hex()}"
         self.conn.execute(
             "INSERT INTO sessions (id, conversation, scope, gates_json, budget_json, "
-            "triggers_json, arbitrator_fp, arbitrator_pane, state, window_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,'active',?,?)",
+            "triggers_json, arbitrator_fp, arbitrator_pane, state, pause_reason, window_at, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
              json.dumps(triggers),
-             json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"], at, at))
+             json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"],
+             # Briefed either way. The starter prompt is what makes an agent an arbitrator, so it
+             # goes out on every start; `paused` decides only whether the loop is armed behind it,
+             # which is the difference between "this one is ready" and "this one is deciding".
+             "paused" if paused else "active", "not_started" if paused else None, at, at))
         self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
@@ -820,7 +884,7 @@ class Arbitration:
         # The arbitrator rides along so the roster is checked *against* it — same project, and not
         # one of the two — and is dropped again: `_enrol` validates participants, and which of them
         # are members is this method's business.
-        enrolled = self._enrol([*members, {"pane_id": arb}])[:MEMBERS_REQUIRED]
+        enrolled = self._enrol([*members, {"pane_id": arb}], session_id)[:MEMBERS_REQUIRED]
         # N7, and the same refusal `start` makes: the announcement is a keystroke, and a pane
         # mid-turn is where a keystroke goes missing. Refused rather than paused — nothing has
         # changed yet, and the person can do it a moment later.
@@ -940,9 +1004,6 @@ class Arbitration:
         session = self.session(session_id)
         if session["state"] not in ("active", "paused"):
             raise ArbiterError("not_paused", session["state"])
-        running = self.running()
-        if running and running["id"] != session_id:
-            raise ArbiterError("session_running", running["id"])
         self.conn.execute(
             "UPDATE sessions SET state='active', pause_reason=NULL, window_at=? WHERE id=?",
             (self.clock(), session_id))
@@ -999,17 +1060,18 @@ class Arbitration:
         Never raises. A trigger that cannot proceed pauses the session and says why, and the poll
         loop that called this has fifty other panes to get through.
         """
-        s = self.running()
-        if s is None or s["state"] != "active":
-            return None
-        try:
-            member_id = next((mid for mid, m in self.roster(s["id"]).items()
-                              if m["pane_id"] == pane_id), None)
-            if member_id is None:
+        for s in self.running_all():
+            if s["state"] != "active":
+                continue
+            try:
+                member_id = next((mid for mid, m in self.roster(s["id"]).items()
+                                  if m["pane_id"] == pane_id), None)
+                if member_id is None:
+                    continue
+                return self.prompt(s["id"], f"{kind} — {member_id}", entries)
+            except (ArbiterError, sqlite3.Error, OSError):
                 return None
-            return self.prompt(s["id"], f"{kind} — {member_id}", entries)
-        except (ArbiterError, sqlite3.Error, OSError):
-            return None
+        return None
 
     def due(self, now=None):
         """Which members' clocks have come round. §10 — evaluated by the caller's poll loop.
@@ -1022,25 +1084,33 @@ class Arbitration:
         prompt, not twelve — the arbitrator has already been told, and repeating it is how an
         unattended loop spends a budget on nothing. The clock restarts when the pane moves.
         """
-        s = self.running()
-        if s is None or s["state"] != "active":
+        active = [s for s in self.running_all() if s["state"] == "active"]
+        if not active:
             self._since = {}      # a paused session's clocks do not accumulate while it is stopped
             return []
+        now = self.clock() if now is None else now
+        out, live = [], set()
+        for s in active:
+            self._due_one(s, now, out, live)
+        # Keyed by pane and not by session, which is sound because no pane is in two sessions —
+        # `_enrol` refuses that. A member that moved pane starts its clock again.
+        for pane_id in set(self._since) - live:
+            del self._since[pane_id]
+        return out
+
+    def _due_one(self, s, now, out, live):
         trig = json.loads(s["triggers_json"])
         idle_ms, runtime_ms = int(trig.get("idle_ms") or 0), int(trig.get("runtime_ms") or 0)
-        now = self.clock() if now is None else now
         try:
             roster = self.roster(s["id"])
         except (ArbiterError, sqlite3.Error):
-            return []
+            return
         # A send resets the idle clock, because a member that was just written to is not idle in the
         # sense that matters — it is about to work, and prompting the arbitrator about it would ask
         # for a decision on a turn that has not started.
         last_send = {r["pane_id"]: r["at"] for r in self.conn.execute(
             "SELECT pane_id, MAX(at) AS at FROM sends WHERE session_id=? GROUP BY pane_id",
             (s["id"],))}
-        out = []
-        live = set()
         for member_id, m in roster.items():
             pane_id, status = m["pane_id"], m["status"]
             if not pane_id:
@@ -1062,9 +1132,6 @@ class Arbitration:
                 continue
             seen[2] = True
             out.append({"member": member_id, "pane_id": pane_id, "trigger": trigger})
-        for pane_id in set(self._since) - live:
-            del self._since[pane_id]        # a member that moved pane starts its clock again
-        return out
 
     def arbitrator_finished(self, pane_id):
         """The arbitrator ended a turn, so its answer should be on disk. Reads it. §12.1 step 4.
@@ -1073,21 +1140,23 @@ class Arbitration:
         look, which is what stops a compromised or confused agent from pointing it at a file
         somebody else wrote.
         """
-        s = self.running()
-        if s is None or s["state"] != "awaiting":
-            return None
-        try:
-            arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
-            if arb is None or arb != pane_id:
+        live = self.panes()
+        for s in self.running_all():
+            if s["state"] != "awaiting":
+                continue
+            try:
+                arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
+                if arb is None or arb != pane_id:
+                    continue
+                row = self.conn.execute(
+                    "SELECT id FROM prompts WHERE session_id=? AND sequence=? "
+                    "ORDER BY id DESC LIMIT 1", (s["id"], s["sequence"])).fetchone()
+                if row is None:
+                    return None
+                return self.collect(s["id"], row["id"])
+            except (ArbiterError, sqlite3.Error, OSError):
                 return None
-            row = self.conn.execute(
-                "SELECT id FROM prompts WHERE session_id=? AND sequence=? ORDER BY id DESC LIMIT 1",
-                (s["id"], s["sequence"])).fetchone()
-            if row is None:
-                return None
-            return self.collect(s["id"], row["id"])
-        except (ArbiterError, sqlite3.Error, OSError):
-            return None
+        return None
 
     # --- the loop ---
 

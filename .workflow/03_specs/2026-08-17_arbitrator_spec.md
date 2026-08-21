@@ -888,22 +888,38 @@ announcement — a role-only edit is refused while a decision is outstanding, ex
 The announcement says *which* of the two changed: a pane that moved invalidates what the arbitrator
 remembers about a member id, and a role that changed does not.
 
-### 14.4 One loop, several sessions
+### 14.4 Sessions are independent
 
-Only one session may be `active` or `awaiting` at a time — `start` and `resume` both refuse on
-`running()`, which is what keeps a single poll loop unambiguous. **Paused sessions are not
-counted**, so several may be open at once across different conversations, and every one of them is
-a Resume a person can still press.
+Several sessions run at once, one per conversation. Each has its own roster, arbitrator, scope,
+gates, budget, triggers and drop directory, and nothing is shared between them — so a second one
+running is not a reason the first cannot proceed. `start` and `resume` refuse neither.
 
-Which makes conversation scope a client-side invariant worth stating: a control drawn over one
-conversation acts on the session attached to *that* conversation and on no other. The strip, its
-buttons, its detail sheet and the ⚖ shortcut all resolve by `conversation` id; nothing falls back
-to "the newest session anywhere". The one deliberate exception is suppressing a second Start, which
-consults the *running* session only — the same condition the relay refuses on.
+**No pane is in two sessions.** This is the one exclusivity that matters and it is checked at
+enrolment (`participant_in_session`): two arbitrators typing into one terminal, each deciding
+against half of what it said, is unrecoverable once it has happened and a refusal before it is
+cheap. It covers arbitrators as well as members — an arbitrator is not lent out.
 
-Truly concurrent loops are a scheduler change, not a client one, and are not v1.
+What this replaced was a unique index allowing exactly one `active`/`awaiting` session. It is
+dropped, not merely unused: it was guarding the wrong thing. Two sessions over different panes were
+never a problem; two sessions over the *same* pane always were.
 
-### 14.5 Re-briefing
+Consequences the loop has to honour, all of them in §12.1's path:
+
+* a turn end is offered to the session that pane is in, found by lookup rather than search;
+* the digest an arbitrator is shown is its own session's, never "the running one"'s;
+* the clocks in §10 are evaluated per session, over one `_since` map keyed by pane — sound
+  precisely because no pane is in two sessions;
+* the roster lock is per session, so one arbitrator taking eight seconds to confirm a send does
+  not hold up another session's roster edit.
+
+### 14.5 Starting paused
+
+A session may open `paused` with reason `not_started`. The starter prompt goes out either way —
+being briefed is what makes an agent an arbitrator — and `paused` decides only whether the loop
+behind it is armed. "Initialised" and "started" are two different things, and a person assembling a
+room wants the first: appoint the arbitrator, put the members in, then say go.
+
+### 14.6 Re-briefing
 
 A long session pushes the starter prompt out of the arbitrator's context. What that looks like from
 outside is prose written into its own pane where a decision record should be — `invalid_record`
@@ -924,7 +940,7 @@ a line it does not understand and an unchanged context — the same place a pers
 the button is in, so the failure is quiet by construction. The re-brief that follows is confirmed
 like any other send, and an unconfirmed one pauses the session.
 
-### 14.6 Environment
+### 14.7 Environment
 
 | Variable | Purpose |
 |---|---|
@@ -943,7 +959,7 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 | Type | Payload | Gate |
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
-| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
+| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `paused?` | Arbiter |
 | `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) | Arbiter |
 | `arb_reinit` | `session` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
