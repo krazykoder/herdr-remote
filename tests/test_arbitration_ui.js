@@ -37,6 +37,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
   const els = {};
   const el = id => els[id] || (els[id] = {id, value: '', innerHTML: '', textContent: '', style: {}});
   const sent = [], toasts = [];
+  let tabSyncs = 0;
   const g = {
     document: {getElementById: el},
     console, window: {},
@@ -49,12 +50,13 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
     loadConvIndex: () => convs,
     convCurrentId: () => 'c-1',
     showToast: t => toasts.push(t),
+    syncBrowserTab: () => { tabSyncs++; },
     armButton() {},
   };
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(SRC, g);
-  return {g, els, sent, toasts};
+  return {g, els, sent, toasts, tabSyncs: () => tabSyncs};
 }
 
 test('nothing is drawn until the relay offers the feature', () => {
@@ -399,7 +401,7 @@ test('a reconnect closes the sheet rather than leaving another relay’s prose o
 // is exactly the person a `call_human` is addressed to.
 
 test('a session that stops announces itself once, not on every poll', () => {
-  const {g, toasts} = ctx();
+  const {g, toasts, tabSyncs} = ctx();
   g.arbReceiveSession({session: SESSION});
   assert.deepStrictEqual(toasts, [], 'a running session is not news');
 
@@ -415,6 +417,14 @@ test('a session that stops announces itself once, not on every poll', () => {
   // status — arrives here. An alarm with no off switch is one nobody leaves on.
   g.arbReceiveSession({session: Object.assign({}, paused, {budget: {minutes_left: 43}})});
   assert.strictEqual(toasts.length, 1, 'the pause is announced on the transition, not on the state');
+  assert.strictEqual(tabSyncs(), 3, 'each session update refreshes tab count and favicon');
+});
+
+test('a paused session received at reconnect refreshes tab chrome without re-alerting', () => {
+  const {g, toasts, tabSyncs} = ctx();
+  g.arbReceiveSessions({sessions: [Object.assign({}, SESSION, {state: 'paused'})]});
+  assert.strictEqual(toasts.length, 0, 'a standing pause does not chime again on reconnect');
+  assert.strictEqual(tabSyncs(), 1);
 });
 
 test('a pause without a decision behind it still says why it stopped', () => {

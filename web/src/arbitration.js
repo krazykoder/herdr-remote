@@ -36,12 +36,16 @@
       closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
+      // The tab too. A badge raised by a session this browser can no longer see is one nothing it
+      // does will clear — the same gap the two receivers below close, at the other end.
+      syncBrowserTab();
     }
 
     function arbReceiveSessions(msg) {
       arbOn = true;
       arbSession = (msg.sessions || [])[0] || null;
       arbRender();
+      syncBrowserTab();
     }
 
     // One session on any state change. `ended` is not a state to draw: the session is over, and a
@@ -55,6 +59,7 @@
       if (s.state !== 'ended') { arbFormPanes = null; arbFormConv = ''; }
       if (s.state === 'paused' && !(was && was.state === 'paused')) arbAlertPause(s);
       arbRender();
+      syncBrowserTab();
     }
 
     // A session that stopped is asking for a person, and `call_human` is it asking by name. That
