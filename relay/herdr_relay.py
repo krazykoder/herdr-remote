@@ -55,7 +55,11 @@ from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from logging.handlers import RotatingFileHandler
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-LOG_DIR = os.path.expanduser("~/Library/Logs/herdr-remote")
+# Overridable because every relay wrote here, including the ones the test suites spawn: a
+# Playwright run interleaved its fake panes into the log of the relay actually being used,
+# and — PUSH_SUBS_FILE lives here too — a test relay was holding the real devices'
+# subscriptions and could push to a phone.
+LOG_DIR = os.environ.get("HERDR_LOG_DIR") or os.path.expanduser("~/Library/Logs/herdr-remote")
 os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "relay.log")
 AUDIT_FILE = os.path.join(LOG_DIR, "audit.log")

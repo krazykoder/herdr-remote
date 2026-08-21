@@ -623,6 +623,7 @@ class Arbitration:
                           (reason, session_id))
         self.conn.commit()
         s = self.session(session_id)
+        log.info("arbitration %s paused: %s", session_id, reason)
         if self.notify:
             try:
                 self.notify(s, reason)
@@ -842,6 +843,8 @@ class Arbitration:
         if not self._send(arb, body):
             self.pause(session_id, "send_unconfirmed")
             return None
+        log.info("arbitration %s seq %d: asked %s (%s, %d bytes)",
+                 session_id, sequence, arb, trigger, len(body))
         return {"sequence": sequence, "prompt_id": cur.lastrowid, "path": path}
 
     def read_dropbox(self, session_id, sequence):
@@ -947,6 +950,13 @@ class Arbitration:
              doc.get("why") or "", doc.get("ambiguity"), doc.get("decision_complexity"), sha, now))
         decision_id = cur.lastrowid
         self.conn.commit()
+        # A whole successful session used to leave nothing in the relay log — only refusals were
+        # written down, so the one run that worked was indistinguishable from one that never
+        # started. These three lines (asked, decided, paused) are the session's trace on disk.
+        log.info("arbitration %s seq %d: %s", session_id, sequence,
+                 f"rejected {code}" if code else
+                 "{} {} — {}".format(doc["gate"], doc.get("to") or "you",
+                                     (doc.get("why") or "")[:120]))
 
         if code:
             return self._reject(s, decision_id, code)

@@ -50,9 +50,38 @@
       const s = msg.session;
       if (!s) return;
       arbOn = true;
+      const was = arbSession;
       arbSession = s.state === 'ended' ? null : s;
       if (s.state !== 'ended') { arbFormPanes = null; arbFormConv = ''; }
+      if (s.state === 'paused' && !(was && was.state === 'paused')) arbAlertPause(s);
       arbRender();
+    }
+
+    // A session that stopped is asking for a person, and `call_human` is it asking by name. That
+    // used to be a label on a strip — chrome inside the one thread it belongs to, invisible to
+    // anybody on the pane list or on another conversation, which is every way the app is actually
+    // being looked at when an unattended loop stops.
+    //
+    // Deliberately not a pane status. `blocked` is what herdr says about a pane and five surfaces
+    // are keyed on it; a stopped session is a fact about the session, and writing it into a pane
+    // would make all five lie about what is on that pane's screen. So a pause raises the same
+    // signals a blocked pane raises — the chime, a toast, the count on the tab — without
+    // pretending to be one.
+    //
+    // Every reason and not only call_human: a loop that stopped on a spent budget or a member that
+    // exited is equally not going to start itself again.
+    function arbNeedsHuman() {
+      return !!(arbSession && arbSession.state === 'paused');
+    }
+
+    // On the transition into paused, not on the state. A pause stands until somebody answers it,
+    // and a chime on every poll would be an alarm with no off switch.
+    function arbAlertPause(s) {
+      const why = (s.last_decision || {}).why;
+      showToast('⚖ Arbitration paused — ' + (s.pause_reason === 'call_human'
+        ? (why || 'the arbitrator is asking for you')
+        : String(s.pause_reason || 'stopped').replace(/_/g, ' ')));
+      if (window.cue) cue('chime');
     }
 
     // Is this pane the one deciding? Asked by every list that draws a pane, because an arbitrator

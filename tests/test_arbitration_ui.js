@@ -391,3 +391,50 @@ test('a reconnect closes the sheet rather than leaving another relay’s prose o
   g.arbReceiveDetail({type: 'arb_detail', session: 's-20260817-1103', decisions: [DECISION]});
   assert.match(els.arbDetailBody.innerHTML, /Reading the session/, 'and nothing lands in it after');
 });
+
+// A stopped loop has to reach somebody who is not looking at this thread.
+//
+// The strip says "Paused — call human" and that is the whole of what it said: a person on the pane
+// list, in another conversation, or with the tab in the background was told nothing at all, which
+// is exactly the person a `call_human` is addressed to.
+
+test('a session that stops announces itself once, not on every poll', () => {
+  const {g, toasts} = ctx();
+  g.arbReceiveSession({session: SESSION});
+  assert.deepStrictEqual(toasts, [], 'a running session is not news');
+
+  const paused = Object.assign({}, SESSION, {
+    state: 'paused', pause_reason: 'call_human',
+    last_decision: {gate: 'call_human', to: null, why: 'The two disagree about the footer.'},
+  });
+  g.arbReceiveSession({session: paused});
+  assert.strictEqual(toasts.length, 1);
+  assert.match(toasts[0], /The two disagree about the footer\./);
+
+  // Every arb_session for the same standing pause — a budget line ticking down, a member changing
+  // status — arrives here. An alarm with no off switch is one nobody leaves on.
+  g.arbReceiveSession({session: Object.assign({}, paused, {budget: {minutes_left: 43}})});
+  assert.strictEqual(toasts.length, 1, 'the pause is announced on the transition, not on the state');
+});
+
+test('a pause without a decision behind it still says why it stopped', () => {
+  const {g, toasts} = ctx();
+  g.arbReceiveSession({session: SESSION});
+  g.arbReceiveSession({session: Object.assign({}, SESSION,
+    {state: 'paused', pause_reason: 'send_unconfirmed'})});
+  assert.match(toasts[0], /send unconfirmed/);
+});
+
+test('a paused session is one thing waiting on you; anything else is none', () => {
+  const {g} = ctx();
+  assert.strictEqual(g.arbNeedsHuman(), false, 'no session at all');
+  g.arbReceiveSession({session: SESSION});
+  assert.strictEqual(g.arbNeedsHuman(), false, 'a session doing its job is not waiting on anyone');
+  g.arbReceiveSession({session: Object.assign({}, SESSION,
+    {state: 'paused', pause_reason: 'call_human'})});
+  assert.strictEqual(g.arbNeedsHuman(), true);
+  // Ended clears the session outright, and a badge for a session that is over is a badge that
+  // cannot be cleared by doing anything.
+  g.arbReceiveSession({session: Object.assign({}, SESSION, {state: 'ended'})});
+  assert.strictEqual(g.arbNeedsHuman(), false);
+});

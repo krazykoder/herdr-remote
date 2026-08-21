@@ -74,6 +74,10 @@ async function startRelay({port, logs, name = 'relay.out', env = {}}) {
     // Two relays writing one session table is also a suite that can see another worker's
     // session on the strip.
     HERDR_CONV_LOG: '1',
+    // Including the relay's own log and its push subscriptions, which are otherwise the
+    // user's real ones under ~/Library/Logs — a suite must not write into the log of the
+    // relay being debugged, and must not be able to push to a phone.
+    HERDR_LOG_DIR: logs,
     HERDR_ARBITER_DB: path.join(logs, 'arbitration.sqlite3'),
     HERDR_STATE_DB: path.join(logs, 'state.sqlite3'),
     // Arbitration, whose companions are the two above. On for the whole suite because the

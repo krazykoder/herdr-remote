@@ -92,7 +92,10 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   // starter prompt went to stays `idle` and the send is never confirmed — and the relay ends the
   // session it had already inserted.
   // Leaving before that lands would hand the next test a relay reporting a session in flight.
-  await expect(page.locator('#toast')).toContainText('send_unconfirmed');
+  // Longer than the default 5s: the relay now watches an unconfirmed pane for the whole of
+  // SUBMIT_TIMEOUT (8s) before saying so, which is the point of watching a pane rather than
+  // counting presses. A 5s expectation was asserting the old give-up time.
+  await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 
 test('a half-written scope survives the poll that redraws the view around it', async ({page}) => {

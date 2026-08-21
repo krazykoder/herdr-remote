@@ -44,6 +44,7 @@ def relay_env(**extra):
         # they default under the repo root, which on a developer's machine is the record
         # their own relay is keeping. HERDR_STATE_DIR stood here and is read by nothing in
         # the relay, so it never moved anything.
+        "HERDR_LOG_DIR": f"{HERE}/logs",
         "HERDR_ARBITER_DB": f"{HERE}/logs/arbitration.sqlite3",
         "HERDR_STATE_DB": f"{HERE}/logs/state.sqlite3",
     })

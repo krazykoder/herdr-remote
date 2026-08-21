@@ -957,7 +957,8 @@
       // Red is blocked alone, matching everything else. Done shares the resting blue rather than
       // getting a third colour: a 16px dot cannot carry three states apart at tab size, and the
       // count already in the title is what says a finished pane is waiting to be read.
-      const href = favicon(agents.some(a => attentionKind(a) === 'blocked') ? '#f7768e' : '#7aa2f7');
+      const href = favicon(agents.some(a => attentionKind(a) === 'blocked') ||
+        (typeof arbNeedsHuman === 'function' && arbNeedsHuman()) ? '#f7768e' : '#7aa2f7');
       if (el && el.getAttribute('href') !== href) el.setAttribute('href', href);
     }
 

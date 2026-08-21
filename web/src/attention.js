@@ -55,7 +55,13 @@
     function shouldSound(paneId, status) {
       return ATTENTION.includes(status) && !(paneId === activePane && !document.hidden);
     }
-    function attentionCount() { return agents.filter(needsAttention).length; }
+    // Plus the arbitration session that stopped, if one has. Not a pane and never listed as one —
+    // it is counted here because this is the number the browser tab shows, and "one thing is
+    // waiting on you" is the same sentence whether the thing is a pane or a paused loop.
+    function attentionCount() {
+      return agents.filter(needsAttention).length +
+        (typeof arbNeedsHuman === 'function' && arbNeedsHuman() ? 1 : 0);
+    }
 
     function saveAcked() {
       try { localStorage.setItem(ACK_KEY, JSON.stringify(acked)); }

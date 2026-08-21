@@ -106,6 +106,7 @@ def relay_env(**extra):
         "FAKE_PANES": STATE,
         "HERDR_RELAY_PORT": PORT,
         "HERDR_STATE_DIR": f"{TMP}/logs",
+        "HERDR_LOG_DIR": os.path.dirname(DB),
         "HERDR_ARBITER_DB": DB,
         "HERDR_CONV_LOG": "1",
         "HERDR_ENABLE_WRITE_EXT": "1",
@@ -210,13 +211,22 @@ async def wait_msg(ws, kind, pred=lambda m: True, timeout=25):
     return None
 
 
-async def drain_to_agents(ws):
-    seen = []
-    while True:
-        m = json.loads(await ws.recv())
-        seen.append(m)
-        if m["type"] == "agents" and m["agents"]:
-            return seen
+async def drain_to_agents(ws, settle=0.5, timeout=15):
+    """Everything the relay says on connect, not everything up to the first `agents`.
+
+    `arb_sessions` is sent after the cached snapshot, and the snapshot is only cached once a poll
+    has finished — so whether `agents` arrives before or after the feature gate depends on whether
+    the relay had polled yet when this client connected. Stopping at `agents` made the gate check
+    pass or fail on that timing alone. A quiet half second after the snapshot is the burst ending.
+    """
+    seen, until = [], time.monotonic() + timeout
+    while time.monotonic() < until:
+        try:
+            seen.append(json.loads(await asyncio.wait_for(ws.recv(), settle)))
+        except asyncio.TimeoutError:
+            if any(m["type"] == "agents" and m["agents"] for m in seen):
+                return seen
+    return seen
 
 
 def decision(session_id, sequence, **over):
