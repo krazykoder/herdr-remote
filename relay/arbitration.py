@@ -1492,7 +1492,7 @@ class Arbitration:
             # A file that is there and unreadable is not the same as one that has not been written,
             # and the loop treats both as "waiting" — for ever, in this case, with nothing said.
             self._event(session_id, "error", f"reading {os.path.basename(path)}: {e!r}",
-                        sequence=sequence)
+                        sequence=sequence, once=True)
             return None, None
         return raw, hashlib.sha256(raw).hexdigest()
 

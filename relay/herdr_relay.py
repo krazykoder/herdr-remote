@@ -1580,6 +1580,15 @@ def arb_session_message(session):
             "last_decision": None if last is None else {
                 "sequence": last["sequence"], "gate": last["gate"], "to": last["to_member"],
                 "why": last["why"], "ambiguity": last["ambiguity"], "at": last["at"]},
+            # How far this session's path has got, as one number. Not the path itself — that is
+            # prose and goes only to the client that asks for it — but a watermark, so a client
+            # holding an older copy knows to ask again. Without it the thread's steps only
+            # refreshed when a *decision* landed, which is exactly the case a stuck session never
+            # reaches: waiting on a record, a trigger dropped at a paused session, a drop box that
+            # cannot be read.
+            "event_at": (arbitration.conn.execute(
+                "SELECT MAX(id) FROM events WHERE session_id=?",
+                (session["id"],)).fetchone()[0] or 0),
         },
     }
 
@@ -1606,11 +1615,13 @@ def arbitrate_turn_end(pane, pane_id):
         acted = arbitration.arbitrator_finished(pane_id)
         if acted is None:
             acted = arbitration.turn_ended(pane_id, arbitration_entries(pane))
-        if acted is not None:
-            # Read back rather than reused: whatever just happened is very likely to have changed
-            # the state, the budget or the last decision, and the strip above the thread is only
-            # worth having if it says what is true now.
-            arb_broadcast(arbitration.session(session_id))
+        # Announced whether or not anything was asked. Read back rather than reused: whatever just
+        # happened is very likely to have changed the state, the budget or the last decision, and
+        # the strip above the thread is only worth having if it says what is true now. A turn that
+        # was *not* acted on still moves the path — a member finishing while the session is paused
+        # is the fact a person resuming most needs — and `event_at` is how the client learns to
+        # come and read it.
+        arb_broadcast(arbitration.session(session_id))
     except Exception as e:                       # noqa: BLE001 — see the docstring
         log.warning("arbitration: turn end for %s not handled: %s", pane_id, e)
 

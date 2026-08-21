@@ -1049,6 +1049,24 @@ test('the path goes with the bubbles it belongs to', () => {
   assert.deepEqual(old.arbThreadEntries('c-1').map(e => e.gate), ['review', 'call_human']);
 });
 
+test('a session that is not deciding anything still refreshes its path', () => {
+  // The held copy used to be watermarked by the last *decision*, which is the one thing a stuck
+  // session never moves: waiting on a record that never arrives, or dropping triggers while
+  // paused, sat at the same sequence for ever and the thread never asked again — precisely when a
+  // person is reading it.
+  const {g, sent} = ctx();
+  const asks = () => sent.filter(m => m.type === 'arb_detail').length;
+  g.arbReceiveSession({session: {...CREW_SESSION, event_at: 4}});
+  assert.equal(asks(), 1);
+  g.arbReceiveSession({session: {...CREW_SESSION, event_at: 4}});
+  assert.equal(asks(), 1, 'a poll that repeats itself is not a reason to re-read');
+  g.arbReceiveSession({session: {...CREW_SESSION, event_at: 5}});
+  assert.equal(asks(), 2, 'a step is');
+  g.arbReceiveSession({session: {...CREW_SESSION, event_at: 5, state: 'paused',
+                                 pause_reason: 'invalid_record'}});
+  assert.equal(asks(), 3, 'and so is stopping');
+});
+
 test('the sheet opens on where the session got to', () => {
   const {g} = withPath();
   const html = g.arbDetailHtml(DECISIONS, CREW_SESSION, EVENTS);

@@ -1612,6 +1612,8 @@ class Events(Harness):
         Path(self.arb.drop_path(s["id"], p["sequence"])).mkdir(parents=True, exist_ok=True)
         self.assertEqual("waiting", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
         self.assertIn("0001-decision.json", self.find(s["id"], "error")[0]["detail"])
+        self.assertEqual("waiting", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
+        self.assertEqual(1, len(self.find(s["id"], "error")), "one broken file is one event")
 
     def test_editing_a_running_session_is_on_the_path(self):
         s = self.start()

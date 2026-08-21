@@ -1032,6 +1032,11 @@ Two rules keep it readable:
 
 * **Written, never read.** `detail` is a sentence for a person. Nothing in the loop parses it, and
   no control flow depends on any of it (N1).
+* **A watermark, not the path.** `arb_session` carries `event_at`, the id of the last step
+  recorded. The path itself is prose and goes only to the client that asked (`arb_detail`), but a
+  client holding an older copy has to know to ask again — and watermarking by the last *decision*
+  is exactly wrong for a session that is stuck, which by definition is not making any. A member's
+  turn end is announced whether or not it was acted on, for the same reason.
 * **Never fatal, and never per poll.** Recording is best-effort — a full disk must not turn a
   working send into a paused session — and the steps a poll loop reaches repeatedly (`waiting`, a
   trigger arriving at a stopped session) are written once per sequence. At four polls a minute the
@@ -1078,6 +1083,7 @@ the same reason: every path is derived from it.
   "arbitrator": {"pane_id": "…", "label": "Arbitrator", "status": "idle"},
   "budget": {"steps_left": 7, "consecutive_left": 3, "minutes_left": 44},
   "triggers": {"on_turn_end": true, "idle_ms": 0, "runtime_ms": 0},
+  "event_at": 41,
   "last_decision": {"sequence": 7, "gate": "review", "to": "member-2",
                     "why": "…", "ambiguity": "low", "at": 1755423862000}
 }}

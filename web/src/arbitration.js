@@ -29,9 +29,9 @@
     // (§15.2) — and held once for the two readers of it: the detail sheet, and the bubbles the
     // thread draws from the same rows.
     //
-    // `arbDetailSeq` is the sequence of the last decision the held copy covers, so a re-ask happens
-    // when the session actually decided something and not on every poll that repeats a budget.
-    let arbDetail = null, arbEvents = null, arbDetailFor = '', arbDetailSeq = -1;
+    // `arbDetailAt` is how far the held copy goes — see `arbDetailStamp` — so a re-ask happens when
+    // the session actually moved and not on every poll that repeats a budget.
+    let arbDetail = null, arbEvents = null, arbDetailFor = '', arbDetailAt = '';
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
@@ -44,7 +44,7 @@
       arbDetail = null;
       arbEvents = null;
       arbDetailFor = '';
-      arbDetailSeq = -1;
+      arbDetailAt = '';
       closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
@@ -313,12 +313,24 @@
       // connected" toast for it would be a toast about a poll. Returning before anything is marked
       // as held is what makes the reconnect's own `arb_sessions` ask again.
       if (!ws || ws.readyState !== 1) return;
-      const seq = (session.last_decision || {}).sequence || 0;
-      if (arbDetailFor === session.id && arbDetailSeq >= seq) return;
+      const at = arbDetailStamp(session);
+      if (arbDetailFor === session.id && arbDetailAt === at) return;
       if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; }
       arbDetailFor = session.id;
-      arbDetailSeq = seq;
+      arbDetailAt = at;
       arbSend({type: 'arb_detail', session: session.id});
+    }
+
+    // How far this session has got, as one comparable string: the last decision, the state it is
+    // in, and the relay's own watermark over the path.
+    //
+    // The decision alone is what this used to be, and it is the one thing a stuck session never
+    // moves — a loop waiting on a record that never arrives, or dropping triggers at a paused
+    // session, sat at the same sequence for ever and the thread never asked again. Which is
+    // precisely when a person is reading it.
+    function arbDetailStamp(s) {
+      return [(s.last_decision || {}).sequence || 0, s.state || '', s.pause_reason || '',
+              s.event_at || 0].join('|');
     }
 
     // A key that is not a member key. Every real one is a JSON array of four strings, so this
@@ -1048,7 +1060,7 @@
       // Unconditionally, unlike the bubbles' own ask: the sheet is somebody looking now, and the
       // held copy may be a poll old. It is the same round trip either way.
       arbDetailFor = session.id;
-      arbDetailSeq = (session.last_decision || {}).sequence || 0;
+      arbDetailAt = arbDetailStamp(session);
       arbSend({type: 'arb_detail', session: session.id});
     }
 
