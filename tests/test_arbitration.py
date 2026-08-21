@@ -1150,18 +1150,18 @@ class Roles(Harness):
                                    {**self.live[1], "role": second}])
 
     def test_roles_reach_the_roster_the_arbitrator_reads(self):
-        s = self.start_with("review", "implement-code")
+        s = self.start_with("review only", "writes the code")
         roster = self.arb.roster(s["id"])
-        self.assertEqual(["review", "implement-code"],
+        self.assertEqual(["review only", "writes the code"],
                          [m["role"] for m in roster.values()])
         self.sent.clear()
         self.step(s["id"])
         _, text = self.sent[0]
-        self.assertIn("member-1  p1 / review / claude", text)
-        self.assertIn("member-2  p2 / implement-code / codex", text)
+        self.assertIn("member-1  p1 / review only / claude", text)
+        self.assertIn("member-2  p2 / writes the code / codex", text)
 
     def test_the_starter_prompt_says_what_a_role_is_for(self):
-        self.start_with("review", "implement-code")
+        self.start_with("review only", "writes the code")
         _, text = self.sent[0]
         self.assertIn("Roles are what the person running this session wants", text)
         self.assertIn("who does what", text)
@@ -1169,21 +1169,51 @@ class Roles(Harness):
     def test_two_members_may_carry_the_same_role(self):
         # The reason the vocabulary is not exclusive: two agents that can both review is what lets
         # the arbitrator keep the loop moving when one of them is working.
-        s = self.start_with("review, fix-code", "review")
-        self.assertEqual(["review, fix-code", "review"],
+        s = self.start_with("review only, no code writing", "review only")
+        self.assertEqual(["review only, no code writing", "review only"],
                          [m["role"] for m in self.arb.roster(s["id"]).values()])
 
     def test_a_role_survives_an_edit_and_is_announced(self):
-        s = self.start_with("review", "implement-code")
+        s = self.start_with("review only", "writes the code")
         p3 = pane("p3", agent="codex", cwd="/b", label="Reviewer 2")
         self.live.append(p3)
         self.sent.clear()
-        self.arb.set_members(s["id"], [{**self.live[0], "role": "review"},
-                                       {**p3, "role": "fix-code"}])
-        self.assertEqual(["review", "fix-code"],
+        self.arb.set_members(s["id"], [{**self.live[0], "role": "review only"},
+                                       {**p3, "role": "fixes what review finds"}])
+        self.assertEqual(["review only", "fixes what review finds"],
                          [m["role"] for m in self.arb.roster(s["id"]).values()])
         _, text = self.sent[0]
-        self.assertIn("member-2  Reviewer 2 / fix-code / codex", text)
+        self.assertIn("member-2  Reviewer 2 / fixes what review finds / codex", text)
+
+    def test_changing_only_a_role_is_announced_as_that_and_not_as_a_swap(self):
+        # "You review, you fix" is a decision a person makes a few turns in, with the same two
+        # agents in the room. Telling the arbitrator its member ids may now mean somebody else
+        # would have it distrust a colleague it has been working with all session.
+        s = self.start_with("review only", "writes the code")
+        self.sent.clear()
+        self.arb.set_members(s["id"], [{**self.live[0], "role": "plans the next phase"},
+                                       {**self.live[1], "role": "writes the code"}])
+        self.assertEqual(1, len(self.sent), "announced, on the same call")
+        pane_id, text = self.sent[0]
+        self.assertEqual("pA", pane_id)
+        self.assertIn("changed what each member is for", text)
+        self.assertIn("The same agents are still here", text)
+        self.assertNotIn("may now be a different agent", text)
+        self.assertIn("member-1  p1 / plans the next phase / claude", text)
+        # And the mapping the roles are read through is named, because `to` is a member id and
+        # never a role.
+        self.assertIn("Address members by the id in the first column", text)
+
+    def test_swapping_a_member_and_its_role_at_once_says_both(self):
+        s = self.start_with("review only", "writes the code")
+        p3 = pane("p3", agent="codex", cwd="/b", label="Reviewer 2")
+        self.live.append(p3)
+        self.sent.clear()
+        self.arb.set_members(s["id"], [{**self.live[0], "role": "review only"},
+                                       {**p3, "role": "fixes what review finds"}])
+        _, text = self.sent[0]
+        self.assertIn("changed who is in it, and what each of them is for", text)
+        self.assertIn("may now be a different agent", text)
 
     def test_a_member_with_no_role_is_written_as_having_none(self):
         s = self.start_with("", "")
@@ -1193,13 +1223,18 @@ class Roles(Harness):
         self.assertIn("member-1  p1 / - / claude", text)
 
     def test_a_person_types_what_they_say_out_loud(self):
-        # `#Fix Code` and `fix-code` are the same role. The hash is how the person wrote it down,
-        # the capital is a phone's keyboard, and neither is a second tag.
-        self.assertEqual("fix-code", check_roles("#Fix Code"))
-        self.assertEqual("review, fix-code", check_roles(" review , #fix-code "))
-        self.assertEqual("review", check_roles(["review", "review"]), "said twice is once")
+        # The hash is how a badge writes it down and the phrase is the role. Case is the person's
+        # and is kept; only the comparison that spots a repeat ignores it.
+        self.assertEqual("review only", check_roles("#review only"))
+        self.assertEqual("Review only, no code writing",
+                         check_roles(" Review  only , #no code writing "))
+        self.assertEqual("review only", check_roles(["review only", "Review Only"]),
+                         "said twice is once")
         self.assertEqual("", check_roles(None))
         self.assertEqual("", check_roles("  ,  "))
+        # Nothing that could move a cursor or paint a terminal. This text is typed into a pane.
+        self.assertEqual("a[31mb", check_roles("a\x1b[31mb"))
+        self.assertEqual("one line", check_roles("one\nline"))
 
     def test_a_role_stays_a_label(self):
         # The refusals are the reason this is validated at all: the roster is the one part of a
@@ -1209,14 +1244,14 @@ class Roles(Harness):
             check_roles("x" * (ROLE_MAX + 1))
         self.assertEqual("bad_role", caught.exception.code)
         with self.assertRaises(ArbiterError) as caught:
-            check_roles(",".join(f"r{i}" for i in range(ROLES_MAX + 1)))
+            check_roles(",".join(f"role {i}" for i in range(ROLES_MAX + 1)))
         self.assertEqual("bad_role", caught.exception.code)
         with self.assertRaises(ArbiterError):
             check_roles({"role": "review"})
 
     def test_a_bad_role_refuses_the_start_rather_than_being_dropped(self):
         with self.assertRaises(ArbiterError) as caught:
-            self.start_with("x" * (ROLE_MAX + 1), "review")
+            self.start_with("x" * (ROLE_MAX + 1), "review only")
         self.assertEqual("bad_role", caught.exception.code)
         self.assertIsNone(self.arb.running(), "nothing left behind")
 

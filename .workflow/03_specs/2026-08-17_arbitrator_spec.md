@@ -621,7 +621,8 @@ Every trigger message lists the roster, one line each:
 The label is the name the turns quoted below it are headed with.
 
 Roles are what the person running this session wants that member to do —
-fix-code, review, implement-code, and whatever else they wrote. They are the
+"review only", "no code writing", "minimal focused test", and whatever else
+they wrote. Read them as instructions about that member, not as a job title. They are the
 person's instruction about who does what, so choose the member whose roles cover
 the step you decided on. Roles may overlap: when more than one member fits, prefer
 the one that is not already working. A member shown as `-` has no role and is
@@ -662,8 +663,8 @@ does not cover what just happened, or when you would be guessing.
 
 ```
 Roster:
-  member-1  Architect 1 / plan, review / claude / idle
-  member-2  Reviewer 1  / fix-code     / codex  / working
+  member-1  Architect 1 / plans the next phase, review only / claude / idle
+  member-2  Reviewer 1  / writes the code                    / codex  / working
 
 Trigger: turn_end — member-1 (working → idle)
 
@@ -853,21 +854,39 @@ with no code change, which is the extensibility line this design defends.
 ### 14.3 Roles
 
 Each member carries **roles**: the person's own words for what that member is there to do, written
-when the roster is chosen and editable with it. A comma-joined line of at most 4 tags, each at most
-24 characters of `[a-z0-9-]`; the relay normalises what it is given (`#Fix Code` and `fix-code` are
-one tag) and refuses anything longer, because the roster is the one part of a trigger message the
-arbitrator is told to read as fact.
+when the roster is chosen and editable with it. A comma-joined line of short phrases — `review
+only`, `no code writing`, `minimal focused test` — at most 6 of them, each at most 48 characters.
+
+Phrases and not slugs, because the arbitrator acts on them: `#no-code` is a tag a reader has to
+decode before it means anything, and "no code writing" is already the instruction. The front end
+offers them as badges whose label is the tag and whose value is the phrase, so the tapping is short
+and what lands on the wire is the sentence.
+
+The relay normalises what it is given and refuses the rest: whitespace collapsed, a leading `#`
+dropped, non-printing characters stripped — this text is typed into a terminal — repeats removed
+case-insensitively, and both caps enforced. Case is otherwise the person's and is kept. The roster
+is the one part of a trigger message the arbitrator is told to read as fact, so a pasted paragraph
+in it is a person's instruction forged by a stale client.
 
 **The vocabulary is open.** There is no allowlist and no host-owned set: a documentation session
-wants `write-docs`, and shipping a config file to say so is the extensibility this design refuses
-everywhere else. Only the shape is checked.
+wants `writes the release notes`, and shipping a config file to say so is the extensibility this
+design refuses everywhere else. Only the shape is checked.
 
-**Roles may overlap.** Two members that both carry `review` is the intended case — it is what lets
-the arbitrator keep the loop moving when one of them is working, and it is why roles are not a
+**Roles may overlap.** Two members that both carry `review only` is the intended case — it is what
+lets the arbitrator keep the loop moving when one of them is working, and it is why roles are not a
 partition of the work.
+
+A role is **not a name.** `to` is always a member id. The roster line is the only thing that maps
+one to the other, which is why it carries label, roles, agent and status together and why it is
+repeated in full in every trigger message rather than remembered.
 
 A role is **not a permission**. It never stops the arbitrator addressing a member; it tells it who
 the person meant to do this. §11.2 says so in those words, and §11.3's roster line carries it.
+
+**Roles change with the roster** (§15.1 `arb_members`), under the same preconditions and the same
+announcement — a role-only edit is refused while a decision is outstanding, exactly as a swap is.
+The announcement says *which* of the two changed: a pane that moved invalidates what the arbitrator
+remembers about a member id, and a role that changed does not.
 
 ### 14.4 Environment
 

@@ -100,7 +100,7 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 
-test('a role typed into the form is what the relay is asked for', async ({page}) => {
+test('a role badge writes a phrase, and the phrase is what the relay is asked for', async ({page}) => {
   await openConv(page);
   await captureSends(page);
   await page.locator('#arbStrip button').click();
@@ -108,13 +108,17 @@ test('a role typed into the form is what the relay is asked for', async ({page})
   await page.locator('#arbWho').selectOption({label: ARBITER});
   // Overlapping on purpose: two agents that can both review is what lets the arbitrator keep the
   // loop moving when one of them is working.
-  await page.locator('#arbRoleFirst').fill('review, fix-code');
-  await page.locator('#arbRoleSecond').fill('review');
+  // Tapped, not typed: the badge is the whole point of the row, and what it writes into the field
+  // is the phrase the arbitrator is shown rather than the tag on the pill.
+  await page.locator('#arbRoleFirstPills button[onclick*="review-only"]').click();
+  await page.locator('#arbRoleFirstPills button[onclick*="no-code"]').click();
+  await page.locator('#arbRoleSecond').fill('writes the code');
+  await expect(page.locator('#arbRoleFirst')).toHaveValue('review only, no code writing');
   await page.locator('#arbStrip .arb-btn.go').click();
 
   const msgs = await sent(page);
-  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: 'review, fix-code'},
-                                   {pane_id: 'w8:p1', role: 'review'}]);
+  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: 'review only, no code writing'},
+                                   {pane_id: 'w8:p1', role: 'writes the code'}]);
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 

@@ -58,6 +58,13 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
               removeItem: k => store.delete(k)};
     })(),
     armButton() {},
+    // The real one lives in start_dialog.js, which drags half the app in behind it. What this file
+    // asserts about a badge is the two things arbitration puts there — which call it makes and
+    // whether it is lit — so it stands in with the same shape rather than loading that module.
+    badgeHtml: (label, on, call, opts) =>
+      `<button type="button" class="badge pick${(opts || {}).proj ? ' proj' : ''}` +
+      `${on ? ' on' : ''}" onclick="${call}" aria-pressed="${on}"` +
+      ` title="${(opts || {}).title || ''}">${label}</button>`,
   };
   g.globalThis = g;
   vm.createContext(g);
@@ -530,7 +537,10 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
   const html = g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null);
   assert.match(html, /id="arbRoleFirst"/);
   assert.match(html, /id="arbRoleSecond"/);
-  assert.match(html, /<datalist id="arbRoleList">/, 'the common ones, offered');
+  // A badge per tag, and the phrase it writes as its tooltip: the tag is what fits on a pill and
+  // the phrase is what the arbitrator is actually shown.
+  assert.match(html, /onclick="arbPickRole\('arbRoleFirst', 'review-only'\)"/);
+  assert.match(html, /title="review only"/);
 
   els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
   els.arbWho = {id: 'arbWho', value: 'w1:p3'};
@@ -543,6 +553,29 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
   g.arbStart();
   assert.deepEqual(sent[0].members, [{pane_id: 'w1:p1', role: 'review, fix-code'},
                                      {pane_id: 'w1:p2', role: 'review'}]);
+});
+
+test('a badge writes its phrase into the line, and a second tap takes it out again', () => {
+  const {g, els} = ctx();
+  // Pure, so the toggle can be pinned without a DOM: the line is the value and the badges only
+  // ever read it back.
+  assert.equal(g.arbRoleToggle('', 'review only'), 'review only');
+  assert.equal(g.arbRoleToggle('review only', 'no code writing'),
+               'review only, no code writing');
+  assert.equal(g.arbRoleToggle('review only, no code writing', 'review only'), 'no code writing');
+  // A phrase typed by hand lights its badge, whatever case it was typed in — the field is the
+  // truth and the badges are a view of it.
+  assert.ok(g.arbRoleHas('Review Only, minimal focused test', 'review only'));
+  assert.ok(!g.arbRoleHas('reviewed', 'review only'), 'a phrase, not a substring');
+
+  els.arbRoleFirst = {id: 'arbRoleFirst', value: ''};
+  g.arbPickRole('arbRoleFirst', 'review-only');
+  g.arbPickRole('arbRoleFirst', 'no-code');
+  g.arbPickRole('arbRoleFirst', 'test-min');
+  assert.equal(els.arbRoleFirst.value, 'review only, no code writing, minimal focused test');
+  assert.match(els.arbRoleFirstPills.innerHTML, /aria-pressed="true"[^>]*>#review-only</);
+  g.arbPickRole('arbRoleFirst', 'no-code');
+  assert.equal(els.arbRoleFirst.value, 'review only, minimal focused test');
 });
 
 test('a running session says what each member is for, and lets it be changed', () => {

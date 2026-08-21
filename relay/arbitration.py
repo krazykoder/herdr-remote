@@ -87,11 +87,11 @@ TRIGGER_MAX_MS = 6 * 60 * 60 * 1000
 # given and the instruction it produced, both of which are whole agent turns.
 DETAIL_DECISIONS = 20
 DETAIL_TEXT = 8_000
-# A role is a label, not a brief. Several members may carry the same one — overlapping roles are
-# the point: two agents that can both review is what lets the arbitrator keep the loop moving when
-# one of them is busy.
-ROLES_MAX = 4
-ROLE_MAX = 24
+# A role is a short phrase, not a brief. Several members may carry the same one — overlapping roles
+# are the point: two agents that can both review is what lets the arbitrator keep the loop moving
+# when one of them is busy. The caps are what keeps a phrase from becoming the prompt.
+ROLES_MAX = 6
+ROLE_MAX = 48
 MEMBERS_REQUIRED = 2      # v1, until a two-member loop has been watched running for real (§14.1)
 RUNNING = ("active", "awaiting")
 # A pane acting on something is never written to (N7). Matches SUBMIT_TOOK in herdr_relay.py, and
@@ -264,12 +264,21 @@ def check_roles(value):
     """One member's roles, normalised to a comma-joined line — or a refusal.
 
     Roles are the person's own words for what a member is there to do, and they are carried into
-    every roster line the arbitrator reads. The **shape** is checked here and the spelling is not:
-    the vocabulary is open on purpose, because a docs session wants `write-docs` and an allowlist
-    for a label is a config file nobody asked for.
+    every roster line the arbitrator reads. `review only`, `no code writing`, `minimal focused
+    test` — short phrases, because the arbitrator acts on them and `no-code` is a slug a person
+    has to decode before an agent can.
 
-    What is enforced is that a role stays a label. A few short tags, so a paste cannot quietly
-    become the prompt — the roster is the part of a trigger message the arbitrator reads as fact.
+    The **shape** is checked here and the wording is not: the vocabulary is open on purpose,
+    because a docs session wants `writes the release notes` and an allowlist for a phrase is a
+    config file nobody asked for.
+
+    What is enforced is that a role stays one short line. Whitespace is collapsed, non-printing
+    characters are dropped — a terminal escape belongs in nobody's prompt — and both the length of
+    a phrase and the number of them are capped. The roster is the one part of a trigger message the
+    arbitrator is told to read as fact, and a pasted paragraph in it is a person's instruction
+    forged by a stale client.
+
+    Case is kept. It is what the person wrote; only the comparison that spots a repeat ignores it.
     """
     if not value:
         return ""
@@ -281,15 +290,15 @@ def check_roles(value):
         raise ArbiterError("bad_role", repr(value)[:40])
     out = []
     for part in parts:
-        # A person types what they say out loud — "#fix code" is the same role as "fix-code".
-        tag = "-".join(part.strip().lstrip("#").lower().split())
-        tag = "".join(c for c in tag if c.isalnum() or c == "-").strip("-")
-        if not tag:
+        # `#review only` is how a person writes it down and `review only` is the role.
+        clean = "".join(c for c in part if c.isprintable() or c.isspace())
+        phrase = " ".join(clean.strip().lstrip("#").split())
+        if not phrase:
             continue
-        if len(tag) > ROLE_MAX:
-            raise ArbiterError("bad_role", f"{tag[:ROLE_MAX]}…, max {ROLE_MAX} characters")
-        if tag not in out:
-            out.append(tag)
+        if len(phrase) > ROLE_MAX:
+            raise ArbiterError("bad_role", f"{phrase[:ROLE_MAX]}…, max {ROLE_MAX} characters")
+        if phrase.lower() not in [x.lower() for x in out]:
+            out.append(phrase)
     if len(out) > ROLES_MAX:
         raise ArbiterError("bad_role", f"{len(out)} roles, max {ROLES_MAX}")
     return ", ".join(out)
@@ -352,7 +361,8 @@ Every trigger message lists the roster, one line each:
 The label is the name the turns quoted below it are headed with.
 
 Roles are what the person running this session wants that member to do —
-fix-code, review, implement-code, and whatever else they wrote. They are the
+"review only", "no code writing", "minimal focused test", and whatever else
+they wrote. Read them as instructions about that member, not as a job title. They are the
 person's instruction about who does what, so choose the member whose roles cover
 the step you decided on. Roles may overlap: when more than one member fits, prefer
 the one that is not already working. A member shown as `-` has no role and is
@@ -387,24 +397,42 @@ Choose call_human when ambiguity or decision complexity is high, when the scope
 does not cover what just happened, or when you would be guessing."""
 
 
-def roster_prompt(roster, scope):
-    """Sent when the person changes who is in the session. Announcement, not a trigger.
+def roster_prompt(roster, scope, moved=True, reroled=True):
+    """Sent when the person changes the session's roster. Announcement, not a trigger.
 
     The arbitrator was told the roster once, in the starter prompt, and every trigger message
     repeats it — so a roster edited underneath it would be discovered as a surprise in the next
     trigger, with no way to tell a swap from a mistake. This says a person did it, on purpose.
 
+    Which of the two things changed is said out loud, because they mean different things to the
+    agent reading it. A pane that moved invalidates what it remembers about a member id; a role
+    that changed does not — the same colleague is still there and has been given a different job,
+    and telling it otherwise would have it distrust a member it has been working with all session.
+
     No decision is asked for and no drop path is named: nothing has happened yet that needs one.
     """
-    lines = ["The person running this session has changed who is in it.",
+    what = ("changed who is in it, and what each of them is for" if moved and reroled
+            else "changed who is in it" if moved
+            else "changed what each member is for")
+    lines = [f"The person running this session has {what}.",
              "", "The roster is now:"]
     for member_id, m in roster.items():
         lines.append(f"  {member_id}  {m.get('label') or '-'} / {m.get('role') or '-'} / "
                      f"{m.get('agent') or '-'}")
-    lines += ["", "Anyone not listed above has left and can no longer be addressed. Member ids "
-                  "are positional, so one you have used before may now be a different agent — "
-                  "read the roster in each trigger message rather than remembering it.",
-              "", f"The scope is unchanged:", scope,
+    lines.append("")
+    lines.append("The second column is the role: what the person wants that member to do. Address "
+                 "members by the id in the first column — the roles are how you choose between "
+                 "them, never how you name one.")
+    if moved:
+        lines.append("")
+        lines.append("Anyone not listed above has left and can no longer be addressed. Member ids "
+                     "are positional, so one you have used before may now be a different agent — "
+                     "read the roster in each trigger message rather than remembering it.")
+    else:
+        lines.append("")
+        lines.append("The same agents are still here. Only their roles changed, so a member id "
+                     "still means the agent it meant before.")
+    lines += ["", "The scope is unchanged:", scope,
               "", "Do not write a decision record for this message. Wait for the next trigger."]
     return "\n".join(lines)
 
@@ -793,18 +821,27 @@ class Arbitration:
             raise ArbiterError("arbitrator_busy", arb)
 
         at = self.clock()
+        # Read before the write, so the announcement can say which half of the roster moved. A
+        # role-only edit is an ordinary thing to do — "you review, you fix" is a decision a person
+        # makes a few turns in — and it is not a swap, so it must not be announced as one.
+        before = self.roster(session_id)
         self._write_members(session_id, enrolled, at)
         self.conn.execute("UPDATE sessions SET arbitrator_pane=? WHERE id=?", (arb, session_id))
         self.conn.commit()
         roster = self.roster(session_id)
+        moved = ([m["pane_id"] for m in before.values()]
+                 != [m["pane_id"] for m in roster.values()])
+        reroled = [m["role"] for m in before.values()] != [m["role"] for m in roster.values()]
         log.info("arbitration %s roster set to %s", session_id,
                  ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
+                           f"{' [' + m['role'] + ']' if m.get('role') else ''}"
                            for mid, m in roster.items()))
+        body = roster_prompt(roster, s["scope"], moved, reroled)
         self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
-            (session_id, s["sequence"], "roster", roster_prompt(roster, s["scope"]), at))
+            (session_id, s["sequence"], "roster", body, at))
         self.conn.commit()
-        if not self._send(arb, roster_prompt(roster, s["scope"])):
+        if not self._send(arb, body):
             # The roster is already changed — it is a row, and the row is written. What could not
             # be proven is that the arbitrator was *told*, and an arbitrator deciding against a
             # roster it does not know about is the one thing this whole call exists to prevent.

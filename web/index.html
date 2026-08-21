@@ -3028,6 +3028,26 @@
       gap: 3px;
     }
 
+    /* A role field is a lede, a row of badges and the line they write — laid out like the labels
+       around it, but not one: a tap on a badge inside a <label> is forwarded to the input it
+       names, which on a phone is the keyboard opening on every tap. */
+    .arb-form .arb-role {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .arb-role-lede {
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+
+    .arb-roles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
     .arb-form textarea,
     .arb-form input,
     .arb-form select {

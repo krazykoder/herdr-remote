@@ -301,13 +301,13 @@
         if (crew) {
           const roster = s.members || [];
           const ids = roster.map(m => m.pane_id);
-          return '<div class="arb-form">' + ARB_ROLE_LIST +
+          return '<div class="arb-form">' +
             `<p class="arb-who">Who ${escapeHtml((s.arbitrator || {}).label || 'the arbitrator')}` +
             ' is watching, and what each of them is for</p>' +
             arbPaneSelect('arbCrewA', crew, ids[0], 'First') +
-            arbRoleInput('arbCrewRoleA', (roster[0] || {}).role) +
+            arbRoleField('arbCrewRoleA', (roster[0] || {}).role) +
             arbPaneSelect('arbCrewB', crew, ids[1], 'Second') +
-            arbRoleInput('arbCrewRoleB', (roster[1] || {}).role) +
+            arbRoleField('arbCrewRoleB', (roster[1] || {}).role) +
             (s.state === 'awaiting'
               ? '<p class="arb-who">A decision is in the air. This can be changed once it lands, ' +
                 'or after a Pause.</p>' : '') +
@@ -356,16 +356,16 @@
         return '<div class="arb-strip idle"><button class="arb-btn" onclick="arbToggleForm()">' +
           '⚖ Arbitrate</button></div>';
       }
-      return '<div class="arb-form">' + ARB_ROLE_LIST +
+      return '<div class="arb-form">' +
         '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop."></textarea></label>' +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
         arbPaneSelect('arbFirst', live, (live[0] || {}).pane_id, 'First') +
-        arbRoleInput('arbRoleFirst', '') +
+        arbRoleField('arbRoleFirst', '') +
         arbPaneSelect('arbSecond', live, (live[1] || {}).pane_id, 'Second') +
-        arbRoleInput('arbRoleSecond', '') +
+        arbRoleField('arbRoleSecond', '') +
         '<label>Arbitrator<select id="arbWho">' +
         formPanes.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
           `</option>`).join('') + '</select></label>' +
@@ -386,19 +386,72 @@
     const ARB_IDLE_CHOICES = [0, 5, 15, 30];
     const ARB_RUNTIME_CHOICES = [0, 15, 30, 60];
 
-    // Suggestions, not a vocabulary. The relay checks the shape of a role and never its spelling,
-    // because the set is open — a docs session wants `write-docs` and nobody should have to ship a
-    // config file to say so. These are here to save typing the common ones.
-    const ARB_ROLE_SUGGEST = ['implement-code', 'fix-code', 'review', 'test', 'plan', 'research'];
-    const ARB_ROLE_LIST = '<datalist id="arbRoleList">' +
-      ARB_ROLE_SUGGEST.map(r => `<option value="${r}"></option>`).join('') + '</datalist>';
+    // The pills, and what each one writes. A tag is short enough to tap and the phrase is what the
+    // arbitrator actually reads — `#no-code` is a slug a person has to decode first, "no code
+    // writing" is an instruction. Suggestions, not a vocabulary: the relay checks the shape of a
+    // role and never its wording, so the field stays typeable and this list only saves the typing.
+    const ARB_ROLE_TAGS = [
+      {tag: 'implement', text: 'writes the code'},
+      {tag: 'fix-code', text: 'fixes what review finds'},
+      {tag: 'review-only', text: 'review only'},
+      {tag: 'no-code', text: 'no code writing'},
+      {tag: 'test-min', text: 'minimal focused test'},
+      {tag: 'test-full', text: 'runs the full suite'},
+      {tag: 'plan', text: 'plans the next phase'},
+      {tag: 'research', text: 'researches without changing files'},
+      {tag: 'docs', text: 'writes the documentation'},
+    ];
 
-    // What this member is here to do, in the person's own words. Free text with the common ones
-    // offered: roles may overlap across members on purpose — two agents that can both review is
-    // what lets the arbitrator keep going when one of them is busy.
-    function arbRoleInput(id, value) {
-      return `<label>Roles<input id="${id}" list="arbRoleList" maxlength="120"` +
-        ` value="${escapeHtml(value || '')}" placeholder="review, fix-code"></label>`;
+    // The field is one comma-separated line, because that is what goes on the wire and what the
+    // arbitrator is shown. These three keep the pills and the line saying the same thing without
+    // the pills owning the value — a person may type a phrase no badge offers, and the badge for
+    // one they typed by hand still lights up.
+    function arbRoleParts(text) {
+      return String(text || '').split(',').map(x => x.trim()).filter(Boolean);
+    }
+
+    function arbRoleHas(text, phrase) {
+      return arbRoleParts(text).some(x => x.toLowerCase() === phrase.toLowerCase());
+    }
+
+    function arbRoleToggle(text, phrase) {
+      const parts = arbRoleParts(text);
+      const i = parts.findIndex(x => x.toLowerCase() === phrase.toLowerCase());
+      if (i >= 0) parts.splice(i, 1); else parts.push(phrase);
+      return parts.join(', ');
+    }
+
+    // What this member is here to do: the badges, and the line they write. Roles may overlap
+    // across members on purpose — two agents that can both review is what lets the arbitrator keep
+    // going when one of them is busy.
+    //
+    // Not inside a <label>: a tap on a button inside one is forwarded to the control it names, and
+    // on a phone that is the keyboard opening on every badge.
+    function arbRoleField(id, value) {
+      return `<div class="arb-role"><span class="arb-role-lede">Roles</span>` +
+        `<div class="arb-roles" id="${id}Pills">${arbRolePillsHtml(id, value)}</div>` +
+        `<input id="${id}" maxlength="240" value="${escapeHtml(value || '')}"` +
+        ` oninput="arbSyncRolePills('${id}')"` +
+        ` placeholder="What this one is for, in your own words"></div>`;
+    }
+
+    function arbRolePillsHtml(id, value) {
+      return ARB_ROLE_TAGS.map(r => badgeHtml('#' + r.tag, arbRoleHas(value, r.text),
+        `arbPickRole('${id}', '${r.tag}')`, {proj: true, title: r.text})).join('');
+    }
+
+    function arbPickRole(id, tag) {
+      const el = document.getElementById(id);
+      const r = ARB_ROLE_TAGS.find(x => x.tag === tag);
+      if (!el || !r) return;
+      el.value = arbRoleToggle(el.value, r.text);
+      arbSyncRolePills(id);
+      if (window.cue) cue('tick');
+    }
+
+    function arbSyncRolePills(id) {
+      const box = document.getElementById(id + 'Pills'), el = document.getElementById(id);
+      if (box && el) box.innerHTML = arbRolePillsHtml(id, el.value);
     }
 
     function arbRoleValue(id) {
