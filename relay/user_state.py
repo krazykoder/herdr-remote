@@ -47,12 +47,16 @@ CREATE TABLE IF NOT EXISTS history (
 # per name, which buys enough revisions to cover a bad browser being noticed and shut.
 HISTORY_KEEP = 200
 
-# Mirrors of `herdr_pairs`, `herdr_conversations`, `herdr_conv_view` and `herdr_conv_hidden`.
-# Deliberately not the other thirty-nine: a theme and a font size are answers to "how should this
-# device behave", and syncing them makes a desktop adopt a phone's font size.
-DOC_NAMES = ("pairs", "conversations", "conv_view", "conv_hidden")
+# Mirrors of `herdr_pairs`, `herdr_conversations`, `herdr_conv_view`, `herdr_conv_hidden` and
+# `herdr_launcher`. Deliberately not the other thirty-nine: a theme and a font size are answers to
+# "how should this device behave", and syncing them makes a desktop adopt a phone's font size.
+#
+# `launcher` is here for the same reason the first four are. A launcher tile says "these three
+# agents are the ones I start together" — an assertion about the work, not about this screen — and
+# a phone that does not know it is offering a different toolkit than the desktop beside it.
+DOC_NAMES = ("pairs", "conversations", "conv_view", "conv_hidden", "launcher")
 
-# Per document, so the ceiling on this store is four of these. The app's own caps — MAX_PAIRS is
+# Per document, so the ceiling on this store is five of these. The app's own caps — MAX_PAIRS is
 # 32, and convFit trims the conversation index — keep real documents orders of magnitude under it,
 # so this is a bound on a client that has gone wrong rather than a limit anyone will meet.
 MAX_BODY = 256 * 1024
@@ -289,6 +293,10 @@ def _demo():
                 pass
         assert s.get(["pairs"])["pairs"]["rev"] == 1, "a refused put must not advance the rev"
         assert set(s.get()) == set(DOC_NAMES)
+        # The newest name, round-tripped explicitly: `get()` above proves it is served, and this
+        # proves `put` accepts it — the half a client actually depends on.
+        assert s.put("launcher", 0, '{"items":[]}') == 1
+        assert s.get(["launcher"])["launcher"] == {"rev": 1, "body": '{"items":[]}'}
 
         # The history is what makes an overwrite recoverable, so the overwrite is what tests it.
         s.put("conversations", 0, '{"items":["named"]}')
