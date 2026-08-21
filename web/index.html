@@ -4356,6 +4356,14 @@
       display: inline-flex;
     }
 
+    /* An arbitrator is already reading this thread and the tap goes to its pane. Unlit, the same
+       button is the offer to appoint one — same place, same glyph, and the colour is what says
+       which of the two it is about to do. */
+    .hang-arbitrator.live {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
     /* Mid-refresh: the same button, saying so. Not a spinner over the thread — the work is a read
        and a tidy, both of which finish in well under a second on a record this size. */
     .hang-tidy.busy {
@@ -5979,6 +5987,11 @@
          back. See convLiveSyncing. -->
     <div class="hang-pill" id="convViewSyncing" role="status" hidden>Syncing…</div>
     <div class="hang-float">
+      <!-- Two states and no third: this conversation has an arbitrator and this goes to its
+           pane, or it has none and this opens the form that gives it one. Hidden when neither is
+           true, because a button whose answer is "nothing" is one a person taps twice. -->
+      <button class="hang-btn hang-arbitrator" id="convArbitrator" onclick="arbOpenFromConv()"
+        aria-label="Arbitrate this conversation">⚖</button>
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">
@@ -6265,6 +6278,10 @@
       <div class="hang-working" id="paneWorking" aria-live="polite"></div>
       <div class="hang-pill" id="paneSyncing" role="status" hidden>Syncing…</div>
       <div class="hang-float">
+        <!-- Only when this pane is in a session. A pane view has no conversation and no strip,
+             so the one thing this can mean here is "take me to the arbitrator reading this". -->
+        <button class="hang-btn hang-arbitrator" id="paneArbitrator" onclick="arbOpenFromPane()"
+          aria-label="Open the arbitrator’s pane">⚖</button>
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
           aria-label="Refresh and tidy">

@@ -577,6 +577,11 @@ class Arbitration:
             "SELECT * FROM sessions WHERE state != 'ended' ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
         return dict(row) if row else None
 
+    def open_sessions(self):
+        """Every unfinished session, newest first, for a reconnecting client."""
+        return [dict(row) for row in self.conn.execute(
+            "SELECT * FROM sessions WHERE state != 'ended' ORDER BY created_at DESC, rowid DESC")]
+
     def members(self, session_id):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM members WHERE session_id = ? ORDER BY member_id", (session_id,))]

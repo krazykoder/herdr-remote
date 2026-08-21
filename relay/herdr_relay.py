@@ -1967,11 +1967,11 @@ async def handle_client(ws, listener="lan"):
         # what panes exist cannot render it. Sent even when nothing is running — an empty list is
         # what tells the browser the feature is on, exactly as start_options gates Start (§15.2).
         if arbitration is not None:
-            running = await asyncio.to_thread(arbitration.open)
+            open_sessions = await asyncio.to_thread(arbitration.open_sessions)
             await ws.send(json.dumps({
                 "type": "arb_sessions",
-                "sessions": [] if running is None else
-                            [(await asyncio.to_thread(arb_session_message, running))["session"]],
+                "sessions": [(await asyncio.to_thread(arb_session_message, session))["session"]
+                             for session in open_sessions],
             }))
         async for raw in ws:
             try:

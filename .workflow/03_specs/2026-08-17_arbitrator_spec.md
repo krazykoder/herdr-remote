@@ -888,7 +888,22 @@ announcement — a role-only edit is refused while a decision is outstanding, ex
 The announcement says *which* of the two changed: a pane that moved invalidates what the arbitrator
 remembers about a member id, and a role that changed does not.
 
-### 14.4 Re-briefing
+### 14.4 One loop, several sessions
+
+Only one session may be `active` or `awaiting` at a time — `start` and `resume` both refuse on
+`running()`, which is what keeps a single poll loop unambiguous. **Paused sessions are not
+counted**, so several may be open at once across different conversations, and every one of them is
+a Resume a person can still press.
+
+Which makes conversation scope a client-side invariant worth stating: a control drawn over one
+conversation acts on the session attached to *that* conversation and on no other. The strip, its
+buttons, its detail sheet and the ⚖ shortcut all resolve by `conversation` id; nothing falls back
+to "the newest session anywhere". The one deliberate exception is suppressing a second Start, which
+consults the *running* session only — the same condition the relay refuses on.
+
+Truly concurrent loops are a scheduler change, not a client one, and are not v1.
+
+### 14.5 Re-briefing
 
 A long session pushes the starter prompt out of the arbitrator's context. What that looks like from
 outside is prose written into its own pane where a decision record should be — `invalid_record`
@@ -909,7 +924,7 @@ a line it does not understand and an unchanged context — the same place a pers
 the button is in, so the failure is quiet by construction. The re-brief that follows is confirmed
 like any other send, and an unconfirmed one pauses the session.
 
-### 14.5 Environment
+### 14.6 Environment
 
 | Variable | Purpose |
 |---|---|
@@ -943,7 +958,7 @@ the same reason: every path is derived from it.
 
 | Type | When | Delivery |
 |---|---|---|
-| `arb_sessions` | After the snapshot, unsolicited | Broadcast — its presence is the client's arbitration gate, the way `start_options` gates Start |
+| `arb_sessions` | After the snapshot, unsolicited | Broadcast — its presence is the client's arbitration gate, the way `start_options` gates Start. Carries **every unfinished session**, newest first, not only the running one: paused sessions accumulate (§9.3) and a client that saw only the newest would lose the Resume control for the rest |
 | `arb_session` | Any session state change | Broadcast |
 | `arb_detail` | Answering `arb_detail` | To the asking client only — it carries prose |
 | `conv_log` | Answering `conv_log` | To the asking client only |

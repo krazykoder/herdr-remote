@@ -85,6 +85,13 @@ class Lifecycle(Harness):
         self.arb.pause(s["id"], "user")
         self.assertEqual(s["id"], self.arb.open()["id"])
 
+    def test_reconnect_lists_each_unfinished_session(self):
+        first = self.start()
+        self.arb.pause(first["id"], "user")
+        second = self.start(conversation="c2")
+        self.assertEqual([second["id"], first["id"]],
+                         [s["id"] for s in self.arb.open_sessions()])
+
     def test_an_ended_session_cannot_be_resumed_or_ended_again(self):
         s = self.start()
         self.arb.end(s["id"], "cancelled")

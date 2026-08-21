@@ -35,13 +35,26 @@ const SESSION = {
 
 function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) {
   const els = {};
-  const el = id => els[id] || (els[id] = {id, value: '', innerHTML: '', textContent: '', style: {}});
-  const sent = [], toasts = [];
+  const el = id => {
+    if (els[id]) return els[id];
+    const out = {id, value: '', innerHTML: '', textContent: '', className: '', style: {},
+                 hidden: false, title: '', attrs: {},
+                 setAttribute(k, v) { out.attrs[k] = v; }, scrollIntoView() {}};
+    out.classList = {toggle: (name, on) => {
+      const names = new Set(out.className.split(/\s+/).filter(Boolean));
+      if (on) names.add(name); else names.delete(name);
+      out.className = [...names].join(' ');
+    }};
+    return (els[id] = out);
+  };
+  const sent = [], toasts = [], opened = [];
   let tabSyncs = 0;
   const g = {
     document: {getElementById: el},
     console, window: {},
     agents: live,
+    // The pane view's own scope: `arbSessionForPane` is what stands in for a conversation there.
+    activePane: null,
     ws: {readyState: ready, send: s => sent.push(JSON.parse(s))},
     convMemberKey: key,
     paneLabel: a => a.label,
@@ -50,6 +63,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
     loadConvIndex: () => convs,
     convCurrentId: () => 'c-1',
     showToast: t => toasts.push(t),
+    openTerminal: paneId => opened.push(paneId),
     syncBrowserTab: () => { tabSyncs++; },
     localStorage: (() => {
       const store = new Map();
@@ -69,7 +83,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(SRC, g);
-  return {g, els, sent, toasts, tabSyncs: () => tabSyncs};
+  return {g, els, sent, toasts, opened, tabSyncs: () => tabSyncs};
 }
 
 test('nothing is drawn until the relay offers the feature', () => {
@@ -192,6 +206,54 @@ test('the arbitrator’s pane is marked, and typing at it is asked twice', () =>
   assert.equal(g.arbGuardSend('w1:p3'), false, 'the first send at the arbitrator is held');
   assert.equal(toasts.length, 1);
   assert.equal(g.arbGuardSend('w1:p3'), true, 'the second goes — this arms, it does not forbid');
+});
+
+test('⚖ goes to this conversation’s arbitrator, and never to another conversation’s', () => {
+  const other = {id: 'c-2', name: 'Other', members: []};
+  const {g, els, opened, sent} = ctx({convs: [CONV, other]});
+  const here = {...SESSION, id: 's-here', arbitrator: {pane_id: 'w1:p2'}};
+  const elsewhere = {...SESSION, id: 's-other', conversation: other.id, state: 'paused',
+                     arbitrator: {pane_id: 'w1:p3'}};
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [elsewhere, here]});
+  assert.match(els.convArbitrator.className, /live/, 'this conversation has one, so it is lit');
+  g.arbOpenFromConv();
+  assert.deepEqual(opened, ['w1:p2'], 'this conversation’s arbitrator');
+  g.arbCommand('arb_pause');
+  assert.equal(sent.at(-1).session, 's-here', 'controls act on this conversation’s session');
+
+  // The bug this replaces: with nothing arbitrating the conversation on screen, the button used to
+  // reach the newest session anywhere and open somebody else's arbitrator.
+  g.arbReceiveSession({type: 'arb_session', session: {...here, state: 'ended'}});
+  g.arbOpenFromConv();
+  assert.deepEqual(opened, ['w1:p2'], 'no second pane was opened');
+  assert.ok(!/live/.test(els.convArbitrator.className), 'and the button is not lit for one');
+  // It offers to start one instead — this conversation has two live members and a free third.
+  assert.match(els.convArbitrator.className, /on/, 'still there — starting one is the other answer');
+  assert.match(els.convArbitrator.title, /Start arbitrating/);
+  assert.ok(g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null).includes('arbScope'),
+            'the form is what it opened');
+});
+
+test('the pane button follows the pane, because a pane has no conversation', () => {
+  const {g, els, opened} = ctx();
+  const session = {...SESSION, arbitrator: {pane_id: 'w1:p3', label: 'Arbiter'}};
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [session]});
+  // Not in the session: nothing to go to, so nothing to tap.
+  g.activePane = 'w1:p9';
+  g.arbRender();
+  assert.ok(!/on/.test(els.paneArbitrator.className), 'a pane outside every session gets no button');
+
+  g.activePane = 'w1:p1';           // member-1
+  g.arbRender();
+  assert.match(els.paneArbitrator.className, /on live/, 'shown, and lit');
+  assert.match(els.paneArbitrator.title, /Arbiter/, 'says whose pane it opens');
+  g.arbOpenFromPane();
+  assert.deepEqual(opened, ['w1:p3']);
+
+  // Standing in the arbitrator's own pane, it has nowhere to go.
+  g.activePane = 'w1:p3';
+  g.arbOpenFromPane();
+  assert.deepEqual(opened, ['w1:p3'], 'no second open');
 });
 
 test('arming one arbitrator never arms a later session’s arbitrator', () => {

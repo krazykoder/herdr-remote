@@ -122,6 +122,26 @@ test('a role badge writes a phrase, and the phrase is what the relay is asked fo
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 
+test('⚖ over a conversation with no arbitrator opens the form that appoints one', async ({page}) => {
+  await openConv(page);
+  const btn = page.locator('#convArbitrator');
+  await expect(btn).toBeVisible();
+  await expect(btn).not.toHaveClass(/live/);
+  await btn.click();
+  // The strip's own form, opened from a button that stays reachable while the strip is scrolled
+  // away — which is the whole reason it is in the floating row and not only on the strip.
+  await expect(page.locator('#arbScope')).toBeVisible();
+});
+
+test('⚖ goes to the arbitrator’s own pane once this conversation has one', async ({page}) => {
+  await openConv(page);
+  await broadcast(page, session());
+  const btn = page.locator('#convArbitrator');
+  await expect(btn).toHaveClass(/live/);
+  await btn.click();
+  await expect(page.locator('#terminalView')).toBeVisible();
+});
+
 test('a half-written scope survives the poll that redraws the view around it', async ({page}) => {
   await openConv(page);
   await page.locator('#arbStrip button').click();

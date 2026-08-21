@@ -11,6 +11,7 @@
 
     let arbOn = false;          // this relay sent arb_sessions on this connection
     let arbSession = null;      // the one session that may be running, or null
+    let arbSessions = [];       // unfinished sessions, newest first; one may be running
     // The start form, which is a tap away rather than always on screen. Null when closed; open, it
     // is the *frozen* candidate list the form was opened on. Frozen because the list is derived
     // from live pane status, and a candidate going `working` two seconds after the form opened
@@ -39,6 +40,7 @@
     function arbReset() {
       arbOn = false;
       arbSession = null;
+      arbSessions = [];
       arbFormPanes = null;
       arbFormConv = '';
       arbCrew = null;
@@ -49,6 +51,7 @@
       closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
+      arbSyncOpenButton();
       // The tab too. A badge raised by a session this browser can no longer see is one nothing it
       // does will clear — the same gap the two receivers below close, at the other end.
       syncBrowserTab();
@@ -56,7 +59,8 @@
 
     function arbReceiveSessions(msg) {
       arbOn = true;
-      arbSession = (msg.sessions || [])[0] || null;
+      arbSessions = (msg.sessions || []).filter(s => s && s.state !== 'ended');
+      arbSession = arbSessions[0] || null;
       arbAskDetail(arbSession);
       arbRender();
       syncBrowserTab();
@@ -68,8 +72,10 @@
       const s = msg.session;
       if (!s) return;
       arbOn = true;
-      const was = arbSession;
-      arbSession = s.state === 'ended' ? null : s;
+      const was = arbSessions.find(x => x.id === s.id);
+      arbSessions = arbSessions.filter(x => x.id !== s.id);
+      if (s.state !== 'ended') arbSessions.unshift(s);
+      arbSession = arbSessions[0] || null;
       if (s.state !== 'ended') { arbFormPanes = null; arbFormConv = ''; }
       if (s.state === 'paused' && !(was && was.state === 'paused')) arbAlertPause(s);
       arbAskDetail(arbSession);
@@ -91,7 +97,7 @@
     // Every reason and not only call_human: a loop that stopped on a spent budget or a member that
     // exited is equally not going to start itself again.
     function arbNeedsHuman() {
-      return !!(arbSession && arbSession.state === 'paused');
+      return arbSessions.some(s => s.state === 'paused');
     }
 
     // On the transition into paused, not on the state. A pause stands until somebody answers it,
@@ -108,8 +114,88 @@
     // mid-session looks exactly like an ordinary agent and is not one: what is typed there is read
     // by something whose entire instruction is to answer with a JSON file.
     function arbIsArbitrator(paneId) {
-      return !!(arbSession && arbSession.arbitrator && paneId &&
-                arbSession.arbitrator.pane_id === paneId);
+      return !!(paneId && arbSessions.some(s => (s.arbitrator || {}).pane_id === paneId));
+    }
+
+    function arbSessionForConversation(convId) {
+      return (convId && arbSessions.find(s => s.conversation === convId)) || null;
+    }
+
+    // The session the conversation on screen is under, and **never** another one's. Several may be
+    // open at once — the relay runs one loop at a time but keeps every paused session — so a
+    // control drawn over one conversation that reached the newest session anywhere is a Pause
+    // landing in a thread the person is not looking at.
+    function arbSessionHere() {
+      return arbSessionForConversation(
+        typeof convCurrentId === 'function' ? convCurrentId() : '');
+    }
+
+    // What a *pane* is taking part in, as a member or as the arbitrator. The pane view has no
+    // conversation to scope by, so this is what scopes it instead.
+    function arbSessionForPane(paneId) {
+      if (!paneId) return null;
+      return arbSessions.find(s => (s.arbitrator || {}).pane_id === paneId ||
+        (s.members || []).some(m => m.pane_id === paneId)) || null;
+    }
+
+    // A session that would refuse a new start. Only `active` and `awaiting` do: a paused session
+    // is one a person can still resume, and the relay's own precondition ignores it — so a strip
+    // that hid Start on its account would refuse something the relay would have allowed.
+    function arbBlockingSession() {
+      return arbSessions.find(s => s.state === 'active' || s.state === 'awaiting') || null;
+    }
+
+    // ⚖ over a thread. Shown only where it has somewhere to go, and lit only when that somewhere
+    // is an arbitrator already at work — an always-on button that sometimes opens a form and
+    // sometimes jumps to a terminal is one a person cannot predict.
+    function arbSyncOpenButton() {
+      const here = arbSessionHere();
+      const conv = typeof convCurrentId === 'function' ? convCurrentId() : '';
+      arbMarkButton('convArbitrator', arbOn && !!conv, (here || {}).arbitrator,
+                    'Start arbitrating this conversation');
+      const mine = arbSessionForPane(activePane);
+      arbMarkButton('paneArbitrator', arbOn && !!mine, (mine || {}).arbitrator, '');
+    }
+
+    function arbMarkButton(id, show, arb, idleLabel) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // `on` is what makes a .hang-btn visible at all — the class the refresh and the jump are
+      // drawn by. `live` is the second question: whether the tap goes to an arbitrator already at
+      // work, or offers to appoint one.
+      const at = arb && arb.pane_id;
+      el.classList.toggle('on', !!show);
+      el.classList.toggle('live', !!at);
+      const label = at ? `Open ${arb.label || 'the arbitrator'}’s pane` : idleLabel;
+      el.title = label;
+      el.setAttribute('aria-label', label);
+    }
+
+    // Two states and no third: this conversation has an arbitrator, so go to it — or it does not,
+    // so open the form that gives it one. Reaching the newest session anywhere is what put a tap
+    // on this button into somebody else's conversation.
+    function arbOpenFromConv() {
+      const at = ((arbSessionHere() || {}).arbitrator || {}).pane_id;
+      if (at) { openTerminal(at); return; }
+      const conv = loadConvIndex().find(c => c.id === convCurrentId());
+      if (!conv) return;
+      const blocking = arbBlockingSession();
+      if (blocking) { showToast('One session at a time — end or pause the running one first.'); return; }
+      const live = arbLiveMembers(conv), free = arbCandidates(conv);
+      // The same sentence the strip would have drawn. Said out loud here because this button is
+      // reachable while the strip is scrolled away, and a tap that does nothing is the worst
+      // answer to "why can I not arbitrate this".
+      if (live.length < 2 || !free.length) { showToast(arbWhyNot(live, free, arbProject(conv))); return; }
+      if (!arbFormPanes) arbToggleForm();
+      const el = document.getElementById('arbStrip');
+      if (el && el.scrollIntoView) el.scrollIntoView({block: 'nearest'});
+    }
+
+    // From a pane, there is no conversation and no strip — only the session this pane is in, if it
+    // is in one, and the arbitrator reading it.
+    function arbOpenFromPane() {
+      const at = ((arbSessionForPane(activePane) || {}).arbitrator || {}).pane_id;
+      if (at && at !== activePane) openTerminal(at);
     }
 
     function arbMark(paneId) {
@@ -171,7 +257,7 @@
       const on = !arbBubblesOn();
       try { localStorage.setItem(ARB_BUBBLES_KEY, on ? 'on' : 'off'); }
       catch (e) { /* private mode: this session only */ }
-      if (on) arbAskDetail(arbSession);
+      if (on) arbAskDetail(arbSessionHere());
       arbRender();
       if (typeof renderConvView === 'function') renderConvView();
       if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
@@ -212,9 +298,9 @@
     // Refusals stay in the detail sheet. A record the relay rejected is a fact about the
     // arbitrator having a bad minute, not a step in the conversation.
     function arbThreadEntries(convId) {
-      const s = arbSession;
+      const s = arbSessionForConversation(convId);
       if (!s || !arbBubblesOn() || !convId || s.conversation !== convId) return [];
-      if (!Array.isArray(arbDetail)) return [];
+      if (arbDetailFor !== s.id || !Array.isArray(arbDetail)) return [];
       const arb = s.arbitrator || {};
       const members = s.members || [];
       return arbDetail.filter(d => d.valid).map(d => {
@@ -479,6 +565,11 @@
     // members, or with every other pane busy, silently had no arbitration at all and no way to
     // find out why. Both reasons are things a person can act on.
     function arbWhyNotHtml(live, free, project) {
+      return `<div class="arb-strip idle"><span class="arb-state">` +
+        `${escapeHtml(arbWhyNot(live, free, project))}</span></div>`;
+    }
+
+    function arbWhyNot(live, free, project) {
       const why = live.length < 2
         ? 'Arbitration watches two agents talk. This conversation has ' +
           (live.length === 1 ? 'one live member.' : 'none live.')
@@ -486,7 +577,7 @@
         ? 'Arbitration needs everyone in one project, and this conversation spans more than one.'
         : 'Arbitration needs a third agent in this project to decide, and every other pane here ' +
           'is busy right now.';
-      return `<div class="arb-strip idle"><span class="arb-state">${escapeHtml(why)}</span></div>`;
+      return why;
     }
 
     function arbToggleCrew() {
@@ -538,16 +629,27 @@
     // Diffed, and that is not an optimisation: the scope textarea lives in this element, and a
     // redraw on every poll would take a half-written sentence out from under the person writing it.
     function arbRender() {
+      arbSyncOpenButton();
       const el = document.getElementById('arbStrip');
       if (!el) return;
       const conv = typeof convCurrentId === 'function'
         ? loadConvIndex().find(c => c.id === convCurrentId()) : null;
+      // A session attached to this conversation is the one its controls must operate on. The
+      // primary session remains the fallback solely to suppress a second Start while another loop
+      // is active — the relay is still the final authority for that refusal.
+      const here = conv ? arbSessionForConversation(conv.id) : null;
+      // The fallback draws nothing — `arbStripHtml` returns '' for a session over some other
+      // conversation — and that is its whole job: it suppresses a second Start while a loop is
+      // actually running. Only a running one, because only a running one is what the relay
+      // refuses on.
+      const session = here || arbBlockingSession();
       if (arbFormPanes && (!conv || arbFormConv !== conv.id)) {
         arbFormPanes = null;
         arbFormConv = '';
       }
-      if (arbCrew && !(arbSession && conv && arbSession.conversation === conv.id)) arbCrew = null;
-      const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes, arbCrew);
+      if (arbCrew && !(session && conv && session.conversation === conv.id)) arbCrew = null;
+      if (here) arbAskDetail(here);
+      const html = arbStripHtml(session, conv || null, arbOn, arbFormPanes, arbCrew);
       if (html !== arbHtmlLast) {
         // A redraw takes an armed button with it — the budget ticking down a minute is enough to
         // trigger one — and an arm on a node that is no longer in the page is a first tap that was
@@ -656,20 +758,21 @@
 
     function arbRenderDetail() {
       const el = document.getElementById('arbDetailBody');
-      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSession);
+      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSessionHere());
     }
 
     function arbOpenDetail() {
-      if (!arbSession) return;
-      if (arbDetailFor !== arbSession.id) arbDetail = null;   // never the previous session's
+      const session = arbSessionHere();
+      if (!session) return;
+      if (arbDetailFor !== session.id) arbDetail = null;   // never the previous session's
       const el = document.getElementById('arbSheet');
       if (el) el.style.display = 'block';
       arbRenderDetail();
       // Unconditionally, unlike the bubbles' own ask: the sheet is somebody looking now, and the
       // held copy may be a poll old. It is the same round trip either way.
-      arbDetailFor = arbSession.id;
-      arbDetailSeq = (arbSession.last_decision || {}).sequence || 0;
-      arbSend({type: 'arb_detail', session: arbSession.id});
+      arbDetailFor = session.id;
+      arbDetailSeq = (session.last_decision || {}).sequence || 0;
+      arbSend({type: 'arb_detail', session: session.id});
     }
 
     // Closing the sheet hides the sheet. The decisions stay: the thread is drawing bubbles from
@@ -693,7 +796,11 @@
       if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
     }
 
+    // Every strip control routes through here, so this is the one place that has to be right:
+    // the session named is the one this conversation is under. Pausing what is on screen must
+    // never pause what is not.
     function arbCommand(type, extra) {
-      if (!arbSession) return;
-      arbSend(Object.assign({ type: type, session: arbSession.id }, extra || {}));
+      const session = arbSessionHere();
+      if (!session) return;
+      arbSend(Object.assign({ type: type, session: session.id }, extra || {}));
     }
