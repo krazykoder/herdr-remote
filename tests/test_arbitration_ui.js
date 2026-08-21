@@ -86,23 +86,32 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
   return {g, els, sent, toasts, opened, tabSyncs: () => tabSyncs};
 }
 
+const setupHtml = (g, conv = CONV) =>
+  g.arbSetupHtml(g.arbLiveMembers(conv), g.arbCandidates(conv), '');
+
+const classed = (el, name) => el.className.split(/\s+/).includes(name);
+
 test('nothing is drawn until the relay offers the feature', () => {
-  const {g} = ctx();
-  assert.equal(g.arbStripHtml(null, CONV, false, false), '');
+  const {g, els} = ctx();
+  g.arbRender();
+  assert.equal(els.arbStrip.innerHTML, '');
+  assert.equal(classed(els.convArbitrator, 'on'), false, 'and no way in');
   // And the gate is the message arriving at all, empty list included.
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  assert.ok(g.arbStripHtml(null, CONV, true, false).includes('Arbitrate'));
+  assert.equal(classed(els.convArbitrator, 'on'), true);
 });
 
 test('a session over another conversation does not stop this one starting its own', () => {
   // This used to draw nothing at all — one loop at a time, so a session anywhere suppressed the
   // Start button everywhere. Sessions are independent now: their own roster, arbitrator, budget
   // and drop directory, and no pane in two of them.
-  const {g} = ctx();
+  const {g, els} = ctx();
   const elsewhere = {...SESSION, conversation: 'c-2'};
   g.arbReceiveSessions({type: 'arb_sessions', sessions: [elsewhere]});
   g.arbRender();
-  assert.match(g.arbStripHtml(null, CONV, true, false), /⚖ Arbitrate/);
+  assert.equal(els.arbStrip.innerHTML, '', 'no strip: that session is not this conversation’s');
+  g.arbOpenFromConv();
+  assert.match(els.arbSetupBody.innerHTML, /id="arbWho"/, 'but this one may start its own');
 });
 
 test('a running session shows its state, budget and one way to stop it', () => {
@@ -133,22 +142,28 @@ test('the last decision is shown by gate, target and why — never its instructi
 });
 
 test('an ended session leaves no strip behind', () => {
-  const {g} = ctx();
+  const {g, els} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  assert.ok(els.arbStrip.innerHTML.includes('Arbitrating'));
   g.arbReceiveSession({type: 'arb_session', session: {...SESSION, state: 'ended'}});
-  assert.equal(g.arbStripHtml(null, CONV, true, false).includes('Arbitrating'), false);
+  assert.equal(els.arbStrip.innerHTML, '');
 });
 
 test('a conversation that cannot be arbitrated says which half is missing', () => {
-  // v1 runs one shape: two members and an arbitrator outside them. What is missing used to be
-  // drawn as nothing at all — and a strip that renders nothing is indistinguishable from a broken
-  // one. Both of these are things a person can fix, so both say so.
-  const oneMember = ctx({live: [PANE_A, PANE_C]}).g.arbStripHtml(null, CONV, true, false);
-  assert.match(oneMember, /one live member/);
+  // v1 runs one shape: two members and an arbitrator outside them. What is missing used to be a
+  // tap that did nothing, which is indistinguishable from a broken button. Both of these are
+  // things a person can fix, so both are said out loud.
+  const one = ctx({live: [PANE_A, PANE_C]});
+  one.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  one.g.arbOpenFromConv();
+  assert.match(one.toasts.at(-1), /one live member/);
+  assert.equal(one.g.document.getElementById('arbSetupBody').innerHTML, '',
+               'and no dialog it would refuse');
 
-  const noArbiter = ctx({live: [PANE_A, PANE_B]}).g.arbStripHtml(null, CONV, true, false);
-  assert.match(noArbiter, /third agent/);
-  assert.equal(/Arbitrate</.test(noArbiter), false, 'and offers no button it would refuse');
+  const none = ctx({live: [PANE_A, PANE_B]});
+  none.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  none.g.arbOpenFromConv();
+  assert.match(none.toasts.at(-1), /third agent/);
 });
 
 test('a conversation of three offers arbitration over a chosen two', () => {
@@ -158,9 +173,7 @@ test('a conversation of three offers arbitration over a chosen two', () => {
   const three = {id: 'c-1', name: 'Footer',
                  members: [{key: key(PANE_A)}, {key: key(PANE_B)}, {key: key(PANE_D)}]};
   const {g} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [three]});
-  const idle = g.arbStripHtml(null, three, true, false);
-  assert.match(idle, /Arbitrate/);
-  const form = g.arbStripHtml(null, three, true, [PANE_C]);
+  const form = setupHtml(g, three);
   assert.match(form, /id="arbFirst"/);
   assert.match(form, /id="arbSecond"/);
   assert.match(form, /Architect 2/, 'the third member is a choice, not an exclusion');
@@ -191,7 +204,7 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
 test('brief only starts the arbitrator paused, and says so on the badge', () => {
   const {g, els, sent} = ctx();
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  const form = () => g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null);
+  const form = () => setupHtml(g);
   assert.match(form(), /aria-pressed="true"[^>]*>Start deciding</, 'armed by default');
   g.arbPickStartPaused(true);
   assert.match(form(), /aria-pressed="true"[^>]*>Brief only</);
@@ -254,8 +267,8 @@ test('⚖ goes to this conversation’s arbitrator, and never to another convers
   // It offers to start one instead — this conversation has two live members and a free third.
   assert.match(els.convArbitrator.className, /on/, 'still there — starting one is the other answer');
   assert.match(els.convArbitrator.title, /Start arbitrating/);
-  assert.ok(g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null).includes('arbScope'),
-            'the form is what it opened');
+  g.arbOpenFromConv();
+  assert.ok(els.arbSetupBody.innerHTML.includes('arbScope'), 'the dialog is what it opened');
 });
 
 test('the pane button follows the pane, because a pane has no conversation', () => {
@@ -337,20 +350,20 @@ test('an open form is not rebuilt when a candidate changes status under it', () 
   const live = [PANE_A, PANE_B, {...PANE_C}, {...PANE_C, pane_id: 'w1:p4', label: 'Spare'}];
   const {g, els} = ctx({live});
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  g.arbToggleForm();
-  const drawn = els.arbStrip.innerHTML;
+  g.openArbSetup();
+  const drawn = els.arbSetupBody.innerHTML;
   assert.ok(drawn.includes('arbScope'), drawn);
 
   live[3].status = 'working';
   g.arbRender();
-  assert.equal(els.arbStrip.innerHTML, drawn);
+  assert.equal(els.arbSetupBody.innerHTML, drawn);
 });
 
 test('an arbitrator that went busy while the scope was written is said out loud', () => {
   const live = [PANE_A, PANE_B, {...PANE_C}];
   const {g, els, sent, toasts} = ctx({live});
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  g.arbToggleForm();
+  g.openArbSetup();
   g.document.getElementById('arbScope').value = 'Review the footer.';
   g.document.getElementById('arbWho').value = 'w1:p3';
   g.document.getElementById('arbFirst').value = 'w1:p1';
@@ -359,8 +372,8 @@ test('an arbitrator that went busy while the scope was written is said out loud'
   g.arbStart();
   assert.deepEqual(sent, []);
   assert.equal(toasts.length, 1);
-  assert.equal(g.document.getElementById('arbScope').value, 'Review the footer.',
-               'the scope is kept');
+  assert.match(els.arbSetupBody.innerHTML, /Review the footer\./,
+               'and the scope is written back into the dialog it redrew');
 });
 
 test('pause, resume and cancel name the session the relay assigned', () => {
@@ -388,26 +401,25 @@ test('nothing is sent with no session, and nothing is sent with no socket', () =
 });
 
 test('a reconnect drops the capability rather than remembering it', () => {
-  const {g} = ctx();
+  const {g, els} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  assert.ok(els.arbStrip.innerHTML.includes('Arbitrating'));
   g.arbReset();
-  assert.equal(g.arbStripHtml(null, CONV, true, false).includes('Arbitrate'), true,
-               'the pure function still draws what it is handed');
-  g.arbRender();
-  assert.equal(g.document.getElementById('arbStrip').innerHTML, '',
-               'but the element is cleared, and nothing redraws until the next arb_sessions');
+  assert.equal(els.arbStrip.innerHTML, '',
+               'the element is cleared, and nothing redraws until the next arb_sessions');
+  assert.equal(classed(els.convArbitrator, 'on'), false, 'and no way in until it does');
 });
 
 test('a frozen arbitrator form is discarded when the reader changes conversation', () => {
   const second = {...CONV, id: 'c-2', name: 'Another conversation'};
   const {g, els} = ctx({convs: [CONV, second]});
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  g.arbToggleForm();
-  assert.ok(els.arbStrip.innerHTML.includes('arb-form'));
+  g.openArbSetup();
+  assert.ok(els.arbSetupBody.innerHTML.includes('arbScope'));
+  assert.equal(els.arbModal.style.display, 'block');
   g.convCurrentId = () => 'c-2';
   g.arbRender();
-  assert.ok(els.arbStrip.innerHTML.includes('⚖ Arbitrate'));
-  assert.ok(!els.arbStrip.innerHTML.includes('arb-form'));
+  assert.equal(els.arbModal.style.display, 'none', 'a Start here would land in another thread');
 });
 
 // The other half of a session a person did not watch: what the thread says about a prompt nobody
@@ -604,7 +616,7 @@ test('the crew of a running session is replaced whole, and the session is not', 
   g.arbReceiveSession({session: CREW_SESSION});
   g.arbToggleCrew();
 
-  const html = g.arbStripHtml(CREW_SESSION, three, true, null, g.arbLiveMembers(three));
+  const html = g.arbStripHtml(CREW_SESSION, three, true, g.arbLiveMembers(three));
   assert.match(html, /id="arbCrewA"/);
   assert.match(html, /id="arbCrewB"/);
 
@@ -620,7 +632,7 @@ test('the crew of a running session is replaced whole, and the session is not', 
 test('what each member is for is asked, sent, and shown on the strip', () => {
   const {g, els, sent} = ctx();
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
-  const html = g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null);
+  const html = setupHtml(g);
   assert.match(html, /id="arbRoleFirst"/);
   assert.match(html, /id="arbRoleSecond"/);
   // A badge per tag, and the phrase it writes as its tooltip: the tag is what fits on a pill and
@@ -644,7 +656,7 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
 test('the brief can be given again, and is asked twice before it is', () => {
   const {g, sent} = ctx();
   g.arbReceiveSession({session: SESSION});
-  const html = g.arbStripHtml(SESSION, CONV, true, null, null);
+  const html = g.arbStripHtml(SESSION, CONV, true, null);
   assert.match(html, /arbCommand\('arb_reinit'\)/);
   // Armed like End is: it empties the arbitrator's context, which is not undoable.
   assert.match(html, /class="arb-btn arm-btn"[^>]*Re-brief\?/);
@@ -683,12 +695,12 @@ test('a running session says what each member is for, and lets it be changed', (
   ]});
   const {g, els, sent} = ctx();
   g.arbReceiveSession({session: roled});
-  assert.match(g.arbStripHtml(roled, CONV, true, null, null),
+  assert.match(g.arbStripHtml(roled, CONV, true, null),
                /Architect 1 \(review\) · Reviewer 1 \(fix-code\)/);
 
   // The picker opens on what the roster already says, so an edit that only swaps a pane does not
   // quietly drop the roles the person typed the first time.
-  const crew = g.arbStripHtml(roled, CONV, true, null, g.arbLiveMembers(CONV));
+  const crew = g.arbStripHtml(roled, CONV, true, g.arbLiveMembers(CONV));
   assert.match(crew, /id="arbCrewRoleA"[^>]*value="review"/);
   assert.match(crew, /id="arbCrewRoleB"[^>]*value="fix-code"/);
 
@@ -785,16 +797,20 @@ test('a thread with no answer yet draws no arbitrator rather than an empty one',
 
 test('an arbitrator is only offered from the conversation’s own project', () => {
   const p = (a, id) => Object.assign({}, a, {project_id: id});
-  const {g} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-a'), p(PANE_C, 'proj-b')]});
+  const {g, toasts} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-a'), p(PANE_C, 'proj-b')]});
   assert.deepEqual(g.arbCandidates(CONV), [], 'the only free pane is in another repository');
-  assert.match(g.arbStripHtml(null, CONV, true, false), /third agent in this project/);
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbOpenFromConv();
+  assert.match(toasts.at(-1), /third agent in this project/);
 });
 
 test('a conversation that spans two projects says so instead of offering a session', () => {
   const p = (a, id) => Object.assign({}, a, {project_id: id});
-  const {g} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-b'), p(PANE_C, 'proj-a')]});
+  const {g, toasts} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-b'), p(PANE_C, 'proj-a')]});
   assert.equal(g.arbProject(CONV), null);
-  assert.match(g.arbStripHtml(null, CONV, true, false), /everyone in one project/);
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbOpenFromConv();
+  assert.match(toasts.at(-1), /everyone in one project/);
 });
 
 test('with no projects configured every free pane is still a candidate', () => {

@@ -67,18 +67,21 @@ const session = (over = {}) => Object.assign({
 const broadcast = (page, s) =>
   page.evaluate(s => handleMessage({type: 'arb_session', session: s}), s);
 
-test('the relay’s gate reaches the strip, and the strip is where the thread starts', async ({page}) => {
+test('the relay’s gate reaches the button that appoints one', async ({page}) => {
   await openConv(page);
-  await expect(page.locator('#arbStrip button')).toHaveText('⚖ Arbitrate');
+  // The gate is the ⚖ over the thread, not a strip: a conversation nobody is arbitrating draws
+  // nothing above its messages.
+  await expect(page.locator('#convArbitrator')).toBeVisible();
+  await expect(page.locator('#arbStrip')).toBeEmpty();
 });
 
 test('starting names two pane ids, an arbitrator and a scope — and nothing else', async ({page}) => {
   await openConv(page);
   await captureSends(page);
-  await page.locator('#arbStrip button').click();
+  await page.locator('#convArbitrator').click();
   await page.locator('#arbScope').fill('Get the footer reviewed, then stop.');
   await page.locator('#arbWho').selectOption({label: ARBITER});
-  await page.locator('#arbStrip .arb-btn.go').click();
+  await page.locator('#arbSetupBody .arb-btn.go').click();
 
   const msgs = await sent(page);
   expect(msgs).toHaveLength(1);
@@ -104,7 +107,7 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
 test('a role badge writes a phrase, and the phrase is what the relay is asked for', async ({page}) => {
   await openConv(page);
   await captureSends(page);
-  await page.locator('#arbStrip button').click();
+  await page.locator('#convArbitrator').click();
   await page.locator('#arbScope').fill('Get the footer reviewed, then stop.');
   await page.locator('#arbWho').selectOption({label: ARBITER});
   // Overlapping on purpose: two agents that can both review is what lets the arbitrator keep the
@@ -115,7 +118,7 @@ test('a role badge writes a phrase, and the phrase is what the relay is asked fo
   await page.locator('#arbRoleFirstPills button[onclick*="no-code"]').click();
   await page.locator('#arbRoleSecond').fill('writes the code');
   await expect(page.locator('#arbRoleFirst')).toHaveValue('review only, no code writing');
-  await page.locator('#arbStrip .arb-btn.go').click();
+  await page.locator('#arbSetupBody .arb-btn.go').click();
 
   const msgs = await sent(page);
   expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: 'review only, no code writing'},
@@ -123,15 +126,20 @@ test('a role badge writes a phrase, and the phrase is what the relay is asked fo
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 
-test('⚖ over a conversation with no arbitrator opens the form that appoints one', async ({page}) => {
+test('⚖ over a conversation with no arbitrator opens the dialog that appoints one', async ({page}) => {
   await openConv(page);
   const btn = page.locator('#convArbitrator');
   await expect(btn).toBeVisible();
   await expect(btn).not.toHaveClass(/live/);
   await btn.click();
-  // The strip's own form, opened from a button that stays reachable while the strip is scrolled
-  // away — which is the whole reason it is in the floating row and not only on the strip.
   await expect(page.locator('#arbScope')).toBeVisible();
+  // Three sections, because there are three decisions: who decides, and the two it decides
+  // between.
+  await expect(page.locator('#arbSetupBody .arb-part-lede')).toHaveText(
+    ['⚖ Arbitrator', 'Agent 1', 'Agent 2']);
+  // A dialog, so a tap beside it is the way out — and nothing it was over moved to make room.
+  await page.mouse.click(5, 5);
+  await expect(page.locator('#arbModal')).toBeHidden();
 });
 
 test('⚖ goes to the arbitrator’s own pane once this conversation has one', async ({page}) => {
@@ -145,10 +153,10 @@ test('⚖ goes to the arbitrator’s own pane once this conversation has one', a
 
 test('a half-written scope survives the poll that redraws the view around it', async ({page}) => {
   await openConv(page);
-  await page.locator('#arbStrip button').click();
+  await page.locator('#convArbitrator').click();
   await page.locator('#arbScope').fill('Half a sen');
-  // Two poll intervals. The view redraws on every snapshot, and the strip is diffed on its own
-  // precisely so this element is not rebuilt under the person typing into it.
+  // Two poll intervals. The view redraws on every snapshot, and the dialog is drawn once when it
+  // opens precisely so this element is not rebuilt under the person typing into it.
   await page.waitForTimeout(4500);
   await expect(page.locator('#arbScope')).toHaveValue('Half a sen');
 });
@@ -189,5 +197,5 @@ test('ending is asked twice, and the strip goes with the session', async ({page}
   expect(await sent(page)).toEqual([{type: 'arb_cancel', session: 's-20260817-1103'}]);
 
   await broadcast(page, session({state: 'ended'}));
-  await expect(page.locator('#arbStrip .arb-strip')).toHaveText('⚖ Arbitrate');
+  await expect(page.locator('#arbStrip')).toBeEmpty();
 });

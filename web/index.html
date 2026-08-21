@@ -1692,6 +1692,25 @@
       opacity: 0.5;
     }
 
+    /* One of the three the arbitration dialog is made of: who decides, and the two it decides
+       between. A rule above rather than a box around — the sections are a reading order, not three
+       separate forms, and a card each would say otherwise. */
+    .arb-part {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .arb-part-lede {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text);
+    }
+
     /* Beside a field's label, saying what the field expects rather than what it is. */
     .field-note {
       opacity: 0.7;
@@ -3140,6 +3159,44 @@
       padding: 16px;
       font-size: 0.72rem;
       color: var(--muted);
+    }
+
+    /* The same fields, inside the dialog instead of above the thread. No bar of its own, and
+       roomier controls: a dialog is not competing with messages for height. */
+    .arb-setup {
+      background: none;
+      border-bottom: none;
+      padding: 10px 14px 12px;
+      gap: 10px;
+      font-size: 0.7rem;
+    }
+
+    .arb-setup textarea,
+    .arb-setup input,
+    .arb-setup select {
+      font-size: 0.78rem;
+      padding: 8px 10px;
+    }
+
+    /* The clocks, folded away: both are `Never` until somebody goes looking for them. */
+    .arb-more summary {
+      cursor: pointer;
+      color: var(--blue);
+      padding: 2px 0;
+    }
+
+    .arb-more[open] {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* Nine role badges wrap to three rows twice over, which is most of a phone's height spent on
+       suggestions. Smaller than the badges elsewhere on purpose — these are a shortcut for the
+       field under them, not the field. */
+    .arb-setup .badge.pick {
+      font-size: 0.62rem;
+      padding: 2px 7px;
     }
 
     .arb-form-actions {
@@ -6672,6 +6729,27 @@
           style="padding:11px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Add
           agent</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Appointing an arbitrator, as a dialog rather than a panel. It used to be a strip inside the
+       thread, which pushed every message down by its own height for as long as it was open — a
+       setup form is a moment's work and the thread is what the person came for. Same shape as the
+       New agent dialog beside it: a scrim that closes on a tap outside, and fields that are badges
+       wherever the answer is a choice.
+
+       Three sections because there are three decisions, and they were previously interleaved: who
+       decides, and the two it is deciding between. -->
+  <div id="arbModal" style="display:none;position:fixed;inset:0;z-index:120;">
+    <div onclick="closeArbSetup()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="Arbitrate this conversation"
+      style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">⚖ Arbitrate · <span id="arbSetupConvName"></span></span>
+        <button onclick="closeArbSetup()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div class="arb-form arb-setup" id="arbSetupBody"></div>
     </div>
   </div>
 

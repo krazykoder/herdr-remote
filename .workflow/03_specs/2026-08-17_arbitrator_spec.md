@@ -998,14 +998,20 @@ the same reason: every path is derived from it.
 
 No second product. The existing conversation thread, plus:
 
-- A **session strip** above the thread: state, budget remaining, the last decision's gate and `why`,
-  and one Pause control.
+- A **session strip** above the thread — **only while this conversation has a session**: state,
+  budget remaining, the last decision's gate and `why`, and one Pause control. A conversation
+  nobody is arbitrating draws nothing above its messages; the way in is the ⚖ in the thread's
+  controls, which costs no height.
 - Arbitrated messages rendered as ordinary entries with a badge. The thread already renders
   provenance per entry (`via`: `typed` / `transfer` / `mixed`), so `arbitrator` is a fourth value and
   a badge, not a new view.
 - A decision detail sheet: the record, the prompt that produced it, and the send.
-- A start dialog: pick two members from the conversation, pick the arbitrator, write the scope,
-  confirm gates and budgets.
+- A start dialog, opened by ⚖ and dismissed by a tap outside it: the scope, then one section each
+  for the arbitrator and the two members it decides between — a pane for each, the roles for the
+  two, and whether the loop is armed on start or only briefed. The clocks of §10 are folded away,
+  because both are `Never` until somebody goes looking for them.
+- ⚖ over a thread has two states and no third: lit, it opens the arbitrator's own pane; plain, it
+  opens that dialog. It never reaches a session belonging to another conversation.
 
 ## 16. Test plan
 

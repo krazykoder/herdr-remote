@@ -79,10 +79,10 @@ async function main() {
       openConversation('c1');
     });
 
-    await page.click('#arbStrip button');
+    await page.click('#convArbitrator');
     await page.fill('#arbScope', 'Get the footer change reviewed, then stop.');
     await page.selectOption('#arbWho', {label: 'Arbitrator'});
-    await page.click('#arbStrip .arb-btn.go');
+    await page.click('#arbSetupBody .arb-btn.go');
 
     await page.waitForSelector('#arbStrip .arb-strip', {timeout: 30000});
     const running = await page.textContent('#arbStrip .arb-strip');
@@ -146,7 +146,7 @@ async function main() {
 
     const end = page.locator('#arbStrip').getByRole('button', {name: /End/});
     await end.click(); await end.click();
-    await page.waitForFunction(() => /Arbitrate/.test(document.querySelector('#arbStrip').textContent), null, {timeout: 15000});
+    await page.waitForFunction(() => document.querySelector('#arbStrip').textContent === '', null, {timeout: 15000});
     check('and ending takes the strip with it', true);
   } catch (e) {
     check('the run finished', false, String(e));
