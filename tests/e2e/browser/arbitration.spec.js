@@ -161,6 +161,40 @@ test('a half-written scope survives the poll that redraws the view around it', a
   await expect(page.locator('#arbScope')).toHaveValue('Half a sen');
 });
 
+test('a slot starts its own agent, and the dialog is still there when it arrives', async ({page}) => {
+  await openConv(page);
+  await captureSends(page);
+  // What the relay is willing to start, and the Projects to start into. The fake herdr's board
+  // never grows, so the pane the start "produces" is one that is already live.
+  const spare = await page.evaluate(() => {
+    projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+    startOptions = {type: 'start_options', agents: ['claude', 'codex'], roles: ['architect']};
+    for (const a of agents) { a.project_id = 'p1'; a.workspace_id = 'w1'; }
+    return agents.find(a => a.label === 'amp').pane_id;
+  });
+  await page.locator('#convArbitrator').click();
+  await page.locator('#arbScope').fill('Half a sen');
+  // The New agent dialog, over the arbitration one rather than instead of it.
+  await page.locator('#arbSetupBody .arb-part', {hasText: 'Agent 2'})
+    .getByRole('button', {name: '+ New'}).click();
+  await expect(page.locator('#newAgentModal')).toBeVisible();
+  await page.locator('#newAgentSubmit').click();
+  await expect(page.locator('#newAgentModal')).toBeHidden();
+  await expect(page.locator('#arbModal')).toBeVisible();
+
+  await page.evaluate(id => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: id});
+    openPendingStart();
+  }, spare);
+
+  // Chosen in the slot that asked for it, with everything already answered kept — and the person
+  // is still in the dialog rather than in the new pane's terminal.
+  await expect(page.locator('#arbSecond')).toHaveValue(spare);
+  await expect(page.locator('#arbScope')).toHaveValue('Half a sen');
+  await expect(page.locator('#terminalView')).toBeHidden();
+  expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
+});
+
 test('a running session shows what it is doing and how to stop it', async ({page}) => {
   await openConv(page);
   await broadcast(page, session({last_decision: {

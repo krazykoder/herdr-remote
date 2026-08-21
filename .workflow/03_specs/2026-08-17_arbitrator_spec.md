@@ -1012,6 +1012,12 @@ No second product. The existing conversation thread, plus:
   because both are `Never` until somebody goes looking for them.
 - ⚖ over a thread has two states and no third: lit, it opens the arbitrator's own pane; plain, it
   opens that dialog. It never reaches a session belonging to another conversation.
+- Each of the three slots can **start its own agent**, through the New agent dialog. The new pane
+  is chosen in the slot that asked for it and nothing is opened — the dialog behind is half filled
+  in, and a terminal on screen is that work thrown away. A member joins the conversation; the
+  arbitrator does not, and is started with no opening prompt of its own, because the session's
+  brief is the only thing that tells it what it is. This is also the whole of "start from scratch":
+  three slots, three taps, and `Brief only` so the loop waits for the room to be ready.
 
 ## 16. Test plan
 

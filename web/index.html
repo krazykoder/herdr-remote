@@ -3178,6 +3178,24 @@
       padding: 8px 10px;
     }
 
+    /* A slot's pane, and the way to start one that is not there yet. */
+    .arb-slot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* The select is inside its label, so the label is the flex child — without this the row
+       shrinks to the width of whichever pane happens to have the shortest name. */
+    .arb-slot > label {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .arb-slot select {
+      width: 100%;
+    }
+
     /* The clocks, folded away: both are `Never` until somebody goes looking for them. */
     .arb-more summary {
       cursor: pointer;
@@ -6692,7 +6710,7 @@
        a harness, the Project it is spawned beside, and the first thing to say to it. Centred rather
        than raised from the bottom, because it is opened from a menu in the middle of the screen and
        a sheet sliding up under the composer would land under the keyboard. -->
-  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:120;">
+  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:121;">
     <div onclick="closeNewAgent()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="New agent"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">

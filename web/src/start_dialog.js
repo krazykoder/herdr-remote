@@ -101,6 +101,17 @@
           (paired ? ' and paired.' : ' — confirm the pair.'), 'success');
         return;
       }
+      // Started from a slot in the arbitration dialog. It is chosen there and nothing is opened —
+      // the dialog behind is half filled in, and a terminal on screen is that work thrown away.
+      // The prompt still goes, because a member started with something to say to it is a turn the
+      // thread would otherwise be missing the start of.
+      if (intent && intent.arb) {
+        arbAdoptStarted(a, intent.arb);
+        if (prompt) sendTextTo(a.pane_id, prompt);
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started — it is in the dialog.`,
+                        'success');
+        return;
+      }
       // A respawn asked from a conversation replaces the ended member in that conversation. The
       // old terminal is gone, but its local thread is continued under this new pane's key.
       if (intent && intent.conv) {

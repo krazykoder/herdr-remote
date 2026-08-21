@@ -171,10 +171,21 @@
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
       if (!conv) return;
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
-      // The same sentence the strip would have drawn. Said out loud here because this button is
-      // reachable while the strip is scrolled away, and a tap that does nothing is the worst
-      // answer to "why can I not arbitrate this".
-      if (live.length < 2 || !free.length) { showToast(arbWhyNot(live, free, arbProject(conv))); return; }
+      // Refused only when the dialog could do nothing about it. A missing member or a missing
+      // arbitrator is a slot away now that each one can start its own — what is not answerable
+      // from here is a relay that will not start agents at all, or a conversation whose own
+      // members are in two projects, which no new pane fixes.
+      if (!arbCanSpawn() && (live.length < 2 || !free.length)) {
+        showToast(arbWhyNot(live, free, arbProject(conv)));
+        return;
+      }
+      // A conversation whose own live members are in two projects is the one refusal a new pane
+      // cannot fix. An *empty* one also has no project — that is not a disagreement, it is a room
+      // with nobody in it yet, and filling it is what + New is for.
+      if (live.length >= 2 && arbProject(conv) === null) {
+        showToast(arbWhyNot(live, free, null));
+        return;
+      }
       openArbSetup();
     }
 
@@ -440,15 +451,16 @@
     //
     // Pure, and given its lists rather than reading them, for the same reason the strip is: the
     // states worth asserting are the ones nobody is sitting in front of.
-    function arbSetupHtml(live, free, scope) {
+    function arbSetupHtml(live, free, at) {
+      at = at || {};
       return '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop.">' +
-        escapeHtml(scope || '') + '</textarea></label>' +
+        escapeHtml(at.arbScope || '') + '</textarea></label>' +
         // The one that decides. It is deliberately not in the conversation — it is not a
         // participant in it, it is the thing deciding what happens in it — so its list is the panes
         // outside the conversation and inside its project.
         arbPart('⚖ Arbitrator',
-          arbPaneSelect('arbWho', free, (free[0] || {}).pane_id, '') +
+          arbSlot('arbWho', free, at.arbWho || (free[0] || {}).pane_id) +
           // §10's two clocks, off by default and folded away because of it. A turn ending is
           // always a trigger; these are for the two ways a conversation stops without anyone's
           // turn ending — a member that went quiet, and one that has been working long enough to
@@ -456,22 +468,77 @@
           // saying Never are two rows of a dialog spent on nothing.
           '<details class="arb-more"><summary>Also decide on a clock</summary>' +
           '<label>If a member goes quiet<select id="arbIdle">' +
-          arbClockOptions(ARB_IDLE_CHOICES) + '</select></label>' +
+          arbClockOptions(ARB_IDLE_CHOICES, at.arbIdle) + '</select></label>' +
           '<label>If a member works without stopping<select id="arbRuntime">' +
-          arbClockOptions(ARB_RUNTIME_CHOICES) + '</select></label></details>') +
+          arbClockOptions(ARB_RUNTIME_CHOICES, at.arbRuntime) + '</select></label></details>') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
         arbPart('Agent 1',
-          arbPaneSelect('arbFirst', live, (live[0] || {}).pane_id, '') +
-          arbRoleField('arbRoleFirst', '')) +
+          arbSlot('arbFirst', live, at.arbFirst || (live[0] || {}).pane_id) +
+          arbRoleField('arbRoleFirst', at.arbRoleFirst)) +
         arbPart('Agent 2',
-          arbPaneSelect('arbSecond', live, (live[1] || {}).pane_id, '') +
-          arbRoleField('arbRoleSecond', '')) +
+          arbSlot('arbSecond', live, at.arbSecond || (live[1] || {}).pane_id) +
+          arbRoleField('arbRoleSecond', at.arbRoleSecond)) +
         arbArmChoiceHtml() +
         '<div class="arb-form-actions">' +
         '<button class="arb-btn" onclick="closeArbSetup()">Cancel</button>' +
         '<button class="arb-btn go" onclick="arbStart()">Start</button></div>';
+    }
+
+    // The pane, or a new one. A room is often assembled from nothing — two fresh agents and
+    // something to decide between them — and leaving this dialog to start each one loses every
+    // answer already in it. So each slot can start its own, and the new pane lands *here*: it is
+    // chosen in the slot that asked for it and the page does not move.
+    function arbSlot(id, panes, selected) {
+      return '<div class="arb-slot">' + arbPaneSelect(id, panes, selected, '') +
+        (arbCanSpawn()
+          ? `<button type="button" class="badge pick proj" onclick="arbSpawnFor('${id}')"` +
+            ' title="Start a new agent and put it in this slot">+ New</button>' : '') +
+        '</div>';
+    }
+
+    // The New agent dialog is the one that knows how to start one, and it is two taps. Guarded by
+    // `typeof` because arbitration is drawn by relays that never sent `start_options`, and a
+    // missing Start is a slot with no + New rather than a broken page.
+    function arbCanSpawn() {
+      return typeof canStartFromConv === 'function' && canStartFromConv();
+    }
+
+    function arbSpawnFor(slot) {
+      if (arbCanSpawn()) openNewAgent(slot);
+    }
+
+    // What the dialog is holding right now, keyed by the element it is in — which is also what
+    // `arbSetupHtml` reads, so a redraw is "read it, change one field, draw it again".
+    function arbReadSetup() {
+      const at = {};
+      ['arbScope', 'arbWho', 'arbFirst', 'arbSecond', 'arbRoleFirst', 'arbRoleSecond',
+       'arbIdle', 'arbRuntime'].forEach(id => {
+        at[id] = (document.getElementById(id) || {}).value || '';
+      });
+      return at;
+    }
+
+    // A pane started for a slot, once the poll has it. A member joins the conversation, because
+    // that is what the two being arbitrated are; the arbitrator does not, because it is not a
+    // participant in the conversation — it is the thing deciding what happens in it.
+    //
+    // Nothing is opened. The person is half way through filling this dialog in, and landing them
+    // in a terminal is losing it.
+    function arbAdoptStarted(a, want) {
+      const at = arbSetupOpen() ? arbReadSetup() : {};
+      if (want.slot !== 'arbWho') {
+        const items = loadConvIndex();
+        const conv = items.find(c => c.id === want.conv);
+        if (conv && !(conv.members || []).some(m => m.key === convMemberKey(a))) {
+          conv.members = (conv.members || []).concat(convMemberOf(a));
+          saveConvIndex(items);
+        }
+      }
+      at[want.slot] = a.pane_id;
+      const conv = loadConvIndex().find(c => c.id === want.conv);
+      if (conv) arbDrawSetup(conv, at);
     }
 
     // A rule above rather than a box around: the three are a reading order, not three forms.
@@ -484,11 +551,13 @@
       return !!arbSetupConv;
     }
 
-    // Drawn once, on open, and left alone after — see `arbSetupConv`. `scope` is passed back in on
-    // the one redraw there is: a pane that went busy while the scope was being written.
-    function arbDrawSetup(conv, scope) {
+    // Drawn once, on open, and left alone after — see `arbSetupConv`. `at` is what the dialog was
+    // holding, passed back in on the two redraws there are: a pane that went busy while the scope
+    // was being written, and a pane started from a slot.
+    function arbDrawSetup(conv, at) {
       const el = document.getElementById('arbSetupBody');
-      if (el) el.innerHTML = arbSetupHtml(arbLiveMembers(conv), arbCandidates(conv), scope);
+      const free = arbWithPick(arbCandidates(conv), (at || {}).arbWho);
+      if (el) el.innerHTML = arbSetupHtml(arbLiveMembers(conv), free, at);
       const name = document.getElementById('arbSetupConvName');
       if (name) name.textContent = conv.name || '';
       arbSetupConv = conv.id;
@@ -500,7 +569,17 @@
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
       if (!conv) return;
       arbStartPaused = false;
-      arbDrawSetup(conv, '');
+      arbDrawSetup(conv, null);
+    }
+
+    // An arbitrator started from this dialog a second ago is `working` while its TUI comes up, and
+    // `arbCandidates` drops a working pane — so the slot the person just filled would empty itself
+    // under them. Held in the list by name. Whether it can actually take the brief is still the
+    // relay's answer, and it refuses a busy arbitrator (N7).
+    function arbWithPick(list, paneId) {
+      if (!paneId || list.some(x => x.pane_id === paneId)) return list;
+      const a = agents.find(x => x.pane_id === paneId);
+      return a ? list.concat([a]) : list;
     }
 
     function closeArbSetup() {
@@ -666,8 +745,9 @@
       arbRender();
     }
 
-    function arbClockOptions(choices) {
-      return choices.map(m => `<option value="${m}">${m ? m + ' min' : 'Never'}</option>`).join('');
+    function arbClockOptions(choices, selected) {
+      return choices.map(m => `<option value="${m}"${String(m) === String(selected) ? ' selected' : ''}>` +
+        `${m ? m + ' min' : 'Never'}</option>`).join('');
     }
 
     function arbClockValue(id) {
@@ -716,14 +796,19 @@
     function arbStart() {
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
       if (!conv) return;
+      const at = arbReadSetup();
+      const who = at.arbWho;
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
-      const scope = ((document.getElementById('arbScope') || {}).value || '').trim();
-      const who = (document.getElementById('arbWho') || {}).value || '';
-      const picks = ['arbFirst', 'arbSecond']
-        .map(id => (document.getElementById(id) || {}).value || '');
+      const scope = at.arbScope.trim();
+      const picks = [at.arbFirst, at.arbSecond];
       const roles = ['arbRoleFirst', 'arbRoleSecond'].map(arbRoleValue);
       if (!scope) { showToast('Say what this session is for.'); return; }
-      if (live.length < 2 || !picks[0] || !picks[1]) return;
+      if (live.length < 2 || !picks[0] || !picks[1] || !who) {
+        // Sayable now that a slot can fill itself: an empty one used to mean the conversation was
+        // short a member and there was nothing to be done about it from here.
+        showToast('Two agents and one to decide between them — + New starts a missing one.');
+        return;
+      }
       if (picks[0] === picks[1]) {
         showToast('Two different panes — one agent has nobody to talk to.');
         return;
@@ -732,8 +817,12 @@
       // while the scope was being written is said out loud rather than swallowed, and the form is
       // redrawn on what is free now — with the scope kept, because that is the part worth keeping.
       if (!free.some(x => x.pane_id === who)) {
-        arbDrawSetup(conv, scope);
-        showToast('That pane is busy now — pick another arbitrator.');
+        // Held in the list it was just dropped from, so the answer is still on screen while the
+        // sentence explaining it is read. An arbitrator started from this dialog a moment ago is
+        // the common case: it is `working` until its TUI comes up, and the relay refuses a busy
+        // one (N7) rather than briefing something that is not listening yet.
+        arbDrawSetup(conv, at);
+        showToast('That pane is not free — if it has just started, give it a moment.');
         return;
       }
       arbSend({

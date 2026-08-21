@@ -33,7 +33,8 @@ const SESSION = {
   last_decision: null,
 };
 
-function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) {
+function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
+              canStart = false} = {}) {
   const els = {};
   const el = id => {
     if (els[id]) return els[id];
@@ -47,7 +48,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
     }};
     return (els[id] = out);
   };
-  const sent = [], toasts = [], opened = [];
+  const sent = [], toasts = [], opened = [], spawned = [];
   let tabSyncs = 0;
   const g = {
     document: {getElementById: el},
@@ -72,6 +73,13 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
               removeItem: k => store.delete(k)};
     })(),
     armButton() {},
+    // Starting an agent belongs to the New agent dialog; what arbitration owns is which slot asked
+    // and what happens to the pane when it comes up.
+    canStartFromConv: () => canStart,
+    openNewAgent: slot => spawned.push(slot),
+    convMemberOf: a => ({key: key(a), added: 0, label: a.label}),
+    saveConvIndex: () => {},
+    sendTextTo() {},
     // The real one lives in start_dialog.js, which drags half the app in behind it. What this file
     // asserts about a badge is the two things arbitration puts there — which call it makes and
     // whether it is lit — so it stands in with the same shape rather than loading that module.
@@ -83,7 +91,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(SRC, g);
-  return {g, els, sent, toasts, opened, tabSyncs: () => tabSyncs};
+  return {g, els, sent, toasts, opened, spawned, tabSyncs: () => tabSyncs};
 }
 
 const setupHtml = (g, conv = CONV) =>
@@ -663,6 +671,77 @@ test('the brief can be given again, and is asked twice before it is', () => {
   g.arbCommand('arb_reinit');
   assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
                    [{type: 'arb_reinit', session: 's-20260817-1103'}]);
+});
+
+// --- A slot that starts its own agent ------------------------------------------------------------
+//
+// A room is often assembled from nothing: two fresh agents and something to decide between them.
+// Leaving the dialog to start each one loses every answer already in it, so each slot starts its
+// own — and the new pane lands in the slot that asked, with the page where it was.
+
+test('a slot offers to start its own agent only where the relay will start one', () => {
+  assert.equal(/\+ New/.test(setupHtml(ctx().g)), false, 'a relay that starts nothing offers none');
+  const {g, spawned} = ctx({canStart: true});
+  const html = setupHtml(g);
+  assert.equal((html.match(/arbSpawnFor/g) || []).length, 3, 'one per slot');
+  g.arbSpawnFor('arbFirst');
+  assert.deepEqual(spawned, ['arbFirst'], 'and it is the New agent dialog that starts it');
+});
+
+test('a pane started for a member slot joins the conversation and is chosen there', () => {
+  const PANE_D = {pane_id: 'w1:p4', label: 'Architect 2', agent: 'claude', cwd: '/d', host: 'local'};
+  const conv = {...CONV, members: [{key: key(PANE_A)}, {key: key(PANE_B)}]};
+  const {g, els, opened} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [conv],
+                                canStart: true});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Half a sen';
+  g.arbAdoptStarted(PANE_D, {slot: 'arbSecond', conv: 'c-1'});
+
+  assert.equal(conv.members.length, 3, 'a member of the conversation, because that is what it is');
+  assert.match(els.arbSetupBody.innerHTML,
+               /id="arbSecond"[\s\S]*?value="w1:p4" selected/, 'and chosen in the slot that asked');
+  assert.match(els.arbSetupBody.innerHTML, /Half a sen/, 'with everything already answered kept');
+  assert.deepEqual(opened, [], 'nothing is opened — the dialog is half filled in');
+});
+
+test('an arbitrator started for the slot stands outside the conversation, and is held while it boots', () => {
+  const PANE_D = {pane_id: 'w1:p4', label: 'Arbiter 2', agent: 'claude', cwd: '/d', host: 'local',
+                  status: 'working'};
+  const conv = {...CONV, members: [{key: key(PANE_A)}, {key: key(PANE_B)}]};
+  const {g, els} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [conv], canStart: true});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.arbAdoptStarted(PANE_D, {slot: 'arbWho', conv: 'c-1'});
+
+  assert.equal(conv.members.length, 2,
+               'the arbitrator is not a participant — it decides what happens between them');
+  // Still `working` while its TUI comes up, which is what drops a pane out of the candidate list.
+  assert.deepEqual(g.arbCandidates(conv).map(x => x.pane_id), ['w1:p3']);
+  assert.match(els.arbSetupBody.innerHTML, /id="arbWho"[\s\S]*?value="w1:p4" selected/,
+               'but the slot the person just filled does not empty itself under them');
+});
+
+test('an empty conversation can still be assembled, and two projects still cannot', () => {
+  const empty = {id: 'c-1', name: 'Nothing yet', members: []};
+  const cannot = ctx({convs: [empty]});
+  cannot.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  cannot.g.arbOpenFromConv();
+  assert.match(cannot.toasts.at(-1), /none live/, 'with no way to start one, that is the answer');
+
+  const can = ctx({convs: [empty], canStart: true});
+  can.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  can.g.arbOpenFromConv();
+  assert.match(can.els.arbSetupBody.innerHTML, /\+ New/, 'with one, the room is a slot away');
+
+  // The one refusal no new pane fixes: the conversation's own members are in two repositories.
+  const p = (a, id) => Object.assign({}, a, {project_id: id});
+  const split = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-b'), p(PANE_C, 'proj-a')],
+                     canStart: true});
+  split.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  split.g.arbOpenFromConv();
+  assert.match(split.toasts.at(-1), /everyone in one project/);
+  assert.equal(split.g.document.getElementById('arbSetupBody').innerHTML, '');
 });
 
 test('a badge writes its phrase into the line, and a second tap takes it out again', () => {

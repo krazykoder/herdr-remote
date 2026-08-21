@@ -821,13 +821,18 @@
     let newAgentKind = '';
     let newAgentRole = 0;
     let newAgentProject = '';
+    // Which arbitration slot asked for this one, or '' for the ordinary route in. A slot's start
+    // does not open the new pane: the person is half way through filling in the arbitration dialog
+    // behind this one, and landing them in a terminal is losing it.
+    let newAgentFor = '';
 
     // The relay must be willing to start, and there must be a Project to start into.
     function canStartFromConv() {
       return !!(startOptions && (startOptions.agents || []).length && projects.length);
     }
 
-    function openNewAgent() {
+    function openNewAgent(forSlot) {
+      newAgentFor = forSlot || '';
       closeDockMenu();
       if (!canStartFromConv()) { showToast('This relay does not start sessions.'); return; }
       const conv = loadConvIndex().find(c => c.id === convViewId);
@@ -850,6 +855,7 @@
     }
 
     function closeNewAgent() {
+      newAgentFor = '';
       document.getElementById('newAgentModal').style.display = 'none';
       closeDockMenu('newAgentProjMenu');
     }
@@ -930,8 +936,11 @@
       if (beside) msg.workspace_id = beside.workspace_id;
       // Joins this conversation when it comes up, and is opened with the role's prompt — the same
       // pair a respawn sets, which is what makes the new pane open on the thread and speak into it.
-      startIntent = {conv: convViewId};
-      startPrompt = roleStarter(role);
+      startIntent = newAgentFor
+        ? {arb: {slot: newAgentFor, conv: convViewId}} : {conv: convViewId};
+      // The arbitrator is briefed by the session, and that brief is the only thing that tells it
+      // what it is. A role's opening prompt would have it doing the work it is there to referee.
+      startPrompt = newAgentFor === 'arbWho' ? '' : roleStarter(role);
       showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
       closeNewAgent();
