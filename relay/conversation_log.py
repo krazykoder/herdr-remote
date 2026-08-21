@@ -21,7 +21,9 @@ the process an agent runs to read the record holds no code that could write it.
 """
 import json
 import os
+import functools
 import sqlite3
+import threading
 import time
 
 from conv_query import QUERY_ROWS_DEFAULT, as_wire, query  # noqa: F401  (re-exported for the relay)
@@ -136,6 +138,20 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def _locked(method):
+    """Serialise one operation over the connection — the fetches, not only the execute.
+
+    On the methods a thread can reach, which is all the public ones: the relay calls every one of
+    them through asyncio.to_thread. Re-entrant because they call each other — record_turn_end ends
+    in record, which ends in _prune.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class ConversationLog:
     """The writer. One per relay process; SQLite handles the rest."""
 
@@ -145,9 +161,20 @@ class ConversationLog:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, mode=0o700, exist_ok=True)
-        # check_same_thread=False: the relay writes from asyncio.to_thread, so the connection is
-        # touched from more than one thread but never from two at once — every write goes through
-        # the poll loop. A lock here would be guarding against a caller that does not exist.
+        # check_same_thread=False: every caller reaches this through asyncio.to_thread, so the
+        # connection is touched from a different thread each time — and, since the app learned to
+        # walk a thread backwards, from several at once: one poll loop writing turns while two
+        # clients page through the record.
+        #
+        # That caller used to not exist, and the lock below used to not be here. Two threads on one
+        # connection share one cached prepared statement per SQL text, and one resetting it under
+        # the other returns rows shaped like nobody's query — `PRAGMA table_info` answering with a
+        # one-column row, a SELECT built from no columns at all. It surfaces as an IndexError or a
+        # syntax error somewhere innocent, never as the race it is.
+        #
+        # Held across the whole operation, not just the execute: a cursor is iterated lazily, so
+        # releasing after execute() would leave the fetches racing exactly as before.
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -165,9 +192,11 @@ class ConversationLog:
             if name not in have:
                 self.conn.execute(f"ALTER TABLE turns ADD COLUMN {name} {decl}")
 
+    @_locked
     def close(self):
         self.conn.close()
 
+    @_locked
     def knows_directory(self, host, cwd):
         """Has this relay ever recorded a turn in this directory on this host?
 
@@ -180,6 +209,7 @@ class ConversationLog:
             "SELECT 1 FROM turns WHERE host=? AND cwd=? LIMIT 1",
             (host or "local", cwd or "")).fetchone() is not None
 
+    @_locked
     def last_commit(self, host, cwd):
         """The commit the last recorded turn for this directory was at, or ''.
 
@@ -193,6 +223,7 @@ class ConversationLog:
             " ORDER BY at DESC, id DESC LIMIT 1", (host or "local", cwd or "")).fetchone()
         return row["commit_sha"] if row else ""
 
+    @_locked
     def last_branch(self, host, cwd):
         """The branch the last recorded turn for this directory was on, or ''.
 
@@ -208,6 +239,7 @@ class ConversationLog:
 
     # --- writing ---
 
+    @_locked
     def record(self, *, agent, pane_id, kind, origin, at_src, host="local", cwd="", label="",
                project="", text="", tail="", span=None, status_from=None, status_to=None,
                at=None, decision_id=None, git=None):
@@ -245,6 +277,7 @@ class ConversationLog:
         self._prune()
         return row.lastrowid
 
+    @_locked
     def record_turn_end(self, pane, content, status_from, status_to, at=None, git=None):
         """A pane that just stopped working, from the content of its pane.
 
@@ -430,6 +463,7 @@ class ConversationLog:
 
     # --- reading ---
 
+    @_locked
     def query(self, **selectors):
         """The same bounded read conv_query gives an agent, for the relay's own answers."""
         return query(self.conn, **selectors)

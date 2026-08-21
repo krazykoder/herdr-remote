@@ -13,6 +13,7 @@ import json
 import re
 import sqlite3
 import sys
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -377,6 +378,55 @@ class Fingerprints(unittest.TestCase):
     def test_the_roster_a_client_may_name_is_bounded(self):
         self.assertEqual(len(fingerprints_from([["h", "a", "c"]] * (FINGERPRINTS_MAX + 20))),
                          FINGERPRINTS_MAX)
+
+
+class Concurrency(unittest.TestCase):
+    """One connection, many threads — which is what the relay became.
+
+    The record used to be written by the poll loop and read by nobody else, and its connection was
+    shared on that basis. Then the thread learned to be walked backwards, and several client
+    handlers began querying it at once while the loop kept writing. Two threads on one sqlite3
+    connection share one cached prepared statement per SQL text; one resetting it under the other
+    hands back rows belonging to neither query, and it lands as `PRAGMA table_info` returning a
+    row too short to index or a SELECT built from no columns at all.
+    """
+
+    def test_readers_and_a_writer_do_not_corrupt_each_others_statements(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = ConversationLog(str(Path(d) / "c.sqlite3"))
+            self.addCleanup(log.close)
+            for i in range(30):
+                log.record(kind="agent_final", pane_id=f"w1:p{i % 3}", host="local",
+                           agent="claude", cwd="/x", text=f"turn {i}", at=1000 + i,
+                           origin="agent", at_src="poll")
+
+            failures = []
+
+            def read():
+                for _ in range(150):
+                    try:
+                        log.query(last=5)
+                    except Exception as e:      # noqa: BLE001 — the failure is the assertion
+                        failures.append(e)
+                        return
+
+            def write():
+                for i in range(80):
+                    try:
+                        log.record(kind="agent_final", pane_id="w1:p9", host="local",
+                                   agent="codex", cwd="/y", text=f"w{i}", at=9000 + i,
+                                   origin="agent", at_src="poll")
+                    except Exception as e:      # noqa: BLE001
+                        failures.append(e)
+                        return
+
+            threads = [threading.Thread(target=read) for _ in range(6)]
+            threads.append(threading.Thread(target=write))
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(failures, [], f"{len(failures)} thread(s) failed: {failures[:1]}")
 
 
 if __name__ == "__main__":

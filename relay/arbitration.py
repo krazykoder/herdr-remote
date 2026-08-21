@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 
 from arbitrator import MAX_INSTRUCTION, validate
@@ -365,15 +366,42 @@ class Arbitration:
         if parent:
             os.makedirs(parent, mode=0o700, exist_ok=True)
         os.makedirs(self.dir, mode=0o700, exist_ok=True)
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA foreign_keys=ON")
+        self._local = threading.local()
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
+    @property
+    def conn(self):
+        """This thread's connection. One per thread, never one shared between them.
+
+        Every method here is reached through asyncio.to_thread — the poll loop firing a trigger,
+        a client asking for a session's decisions, another ending it — so the connection is
+        touched from several threads at once. Two threads on one sqlite3 connection share one
+        cached prepared statement per SQL text, and one resetting it under the other returns rows
+        belonging to neither query. It surfaces far from the race, as a short row or a SELECT
+        built from no columns.
+
+        A lock would do it too, and is what the conversation log next door uses. Not here: `start`
+        and `prompt` type into a pane and wait for it to confirm, which is seconds of herdr calls,
+        and a lock wide enough to cover their writes would hold every reader off for all of it.
+        WAL lets these connections read while one writes; busy_timeout covers the moment two want
+        to write at once.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = conn
+        return conn
+
     def close(self):
-        self.conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
     def _send(self, pane_id, text):
         """Deliver, and say whether it was *proven* delivered. False is never guessed into a yes.
