@@ -529,6 +529,11 @@ All must hold, checked in this order, each with its own error:
 1. `HERDR_ENABLE_ARBITER=1` **and** `HERDR_ENABLE_WRITE_EXT=1` **and** `HERDR_CONV_LOG=1`.
 2. No other session is running — `active` **or** `awaiting`.
 3. Exactly **two** members are enrolled (v1, §14.1), plus one arbitrator, all distinct panes.
+3b. Every participant resolves to the same `project_id`. A pane with a project and a pane without
+   one are two different answers and refused as such. With no Projects configured nothing carries
+   one and this cannot refuse anything — an arbitrator reading agents in an unrelated checkout is
+   deciding about work it cannot see, and there is no such thing to detect when the relay has not
+   been told what a project is.
 4. Every member and the arbitrator resolve to exactly one live pane by fingerprint.
 5. All participants are on `host = 'local'` (v1, D13).
 6. `scope` is non-empty and ≤ 4 000 characters.

@@ -1051,6 +1051,56 @@ class RosterEdits(Harness):
         self.assertEqual("p3", out["pane_id"])
 
 
+class OneProject(Harness):
+    """Everybody in the same project, or nobody arbitrates.
+
+    An arbitrator reading two agents in an unrelated checkout is deciding about work it cannot
+    see, and every instruction it writes lands in the wrong repository. `project_id` is the
+    person's own grouping, resolved by the relay — not a guess off a directory name.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for p in self.live:
+            p["project_id"] = "proj-a"
+
+    def test_a_participant_in_another_project_is_refused_at_start(self):
+        self.live[1]["project_id"] = "proj-b"
+        with self.assertRaises(ArbiterError) as caught:
+            self.start()
+        self.assertEqual("project_mismatch", caught.exception.code)
+
+    def test_an_arbitrator_in_another_project_is_refused_too(self):
+        self.live[2]["project_id"] = "proj-b"
+        with self.assertRaises(ArbiterError) as caught:
+            self.start()
+        self.assertEqual("project_mismatch", caught.exception.code)
+
+    def test_a_pane_with_no_project_is_not_the_same_as_one_with_a_project(self):
+        self.live[1].pop("project_id")
+        with self.assertRaises(ArbiterError) as caught:
+            self.start()
+        self.assertEqual("project_mismatch", caught.exception.code)
+
+    def test_a_swap_cannot_move_the_roster_out_from_under_the_arbitrator(self):
+        s = self.start()
+        outsider = pane("p3", agent="codex", cwd="/elsewhere")
+        outsider["project_id"] = "proj-b"
+        self.live.append(outsider)
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.set_members(s["id"], [self.live[0], outsider])
+        self.assertEqual("project_mismatch", caught.exception.code)
+        self.assertEqual(["p1", "p2"],
+                         [m["pane_id"] for m in self.arb.roster(s["id"]).values()])
+
+    def test_with_no_projects_configured_nothing_is_refused(self):
+        # N10 in its smallest form: the relay annotates nothing when Projects are off, so no pane
+        # has a project, there is nothing to be the same of, and this check cannot fire.
+        for p in self.live:
+            p.pop("project_id")
+        self.assertEqual("active", self.start()["state"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

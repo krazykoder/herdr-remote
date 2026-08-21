@@ -575,6 +575,19 @@ class Arbitration:
             if host != "local":
                 raise ArbiterError("remote_participant", host)
             out.append({**actual, "role": p.get("role") or ""})
+        # One project for everyone. An arbitrator reading two agents in an unrelated checkout is
+        # deciding about work it cannot see, and every instruction it writes then lands in the
+        # wrong repository — which is the one failure here that costs somebody a morning rather
+        # than a re-prompt.
+        #
+        # `project_id` is set only where the relay has Projects configured and the pane's cwd is
+        # under one, so a pane that has one and a pane that has none are two different answers and
+        # refused as such. With no Projects configured at all nothing has one, there is nothing to
+        # be the same of, and this cannot refuse anything — off means off (N10).
+        projects = {p.get("project_id") or "" for p in out}
+        if len(projects) > 1:
+            raise ArbiterError("project_mismatch",
+                               ", ".join(sorted(x or "no project" for x in projects)))
         return out
 
     # --- lifecycle ---
@@ -685,9 +698,10 @@ class Arbitration:
         arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
         if arb is None:
             raise ArbiterError("arbitrator_gone")
-        if arb in [p.get("pane_id") for p in members]:
-            raise ArbiterError("duplicate_participant", arb)
-        enrolled = self._enrol(members)
+        # The arbitrator rides along so the roster is checked *against* it — same project, and not
+        # one of the two — and is dropped again: `_enrol` validates participants, and which of them
+        # are members is this method's business.
+        enrolled = self._enrol([*members, {"pane_id": arb}])[:MEMBERS_REQUIRED]
         # N7, and the same refusal `start` makes: the announcement is a keystroke, and a pane
         # mid-turn is where a keystroke goes missing. Refused rather than paused — nothing has
         # changed yet, and the person can do it a moment later.

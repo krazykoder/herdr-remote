@@ -364,6 +364,23 @@
       return (conv.members || []).filter(m => live.has(m.key));
     }
 
+    // Put entries into a thread at the time they happened, without disturbing the thread.
+    //
+    // Not `concat().sort()`. The record's own order is authoritative and is not a sort by `at`:
+    // two entries can share a stamp, and a reply backfilled from a pane read can carry a stamp
+    // earlier than the input that prompted it. Sorting the whole thread by time reordered
+    // messages that were already in the right place — which is a thread telling a different story
+    // than the one that happened.
+    function convInsertByTime(entries, extra) {
+      const out = entries.slice();
+      for (const e of extra) {
+        let i = out.length;
+        while (i > 0 && convAt(out[i - 1]) > convAt(e)) i--;
+        out.splice(i, 0, e);
+      }
+      return out;
+    }
+
     // The thread, composed from the store and from nothing else. No pane, no view, no selection —
     // a conversation is a record, and reading one must not require a live pane to read it through.
     // What a pane is saying mid-turn is not in here at all: it is not settled in either source, and
@@ -386,10 +403,17 @@
         const rec = by.get(e.key || (recs[0] || {}).key) || {};
         return Object.assign({}, e, { label: rec.label, agent: e.agent || (rec.spawn || {}).agent });
       });
+      // What the arbitrator decided, folded in by time. Display only, and only that: nothing here
+      // touches `recs`, the conversation's members, or anything that is written down. The
+      // arbitrator is not in this conversation and does not become part of it by being drawn in it
+      // — turning the toggle off leaves the record exactly what it was.
+      const arbEntries = typeof arbThreadEntries === 'function'
+        ? arbThreadEntries(conv && conv.id) : [];
+      const withArb = arbEntries.length ? convInsertByTime(all, arbEntries) : all;
       // `all` and `entries` both, because "nothing recorded" and "everything recorded is
       // provisional" are different empty states and the view says so differently.
-      return { recs: recs, joint: joint, all: all,
-        entries: convFinalOnly() ? all.filter(e => !convProvisional(e)) : all };
+      return { recs: recs, joint: joint, all: withArb,
+        entries: convFinalOnly() ? withArb.filter(e => !convProvisional(e)) : withArb };
     }
 
     // Both halves of the switch: the button that offers it and the view it selects.
@@ -788,6 +812,30 @@
       const gitSeen = new Map();
       return entries.map((e, i) => {
         const at = convAt(e);
+        // The arbitrator, which is a different kind of thing from a message and is drawn as one.
+        // It is not a speaker in this conversation — it has no side, no member colour and no
+        // selection tick, because a decision is not a message anyone can quote back at an agent.
+        // What it says is why, and under it, in the same shape the commit strip uses for the other
+        // "this happened between two messages" fact, the gate and the agent that was called.
+        if (e.who === 'arbiter') {
+          const when = convClock(e);
+          const badge = e.toAgent ? agentBadge(e.toAgent) : '';
+          const gate = escapeHtml(e.gate || 'decided');
+          // The member's own label and never `member-2`. That id is this session's bookkeeping and
+          // the person reading the thread never agreed to it.
+          const to = escapeHtml(e.to || '');
+          const rail = `<div class="conv-arb-to">` +
+            `<span class="conv-commits-lede">${gate}</span>` +
+            (to ? `<span class="conv-commit">${badge}${to}</span>` : '') +
+            // Said out loud, because the alternative is a decision that looks executed and was not.
+            (e.delivered ? '' : '<span class="conv-commit warn">not confirmed</span>') +
+            '</div>';
+          last = at;
+          return `<div class="conv-arb"><span class="conv-arb-who">⚖ ` +
+            `${escapeHtml(e.label || 'Arbitrator')}` +
+            (when ? `<span class="conv-time">${escapeHtml(when)}</span>` : '') +
+            `</span>${escapeHtml(e.text || '')}</div>${rail}`;
+        }
         // How long the thread was not being recorded for, when both ends of the break are known —
         // "41 min" is the fact; "recording resumed" is all there is to say without a previous entry.
         const rule = e.gap

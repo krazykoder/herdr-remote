@@ -19,11 +19,20 @@
     // sentence taken out from under someone is not answered by anything.
     let arbFormPanes = null;
     let arbFormConv = '';
+    // The crew picker on a *running* session: null when closed, the frozen live-member list when
+    // open. Frozen for the same reason the start form's list is — it is derived from live pane
+    // status, and a member going `working` mid-edit would rebuild the element under the person
+    // choosing from it.
+    let arbCrew = null;
     let arbHtmlLast = '';
-    // The detail sheet: what the arbitrator was given, what it decided, and what was typed as a
-    // result. Fetched and never pushed — it carries prose, which the relay answers only to the
-    // client that asked (§15.2) — so it exists only while a sheet is open on one session.
-    let arbDetail = null, arbDetailFor = '';
+    // What the arbitrator was given, what it decided, and what was typed as a result. Fetched and
+    // never pushed — it carries prose, which the relay answers only to the client that asked
+    // (§15.2) — and held once for the two readers of it: the detail sheet, and the bubbles the
+    // thread draws from the same rows.
+    //
+    // `arbDetailSeq` is the sequence of the last decision the held copy covers, so a re-ask happens
+    // when the session actually decided something and not on every poll that repeats a budget.
+    let arbDetail = null, arbDetailFor = '', arbDetailSeq = -1;
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
@@ -32,7 +41,11 @@
       arbSession = null;
       arbFormPanes = null;
       arbFormConv = '';
+      arbCrew = null;
       arbHtmlLast = '';
+      arbDetail = null;
+      arbDetailFor = '';
+      arbDetailSeq = -1;
       closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
@@ -44,6 +57,7 @@
     function arbReceiveSessions(msg) {
       arbOn = true;
       arbSession = (msg.sessions || [])[0] || null;
+      arbAskDetail(arbSession);
       arbRender();
       syncBrowserTab();
     }
@@ -58,6 +72,7 @@
       arbSession = s.state === 'ended' ? null : s;
       if (s.state !== 'ended') { arbFormPanes = null; arbFormConv = ''; }
       if (s.state === 'paused' && !(was && was.state === 'paused')) arbAlertPause(s);
+      arbAskDetail(arbSession);
       arbRender();
       syncBrowserTab();
     }
@@ -120,12 +135,102 @@
       return (conv.members || []).map(m => live.get(m.key)).filter(Boolean);
     }
 
-    // Everything live that is not in this conversation. The arbitrator is deliberately outside it:
-    // it is not a participant in the conversation, it is the thing deciding what happens in it.
+    // The project everyone in this session has to be in, or null if the conversation's own live
+    // members do not agree on one. The relay refuses a roster that spans two projects — an
+    // arbitrator reading agents in an unrelated checkout is deciding about work it cannot see —
+    // so a picker that offered one would be offering a refusal.
+    function arbProject(conv) {
+      const live = arbLiveMembers(conv);
+      const ids = new Set(live.map(x => x.project_id || ''));
+      return ids.size === 1 ? (live[0].project_id || '') : null;
+    }
+
+    // Everything live that is not in this conversation, and is in its project. The arbitrator is
+    // deliberately outside the conversation: it is not a participant in it, it is the thing
+    // deciding what happens in it — but it is in the same repository, or it cannot read the work.
     function arbCandidates(conv) {
       const taken = new Set((conv.members || []).map(m => m.key));
+      const project = arbProject(conv);
+      if (project === null) return [];
       return agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)) &&
+        (x.project_id || '') === project &&
         x.status !== 'working' && x.status !== 'blocked');
+    }
+
+    // Whether the thread shows what the arbitrator decided, as bubbles among the messages. A
+    // per-device reading preference like the record and commit toggles beside it — and on by
+    // default, because a session running with its decisions hidden is the state this whole feature
+    // was invisible in.
+    const ARB_BUBBLES_KEY = 'herdr_arb_bubbles';
+
+    function arbBubblesOn() {
+      try { return localStorage.getItem(ARB_BUBBLES_KEY) !== 'off'; } catch (e) { return true; }
+    }
+
+    function toggleArbBubbles() {
+      const on = !arbBubblesOn();
+      try { localStorage.setItem(ARB_BUBBLES_KEY, on ? 'on' : 'off'); }
+      catch (e) { /* private mode: this session only */ }
+      if (on) arbAskDetail(arbSession);
+      arbRender();
+      if (typeof renderConvView === 'function') renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+      showToast(on ? 'Showing what the arbitrator decided' : 'Hiding the arbitrator');
+      if (window.cue) cue('toggle');
+    }
+
+    // Ask for the decisions, unless the held copy already covers them. Called on every session
+    // update, which is how a bubble appears at the moment the decision does rather than the next
+    // time somebody opens the sheet.
+    function arbAskDetail(session) {
+      if (!session || !arbBubblesOn()) return;
+      // Silently, unlike a command: this is a background read nobody asked for, and a "Not
+      // connected" toast for it would be a toast about a poll. Returning before anything is marked
+      // as held is what makes the reconnect's own `arb_sessions` ask again.
+      if (!ws || ws.readyState !== 1) return;
+      const seq = (session.last_decision || {}).sequence || 0;
+      if (arbDetailFor === session.id && arbDetailSeq >= seq) return;
+      if (arbDetailFor !== session.id) arbDetail = null;   // never the previous session's
+      arbDetailFor = session.id;
+      arbDetailSeq = seq;
+      arbSend({type: 'arb_detail', session: session.id});
+    }
+
+    // A key that is not a member key. Every real one is a JSON array of four strings, so this
+    // cannot collide with a pane — which matters because the thread filters, colours and hides
+    // bubbles by key, and an arbitrator bubble must not answer to any of it.
+    const ARB_ENTRY_KEY = 'arbitrator';
+
+    // The arbitrator's decisions as thread entries, for the conversation being read.
+    //
+    // **Not the arbitrator's pane.** What is drawn is what it *decided* — the gate, who it called
+    // and the sentence it wrote about why — and never what its terminal was showing while it
+    // worked that out. And never enrolled: this is a list built for a render, and nothing here
+    // touches the conversation's roster, its record or its stored members. Turning the toggle off
+    // leaves the conversation byte for byte what it was.
+    //
+    // Refusals stay in the detail sheet. A record the relay rejected is a fact about the
+    // arbitrator having a bad minute, not a step in the conversation.
+    function arbThreadEntries(convId) {
+      const s = arbSession;
+      if (!s || !arbBubblesOn() || !convId || s.conversation !== convId) return [];
+      if (!Array.isArray(arbDetail)) return [];
+      const arb = s.arbitrator || {};
+      const members = s.members || [];
+      return arbDetail.filter(d => d.valid).map(d => {
+        const to = members.find(m => m.id === d.to);
+        return {
+          who: 'arbiter', text: d.why || '', at: d.at || 0, seen: d.at || 0, at_src: 'sent',
+          key: ARB_ENTRY_KEY, member: 0, live: true, kind: 'decision',
+          label: arb.label || 'Arbitrator', agent: arb.agent || '',
+          gate: d.gate || '',
+          // The agent's own name, because `member-2` is an id this session made up and the person
+          // reading the thread has never agreed to it. Its kind rides along for the badge.
+          to: d.gate === 'call_human' ? 'you' : (to ? (to.label || d.to) : (d.to || '')),
+          toAgent: to ? to.agent || '' : '',
+          delivered: !!d.send,
+        };
+      });
     }
 
     function arbStateLabel(s) {
@@ -146,14 +251,26 @@
       return `${d.gate || '?'} · ${who} · ${d.why || ''}`;
     }
 
-    // Only what a person can act on. `working` is what an arbitrator mid-decision looks like and is
-    // not news; `blocked` is a question waiting in a pane, and a session that will not move until
-    // somebody answers it.
+    // The way to the arbitrator's own pane, which is a place a person is allowed to go.
+    //
+    // It used to appear only when the pane was `blocked`. But talking to the arbitrator directly —
+    // correcting its reading of the scope, answering a question it asked in its own terminal — is
+    // an ordinary thing to want, and a session where the only route to the deciding agent is
+    // hunting for it in the pane list is one nobody talks to. So the button is always here, and
+    // `blocked` only changes what it says: that one is a permission prompt nobody is looking at,
+    // and from a strip it is indistinguishable from thinking.
+    //
+    // What it opens is a pane like any other. Typing there is still asked twice — see
+    // `arbGuardSend` — because what is typed at an arbitrator is read by something whose whole
+    // instruction is to answer with a file.
     function arbArbitratorNote(s) {
       const arb = s.arbitrator || {};
-      if (arb.status !== 'blocked' || !arb.pane_id) return '';
-      return `<button class="arb-btn warn" onclick="openTerminal('${escapeHtml(arb.pane_id)}')">` +
-        '⚖ Arbitrator needs you</button>';
+      if (!arb.pane_id) return '';
+      const blocked = arb.status === 'blocked';
+      return `<button class="arb-btn${blocked ? ' warn' : ''}" ` +
+        `onclick="openTerminal('${escapeHtml(arb.pane_id)}')" ` +
+        `aria-label="Open the arbitrator's pane">⚖ ` +
+        (blocked ? 'Arbitrator needs you' : escapeHtml(arb.label || 'Arbitrator')) + '</button>';
     }
 
     function arbBudgetLine(s) {
@@ -164,10 +281,28 @@
     // The strip, or the way to start one, or nothing. Pure so the shape of every state can be
     // asserted without a browser — which matters more here than usual, because the states that go
     // wrong are the ones a person is least likely to be sitting in front of.
-    function arbStripHtml(session, conv, on, formPanes) {
+    function arbStripHtml(session, conv, on, formPanes, crew) {
       if (!on || !conv) return '';
       if (session && session.conversation === conv.id) {
         const s = session, paused = s.state === 'paused';
+        // Refused by the relay while a decision is outstanding, and said here rather than
+        // discovered as an error: a prompt is already with the arbitrator naming the roster as it
+        // was, and a decision answering it that named someone who left would be recorded as the
+        // arbitrator's mistake.
+        if (crew) {
+          const ids = (s.members || []).map(m => m.pane_id);
+          return '<div class="arb-form">' +
+            `<p class="arb-who">Who ${escapeHtml((s.arbitrator || {}).label || 'the arbitrator')}` +
+            ' is watching</p>' +
+            arbPaneSelect('arbCrewA', crew, ids[0], 'First') +
+            arbPaneSelect('arbCrewB', crew, ids[1], 'Second') +
+            (s.state === 'awaiting'
+              ? '<p class="arb-who">A decision is in the air. This can be changed once it lands, ' +
+                'or after a Pause.</p>' : '') +
+            '<div class="arb-form-actions">' +
+            '<button class="arb-btn" onclick="arbToggleCrew()">Cancel</button>' +
+            '<button class="arb-btn go" onclick="arbSetCrew()">Change</button></div></div>';
+        }
         return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
           `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
           // The arbitrator's own pane, when it is the thing holding the session up. A blocked
@@ -179,6 +314,18 @@
           `<button class="arb-last" onclick="arbOpenDetail()"` +
           ` aria-label="What this session decided">${escapeHtml(arbLastLine(s))}</button>` +
           `<span class="arb-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
+          // On the strip and not in the pane menu with the other reading toggles: this one is only
+          // ever a question while a session is running, and the strip is the only thing on screen
+          // that exists exactly then.
+          `<button class="arb-btn quiet" onclick="toggleArbBubbles()"` +
+          ` aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
+          ` aria-label="Show what the arbitrator decided, in the thread">` +
+          `${arbBubblesOn() ? '⚖ shown' : '⚖ hidden'}</button>` +
+          // Who it is watching, and the way to change it. Attach, detach and swap are one edit —
+          // the roster is replaced whole — so this opens the same picker the start form uses.
+          `<button class="arb-btn" onclick="arbToggleCrew()"` +
+          ` aria-label="Change who this session is arbitrating between">` +
+          `${escapeHtml((s.members || []).map(m => m.label || m.id).join(' · '))}</button>` +
           (paused
             ? '<button class="arb-btn" onclick="arbCommand(\'arb_resume\')">Resume</button>'
             : '<button class="arb-btn" onclick="arbCommand(\'arb_pause\')">Pause</button>') +
@@ -190,15 +337,21 @@
       }
       if (session) return '';   // running, but over some other conversation
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
-      if (live.length !== 2 || !free.length) return '';
+      // Two *or more*: which two is the person's choice, not the conversation's size. Requiring
+      // exactly two is what made a three-member conversation silently un-arbitratable.
+      if (live.length < 2 || !free.length) return arbWhyNotHtml(live, free, arbProject(conv));
       if (!formPanes || !formPanes.length) {
         return '<div class="arb-strip idle"><button class="arb-btn" onclick="arbToggleForm()">' +
           '⚖ Arbitrate</button></div>';
       }
       return '<div class="arb-form">' +
-        `<p class="arb-who">${escapeHtml(live.map(paneLabel).join(' · '))}</p>` +
         '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop."></textarea></label>' +
+        // The two being arbitrated, named rather than assumed. In a two-member conversation these
+        // are the only answer and the selects say so by having one option each; past two they are
+        // the question the strip used to refuse to ask.
+        arbPaneSelect('arbFirst', live, (live[0] || {}).pane_id, 'First') +
+        arbPaneSelect('arbSecond', live, (live[1] || {}).pane_id, 'Second') +
         '<label>Arbitrator<select id="arbWho">' +
         formPanes.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
           `</option>`).join('') + '</select></label>' +
@@ -218,6 +371,53 @@
     // off is the default for both — a clock nobody asked for is an unattended loop spending budget.
     const ARB_IDLE_CHOICES = [0, 5, 15, 30];
     const ARB_RUNTIME_CHOICES = [0, 15, 30, 60];
+
+    // One pane select. Every picker here is the same question — which of these panes — and the
+    // three of them differing only in their id is what keeps the markup honest about that.
+    function arbPaneSelect(id, panes, selected, label) {
+      return `<label>${escapeHtml(label)}<select id="${id}">` +
+        panes.map(x => `<option value="${escapeHtml(x.pane_id)}"` +
+          `${x.pane_id === selected ? ' selected' : ''}>${escapeHtml(paneLabel(x))}</option>`)
+          .join('') + '</select></label>';
+    }
+
+    // Why there is no Arbitrate button, instead of no button. A strip that draws nothing is
+    // indistinguishable from a broken one — and this was the bug: a conversation with three
+    // members, or with every other pane busy, silently had no arbitration at all and no way to
+    // find out why. Both reasons are things a person can act on.
+    function arbWhyNotHtml(live, free, project) {
+      const why = live.length < 2
+        ? 'Arbitration watches two agents talk. This conversation has ' +
+          (live.length === 1 ? 'one live member.' : 'none live.')
+        : project === null
+        ? 'Arbitration needs everyone in one project, and this conversation spans more than one.'
+        : 'Arbitration needs a third agent in this project to decide, and every other pane here ' +
+          'is busy right now.';
+      return `<div class="arb-strip idle"><span class="arb-state">${escapeHtml(why)}</span></div>`;
+    }
+
+    function arbToggleCrew() {
+      const conv = loadConvIndex().find(c => c.id === convCurrentId());
+      arbCrew = arbCrew ? null : (conv ? arbLiveMembers(conv) : null);
+      arbRender();
+    }
+
+    // The roster of a running session, replaced whole — which is what attach, detach and swap all
+    // are when the size is fixed at two. The arbitrator, its brief, the budget and everything it
+    // has already decided stay exactly where they are; that is the point of editing rather than
+    // starting again.
+    function arbSetCrew() {
+      const picks = ['arbCrewA', 'arbCrewB']
+        .map(id => (document.getElementById(id) || {}).value || '');
+      if (!picks[0] || !picks[1]) return;
+      if (picks[0] === picks[1]) {
+        showToast('Two different panes — one agent has nobody to talk to.');
+        return;
+      }
+      arbCommand('arb_members', {members: picks.map(pane_id => ({pane_id: pane_id}))});
+      arbCrew = null;
+      arbRender();
+    }
 
     function arbClockOptions(choices) {
       return choices.map(m => `<option value="${m}">${m ? m + ' min' : 'Never'}</option>`).join('');
@@ -251,7 +451,8 @@
         arbFormPanes = null;
         arbFormConv = '';
       }
-      const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes);
+      if (arbCrew && !(arbSession && conv && arbSession.conversation === conv.id)) arbCrew = null;
+      const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes, arbCrew);
       if (html !== arbHtmlLast) { arbHtmlLast = html; el.innerHTML = html; }
     }
 
@@ -268,8 +469,14 @@
       const live = arbLiveMembers(conv), free = arbCandidates(conv);
       const scope = ((document.getElementById('arbScope') || {}).value || '').trim();
       const who = (document.getElementById('arbWho') || {}).value || '';
+      const picks = ['arbFirst', 'arbSecond']
+        .map(id => (document.getElementById(id) || {}).value || '');
       if (!scope) { showToast('Say what this session is for.'); return; }
-      if (live.length !== 2) return;
+      if (live.length < 2 || !picks[0] || !picks[1]) return;
+      if (picks[0] === picks[1]) {
+        showToast('Two different panes — one agent has nobody to talk to.');
+        return;
+      }
       // The frozen list is what was on screen; this is the live one. A pane that started working
       // while the scope was being written is said out loud rather than swallowed, and the form is
       // redrawn on what is free now — with the scope kept, because that is the part worth keeping.
@@ -283,7 +490,7 @@
       }
       arbSend({
         type: 'arb_start', conversation: conv.id, scope: scope,
-        members: live.map(a => ({ pane_id: a.pane_id })),
+        members: picks.map(pane_id => ({ pane_id: pane_id })),
         arbitrator: { pane_id: who },
         triggers: { on_turn_end: true, idle_ms: arbClockValue('arbIdle'),
                     runtime_ms: arbClockValue('arbRuntime') },
@@ -350,30 +557,39 @@
 
     function arbOpenDetail() {
       if (!arbSession) return;
-      arbDetail = null;                 // never the previous session's, not even for a frame
-      arbDetailFor = arbSession.id;
+      if (arbDetailFor !== arbSession.id) arbDetail = null;   // never the previous session's
       const el = document.getElementById('arbSheet');
       if (el) el.style.display = 'block';
       arbRenderDetail();
+      // Unconditionally, unlike the bubbles' own ask: the sheet is somebody looking now, and the
+      // held copy may be a poll old. It is the same round trip either way.
+      arbDetailFor = arbSession.id;
+      arbDetailSeq = (arbSession.last_decision || {}).sequence || 0;
       arbSend({type: 'arb_detail', session: arbSession.id});
     }
 
+    // Closing the sheet hides the sheet. The decisions stay: the thread is drawing bubbles from
+    // the same copy, and throwing it away here would blank them until the next decision arrived.
+    // `arbReset` is what drops it, because that is the one event that makes it another relay's.
     function closeArbDetail() {
-      arbDetail = null;
-      arbDetailFor = '';
       const el = document.getElementById('arbSheet');
       if (el) el.style.display = 'none';
     }
 
-    // Ignored unless it answers the sheet that is open. A late answer to a session that has since
+    // Ignored unless it answers the session being held. A late answer to a session that has since
     // ended is prose about something else entirely.
     function arbReceiveDetail(msg) {
       if (!arbDetailFor || (msg.session || '') !== arbDetailFor) return;
       arbDetail = Array.isArray(msg.decisions) ? msg.decisions : [];
       arbRenderDetail();
+      // And the thread, which draws from the same rows. Only when there is one on screen — this
+      // arrives on every decision, and a render is not free.
+      if (typeof convCurrentId === 'function' && convCurrentId() &&
+          typeof renderConvView === 'function') renderConvView();
+      if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
     }
 
-    function arbCommand(type) {
+    function arbCommand(type, extra) {
       if (!arbSession) return;
-      arbSend({ type: type, session: arbSession.id });
+      arbSend(Object.assign({ type: type, session: arbSession.id }, extra || {}));
     }

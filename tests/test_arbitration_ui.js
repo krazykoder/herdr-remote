@@ -51,6 +51,12 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1} = {}) 
     convCurrentId: () => 'c-1',
     showToast: t => toasts.push(t),
     syncBrowserTab: () => { tabSyncs++; },
+    localStorage: (() => {
+      const store = new Map();
+      return {getItem: k => (store.has(k) ? store.get(k) : null),
+              setItem: (k, v) => store.set(k, String(v)),
+              removeItem: k => store.delete(k)};
+    })(),
     armButton() {},
   };
   g.globalThis = g;
@@ -107,12 +113,31 @@ test('an ended session leaves no strip behind', () => {
   assert.equal(g.arbStripHtml(null, CONV, true, false).includes('Arbitrating'), false);
 });
 
-test('a conversation that is not two live panes is not offered arbitration', () => {
-  // v1 runs one shape: two members and an arbitrator outside them. Everything else gets no
-  // button rather than a refusal after the tap.
-  assert.equal(ctx({live: [PANE_A, PANE_C]}).g.arbStripHtml(null, CONV, true, false), '');
-  assert.equal(ctx({live: [PANE_A, PANE_B]}).g.arbStripHtml(null, CONV, true, false), '',
-               'no pane outside the conversation is no arbitrator');
+test('a conversation that cannot be arbitrated says which half is missing', () => {
+  // v1 runs one shape: two members and an arbitrator outside them. What is missing used to be
+  // drawn as nothing at all — and a strip that renders nothing is indistinguishable from a broken
+  // one. Both of these are things a person can fix, so both say so.
+  const oneMember = ctx({live: [PANE_A, PANE_C]}).g.arbStripHtml(null, CONV, true, false);
+  assert.match(oneMember, /one live member/);
+
+  const noArbiter = ctx({live: [PANE_A, PANE_B]}).g.arbStripHtml(null, CONV, true, false);
+  assert.match(noArbiter, /third agent/);
+  assert.equal(/Arbitrate</.test(noArbiter), false, 'and offers no button it would refuse');
+});
+
+test('a conversation of three offers arbitration over a chosen two', () => {
+  // The bug this fixes: `live.length !== 2` blanked the strip, so a conversation with a third
+  // member had no arbitration and no way to find out why.
+  const PANE_D = {pane_id: 'w1:p4', label: 'Architect 2', agent: 'claude', cwd: '/d', host: 'local'};
+  const three = {id: 'c-1', name: 'Footer',
+                 members: [{key: key(PANE_A)}, {key: key(PANE_B)}, {key: key(PANE_D)}]};
+  const {g} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [three]});
+  const idle = g.arbStripHtml(null, three, true, false);
+  assert.match(idle, /Arbitrate/);
+  const form = g.arbStripHtml(null, three, true, [PANE_C]);
+  assert.match(form, /id="arbFirst"/);
+  assert.match(form, /id="arbSecond"/);
+  assert.match(form, /Architect 2/, 'the third member is a choice, not an exclusion');
 });
 
 test('start sends pane ids and a scope, and no identity of its own', () => {
@@ -120,6 +145,8 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   els.arbScope = {id: 'arbScope', value: '  Review the footer.  '};
   els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbFirst = {id: 'arbFirst', value: 'w1:p1'};
+  els.arbSecond = {id: 'arbSecond', value: 'w1:p2'};
   g.arbStart();
   assert.deepEqual(sent, [{
     type: 'arb_start', conversation: 'c-1', scope: 'Review the footer.',
@@ -136,6 +163,8 @@ test('the clocks are sent in the unit the relay counts in, not the one the form 
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
   els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbFirst = {id: 'arbFirst', value: 'w1:p1'};
+  els.arbSecond = {id: 'arbSecond', value: 'w1:p2'};
   els.arbIdle = {id: 'arbIdle', value: '15'};
   els.arbRuntime = {id: 'arbRuntime', value: '30'};
   g.arbStart();
@@ -229,6 +258,8 @@ test('an arbitrator that went busy while the scope was written is said out loud'
   g.arbToggleForm();
   g.document.getElementById('arbScope').value = 'Review the footer.';
   g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
   live[2].status = 'working';
   g.arbStart();
   assert.deepEqual(sent, []);
@@ -242,8 +273,11 @@ test('pause, resume and cancel name the session the relay assigned', () => {
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
   g.arbCommand('arb_pause');
   g.arbCommand('arb_cancel');
-  assert.deepEqual(sent, [{type: 'arb_pause', session: 's-20260817-1103'},
-                          {type: 'arb_cancel', session: 's-20260817-1103'}]);
+  // Reads filtered out: a session arriving also asks for its decisions, because the thread draws
+  // bubbles from them. What this test is about is what a button puts on the wire.
+  assert.deepEqual(sent.filter(m => m.type !== 'arb_detail'),
+                   [{type: 'arb_pause', session: 's-20260817-1103'},
+                    {type: 'arb_cancel', session: 's-20260817-1103'}]);
 });
 
 test('nothing is sent with no session, and nothing is sent with no socket', () => {
@@ -367,8 +401,12 @@ test('the newest decision is at the top', () => {
 test('opening the sheet asks the relay for the session it is open on', () => {
   const {g, els, sent} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
+  // Twice: the thread asked when the session arrived, because it draws bubbles from the same
+  // rows, and the sheet asks again because somebody is looking at it now — the held copy can be a
+  // poll old, and a rejected record never moves `last_decision` for the thread's ask to notice.
   g.arbOpenDetail();
-  assert.deepEqual(sent, [{type: 'arb_detail', session: 's-20260817-1103'}]);
+  assert.deepEqual(sent, [{type: 'arb_detail', session: 's-20260817-1103'},
+                          {type: 'arb_detail', session: 's-20260817-1103'}]);
   assert.equal(els.arbSheet.style.display, 'block');
   assert.match(els.arbDetailBody.innerHTML, /Reading the session/);
 
@@ -447,4 +485,133 @@ test('a paused session is one thing waiting on you; anything else is none', () =
   // cannot be cleared by doing anything.
   g.arbReceiveSession({session: Object.assign({}, SESSION, {state: 'ended'})});
   assert.strictEqual(g.arbNeedsHuman(), false);
+});
+
+// --- Reusing an arbitrator ----------------------------------------------------------------------
+//
+// The expensive thing in a session is the arbitrator: a pane, a brief, a budget and everything it
+// has already decided. Ending a session to change one member threw all of it away. These pin the
+// edit that replaces that.
+
+const CREW_SESSION = Object.assign({}, SESSION, {
+  members: [{id: 'member-1', label: 'Architect 1', pane_id: 'w1:p1', agent: 'claude', status: 'idle'},
+            {id: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2', agent: 'codex', status: 'idle'}],
+  arbitrator: {pane_id: 'w1:p3', status: 'idle', label: 'Arbiter', agent: 'claude'},
+});
+
+test('the crew of a running session is replaced whole, and the session is not', () => {
+  const PANE_D = {pane_id: 'w1:p4', label: 'Architect 2', agent: 'claude', cwd: '/d', host: 'local'};
+  const three = {id: 'c-1', name: 'Footer',
+                 members: [{key: key(PANE_A)}, {key: key(PANE_B)}, {key: key(PANE_D)}]};
+  const {g, els, sent} = ctx({live: [PANE_A, PANE_B, PANE_C, PANE_D], convs: [three]});
+  g.arbReceiveSession({session: CREW_SESSION});
+  g.arbToggleCrew();
+
+  const html = g.arbStripHtml(CREW_SESSION, three, true, null, g.arbLiveMembers(three));
+  assert.match(html, /id="arbCrewA"/);
+  assert.match(html, /id="arbCrewB"/);
+
+  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
+  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p4'};
+  g.arbSetCrew();
+  const edit = sent.filter(m => m.type === 'arb_members');
+  assert.deepEqual(edit, [{type: 'arb_members', session: 's-20260817-1103',
+                           members: [{pane_id: 'w1:p1'}, {pane_id: 'w1:p4'}]}]);
+});
+
+test('one agent cannot be both halves of a conversation', () => {
+  const {g, els, sent, toasts} = ctx();
+  g.arbReceiveSession({session: CREW_SESSION});
+  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
+  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p1'};
+  g.arbSetCrew();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_members'), []);
+  assert.equal(toasts.length, 1);
+});
+
+// --- The arbitrator in the thread ---------------------------------------------------------------
+//
+// Drawn, never enrolled. What is rendered is what it *decided* — not what its pane was showing —
+// and nothing here touches the conversation's members or its record.
+
+const DECISIONS = [
+  {sequence: 1, at: 1000, valid: true, gate: 'review', to: 'member-2',
+   why: 'The footer is ready for a look.', send: {pane_id: 'w1:p2'}},
+  {sequence: 2, at: 2000, valid: false, reject_code: 'unknown_member', why: 'nonsense'},
+  {sequence: 3, at: 3000, valid: true, gate: 'call_human', to: null,
+   why: 'The two disagree and the scope does not cover it.', send: null},
+];
+
+function withDecisions() {
+  const c = ctx();
+  c.g.arbReceiveSession({session: CREW_SESSION});
+  c.g.arbReceiveDetail({session: 's-20260817-1103', decisions: DECISIONS});
+  return c;
+}
+
+test('a decision is drawn under the agent’s own name, never as member-2', () => {
+  const {g} = withDecisions();
+  const entries = g.arbThreadEntries('c-1');
+  assert.deepEqual(entries.map(e => e.to), ['Reviewer 1', 'you']);
+  assert.deepEqual(entries.map(e => e.toAgent), ['codex', '']);
+  assert.deepEqual(entries.map(e => e.who), ['arbiter', 'arbiter']);
+  assert.equal(entries[0].text, 'The footer is ready for a look.');
+  assert.equal(entries[0].gate, 'review');
+});
+
+test('a record the relay refused is not a step in the conversation', () => {
+  const {g} = withDecisions();
+  assert.equal(g.arbThreadEntries('c-1').length, 2, 'the rejected one stays in the sheet');
+});
+
+test('a delivery the relay could not prove is marked, not assumed', () => {
+  const {g} = withDecisions();
+  assert.deepEqual(g.arbThreadEntries('c-1').map(e => e.delivered), [true, false]);
+});
+
+test('the arbitrator is drawn in its own session’s thread and no other', () => {
+  const {g} = withDecisions();
+  assert.deepEqual(g.arbThreadEntries('c-2'), []);
+  assert.deepEqual(g.arbThreadEntries(''), []);
+});
+
+test('hiding the arbitrator empties the thread of it and leaves the conversation alone', () => {
+  const {g, convs} = withDecisions();
+  const before = JSON.stringify(CONV);
+  g.toggleArbBubbles();
+  assert.deepEqual(g.arbThreadEntries('c-1'), []);
+  assert.equal(g.arbBubblesOn(), false);
+  g.toggleArbBubbles();
+  assert.equal(g.arbThreadEntries('c-1').length, 2, 'and comes back');
+  assert.equal(JSON.stringify(CONV), before, 'the conversation was never written to');
+});
+
+test('a thread with no answer yet draws no arbitrator rather than an empty one', () => {
+  const {g} = ctx();
+  g.arbReceiveSession({session: CREW_SESSION});
+  assert.deepEqual(g.arbThreadEntries('c-1'), []);
+});
+
+// --- One project ---------------------------------------------------------------------------------
+//
+// The relay refuses a roster that spans two, so a picker that offered one would be offering a
+// refusal. With no Projects configured no pane carries one, and this cannot exclude anything.
+
+test('an arbitrator is only offered from the conversation’s own project', () => {
+  const p = (a, id) => Object.assign({}, a, {project_id: id});
+  const {g} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-a'), p(PANE_C, 'proj-b')]});
+  assert.deepEqual(g.arbCandidates(CONV), [], 'the only free pane is in another repository');
+  assert.match(g.arbStripHtml(null, CONV, true, false), /third agent in this project/);
+});
+
+test('a conversation that spans two projects says so instead of offering a session', () => {
+  const p = (a, id) => Object.assign({}, a, {project_id: id});
+  const {g} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-b'), p(PANE_C, 'proj-a')]});
+  assert.equal(g.arbProject(CONV), null);
+  assert.match(g.arbStripHtml(null, CONV, true, false), /everyone in one project/);
+});
+
+test('with no projects configured every free pane is still a candidate', () => {
+  const {g} = ctx();
+  assert.deepEqual(g.arbCandidates(CONV).map(x => x.pane_id), ['w1:p3']);
 });

@@ -3683,6 +3683,62 @@
       padding: 0 4px;
     }
 
+    /* The arbitrator, in the thread it is deciding about.
+       Centred and unfilled, so it reads as a thing that happened to the conversation rather than
+       as a third speaker in it — which is exactly what it is: the arbitrator is never a member,
+       and this is a decision drawn where it landed, not a message anyone sent. No member colour
+       for the same reason, and no selection tick: a decision is not a line anyone can quote back
+       at an agent. */
+    .conv-arb {
+      align-self: center;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+      margin: 10px 0 0;
+      padding: 8px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--muted) 7%, var(--surface));
+      color: var(--text);
+      font-size: var(--conv-font, 13px);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .conv-arb-who {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: max(8px, calc(var(--conv-font, 13px) * 0.76));
+      letter-spacing: 0.02em;
+    }
+
+    .conv-arb-who .conv-time {
+      margin-left: auto;
+    }
+
+    /* Who it called, in the commit strip's shape — the same kind of fact, drawn the same way: a
+       small thing that happened at this point, under the thing it belongs to. */
+    .conv-arb-to {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: center;
+      gap: 4px;
+      margin: 4px 0 8px;
+      padding: 0 4px;
+    }
+
+    /* A delivery the relay could not prove is the one badge that has to be found rather than read
+       past: the decision looks executed and may not have been. */
+    .conv-commit.warn {
+      border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+      color: var(--red);
+    }
+
     /* What the badges beside it are. Says the claim out loud, so the strip does not have to be
        guessed at from where it sits. */
     .conv-commits-lede {

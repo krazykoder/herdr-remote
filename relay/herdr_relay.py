@@ -1100,7 +1100,11 @@ def live_panes():
     A remote participant is refused at session start rather than silently skipped here.
     """
     data, err = _herdr_json("pane", "list")
-    return [] if err else dig_panes(data)
+    # Annotated, because arbitration refuses a session whose participants are not all in one
+    # project, and `project_id` is what says which. Raw panes carry a cwd and nothing that maps it
+    # to the person's own grouping. With no Projects configured this adds no key and changes
+    # nothing, which is exactly what "the check cannot apply" should look like.
+    return [] if err else annotate_agents(dig_panes(data), PROJECTS)
 
 
 async def submit_paste(pane_id, text, remote=None):
@@ -1529,8 +1533,8 @@ def arb_session_message(session):
     last = arbitration.conn.execute(
         "SELECT sequence, gate, to_member, why, ambiguity, at FROM decisions "
         "WHERE session_id=? AND valid=1 ORDER BY id DESC LIMIT 1", (session["id"],)).fetchone()
-    arb_pane, _ = arb_resolve(json.loads(session["arbitrator_fp"]),
-                              session["arbitrator_pane"], live_panes())
+    arb_fp = json.loads(session["arbitrator_fp"])
+    arb_pane, _ = arb_resolve(arb_fp, session["arbitrator_pane"], live_panes())
     return {
         "type": "arb_session",
         "session": {
@@ -1540,9 +1544,17 @@ def arb_session_message(session):
             "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
                          "pane_id": m["pane_id"], "status": m["status"]}
                         for mid, m in roster.items()],
+            # The fingerprint too, not only the pane. The thread draws the arbitrator's decisions
+            # as bubbles, and it asks the record for them the way it asks for everything else —
+            # by (host, agent, cwd), because pane ids are renumbered on every restart. The
+            # arbitrator is still not a member: this is what the client needs to *read* its
+            # decisions, and enrolling it is what would put it in the conversation.
             "arbitrator": {"pane_id": arb_pane, "status": next(
                 (p.get("agent_status") or "" for p in live_panes()
-                 if p.get("pane_id") == arb_pane), "")},
+                 if p.get("pane_id") == arb_pane), ""),
+                "host": arb_fp[0], "agent": arb_fp[1], "cwd": arb_fp[2],
+                "label": next((p.get("label") or "" for p in live_panes()
+                               if p.get("pane_id") == arb_pane), "")},
             "budget": {"steps_left": left["steps"], "consecutive_left": left["consecutive"],
                        "minutes_left": left["ms"] // 60000},
             "last_decision": None if last is None else {
