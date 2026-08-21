@@ -1461,6 +1461,61 @@ class Resuming(Harness):
         self.assertEqual("active", self.arb.resume(s["id"])["state"])
 
 
+class Consecutive(Harness):
+    """The budget that asks whether the loop is talking to itself.
+
+    Every automated send raises it and only a person lowers it, so a session nobody joins stops
+    after three — which is the point. What was wrong is that nothing could lower it: the relay
+    never told a session that somebody had typed, and a resume did not either, so
+    `budget_consecutive` was a stop with no way past it.
+    """
+
+    def spend(self, session_id, count):
+        """`count` arbitrated sends in a row, which is what the counter counts."""
+        for _ in range(count):
+            p = self.arb.prompt(session_id, "turn_end — member-1", [])
+            self.write(session_id, p["sequence"])
+            self.assertEqual("sent", self.arb.collect(session_id, p["prompt_id"])["outcome"])
+
+    def test_three_sends_with_nobody_joining_in_stops_the_session(self):
+        s = self.start()
+        self.spend(s["id"], 3)
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.assertEqual("budget_consecutive", caught.exception.code)
+        self.assertEqual("budget_consecutive", self.arb.session(s["id"])["pause_reason"])
+
+    def test_a_person_typing_at_a_member_lets_the_loop_go_on(self):
+        s = self.start()
+        self.spend(s["id"], 2)
+        self.arb.human_entered(s["id"], "p1")
+        self.spend(s["id"], 2)          # would have tripped at the third without the line above
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_resuming_is_itself_a_person_joining_in(self):
+        # A session that stopped on this used to resume straight into the same wall at its next
+        # trigger — a Resume button that did nothing. The person pressing it is the human the
+        # counter is counting the absence of.
+        s = self.start()
+        self.spend(s["id"], 3)
+        with self.assertRaises(ArbiterError):
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.arb.resume(s["id"])
+        self.assertEqual(0, self.arb.session(s["id"])["consecutive"])
+        self.spend(s["id"], 1)
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_the_steps_budget_is_not_forgiven_by_a_resume(self):
+        # Consecutive asks "is anyone watching"; steps asks "how much may this session do at all".
+        # A resume answers the first question and must not answer the second.
+        s = self.start(budget={"max_steps": 2, "max_consecutive": 20})
+        self.spend(s["id"], 2)
+        self.arb.resume(s["id"])
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.assertEqual("budget_steps", caught.exception.code)
+
+
 class Edits(Harness):
     """Changing a session instead of starting a new one.
 
@@ -1614,6 +1669,11 @@ class Events(Harness):
         self.assertIn("0001-decision.json", self.find(s["id"], "error")[0]["detail"])
         self.assertEqual("waiting", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
         self.assertEqual(1, len(self.find(s["id"], "error")), "one broken file is one event")
+
+    def test_a_person_typing_ends_the_run_of_automated_sends(self):
+        s = self.start()
+        self.arb.human_entered(s["id"], "p1")
+        self.assertIn("p1", self.find(s["id"], "human")[0]["detail"])
 
     def test_editing_a_running_session_is_on_the_path(self):
         s = self.start()

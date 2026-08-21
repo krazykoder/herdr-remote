@@ -383,6 +383,7 @@
     // seen, which is the whole reason the path is recorded.
     const ARB_EVENT_LEDE = {
       started: 'session started', briefed: 'briefed', trigger: 'trigger', asked: 'asked',
+      human: 'you typed',
       waiting: 'waiting', record: 'record written', decided: '', rejected: 'record refused',
       reprompt: 're-asked', sent: 'sent', paused: 'paused', resumed: 'resumed',
       edited: 'session edited', ended: 'session ended', error: 'error',
@@ -408,6 +409,37 @@
       return s.state === 'awaiting' ? 'Deciding…' : 'Arbitrating';
     }
 
+    // What a pause reason means, in a sentence, and what to do about it. The codes are the
+    // relay's and they are precise; "budget consecutive" is not a thing a person can act on
+    // without being told that it counts sends nobody joined in on and that resuming clears it.
+    const ARB_PAUSE_WHY = {
+      budget_steps: 'This session has taken every step it was given. Resuming buys nothing — ' +
+        'start a new session for more.',
+      budget_consecutive: 'That many automated sends in a row with nobody joining in. Resuming ' +
+        'clears the run, and so does typing at either agent yourself.',
+      budget_time: 'The session ran out its clock. Resuming grants it a fresh one.',
+      call_human: 'The arbitrator asked for you. Read what it decided, then resume.',
+      invalid_record: 'The arbitrator wrote something that was not a decision, twice. ↻ Brief ' +
+        'gives it its instructions again in an empty pane.',
+      send_unconfirmed: 'A send could not be confirmed. Look at the pane before resuming — the ' +
+        'text may have landed anyway.',
+      arbitrator_gone: 'The deciding pane has exited. Edit the session to appoint another.',
+      member_gone: 'A member’s pane has exited. Edit the session to put another in its place.',
+      member_ambiguous: 'A member’s fingerprint now matches two panes, so nothing can be typed ' +
+        'at it safely. Edit the session to name one.',
+      restart: 'The relay restarted while this was running. Nothing was decided in between.',
+      not_started: 'Briefed and waiting for you to start it.',
+      user: 'You stopped it.',
+    };
+
+    function arbStateTitle(s) {
+      if (s.state !== 'paused') {
+        return s.state === 'awaiting' ? 'The arbitrator is reading and has not answered yet.'
+                                      : 'Armed — the next turn that ends is a decision.';
+      }
+      return ARB_PAUSE_WHY[s.pause_reason] || 'The session stopped and is waiting for you.';
+    }
+
     function arbBudgetLine(s) {
       const b = s.budget || {};
       return `${b.steps_left || 0} steps · ${b.minutes_left || 0} min`;
@@ -425,7 +457,8 @@
       if (!on || !conv || !session || session.conversation !== conv.id) return '';
       const s = session, paused = s.state === 'paused';
       return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
-        `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
+        `<span class="arb-state" title="${escapeHtml(arbStateTitle(s))}">` +
+        `${escapeHtml(arbStateLabel(s))}</span>` +
         // Which of the three is doing something right now, and the way to its pane. This is the
         // whole of "where is it": a session is one agent at a time by construction, and the last
         // decision's sentence — which used to live here — is the answer to a different question

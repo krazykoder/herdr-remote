@@ -546,7 +546,7 @@ All must hold, checked in this order, each with its own error:
 |---|---|---|
 | `user` | Someone pressed Pause | Resume |
 | `budget_steps` | `steps_used ≥ max_steps` | Resume, after the person raises the budget |
-| `budget_consecutive` | `consecutive ≥ max_consecutive` | Any human message into the conversation clears `consecutive`; then Resume |
+| `budget_consecutive` | `consecutive ≥ max_consecutive` | Resume — which itself clears the run (§13.1), as does typing at either member |
 | `budget_time` | Wall clock exceeded | Resume with a new window |
 | `member_blocked` | A member reached `blocked` | Resume once it is unblocked — the existing approval UI already owns answering it |
 | `member_gone` | A member's fingerprint matches no live pane | Re-enrol, then Resume |
@@ -781,8 +781,14 @@ target or `call_human`.
 | `max_wall_clock` | 45 min | 8 h | Since `created_at`, or since the last resume |
 
 Conservative on purpose: raised only on evidence from real sessions. `consecutive` resets to zero on
-any `human_web` or `human_terminal` entry — a person touching the conversation is what "not
-consecutive" means.
+any `human_web` entry — every send this relay makes on a person's behalf, which is the one entry it
+can attribute — and on **a resume**, because a person reading a stopped session and pressing the
+button is the human the counter is counting the absence of. Without the second, a session that
+stopped on `budget_consecutive` resumed into the same wall at its very next trigger: a Resume
+button that did nothing.
+
+`max_steps` is not forgiven that way. The two budgets ask different questions — "is anybody
+watching this" and "how much may this session do at all" — and a resume answers only the first.
 
 ### 13.2 Steps
 

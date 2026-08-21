@@ -936,7 +936,20 @@ async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
     echo in the pane and can never be attributed to anyone, so it is never given this origin.
 
     Agent panes only. A shell has no conversation to be part of.
+
+    Also where a session learns that a person joined in. `max_consecutive` counts automated sends
+    with nobody in between — it is the budget that asks "is this loop talking to itself" — and
+    this is the one place the relay knows the answer is no. Before this it was never told, so the
+    counter only ever went up and every session stopped on `budget_consecutive` three sends in,
+    whatever anybody typed.
     """
+    if arbitration is not None:
+        try:
+            session_id = await asyncio.to_thread(arbitration.session_of_pane, pane_id)
+            if session_id:
+                await asyncio.to_thread(arbitration.human_entered, session_id, pane_id)
+        except Exception as e:                   # noqa: BLE001 — never break a send over this
+            log.warning("arbitration: human entry for %s not recorded: %s", pane_id, e)
     if conv_log is None:
         return
     pane = agent_cache.get(pane_id)

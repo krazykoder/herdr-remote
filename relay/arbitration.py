@@ -1227,8 +1227,15 @@ class Arbitration:
                            if p.get("pane_id") == arb), "")
             if status in BUSY:
                 raise ArbiterError("arbitrator_busy", arb)
+        # The run of automated sends ends here, whatever it was up to. A person reading a session
+        # and pressing Resume *is* the human in the loop that `max_consecutive` is counting the
+        # absence of — and without this, a session that stopped on `budget_consecutive` resumed
+        # into the same wall at its very next trigger, which is a Resume button that does nothing.
+        # The wall clock already renews on a resume for the same reason. Steps do not: that is the
+        # hard cap on how much a session may do at all, and a person who wants more says so by
+        # starting one.
         self.conn.execute(
-            "UPDATE sessions SET state='active', pause_reason=NULL, window_at=?, "
+            "UPDATE sessions SET state='active', pause_reason=NULL, window_at=?, consecutive=0, "
             "arbitrator_pane=? WHERE id=?", (self.clock(), arb, session_id))
         self.conn.commit()
         self._event(session_id, "resumed",
@@ -1268,10 +1275,18 @@ class Arbitration:
         """
         return [self.pause(row["id"], "restart") for row in self.running_all()]
 
-    def human_entered(self, session_id):
-        """A person put text into the conversation, which is what "not consecutive" means."""
+    def human_entered(self, session_id, pane_id=""):
+        """A person put text into the conversation, which is what "not consecutive" means.
+
+        `max_consecutive` is the budget that asks whether the loop is talking to itself. Every
+        automated send raises the count and only this lowers it, so a session where nobody joins in
+        stops after three — which is the point. A session where somebody does join in should not,
+        and until the relay called this, none of them could tell the difference.
+        """
         self.conn.execute("UPDATE sessions SET consecutive=0 WHERE id=?", (session_id,))
         self.conn.commit()
+        self._event(session_id, "human",
+                    f"a person typed at {pane_id}" if pane_id else "a person typed here")
 
     # --- what a pane ending its turn means ------------------------------------------------
     #

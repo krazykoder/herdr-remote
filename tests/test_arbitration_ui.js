@@ -184,6 +184,18 @@ test('the strip says which of the three is working, not what was last said', () 
   assert.match(g.arbStripHtml(quiet, CONV, true), /⚖ Arbitrator · waiting/);
 });
 
+test('a pause says what its reason means, not only what it is called', () => {
+  // "budget consecutive" is precise and unactionable on its own: it counts automated sends nobody
+  // joined in on, and a person cannot know that from the label.
+  const {g} = ctx();
+  const paused = r => g.arbStripHtml({...SESSION, state: 'paused', pause_reason: r}, CONV, true);
+  assert.match(paused('budget_consecutive'), /Paused — budget consecutive/);
+  assert.match(paused('budget_consecutive'), /nobody joining in[\s\S]*Resuming clears the run/);
+  assert.match(paused('invalid_record'), /↻ Brief/);
+  // A reason this page has never heard of still says something true.
+  assert.match(paused('something_new'), /waiting for you/);
+});
+
 test('an ended session leaves no strip behind', () => {
   const {g, els} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
