@@ -21,8 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
-from arbitration import (Arbitration, ArbiterError, DEFAULT_GATES, budget_spent, check_budget,
-                         render, resolve)
+from arbitration import (Arbitration, ArbiterError, DEFAULT_GATES, ROLES_MAX, ROLE_MAX,
+                         budget_spent, check_budget, check_roles, render, resolve)
 
 
 def pane(pane_id, agent="claude", cwd="/w", status="idle", label="", host="local"):
@@ -1130,6 +1130,95 @@ class OneProject(Harness):
         for p in self.live:
             p.pop("project_id")
         self.assertEqual("active", self.start()["state"])
+
+
+class Roles(Harness):
+    """What each member is there to do, and the arbitrator being told.
+
+    The roster has carried a role since the schema was written and nothing ever filled it. What
+    this class pins is the round trip: the person's words, normalised once, reaching the roster
+    line the arbitrator reads in every trigger — and staying a label on the way, because that line
+    is the part of a trigger message the arbitrator reads as fact rather than as prose.
+
+    The vocabulary is deliberately open. Nothing here asserts a set of allowed roles, because there
+    is none to assert: a docs session wants `write-docs` and shipping a config file to say so is
+    the extensibility this design refuses.
+    """
+
+    def start_with(self, first, second):
+        return self.start(members=[{**self.live[0], "role": first},
+                                   {**self.live[1], "role": second}])
+
+    def test_roles_reach_the_roster_the_arbitrator_reads(self):
+        s = self.start_with("review", "implement-code")
+        roster = self.arb.roster(s["id"])
+        self.assertEqual(["review", "implement-code"],
+                         [m["role"] for m in roster.values()])
+        self.sent.clear()
+        self.step(s["id"])
+        _, text = self.sent[0]
+        self.assertIn("member-1  p1 / review / claude", text)
+        self.assertIn("member-2  p2 / implement-code / codex", text)
+
+    def test_the_starter_prompt_says_what_a_role_is_for(self):
+        self.start_with("review", "implement-code")
+        _, text = self.sent[0]
+        self.assertIn("Roles are what the person running this session wants", text)
+        self.assertIn("who does what", text)
+
+    def test_two_members_may_carry_the_same_role(self):
+        # The reason the vocabulary is not exclusive: two agents that can both review is what lets
+        # the arbitrator keep the loop moving when one of them is working.
+        s = self.start_with("review, fix-code", "review")
+        self.assertEqual(["review, fix-code", "review"],
+                         [m["role"] for m in self.arb.roster(s["id"]).values()])
+
+    def test_a_role_survives_an_edit_and_is_announced(self):
+        s = self.start_with("review", "implement-code")
+        p3 = pane("p3", agent="codex", cwd="/b", label="Reviewer 2")
+        self.live.append(p3)
+        self.sent.clear()
+        self.arb.set_members(s["id"], [{**self.live[0], "role": "review"},
+                                       {**p3, "role": "fix-code"}])
+        self.assertEqual(["review", "fix-code"],
+                         [m["role"] for m in self.arb.roster(s["id"]).values()])
+        _, text = self.sent[0]
+        self.assertIn("member-2  Reviewer 2 / fix-code / codex", text)
+
+    def test_a_member_with_no_role_is_written_as_having_none(self):
+        s = self.start_with("", "")
+        self.sent.clear()
+        self.step(s["id"])
+        _, text = self.sent[0]
+        self.assertIn("member-1  p1 / - / claude", text)
+
+    def test_a_person_types_what_they_say_out_loud(self):
+        # `#Fix Code` and `fix-code` are the same role. The hash is how the person wrote it down,
+        # the capital is a phone's keyboard, and neither is a second tag.
+        self.assertEqual("fix-code", check_roles("#Fix Code"))
+        self.assertEqual("review, fix-code", check_roles(" review , #fix-code "))
+        self.assertEqual("review", check_roles(["review", "review"]), "said twice is once")
+        self.assertEqual("", check_roles(None))
+        self.assertEqual("", check_roles("  ,  "))
+
+    def test_a_role_stays_a_label(self):
+        # The refusals are the reason this is validated at all: the roster is the one part of a
+        # trigger message the arbitrator is told to trust, and a pasted paragraph in it is a
+        # person's instruction forged by a stale client.
+        with self.assertRaises(ArbiterError) as caught:
+            check_roles("x" * (ROLE_MAX + 1))
+        self.assertEqual("bad_role", caught.exception.code)
+        with self.assertRaises(ArbiterError) as caught:
+            check_roles(",".join(f"r{i}" for i in range(ROLES_MAX + 1)))
+        self.assertEqual("bad_role", caught.exception.code)
+        with self.assertRaises(ArbiterError):
+            check_roles({"role": "review"})
+
+    def test_a_bad_role_refuses_the_start_rather_than_being_dropped(self):
+        with self.assertRaises(ArbiterError) as caught:
+            self.start_with("x" * (ROLE_MAX + 1), "review")
+        self.assertEqual("bad_role", caught.exception.code)
+        self.assertIsNone(self.arb.running(), "nothing left behind")
 
 
 if __name__ == "__main__":

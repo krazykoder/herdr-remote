@@ -87,6 +87,11 @@ TRIGGER_MAX_MS = 6 * 60 * 60 * 1000
 # given and the instruction it produced, both of which are whole agent turns.
 DETAIL_DECISIONS = 20
 DETAIL_TEXT = 8_000
+# A role is a label, not a brief. Several members may carry the same one — overlapping roles are
+# the point: two agents that can both review is what lets the arbitrator keep the loop moving when
+# one of them is busy.
+ROLES_MAX = 4
+ROLE_MAX = 24
 MEMBERS_REQUIRED = 2      # v1, until a two-member loop has been watched running for real (§14.1)
 RUNNING = ("active", "awaiting")
 # A pane acting on something is never written to (N7). Matches SUBMIT_TOOK in herdr_relay.py, and
@@ -255,6 +260,41 @@ def check_triggers(triggers):
     return out
 
 
+def check_roles(value):
+    """One member's roles, normalised to a comma-joined line — or a refusal.
+
+    Roles are the person's own words for what a member is there to do, and they are carried into
+    every roster line the arbitrator reads. The **shape** is checked here and the spelling is not:
+    the vocabulary is open on purpose, because a docs session wants `write-docs` and an allowlist
+    for a label is a config file nobody asked for.
+
+    What is enforced is that a role stays a label. A few short tags, so a paste cannot quietly
+    become the prompt — the roster is the part of a trigger message the arbitrator reads as fact.
+    """
+    if not value:
+        return ""
+    if isinstance(value, str):
+        parts = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        parts = [x for x in value if isinstance(x, str)]
+    else:
+        raise ArbiterError("bad_role", repr(value)[:40])
+    out = []
+    for part in parts:
+        # A person types what they say out loud — "#fix code" is the same role as "fix-code".
+        tag = "-".join(part.strip().lstrip("#").lower().split())
+        tag = "".join(c for c in tag if c.isalnum() or c == "-").strip("-")
+        if not tag:
+            continue
+        if len(tag) > ROLE_MAX:
+            raise ArbiterError("bad_role", f"{tag[:ROLE_MAX]}…, max {ROLE_MAX} characters")
+        if tag not in out:
+            out.append(tag)
+    if len(out) > ROLES_MAX:
+        raise ArbiterError("bad_role", f"{len(out)} roles, max {ROLES_MAX}")
+    return ", ".join(out)
+
+
 def resolve(fp, pane_id, panes, claimed=()):
     """Which live pane is this participant now, per §5.2. Returns (pane_id, None) or (None, code).
 
@@ -305,6 +345,20 @@ Recipients are the members listed in each trigger message, addressed by member i
 The member that just finished is a valid recipient — sending work back to its
 author is an ordinary outcome.
 
+Every trigger message lists the roster, one line each:
+
+  <member id>  <label> / <roles> / <agent> / <status>
+
+The label is the name the turns quoted below it are headed with.
+
+Roles are what the person running this session wants that member to do —
+fix-code, review, implement-code, and whatever else they wrote. They are the
+person's instruction about who does what, so choose the member whose roles cover
+the step you decided on. Roles may overlap: when more than one member fits, prefer
+the one that is not already working. A member shown as `-` has no role and is
+available for anything. A role is never a permission — it does not stop you
+addressing a member, it tells you who was meant to do this.
+
 Gates: {names}
 
 Write exactly one JSON object to the path named in the trigger message. Fields:
@@ -345,8 +399,8 @@ def roster_prompt(roster, scope):
     lines = ["The person running this session has changed who is in it.",
              "", "The roster is now:"]
     for member_id, m in roster.items():
-        lines.append(f"  {member_id}  {m.get('role') or '-'} / {m.get('agent') or '-'} / "
-                     f"{m.get('label') or '-'}")
+        lines.append(f"  {member_id}  {m.get('label') or '-'} / {m.get('role') or '-'} / "
+                     f"{m.get('agent') or '-'}")
     lines += ["", "Anyone not listed above has left and can no longer be addressed. Member ids "
                   "are positional, so one you have used before may now be a different agent — "
                   "read the roster in each trigger message rather than remembering it.",
@@ -364,8 +418,10 @@ def trigger_prompt(roster, trigger, entries, gates, left, sequence, drop_path):
     """
     lines = ["Roster:"]
     for member_id, m in roster.items():
-        lines.append(f"  {member_id}  {m.get('role') or '-'} / {m.get('agent') or '-'} / "
-                     f"{m.get('status') or 'unknown'}")
+        # Label first, because it is the name the turns below are headed with — the roster line is
+        # what links `[Architect 1]` to `member-1`, and there is nothing else that does.
+        lines.append(f"  {member_id}  {m.get('label') or '-'} / {m.get('role') or '-'} / "
+                     f"{m.get('agent') or '-'} / {m.get('status') or 'unknown'}")
     lines.append("")
     lines.append(f"Trigger: {trigger}")
     lines.append("")
@@ -599,7 +655,7 @@ class Arbitration:
             host = p.get("host") or actual.get("host") or "local"
             if host != "local":
                 raise ArbiterError("remote_participant", host)
-            out.append({**actual, "role": p.get("role") or ""})
+            out.append({**actual, "role": check_roles(p.get("role"))})
         # One project for everyone. An arbitrator reading two agents in an unrelated checkout is
         # deciding about work it cannot see, and every instruction it writes then lands in the
         # wrong repository — which is the one failure here that costs somebody a morning rather

@@ -1513,7 +1513,10 @@ def arbitration_entries(pane):
         return []
     members = arbitration.members(session["id"])
     fingerprints = [[m["host"], m["agent"], m["cwd"]] for m in members]
-    labels = {(m["host"], m["agent"], m["cwd"]): (m["role"] or m["label"] or m["member_id"])
+    # The pane's own label, and never the role: a role is what a member is *for* and several
+    # members may carry the same one, so heading a turn with it would put two agents' words under
+    # one name. The roster line in the trigger message carries both, which is where they belong.
+    labels = {(m["host"], m["agent"], m["cwd"]): (m["label"] or m["member_id"])
               for m in members}
     rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST)
     return [{"label": labels.get((r["host"], r["agent"], r["cwd"]), r["origin"]),

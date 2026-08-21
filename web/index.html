@@ -3029,6 +3029,7 @@
     }
 
     .arb-form textarea,
+    .arb-form input,
     .arb-form select {
       font: inherit;
       font-size: 0.72rem;
@@ -3737,6 +3738,13 @@
     .conv-commit.warn {
       border-color: color-mix(in srgb, var(--red) 45%, var(--border));
       color: var(--red);
+    }
+
+    /* A member's roles sit beside its name and are context for it, not a second claim — so they
+       recede rather than compete with the agent that was actually called. */
+    .conv-commit.quiet {
+      color: var(--muted);
+      border-style: dashed;
     }
 
     /* What the badges beside it are. Says the claim out loud, so the strip does not have to be

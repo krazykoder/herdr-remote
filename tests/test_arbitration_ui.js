@@ -150,7 +150,9 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
   g.arbStart();
   assert.deepEqual(sent, [{
     type: 'arb_start', conversation: 'c-1', scope: 'Review the footer.',
-    members: [{pane_id: 'w1:p1'}, {pane_id: 'w1:p2'}],
+    // The role is the person's own words for what that member is there to do, and is sent even
+    // when it is empty: an unroled member is a fact about the roster, not a field to omit.
+    members: [{pane_id: 'w1:p1', role: ''}, {pane_id: 'w1:p2', role: ''}],
     arbitrator: {pane_id: 'w1:p3'},
     // Both clocks off unless the form was asked for them: a trigger nobody chose is an
     // unattended loop spending budget on a conversation that had stopped on purpose.
@@ -494,8 +496,10 @@ test('a paused session is one thing waiting on you; anything else is none', () =
 // edit that replaces that.
 
 const CREW_SESSION = Object.assign({}, SESSION, {
-  members: [{id: 'member-1', label: 'Architect 1', pane_id: 'w1:p1', agent: 'claude', status: 'idle'},
-            {id: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2', agent: 'codex', status: 'idle'}],
+  members: [{id: 'member-1', label: 'Architect 1', pane_id: 'w1:p1', agent: 'claude',
+             status: 'idle', role: 'review'},
+            {id: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2', agent: 'codex',
+             status: 'idle', role: 'fix-code'}],
   arbitrator: {pane_id: 'w1:p3', status: 'idle', label: 'Arbiter', agent: 'claude'},
 });
 
@@ -516,7 +520,55 @@ test('the crew of a running session is replaced whole, and the session is not', 
   g.arbSetCrew();
   const edit = sent.filter(m => m.type === 'arb_members');
   assert.deepEqual(edit, [{type: 'arb_members', session: 's-20260817-1103',
-                           members: [{pane_id: 'w1:p1'}, {pane_id: 'w1:p4'}]}]);
+                           members: [{pane_id: 'w1:p1', role: ''},
+                                     {pane_id: 'w1:p4', role: ''}]}]);
+});
+
+test('what each member is for is asked, sent, and shown on the strip', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  const html = g.arbStripHtml(null, CONV, true, g.arbCandidates(CONV), null);
+  assert.match(html, /id="arbRoleFirst"/);
+  assert.match(html, /id="arbRoleSecond"/);
+  assert.match(html, /<datalist id="arbRoleList">/, 'the common ones, offered');
+
+  els.arbScope = {id: 'arbScope', value: 'Review the footer.'};
+  els.arbWho = {id: 'arbWho', value: 'w1:p3'};
+  els.arbFirst = {id: 'arbFirst', value: 'w1:p1'};
+  els.arbSecond = {id: 'arbSecond', value: 'w1:p2'};
+  // Overlapping on purpose — two agents that can both review is what keeps the loop moving when
+  // one of them is busy. The browser sends the words; normalising them is the relay's job.
+  els.arbRoleFirst = {id: 'arbRoleFirst', value: ' review, fix-code '};
+  els.arbRoleSecond = {id: 'arbRoleSecond', value: 'review'};
+  g.arbStart();
+  assert.deepEqual(sent[0].members, [{pane_id: 'w1:p1', role: 'review, fix-code'},
+                                     {pane_id: 'w1:p2', role: 'review'}]);
+});
+
+test('a running session says what each member is for, and lets it be changed', () => {
+  const roled = Object.assign({}, CREW_SESSION, {members: [
+    {id: 'member-1', pane_id: 'w1:p1', label: 'Architect 1', status: 'idle', role: 'review'},
+    {id: 'member-2', pane_id: 'w1:p2', label: 'Reviewer 1', status: 'idle', role: 'fix-code'},
+  ]});
+  const {g, els, sent} = ctx();
+  g.arbReceiveSession({session: roled});
+  assert.match(g.arbStripHtml(roled, CONV, true, null, null),
+               /Architect 1 \(review\) · Reviewer 1 \(fix-code\)/);
+
+  // The picker opens on what the roster already says, so an edit that only swaps a pane does not
+  // quietly drop the roles the person typed the first time.
+  const crew = g.arbStripHtml(roled, CONV, true, null, g.arbLiveMembers(CONV));
+  assert.match(crew, /id="arbCrewRoleA"[^>]*value="review"/);
+  assert.match(crew, /id="arbCrewRoleB"[^>]*value="fix-code"/);
+
+  els.arbCrewA = {id: 'arbCrewA', value: 'w1:p1'};
+  els.arbCrewB = {id: 'arbCrewB', value: 'w1:p2'};
+  els.arbCrewRoleA = {id: 'arbCrewRoleA', value: 'review'};
+  els.arbCrewRoleB = {id: 'arbCrewRoleB', value: 'plan, fix-code'};
+  g.arbSetCrew();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_members')[0].members,
+                   [{pane_id: 'w1:p1', role: 'review'},
+                    {pane_id: 'w1:p2', role: 'plan, fix-code'}]);
 });
 
 test('one agent cannot be both halves of a conversation', () => {
@@ -554,6 +606,9 @@ test('a decision is drawn under the agent’s own name, never as member-2', () =
   const entries = g.arbThreadEntries('c-1');
   assert.deepEqual(entries.map(e => e.to), ['Reviewer 1', 'you']);
   assert.deepEqual(entries.map(e => e.toAgent), ['codex', '']);
+  // Why this one and not the other: the roles are the person's instruction about who does what,
+  // so the decision reads as an answer to it rather than a coin toss.
+  assert.deepEqual(entries.map(e => e.toRole), ['fix-code', '']);
   assert.deepEqual(entries.map(e => e.who), ['arbiter', 'arbiter']);
   assert.equal(entries[0].text, 'The footer is ready for a look.');
   assert.equal(entries[0].gate, 'review');

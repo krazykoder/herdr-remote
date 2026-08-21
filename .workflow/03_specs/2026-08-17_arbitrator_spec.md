@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS members (
   agent             TEXT NOT NULL,             -- harness kind: claude, codex, …
   cwd               TEXT NOT NULL DEFAULT '',
   label             TEXT NOT NULL,             -- pane label at enrolment
-  role              TEXT NOT NULL DEFAULT '',  -- 'Architect', 'Reviewer', … or ''
+  role              TEXT NOT NULL DEFAULT '',  -- 'review, fix-code' — see §14.3, or ''
   pane_id           TEXT NOT NULL,             -- last resolved; re-resolved per §5.2
   enrolled_at       INTEGER NOT NULL,
   PRIMARY KEY (session_id, member_id)
@@ -614,6 +614,20 @@ Recipients are the members listed in each trigger message, addressed by member i
 The member that just finished is a valid recipient — sending work back to its
 author is an ordinary outcome.
 
+Every trigger message lists the roster, one line each:
+
+  <member id>  <label> / <roles> / <agent> / <status>
+
+The label is the name the turns quoted below it are headed with.
+
+Roles are what the person running this session wants that member to do —
+fix-code, review, implement-code, and whatever else they wrote. They are the
+person's instruction about who does what, so choose the member whose roles cover
+the step you decided on. Roles may overlap: when more than one member fits, prefer
+the one that is not already working. A member shown as `-` has no role and is
+available for anything. A role is never a permission — it does not stop you
+addressing a member, it tells you who was meant to do this.
+
 Gates: <gate names, with one line each>
 
 Write exactly one JSON object to the path named in the trigger message. Fields:
@@ -648,8 +662,8 @@ does not cover what just happened, or when you would be guessing.
 
 ```
 Roster:
-  member-1  Architect / claude / idle
-  member-2  Reviewer  / codex  / working
+  member-1  Architect 1 / plan, review / claude / idle
+  member-2  Reviewer 1  / fix-code     / codex  / working
 
 Trigger: turn_end — member-1 (working → idle)
 
@@ -673,6 +687,11 @@ against exactly what the arbitrator saw.
 
 Note `member-2  … working` in the roster: the arbitrator is told the live status of every member so
 it can avoid naming one that cannot be written to, rather than discovering it by rejection.
+
+The label comes first because it is the name the entries below are headed with — `[member-1 ·
+Architect 1]` — and the roster line is the only thing that links the two. The roles follow it, and
+they are never used as a name: several members may carry the same role (§14.3), so heading a turn
+with one would put two agents' words under a single speaker.
 
 ## 12. The decision record
 
@@ -831,7 +850,26 @@ to the CRFN set:
 supplies prose, never a template. A gate set is data — a different use case ships a different file
 with no code change, which is the extensibility line this design defends.
 
-### 14.3 Environment
+### 14.3 Roles
+
+Each member carries **roles**: the person's own words for what that member is there to do, written
+when the roster is chosen and editable with it. A comma-joined line of at most 4 tags, each at most
+24 characters of `[a-z0-9-]`; the relay normalises what it is given (`#Fix Code` and `fix-code` are
+one tag) and refuses anything longer, because the roster is the one part of a trigger message the
+arbitrator is told to read as fact.
+
+**The vocabulary is open.** There is no allowlist and no host-owned set: a documentation session
+wants `write-docs`, and shipping a config file to say so is the extensibility this design refuses
+everywhere else. Only the shape is checked.
+
+**Roles may overlap.** Two members that both carry `review` is the intended case — it is what lets
+the arbitrator keep the loop moving when one of them is working, and it is why roles are not a
+partition of the work.
+
+A role is **not a permission**. It never stops the arbitrator addressing a member; it tells it who
+the person meant to do this. §11.2 says so in those words, and §11.3's roster line carries it.
+
+### 14.4 Environment
 
 | Variable | Purpose |
 |---|---|
@@ -850,8 +888,8 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 | Type | Payload | Gate |
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
-| `arb_start` | `conversation`, `members[]` (2), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
-| `arb_members` | `session`, `members[]` (2) | Arbiter |
+| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
+| `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) | Arbiter |
 | `arb_pause` | `session` | Arbiter |
 | `arb_resume` | `session` | Arbiter |
 | `arb_cancel` | `session`, `reason?` | Arbiter |

@@ -85,7 +85,9 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   expect(msgs[0].type).toBe('arb_start');
   expect(msgs[0].conversation).toBe('c1');
   expect(msgs[0].scope).toBe('Get the footer reviewed, then stop.');
-  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1'}, {pane_id: 'w8:p1'}]);
+  // A role each, empty because the form was left alone. Sent rather than omitted: an unroled
+  // member is a fact about the roster.
+  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: ''}, {pane_id: 'w8:p1', role: ''}]);
   expect(msgs[0].arbitrator).toEqual({pane_id: 'w1:p2'});
 
   // Waited for, not merely allowed to happen: the fake herdr's board never moves, so the pane the
@@ -95,6 +97,24 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   // Longer than the default 5s: the relay now watches an unconfirmed pane for the whole of
   // SUBMIT_TIMEOUT (8s) before saying so, which is the point of watching a pane rather than
   // counting presses. A 5s expectation was asserting the old give-up time.
+  await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
+});
+
+test('a role typed into the form is what the relay is asked for', async ({page}) => {
+  await openConv(page);
+  await captureSends(page);
+  await page.locator('#arbStrip button').click();
+  await page.locator('#arbScope').fill('Get the footer reviewed, then stop.');
+  await page.locator('#arbWho').selectOption({label: ARBITER});
+  // Overlapping on purpose: two agents that can both review is what lets the arbitrator keep the
+  // loop moving when one of them is working.
+  await page.locator('#arbRoleFirst').fill('review, fix-code');
+  await page.locator('#arbRoleSecond').fill('review');
+  await page.locator('#arbStrip .arb-btn.go').click();
+
+  const msgs = await sent(page);
+  expect(msgs[0].members).toEqual([{pane_id: 'w1:p1', role: 'review, fix-code'},
+                                   {pane_id: 'w8:p1', role: 'review'}]);
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 

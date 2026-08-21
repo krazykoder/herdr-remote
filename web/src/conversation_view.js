@@ -824,9 +824,13 @@
           // The member's own label and never `member-2`. That id is this session's bookkeeping and
           // the person reading the thread never agreed to it.
           const to = escapeHtml(e.to || '');
+          // The roles that member carries, beside its name: the decision named one of two agents,
+          // and this is the part of the roster that says why it could have been that one.
+          const role = escapeHtml(e.toRole || '');
           const rail = `<div class="conv-arb-to">` +
             `<span class="conv-commits-lede">${gate}</span>` +
             (to ? `<span class="conv-commit">${badge}${to}</span>` : '') +
+            (role ? `<span class="conv-commit quiet">${role}</span>` : '') +
             // Said out loud, because the alternative is a decision that looks executed and was not.
             (e.delivered ? '' : '<span class="conv-commit warn">not confirmed</span>') +
             '</div>';

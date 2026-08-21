@@ -302,7 +302,7 @@ async def loop_run():
             open(LOG, "w").close()
             await ws.send(json.dumps({
                 "type": "arb_start", "conversation": "c-e2e", "scope": SCOPE,
-                "members": [participant(MEMBER_1, "Architect"), participant(MEMBER_2, "Reviewer")],
+                "members": [participant(MEMBER_1, "#Plan, review"), participant(MEMBER_2, "fix-code")],
                 "arbitrator": participant(ARBITER)}))
             m = await wait_msg(ws, "arb_session")
             s = (m or {}).get("session", {})
@@ -314,11 +314,12 @@ async def loop_run():
                   sorted((x["id"], x["pane_id"]) for x in s.get("members", []))
                   == [("member-1", "a1:p1"), ("member-2", "a1:p2")], s.get("members"))
             # The client sent a pane id and a role and nothing else. Agent and label are on the
-            # roster because the relay read them off its own pane list.
+            # roster because the relay read them off its own pane list — and the roles come back
+            # normalised, because `#Plan, review` and `plan, review` are the same two tags.
             check("T12 identity comes from the relay's snapshot, not the client's payload",
                   sorted((x["agent"], x["label"], x["role"]) for x in s.get("members", []))
-                  == [("claude", "Architect 1", "Architect"),
-                      ("codex", "Reviewer 1", "Reviewer")], s.get("members"))
+                  == [("claude", "Architect 1", "plan, review"),
+                      ("codex", "Reviewer 1", "fix-code")], s.get("members"))
             check("T12 the starter prompt went to the arbitrator's pane and nowhere else",
                   "pane send-text a1:p3 You are the arbitrator" in herdr_log()
                   and "pane send-text a1:p1" not in herdr_log()

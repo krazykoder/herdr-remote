@@ -228,9 +228,18 @@
           // reading the thread has never agreed to it. Its kind rides along for the badge.
           to: d.gate === 'call_human' ? 'you' : (to ? (to.label || d.to) : (d.to || '')),
           toAgent: to ? to.agent || '' : '',
+          // Why this one and not the other. The roles are the person's instruction about who does
+          // what, so the decision reads as an answer to it rather than a coin toss.
+          toRole: to ? to.role || '' : '',
           delivered: !!d.send,
         };
       });
+    }
+
+    // A member on the strip: who, and what they are for. The roles are the only part of a roster
+    // a person cannot read off the pane list itself.
+    function arbMemberLine(m) {
+      return (m.label || m.id) + (m.role ? ` (${m.role})` : '');
     }
 
     function arbStateLabel(s) {
@@ -290,12 +299,15 @@
         // was, and a decision answering it that named someone who left would be recorded as the
         // arbitrator's mistake.
         if (crew) {
-          const ids = (s.members || []).map(m => m.pane_id);
-          return '<div class="arb-form">' +
+          const roster = s.members || [];
+          const ids = roster.map(m => m.pane_id);
+          return '<div class="arb-form">' + ARB_ROLE_LIST +
             `<p class="arb-who">Who ${escapeHtml((s.arbitrator || {}).label || 'the arbitrator')}` +
-            ' is watching</p>' +
+            ' is watching, and what each of them is for</p>' +
             arbPaneSelect('arbCrewA', crew, ids[0], 'First') +
+            arbRoleInput('arbCrewRoleA', (roster[0] || {}).role) +
             arbPaneSelect('arbCrewB', crew, ids[1], 'Second') +
+            arbRoleInput('arbCrewRoleB', (roster[1] || {}).role) +
             (s.state === 'awaiting'
               ? '<p class="arb-who">A decision is in the air. This can be changed once it lands, ' +
                 'or after a Pause.</p>' : '') +
@@ -325,7 +337,7 @@
           // the roster is replaced whole — so this opens the same picker the start form uses.
           `<button class="arb-btn" onclick="arbToggleCrew()"` +
           ` aria-label="Change who this session is arbitrating between">` +
-          `${escapeHtml((s.members || []).map(m => m.label || m.id).join(' · '))}</button>` +
+          `${escapeHtml((s.members || []).map(arbMemberLine).join(' · '))}</button>` +
           (paused
             ? '<button class="arb-btn" onclick="arbCommand(\'arb_resume\')">Resume</button>'
             : '<button class="arb-btn" onclick="arbCommand(\'arb_pause\')">Pause</button>') +
@@ -344,14 +356,16 @@
         return '<div class="arb-strip idle"><button class="arb-btn" onclick="arbToggleForm()">' +
           '⚖ Arbitrate</button></div>';
       }
-      return '<div class="arb-form">' +
+      return '<div class="arb-form">' + ARB_ROLE_LIST +
         '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop."></textarea></label>' +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
         arbPaneSelect('arbFirst', live, (live[0] || {}).pane_id, 'First') +
+        arbRoleInput('arbRoleFirst', '') +
         arbPaneSelect('arbSecond', live, (live[1] || {}).pane_id, 'Second') +
+        arbRoleInput('arbRoleSecond', '') +
         '<label>Arbitrator<select id="arbWho">' +
         formPanes.map(x => `<option value="${escapeHtml(x.pane_id)}">${escapeHtml(paneLabel(x))}` +
           `</option>`).join('') + '</select></label>' +
@@ -371,6 +385,25 @@
     // off is the default for both — a clock nobody asked for is an unattended loop spending budget.
     const ARB_IDLE_CHOICES = [0, 5, 15, 30];
     const ARB_RUNTIME_CHOICES = [0, 15, 30, 60];
+
+    // Suggestions, not a vocabulary. The relay checks the shape of a role and never its spelling,
+    // because the set is open — a docs session wants `write-docs` and nobody should have to ship a
+    // config file to say so. These are here to save typing the common ones.
+    const ARB_ROLE_SUGGEST = ['implement-code', 'fix-code', 'review', 'test', 'plan', 'research'];
+    const ARB_ROLE_LIST = '<datalist id="arbRoleList">' +
+      ARB_ROLE_SUGGEST.map(r => `<option value="${r}"></option>`).join('') + '</datalist>';
+
+    // What this member is here to do, in the person's own words. Free text with the common ones
+    // offered: roles may overlap across members on purpose — two agents that can both review is
+    // what lets the arbitrator keep going when one of them is busy.
+    function arbRoleInput(id, value) {
+      return `<label>Roles<input id="${id}" list="arbRoleList" maxlength="120"` +
+        ` value="${escapeHtml(value || '')}" placeholder="review, fix-code"></label>`;
+    }
+
+    function arbRoleValue(id) {
+      return ((document.getElementById(id) || {}).value || '').trim();
+    }
 
     // One pane select. Every picker here is the same question — which of these panes — and the
     // three of them differing only in their id is what keeps the markup honest about that.
@@ -414,7 +447,9 @@
         showToast('Two different panes — one agent has nobody to talk to.');
         return;
       }
-      arbCommand('arb_members', {members: picks.map(pane_id => ({pane_id: pane_id}))});
+      const roles = ['arbCrewRoleA', 'arbCrewRoleB'].map(arbRoleValue);
+      arbCommand('arb_members',
+        {members: picks.map((pane_id, i) => ({pane_id: pane_id, role: roles[i]}))});
       arbCrew = null;
       arbRender();
     }
@@ -471,6 +506,7 @@
       const who = (document.getElementById('arbWho') || {}).value || '';
       const picks = ['arbFirst', 'arbSecond']
         .map(id => (document.getElementById(id) || {}).value || '');
+      const roles = ['arbRoleFirst', 'arbRoleSecond'].map(arbRoleValue);
       if (!scope) { showToast('Say what this session is for.'); return; }
       if (live.length < 2 || !picks[0] || !picks[1]) return;
       if (picks[0] === picks[1]) {
@@ -490,7 +526,7 @@
       }
       arbSend({
         type: 'arb_start', conversation: conv.id, scope: scope,
-        members: picks.map(pane_id => ({ pane_id: pane_id })),
+        members: picks.map((pane_id, i) => ({ pane_id: pane_id, role: roles[i] })),
         arbitrator: { pane_id: who },
         triggers: { on_turn_end: true, idle_ms: arbClockValue('arbIdle'),
                     runtime_ms: arbClockValue('arbRuntime') },
