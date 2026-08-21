@@ -478,10 +478,14 @@ class Arbitration:
     between them, and neither a pane nor a subprocess is needed to test that.
     """
 
-    def __init__(self, path, *, send, panes, log=None, notify=None, clock=now_ms):
+    def __init__(self, path, *, send, panes, log=None, notify=None, clock=now_ms, clear=None):
         self.path = path
         self.dir = os.path.join(os.path.dirname(path) or ".", "arbitration")
         self.send = send
+        # Wiping a pane before its brief is sent again. Injected like the other two, and optional:
+        # a caller that cannot clear a pane still gets a reinit that re-sends the brief, which is
+        # most of the value and is the honest degradation.
+        self.clear = clear
         self.panes = panes
         self.log = log                     # a ConversationLog, or None
         # Called on every pause. §9.3: an unattended loop that stops must not be discovered hours
@@ -845,6 +849,59 @@ class Arbitration:
             # The roster is already changed — it is a row, and the row is written. What could not
             # be proven is that the arbitrator was *told*, and an arbitrator deciding against a
             # roster it does not know about is the one thing this whole call exists to prevent.
+            return self.pause(session_id, "send_unconfirmed")
+        return self.session(session_id)
+
+    @session_change
+    def reinit(self, session_id):
+        """Give the arbitrator its brief again, in a pane with nothing else in it.
+
+        A long session fills an agent's context with turns it has already decided about, and the
+        first thing to fall out of the window is the instruction it was given at the start — the
+        drop path, the fields, the gates. What that looks like from outside is an arbitrator that
+        starts writing prose into its own pane instead of JSON into the drop box, which the record
+        shows as two `invalid_record` rows and a pause nobody can act on.
+
+        This is the person's answer to it: clear the pane, then send the same starter prompt the
+        session opened with. Same scope, same gates, same query path. **Nothing about the session
+        changes** — not the roster, not the budget, not the sequence — because nothing was decided;
+        this re-states a brief that was already given.
+
+        Refused while a decision is outstanding, for the same reason a roster edit is: the prompt
+        naming that sequence would be cleared out from under the answer, and no record would ever
+        be written to a drop box the session is still waiting on. Pause it first.
+        """
+        s = self.session(session_id)
+        if s is None:
+            raise ArbiterError("no_session")
+        if s["state"] not in ("active", "paused"):
+            raise ArbiterError("not_editable", s["state"])
+        arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], self.panes())
+        if arb is None:
+            raise ArbiterError("arbitrator_gone")
+        # N7. A pane mid-turn is where a keystroke goes missing, and the keystroke here is the one
+        # that empties its context — half-delivered is the worst outcome this call has.
+        status = next((p.get("agent_status") or "" for p in self.panes()
+                       if p.get("pane_id") == arb), "")
+        if status in BUSY:
+            raise ArbiterError("arbitrator_busy", arb)
+
+        if self.clear:
+            try:
+                self.clear(arb)
+            except Exception as e:
+                # Not fatal. The brief is about to be sent either way, and an arbitrator that has
+                # been told twice in a full context is strictly better off than one not told at
+                # all — which is what refusing here would leave.
+                log.warning("arbitration %s: clearing %s raised: %r", session_id, arb, e)
+        body = starter_prompt(s["scope"], json.loads(s["gates_json"]), self._query_path())
+        at = self.clock()
+        self.conn.execute(
+            "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
+            (session_id, s["sequence"], "reinit", body, at))
+        self.conn.commit()
+        log.info("arbitration %s: arbitrator %s given its brief again", session_id, arb)
+        if not self._send(arb, body):
             return self.pause(session_id, "send_unconfirmed")
         return self.session(session_id)
 

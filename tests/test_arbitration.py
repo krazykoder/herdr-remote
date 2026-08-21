@@ -1256,5 +1256,78 @@ class Roles(Harness):
         self.assertIsNone(self.arb.running(), "nothing left behind")
 
 
+class Rebrief(Harness):
+    """Giving the arbitrator its opening instruction again, into a pane with nothing else in it.
+
+    The failure this exists for is quiet: a long session pushes the starter prompt out of the
+    agent's context, and what the record then shows is prose where a decision record should be —
+    two `invalid_record` rows and a pause whose reason is true and useless. Nothing about the
+    session is wrong, so nothing about the session should have to be restarted.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cleared = []
+        self.arb.clear = self.cleared.append
+
+    def test_the_pane_is_cleared_and_the_same_brief_is_sent_again(self):
+        s = self.start()
+        opening = self.sent[0][1]
+        self.sent.clear()
+        self.arb.reinit(s["id"])
+        self.assertEqual(["pA"], self.cleared, "cleared first, and only the arbitrator")
+        self.assertEqual([("pA", opening)], self.sent, "the same brief, word for word")
+
+    def test_nothing_about_the_session_moves(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.collect(s["id"], 1)
+        before = self.arb.session(s["id"])
+        self.arb.reinit(s["id"])
+        after = self.arb.session(s["id"])
+        for field in ("sequence", "steps_used", "consecutive", "state"):
+            self.assertEqual(before[field], after[field], field)
+        self.assertEqual([m["pane_id"] for m in self.arb.roster(s["id"]).values()],
+                         ["p1", "p2"], "the roster is not touched")
+
+    def test_it_is_refused_while_a_decision_is_outstanding(self):
+        s = self.start()
+        self.step(s["id"])
+        self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.reinit(s["id"])
+        self.assertEqual("not_editable", caught.exception.code)
+        # And the way through is the one the strip already offers.
+        self.arb.pause(s["id"], "by_hand")
+        self.sent.clear()
+        self.arb.reinit(s["id"])
+        self.assertEqual(1, len(self.sent))
+
+    def test_a_working_arbitrator_is_not_wiped_mid_turn(self):
+        s = self.start()
+        self.live[2]["agent_status"] = "working"
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.reinit(s["id"])
+        self.assertEqual("arbitrator_busy", caught.exception.code)
+        self.assertEqual([], self.cleared, "refused before anything was typed")
+
+    def test_a_clear_that_fails_still_sends_the_brief(self):
+        # An arbitrator told twice in a full context is better off than one not told at all, which
+        # is what refusing here would leave.
+        s = self.start()
+        self.arb.clear = lambda pid: (_ for _ in ()).throw(RuntimeError("no herdr"))
+        self.sent.clear()
+        self.arb.reinit(s["id"])
+        self.assertEqual(1, len(self.sent))
+
+    def test_it_is_in_the_record_as_its_own_kind_of_prompt(self):
+        s = self.start()
+        self.arb.reinit(s["id"])
+        triggers = [r["trigger"] for r in self.arb.conn.execute(
+            "SELECT trigger FROM prompts WHERE session_id=? ORDER BY id", (s["id"],))]
+        self.assertIn("reinit", triggers)
+
+
 if __name__ == "__main__":
     unittest.main()

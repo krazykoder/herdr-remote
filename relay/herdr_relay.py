@@ -1645,6 +1645,33 @@ def arbitration_send(pane_id, text):
     return on_loop(submit_paste(pane_id, text, remote=pane_remote_map.get(pane_id)), wait=True)
 
 
+# What empties an agent's context. Claude Code and Codex both take it; a harness that does not
+# gets a line it does not understand and an unchanged context, which is the same place a person
+# who never pressed the button is in. Not configurable until a harness asks for it.
+ARB_CLEAR = "/clear"
+
+
+async def clear_pane(pane_id):
+    """Type the clear command and press Enter once. No watching, and none to do.
+
+    `submit_paste` proves a send by waiting for the pane to say it is working, and clearing a
+    context is the one thing an agent does *without* going to work — it answers instantly and
+    stays `idle`, which that loop reads as "not taken yet" and spends its whole timeout on. One
+    press is right here, and what has to land is the brief that follows, which is confirmed.
+    """
+    remote = pane_remote_map.get(pane_id)
+    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, ARB_CLEAR, remote=remote)
+    await asyncio.sleep(submit_settle(ARB_CLEAR))
+    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+    # A beat for the harness to actually empty itself, so the brief is not typed into a composer
+    # that is about to be wiped.
+    await asyncio.sleep(1.0)
+
+
+def arbitration_clear(pane_id):
+    return on_loop(clear_pane(pane_id), wait=True)
+
+
 def arbitration_paused(session, reason):
     """Every pause reaches a Lock Screen. §9.3 — an unattended loop that stops must not be news
     six hours later. Fire and forget: the pause is already committed, and a push nobody receives
@@ -2089,6 +2116,10 @@ async def handle_client(ws, listener="lan"):
                                 scope=msg.get("scope") or "",
                                 gates=msg.get("gates"), budget=msg.get("budget"),
                                 triggers=msg.get("triggers")))
+                    elif msg_type == "arb_reinit":
+                        # The same brief the session opened with, into a pane with nothing else in
+                        # it. Nothing about the session moves — see Arbitration.reinit.
+                        session = await asyncio.to_thread(arbitration.reinit, msg["session"])
                     elif msg_type == "arb_members":
                         # Attach, detach and swap are one edit: §14.1 fixes the size at two, so
                         # the roster is always replaced whole. The arbitrator is told on this same
@@ -2469,7 +2500,8 @@ async def main():
         # Built here rather than at import: it calls back into the relay's own herdr helpers, and
         # it needs the running loop to reach them from the thread a session runs on.
         arbitration = Arbitration(CONV_LOG_DB, send=arbitration_send, panes=live_panes,
-                                  log=conv_log, notify=arbitration_paused)
+                                  log=conv_log, notify=arbitration_paused,
+                                  clear=arbitration_clear)
         # A session that was running when the relay stopped is paused, never resumed (§9.4): the
         # relay cannot promise exactly-once delivery into a terminal, and re-sending a phase's
         # instructions is worse than stopping and showing the person the last one.

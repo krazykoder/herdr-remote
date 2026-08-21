@@ -341,6 +341,13 @@
           (paused
             ? '<button class="arb-btn" onclick="arbCommand(\'arb_resume\')">Resume</button>'
             : '<button class="arb-btn" onclick="arbCommand(\'arb_pause\')">Pause</button>') +
+          // The brief again, in an empty pane. A long session pushes the opening instruction out
+          // of an agent's context and what is left is an arbitrator writing prose where the drop
+          // box should be — this is the way back without losing the session. Armed, because it
+          // clears the arbitrator's context and that is not undoable.
+          `<button class="arb-btn arm-btn" onclick="armButton(this, 'Re-brief?',` +
+          ` () => arbCommand('arb_reinit'))"` +
+          ` aria-label="Clear the arbitrator and give it its brief again">↻ Brief</button>` +
           // Asked twice: ending a session is not undoable, and the loop it stops is the reason
           // somebody left two agents running unattended.
           `<button class="arb-btn arm-btn" onclick="armButton(this, 'End?',` +
@@ -541,7 +548,15 @@
       }
       if (arbCrew && !(arbSession && conv && arbSession.conversation === conv.id)) arbCrew = null;
       const html = arbStripHtml(arbSession, conv || null, arbOn, arbFormPanes, arbCrew);
-      if (html !== arbHtmlLast) { arbHtmlLast = html; el.innerHTML = html; }
+      if (html !== arbHtmlLast) {
+        // A redraw takes an armed button with it — the budget ticking down a minute is enough to
+        // trigger one — and an arm on a node that is no longer in the page is a first tap that was
+        // silently lost. Both armed buttons here are destructive, so the arm is dropped out loud
+        // and the person taps again. Same guard the thread's Esc makes when its row goes away.
+        if (typeof armedEl !== 'undefined' && armedEl && el.contains(armedEl)) disarmButton();
+        arbHtmlLast = html;
+        el.innerHTML = html;
+      }
     }
 
     function arbSend(msg) {

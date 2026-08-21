@@ -888,7 +888,28 @@ announcement — a role-only edit is refused while a decision is outstanding, ex
 The announcement says *which* of the two changed: a pane that moved invalidates what the arbitrator
 remembers about a member id, and a role that changed does not.
 
-### 14.4 Environment
+### 14.4 Re-briefing
+
+A long session pushes the starter prompt out of the arbitrator's context. What that looks like from
+outside is prose written into its own pane where a decision record should be — `invalid_record`
+twice and a pause whose reason is true and useless. Nothing about the session is wrong, so nothing
+about it should have to be restarted.
+
+`arb_reinit` (§15.1) clears the arbitrator's pane and sends the **same** starter prompt the session
+opened with: same scope, same gates, same query path. Nothing else moves — not the roster, not the
+budget, not the sequence — because nothing was decided.
+
+Refused while a decision is outstanding, for the reason a roster edit is: the prompt naming that
+sequence would be cleared out from under the answer, and no record would ever reach a drop box the
+session is still waiting on. Refused at a busy arbitrator (N7), because the keystroke that empties
+a context is the worst one to half-deliver. Pause first, in both cases.
+
+The clear command is `/clear`, which Claude Code and Codex both take. A harness that does not gets
+a line it does not understand and an unchanged context — the same place a person who never pressed
+the button is in, so the failure is quiet by construction. The re-brief that follows is confirmed
+like any other send, and an unconfirmed one pauses the session.
+
+### 14.5 Environment
 
 | Variable | Purpose |
 |---|---|
@@ -909,6 +930,7 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
 | `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?` | Arbiter |
 | `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) | Arbiter |
+| `arb_reinit` | `session` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
 | `arb_resume` | `session` | Arbiter |
 | `arb_cancel` | `session`, `reason?` | Arbiter |

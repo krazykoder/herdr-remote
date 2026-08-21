@@ -555,6 +555,18 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
                                      {pane_id: 'w1:p2', role: 'review'}]);
 });
 
+test('the brief can be given again, and is asked twice before it is', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSession({session: SESSION});
+  const html = g.arbStripHtml(SESSION, CONV, true, null, null);
+  assert.match(html, /arbCommand\('arb_reinit'\)/);
+  // Armed like End is: it empties the arbitrator's context, which is not undoable.
+  assert.match(html, /class="arb-btn arm-btn"[^>]*Re-brief\?/);
+  g.arbCommand('arb_reinit');
+  assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
+                   [{type: 'arb_reinit', session: 's-20260817-1103'}]);
+});
+
 test('a badge writes its phrase into the line, and a second tap takes it out again', () => {
   const {g, els} = ctx();
   // Pure, so the toggle can be pinned without a DOM: the line is the value and the badges only
