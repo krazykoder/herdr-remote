@@ -424,6 +424,22 @@ WRITE_EXT = os.environ.get("HERDR_ENABLE_WRITE_EXT", "") == "1"
 # shells are never parsed, so known_panes does not grow and pane_guard behaves exactly as before.
 TERMINAL = os.environ.get("HERDR_ENABLE_TERMINAL", "") == "1"
 
+# Run in a terminal *this relay opened*, once, as soon as its shell reaches a prompt. herdr spawns
+# the user's login shell, so a pane opened from a phone arrives wearing whatever prompt their rc
+# files draw — which on a 40-column screen is usually most of the line, and on zsh is usually the
+# right-hand half of it. This is the only place that can trim it: passing PROMPT/RPROMPT in the
+# environment does nothing, because the rc files run *after* the environment is set and overwrite
+# them. `clear` hides the init line itself, so the pane opens at a bare prompt with nothing above.
+#
+# On by default, unlike every other switch here, because those defend the user's data or grant a
+# capability and this is cosmetic and scoped to a pane the app created a second ago. A shell the
+# user opened in herdr themselves is never written to. Set it to "" to send nothing, or to
+# whatever their shell wants — `RPROMPT=` is a harmless no-op assignment in bash, and fish would
+# need `function fish_right_prompt; end`.
+TERMINAL_INIT = os.environ.get("HERDR_TERMINAL_INIT", "RPROMPT=; clear")
+TERMINAL_INIT_WAIT = 8      # seconds to wait for the new shell's prompt before sending anyway
+TERMINAL_INIT_POLL = 0.4
+
 # Arbitration. Off means off (N10): unset, nothing is constructed, no trigger fires, and the wire is
 # byte-for-byte what it was. Both companions are hard requirements rather than conveniences — the
 # whole output of a session is text typed into somebody's terminal, which is what WRITE_EXT gates,
@@ -498,7 +514,7 @@ agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
 latest_agents = []  # last full snapshot, replayed to each client on connect
 latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
-shell_panes = set()  # pane IDs in latest_shells, for the respond refusal in handle_client
+shell_panes = set()  # pane IDs in latest_shells: the respond refusal, and submit_paste's shortcut
 
 SAFE_RESPONSES = {"y", "n", "a", "yes", "no", "trust", "yes, single permission", "trust, always allow", "no (tab to edit)", "approve all pending", "configure individually", "exit (cancel subagents)"}
 # "ctrl+<key>" and not "C-<key>": herdr accepts C-c as a legacy spelling but answers
@@ -1101,9 +1117,22 @@ async def submit_paste(pane_id, text, remote=None):
     A pane already `working` when the paste arrives is a message queued behind what the agent is
     doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
     nothing to watch. One press after the settle, exactly as before, and the return says so.
+
+    And a pane with no agent skips all of it. Every rule here is about a TUI — booting, laying out a
+    paste, showing a permission prompt — and a shell has none of them. It has no status to watch
+    either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
+    "still starting" and waits out to the timeout, leaving the command unentered at the prompt.
     """
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
     await asyncio.sleep(submit_settle(text))
+    # A shell is none of the cases below. It has no TUI to be mid-boot, no composer to be mid-paste
+    # and no permission prompt for an Enter to accept, so there is nothing the loop could learn by
+    # watching — and nothing to watch it *with*: a real `pane list` reports `unknown` for a pane
+    # carrying no agent, which the loop reads as "still starting" and waits out to the timeout,
+    # leaving the command sitting at the prompt. Press once and say so.
+    if pane_id in shell_panes:
+        await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+        return True
     deadline = time.monotonic() + SUBMIT_TIMEOUT
     presses, first = 0, True
     while time.monotonic() < deadline:
@@ -1269,6 +1298,32 @@ def start_agent_exec(plan):
     return pane_id, None
 
 
+def terminal_init_exec(pane_id, remote):
+    """Send TERMINAL_INIT into a terminal this relay just opened. Never fatal.
+
+    Only ever called from open_terminal_exec, so the pane is one the app created a moment ago and
+    the shell in it has run nothing. An agent pane never comes through here: `agent start` gets a
+    TUI that owns its own screen, and typing a shell command at it would be typing into a prompt.
+
+    A login shell that sources a real profile takes a second or several to reach its prompt, and
+    characters sent before then are dropped. That is the same precondition `agent start` waits out
+    at PANE_NOT_READY above, asked the only way a shell answers it: `pane list` reports `unknown`
+    for a pane carrying no agent, so there is no status to watch — the prompt appearing in the pane
+    is the signal. A pane that never draws one is sent to anyway at the deadline, which is no worse
+    than not having tried.
+    """
+    if not TERMINAL_INIT:
+        return
+    deadline = time.monotonic() + TERMINAL_INIT_WAIT
+    while time.monotonic() < deadline:
+        if run_herdr("pane", "read", pane_id, "--lines", "5",
+                     "--source", "visible", remote=remote).strip():
+            break
+        time.sleep(TERMINAL_INIT_POLL)
+    run_herdr("pane", "send-text", pane_id, TERMINAL_INIT, remote=remote)
+    run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+
+
 def open_terminal_exec(plan):
     """Run a validated open_terminal plan. Returns (pane_id, error). Blocking.
 
@@ -1298,6 +1353,10 @@ def open_terminal_exec(plan):
         if slot_err:
             log.warning("Terminal opened as %s but slot %r was not applied: %s",
                         target_pane, plan["slot"], slot_err)
+    # Last, so the shell is tidied at the width it will be read at rather than the one it was
+    # created at — and never fatal either, for the same reason: a terminal wearing the user's own
+    # prompt is still a terminal.
+    terminal_init_exec(target_pane, remote)
     return target_pane, None
 
 
@@ -1936,7 +1995,7 @@ async def handle_client(ws, listener="lan"):
                         pane=msg.get("pane"), host=msg.get("host"), agent=msg.get("agent"),
                         cwd=msg.get("cwd"), kind=msg.get("kind"), grep=msg.get("grep"),
                         since=since, until=until,
-                        since_id=msg.get("since_id"),
+                        since_id=msg.get("since_id"), until_id=msg.get("until_id"),
                         fingerprints=conv_fingerprints(msg.get("fingerprints")),
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
@@ -1948,6 +2007,24 @@ async def handle_client(ws, listener="lan"):
                 }
                 if "fingerprints" in msg:
                     out_msg["fingerprints"] = msg.get("fingerprints")
+                # Echoed for the same reason: a fingerprint is an agent in a directory and several
+                # panes can share one, so a client that narrowed to a pane has to be able to tell
+                # that answer from the roster's. Without it the narrow answer's highest id reads as
+                # a watermark for every pane sharing the fingerprint, and the rest go quiet.
+                if msg.get("pane"):
+                    out_msg["pane"] = msg.get("pane")
+                # A current pane can inherit a prior pane id after a respawn. `pane` filters the
+                # physical record; this echoes the current logical owner so the browser can apply
+                # the result and its end marker to the right member.
+                if msg.get("owner_pane"):
+                    out_msg["owner_pane"] = msg.get("owner_pane")
+                # Echoed for a third reason, and the sharpest one: a backfill answer is the window
+                # *before* what the client holds, so its highest id is older than the client's
+                # watermark. Taken as a watermark it would wind that client backwards and make the
+                # next delta re-fetch everything between. The client checks for this before it
+                # moves anything.
+                if msg.get("until_id") is not None:
+                    out_msg["until_id"] = msg.get("until_id")
                 await ws.send(json.dumps(out_msg))
             elif msg_type.startswith("arb_"):
                 # One gate for the whole family. With arbitration off these are not merely

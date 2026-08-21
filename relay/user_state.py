@@ -27,7 +27,25 @@ CREATE TABLE IF NOT EXISTS docs (
   body TEXT    NOT NULL,
   at   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS history (
+  name TEXT    NOT NULL,
+  rev  INTEGER NOT NULL,
+  body TEXT    NOT NULL,
+  at   INTEGER NOT NULL,
+  PRIMARY KEY (name, rev)
+);
 """
+
+# Every committed revision, not only the one being replaced: `docs` is one row per name and a put
+# overwrites it, so a client that writes a wrong document destroys the right one with no trace.
+# That is not hypothetical — a browser that filed its own conversation index over the shared one
+# took every conversation name the user had typed, and the only copies left were half-overwritten
+# pages inside the WAL.
+#
+# Opaque bodies mean this cannot keep "the interesting ones", so it keeps the recent ones. At the
+# sizes these documents actually reach — single-digit KB — the whole retention is about a megabyte
+# per name, which buys enough revisions to cover a bad browser being noticed and shut.
+HISTORY_KEEP = 200
 
 # Mirrors of `herdr_pairs`, `herdr_conversations`, `herdr_conv_view` and `herdr_conv_hidden`.
 # Deliberately not the other thirty-nine: a theme and a font size are answers to "how should this
@@ -134,11 +152,20 @@ class UserState:
                     self.conn.rollback()
                     raise Conflict(have, row["body"] if row else None)
                 new_rev = have + 1
+                at = now_ms()
                 self.conn.execute(
                     "INSERT INTO docs (name, rev, body, at) VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(name) DO UPDATE SET rev = excluded.rev, "
                     "body = excluded.body, at = excluded.at",
-                    (name, new_rev, body, now_ms()))
+                    (name, new_rev, body, at))
+                # In the same transaction as the document itself. A history that can be a revision
+                # behind is one that does not hold the version you are trying to get back to.
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO history (name, rev, body, at) VALUES (?, ?, ?, ?)",
+                    (name, new_rev, body, at))
+                self.conn.execute(
+                    "DELETE FROM history WHERE name = ? AND rev <= ?",
+                    (name, new_rev - HISTORY_KEEP))
                 self.conn.commit()
             except Conflict:
                 raise
@@ -146,6 +173,98 @@ class UserState:
                 self.conn.rollback()
                 raise
         return new_rev
+
+
+    def history(self, name, limit=50):
+        """Recent revisions of one document, newest first: [{"rev", "at", "bytes"}].
+
+        Without the bodies — a listing is for finding the revision you want, and four documents'
+        worth of bodies is the thing that makes this table big.
+        """
+        if name not in DOC_NAMES:
+            raise ValueError(f"unknown document {name!r}")
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT rev, at, length(body) AS bytes FROM history WHERE name = ? "
+                "ORDER BY rev DESC LIMIT ?", (name, int(limit))).fetchall()
+        return [dict(r) for r in rows]
+
+    def body_at(self, name, rev):
+        """One historical body, or None if that revision has been pruned or never existed."""
+        if name not in DOC_NAMES:
+            raise ValueError(f"unknown document {name!r}")
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT body FROM history WHERE name = ? AND rev = ?", (name, rev)).fetchone()
+        return row["body"] if row else None
+
+    def restore(self, name, rev):
+        """Put an old body back as a new revision. Returns the new revision.
+
+        Deliberately a normal `put` and not a rewind: the revision only ever goes up, so a browser
+        holding rev 214 sees 216 and adopts it exactly as it would any other write. Rewinding the
+        counter instead would make every open browser's next write land at a revision the relay had
+        already handed to someone else.
+        """
+        body = self.body_at(name, rev)
+        if body is None:
+            raise ValueError(f"{name} has no revision {rev}")
+        return self.put(name, self.get([name])[name]["rev"], body)
+
+
+def _cli(argv):
+    """Read the history and put a version back, from a shell.
+
+    A recovery path that needs the app to be working is not a recovery path — the case this exists
+    for is a browser that has just overwritten the document, which is exactly when you do not want
+    to open another browser.
+    """
+    import json
+    import sys
+    usage = ("usage: user_state.py [--db PATH] list\n"
+             "       user_state.py [--db PATH] history <name> [limit]\n"
+             "       user_state.py [--db PATH] show <name> [rev]\n"
+             "       user_state.py [--db PATH] restore <name> <rev>")
+    db = os.environ.get("HERDR_STATE_DB", ".herdr-remote/state.sqlite3")
+    if argv[:1] == ["--db"]:
+        db, argv = argv[1], argv[2:]
+    if not argv:
+        print(usage, file=sys.stderr)
+        return 2
+    cmd, args = argv[0], argv[1:]
+    s = UserState(db)
+    try:
+        if cmd == "list":
+            for name, doc in s.get().items():
+                n = len(s.history(name, HISTORY_KEEP))
+                print(f"{name:14} rev={doc['rev']:<6} "
+                      f"{len(doc['body'] or ''):>8} bytes  {n} kept")
+        elif cmd == "history" and args:
+            for h in s.history(args[0], int(args[1]) if len(args) > 1 else 50):
+                when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h["at"] / 1000))
+                print(f"rev={h['rev']:<6} {when}  {h['bytes']:>8} bytes")
+        elif cmd == "show" and args:
+            name = args[0]
+            body = (s.body_at(name, int(args[1])) if len(args) > 1
+                    else s.get([name])[name]["body"])
+            if body is None:
+                print("no such revision", file=sys.stderr)
+                return 1
+            print(body)
+        elif cmd == "restore" and len(args) == 2:
+            new_rev = s.restore(args[0], int(args[1]))
+            print(f"{args[0]}: revision {args[1]} restored as {new_rev}")
+            print("Open browsers pick it up on their next connect — the relay broadcasts a write "
+                  "it made itself, not one made under it.")
+        else:
+            print(usage, file=sys.stderr)
+            return 2
+    except (ValueError, Conflict) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        s.close()
+    return 0
 
 
 def _demo():
@@ -170,9 +289,20 @@ def _demo():
                 pass
         assert s.get(["pairs"])["pairs"]["rev"] == 1, "a refused put must not advance the rev"
         assert set(s.get()) == set(DOC_NAMES)
+
+        # The history is what makes an overwrite recoverable, so the overwrite is what tests it.
+        s.put("conversations", 0, '{"items":["named"]}')
+        s.put("conversations", 1, '{"items":["fabricated"]}')
+        hist = s.history("conversations")
+        assert [h["rev"] for h in hist] == [2, 1], hist
+        assert s.body_at("conversations", 1) == '{"items":["named"]}'
+        assert s.restore("conversations", 1) == 3
+        assert s.get(["conversations"])["conversations"]["body"] == '{"items":["named"]}'
+        assert s.body_at("conversations", 99) is None
         s.close()
     print("ok")
 
 
 if __name__ == "__main__":
-    _demo()
+    import sys
+    sys.exit(_cli(sys.argv[1:]) if sys.argv[1:] else (_demo() or 0))

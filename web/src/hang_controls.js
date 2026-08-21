@@ -52,6 +52,16 @@
       hangSyncCommits(document.getElementById('paneCommits'),
                       live && !!thread && !thread.hidden);
       hangSyncCommits(document.getElementById('convCommits'), live && !!convViewId);
+      // Whether the relay has been asked something that has not come back. Only where the record is
+      // what is on screen: a warm fetch runs with the toggle off, and a pill over this browser's own
+      // transcript would be about a thread the reader is not looking at.
+      const asking = live && typeof convLiveSyncing === 'function' && convLiveSyncing();
+      hangSyncPill(document.getElementById('paneSyncing'), asking && !!thread && !thread.hidden);
+      hangSyncPill(document.getElementById('convViewSyncing'), asking && !!convViewId);
+    }
+
+    function hangSyncPill(el, on) {
+      if (el) el.hidden = !on;
     }
 
     function hangSyncCommits(btn, offered) {

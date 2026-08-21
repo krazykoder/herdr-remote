@@ -129,6 +129,14 @@ const test = base.test.extend({
     }
   }, {scope: 'worker'}],
 
+  // What the fake herdr was told to do. Every invocation appends one line, so a test that cares
+  // whether a keystroke reached the pane can read it back rather than inferring it from the screen
+  // — which is the only way to see an Enter that was never pressed.
+  herdrLog: [async ({}, use, workerInfo) => {
+    await use(path.join(ROOT, 'tests', 'e2e', 'logs', `w${workerInfo.parallelIndex}`,
+                        'fake_herdr.log'));
+  }, {scope: 'worker'}],
+
   stateDB: [async ({}, use, workerInfo) => {
     await use(path.join(ROOT, 'tests', 'e2e', 'logs', `w${workerInfo.parallelIndex}`,
                         'state.sqlite3'));

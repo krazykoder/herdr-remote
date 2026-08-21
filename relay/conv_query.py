@@ -92,7 +92,8 @@ def open_ro(path):
 
 
 def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
-          grep=None, since=None, until=None, since_id=None, fingerprints=None, last=QUERY_ROWS_DEFAULT):
+          grep=None, since=None, until=None, since_id=None, until_id=None,
+          fingerprints=None, last=QUERY_ROWS_DEFAULT):
     """Turns matching the selectors, oldest first, bounded.
 
     Selectors are AND-ed. `fingerprints` is a list of (host, agent, cwd) triples — how a session
@@ -131,6 +132,13 @@ def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
     if since_id is not None:
         where.append("id > ?")
         args.append(int(since_id))
+    # The other direction, and the only way back through a record longer than one window. The
+    # ordering below is already newest-first-then-reversed, so this needs no second sort: it moves
+    # which window "the newest `last`" means, from the end of the record to the end of what the
+    # asker already holds.
+    if until_id is not None:
+        where.append("id < ?")
+        args.append(int(until_id))
     if fingerprints:
         ors = " OR ".join("(host = ? AND agent = ? AND cwd = ?)" for _ in fingerprints)
         where.append("(" + ors + ")")
@@ -244,6 +252,7 @@ def main(argv=None):
     p.add_argument("--since", type=int, help="epoch ms; turns at or after this")
     p.add_argument("--until", type=int, help="epoch ms; turns at or before this")
     p.add_argument("--since-id", type=int, help="turn id; turns strictly after this id")
+    p.add_argument("--until-id", type=int, help="turn id; turns strictly before this id")
     # The question this record was built to answer from the other end: not "what was said at half
     # past three" but "what was said between the commit that broke it and the one that fixed it".
     # Resolved here rather than stored per turn — git knows when a commit happened and the record
@@ -285,7 +294,7 @@ def main(argv=None):
         rows, truncated = query(
             conn, pane=args.pane, host=args.host, agent=args.agent, cwd=args.cwd,
             kind=args.kind, grep=args.grep, since=since, until=until,
-            since_id=args.since_id, last=args.last)
+            since_id=args.since_id, until_id=args.until_id, last=args.last)
     if args.format == "json":
         print(json.dumps({"turns": [as_wire(r) for r in rows], "truncated": truncated},
                          indent=2))

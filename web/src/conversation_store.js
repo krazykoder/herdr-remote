@@ -27,7 +27,8 @@
     // addressed by — see conv_live.js.
     const CONV_LIVE_STORE = 'live';
     const CONV_DB_VERSION = 2;
-    const CONV_INDEX_KEY = 'herdr_conversations', CONV_FALLBACK_KEY = 'herdr_transcripts';
+    const CONV_INDEX_KEY = 'herdr_conversations', CONV_PENDING_KEY = 'herdr_conversations_pending',
+      CONV_FALLBACK_KEY = 'herdr_transcripts';
     // What the fallback keeps instead. It is sharing one 5 MB cap with everything else this app
     // stores, so it holds hours of history rather than months — and says so.
     const CONV_FALLBACK_ENTRIES = 400, CONV_FALLBACK_TRANSCRIPTS = 20;
@@ -856,6 +857,37 @@
       if (hit) { saveConvIndex(items); if (!activePane) renderConversations(); }
     }
 
+    // The relay cache is the source a fresh browser can fill before it has watched any panes.
+    // Keep the landing index in step with the same rows its conversation view will draw.
+    //
+    // Raised and never lowered. The relay answers a window — 200 rows a pane — and a browser that
+    // has watched a pane for a week holds more of it than that window carries, so writing this
+    // count down would tell the reader their record had shrunk. The card says the larger of what
+    // is on disk here and what the relay just handed over.
+    function convNoteLiveCounts(keys) {
+      if (typeof convLiveEntries !== 'function') return;
+      const items = loadConvIndex();
+      let hit = false;
+      for (const c of items) for (const m of c.members || []) {
+        if (!(keys || []).includes(m.key)) continue;
+        const entries = convLiveEntries([m.key]);
+        if (!entries.length) continue;
+        const last = entries[entries.length - 1] || {};
+        const messages = Math.max(Number(m.messages) || 0, entries.length);
+        const seen = Math.max(Number(m.seen) || 0, convAt(last) || 0);
+        // The preview belongs to whichever side is newer, so a card cannot show a line older than
+        // the timestamp beside it.
+        const text = seen > (Number(m.seen) || 0)
+          ? String(last.text || '').replace(/\s+/g, ' ').trim().slice(0, 120) : m.last;
+        if (m.messages === messages && m.seen === seen && m.last === text) continue;
+        m.messages = messages;
+        m.seen = seen;
+        m.last = text;
+        hit = true;
+      }
+      if (hit) { saveConvIndex(items); if (!activePane) renderConversations(); }
+    }
+
     // What the session was, for a conversation that outlives it. Every field is one the pane
     // record already carries, except `role`, which roleOf() recovers from the label. Placement and
     // slot are deliberately absent: a snapshot says where a pane *is*, never how it was created,
@@ -889,6 +921,16 @@
     function saveConvIndex(items) {
       const kept = convFit(items);
       try {
+        // What this save adds that the index did not already have is what the relay has never been
+        // told about. Ids the save drops leave the outbox with them: a conversation deleted before
+        // it ever synced, or one convFit trimmed, is not waiting to be sent anywhere, and an outbox
+        // that only ever grows is a localStorage key that never stops.
+        const before = new Set(loadConvIndex().map(c => c && c.id).filter(Boolean));
+        const here = new Set(kept.map(c => c && c.id).filter(Boolean));
+        const pending = JSON.parse(localStorage.getItem(CONV_PENDING_KEY) || '[]');
+        const next = new Set((Array.isArray(pending) ? pending : []).filter(id => here.has(id)));
+        for (const c of kept) if (c && c.id && !before.has(c.id)) next.add(c.id);
+        localStorage.setItem(CONV_PENDING_KEY, JSON.stringify(Array.from(next)));
         localStorage.setItem(CONV_INDEX_KEY, JSON.stringify({ version: 1, items: kept }));
       } catch (e) { /* private mode: this session only */ }
       // A half-written message and the agent it was addressed to belong to a conversation, so they

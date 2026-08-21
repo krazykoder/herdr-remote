@@ -90,7 +90,7 @@ test('the conversation window scrolls as a whole, and its button knows that', as
   await join(page);
   await read(page);
   await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
   await expect(page.locator('#convViewThread .conv-msg').first()).toBeVisible();
   await expect(page.locator('#convLast')).toBeHidden();
   // The thread does not scroll; the view around it does.
@@ -124,7 +124,7 @@ test('the jump lines up under the row it belongs to, in both views', async ({pag
   await edgesLineUp(page, '#paneLast', '#termWrap .hang-float');
 
   await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
   await toTop(page, 'convView');
   await expect(page.locator('#convLast')).toBeVisible();
   // The row here too, and for the same reason: it ends with the record toggle beside the refresh,
@@ -158,7 +158,7 @@ test('the window refresh tidies every member and draws the thread again', async 
   const key = await join(page);
   await read(page);
   await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card').click();
+  await page.locator('#conversations .conversation-card[data-conv-id="c1"]').click();
   await expect(page.locator('#convViewThread .conv-msg').first()).toBeVisible();
   const before = await page.locator('#convViewThread .conv-msg').count();
   await page.evaluate(async k => {

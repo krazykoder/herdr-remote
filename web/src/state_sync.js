@@ -16,7 +16,7 @@
 
     const STATE_DOCS = {
       pairs:         { key: 'herdr_pairs' },
-      conversations: { key: 'herdr_conversations' },
+      conversations: { key: 'herdr_conversations', pendingKey: 'herdr_conversations_pending' },
       conv_view:     { key: 'herdr_conv_view' },
       conv_hidden:   { key: 'herdr_conv_hidden' },
     };
@@ -37,23 +37,96 @@
     const stateDirty = new Set();
     const stateTimers = {};
     const stateInFlight = new Set();
+    const stateSent = {};
 
     // Pure. What to do with one document on the first answer after connect.
-    //   'adopt'  — the relay holds it; take it, whatever this browser had
+    //   'adopt'  — the relay holds it; take it whole
     //   'upload' — the relay holds nothing and this browser does; seed it
     //   'idle'   — neither has anything, or they already agree
     //
-    // 'adopt' is where this feature deletes something the user typed: the second browser to
-    // connect loses its own pairs to the first. That is what one shared answer means, and it is
-    // why stateSyncApply keeps a copy of what it overwrites.
+    // A document the relay holds is the one every other browser is already reading, so this one
+    // takes it whatever it had. That is what stopped a browser writing a list it had manufactured
+    // from an empty localStorage over the real one — the bug that destroyed every conversation
+    // name the user had typed. The cost is paid on the other side: an edit made in the round trip,
+    // and anything created offline, is adopted over. `stateSyncApply` keeps a copy of what it
+    // overwrites, and the pending-create outbox below is what carries offline work across instead
+    // of losing it.
     function stateSyncPlan(serverRev, serverBody, localBody) {
-      if (serverRev > 0) return serverBody === localBody ? 'idle' : 'adopt';
+      if (serverRev > 0) {
+        if (serverBody === localBody) return 'idle';
+        return 'adopt';
+      }
       return localBody ? 'upload' : 'idle';
+    }
+
+    // The shape of each document, which is the whole of what this module knows about their
+    // contents. `list` names the key an envelope carries its id'd objects under; `map` is a plain
+    // object keyed by something already unique. Both merge without understanding a single field.
+    const STATE_SHAPE = {
+      pairs:         { list: 'pairs' },
+      conversations: { list: 'items' },
+      conv_view:     { map: true },
+      conv_hidden:   { map: true },
+    };
+
+    // The relay's document with locally-created rows appended — never a general union. `onlyExtras`
+    // is the set of ids this browser made and the relay has never acknowledged; every other local
+    // row loses, which is what stops a stale cache resurrecting a deleted conversation or replacing
+    // a newer one. A required argument, and an empty set is a real answer meaning "append nothing":
+    // a document with no outbox must never fall through to appending everything local.
+    //
+    // Returns null when this cannot be done safely — a body that does not parse, or one without the
+    // shape the name says it has — and the caller then adopts the relay's document whole.
+    function stateMerge(name, serverBody, localBody, onlyExtras) {
+      const shape = STATE_SHAPE[name];
+      if (!shape || serverBody == null || localBody == null) return null;
+      let server, local;
+      try { server = JSON.parse(serverBody); local = JSON.parse(localBody); }
+      catch (e) { return null; }
+      if (!server || !local || typeof server !== 'object' || typeof local !== 'object') return null;
+      const win = server, lose = local, winBody = serverBody;
+      if (shape.list) {
+        const key = shape.list;
+        if (!Array.isArray(server[key]) || !Array.isArray(local[key])) return null;
+        const have = new Set(win[key].map(x => x && x.id).filter(Boolean));
+        // An entry with no id cannot be told apart from one already held, so it is not carried
+        // over: duplicating it on every connect is worse than losing a malformed row.
+        const extra = lose[key].filter(x => x && x.id && !have.has(x.id) && onlyExtras.has(x.id));
+        // Nothing to add. Returned as the winning body itself, so the caller can tell "the union
+        // is one of the two I already have" from "the union is new and has to be written".
+        if (!extra.length) return winBody;
+        const out = Object.assign({}, win);
+        out[key] = win[key].concat(extra);
+        return JSON.stringify(out);
+      }
+      // A map's keys are not rows anyone created, so there is no outbox for them and nothing to
+      // rebase: the relay's document stands.
+      return serverBody;
     }
 
     function stateRead(name) {
       try { return localStorage.getItem(STATE_DOCS[name].key); }
       catch (e) { return null; }  // private mode: nothing stored, nothing to sync
+    }
+
+    function statePending(name) {
+      const key = STATE_DOCS[name] && STATE_DOCS[name].pendingKey;
+      if (!key) return null;
+      try {
+        const ids = JSON.parse(localStorage.getItem(key) || '[]');
+        return new Set(Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : []);
+      } catch (e) { return new Set(); }
+    }
+
+    function stateClearPending(name, body) {
+      const pending = statePending(name);
+      if (!pending || !pending.size || body == null) return;
+      try {
+        const items = JSON.parse(body).items;
+        if (!Array.isArray(items)) return;
+        for (const item of items) if (item && item.id) pending.delete(item.id);
+        localStorage.setItem(STATE_DOCS[name].pendingKey, JSON.stringify(Array.from(pending)));
+      } catch (e) { /* local recovery metadata is best effort */ }
     }
 
     // Everything still waiting on its timer, sent now.
@@ -95,7 +168,10 @@
       // that runs for every way a socket can be replaced. A socket that closed came through
       // stateSyncClose; a socket replaced while still open (a manual reconnect) produces a close
       // event that arrives late and is dropped as stale, so open is all that is left.
-      for (const name of stateInFlight) stateDirty.add(name);
+      for (const name of stateInFlight) {
+        stateDirty.add(name);
+        delete stateSent[name];
+      }
       stateInFlight.clear();
       stateSocket = socket;
       stateMode = 'pulling';
@@ -135,6 +211,7 @@
       if (body === null) { stateDirty.delete(name); return; }
       stateDirty.delete(name);
       stateInFlight.add(name);
+      stateSent[name] = body;
       try {
         // The socket this module learned its revisions from, never the global `ws`. `connect()`
         // assigns the new socket before it opens, so a timer firing inside that gap would hand a
@@ -147,6 +224,7 @@
         // the revision and this edit goes out then — dropping it here is the silent loss the
         // in-flight retry in stateSyncClose exists to prevent, reached by the other door.
         stateInFlight.delete(name);
+        delete stateSent[name];
         stateDirty.add(name);
       }
     }
@@ -207,6 +285,33 @@
         const doc = docs[name] || {};
         const rev = doc.rev || 0;
         stateRev[name] = rev;
+        const body = doc.body == null ? null : doc.body;
+        if (first) {
+          const local = stateRead(name);
+          const pending = statePending(name);
+          if (pending && rev > 0 && local) {
+            const merged = stateMerge(name, body, local, pending);
+            if (merged !== null && merged !== body) {
+              stateSyncApply(name, merged);
+              stateDirty.add(name);
+            } else {
+              stateSyncApply(name, body);
+              stateDirty.delete(name);
+              stateClearPending(name, body);
+            }
+            continue;
+          }
+          const plan = stateSyncPlan(rev, body, local);
+          if (plan === 'upload') stateDirty.add(name);
+          else if (plan === 'adopt') {
+            stateSyncApply(name, body);
+            stateDirty.delete(name);
+            stateClearPending(name, body);
+          } else {
+            stateDirty.delete(name);   // 'idle': the relay already holds exactly this
+          }
+          continue;
+        }
         if (stateDirty.has(name)) {
           // Edited in this browser between state_get and its answer. The answer was already in
           // flight when the user acted, so adopting it here would revert an edit made a moment
@@ -220,18 +325,24 @@
           if (doc.body != null && doc.body === stateRead(name)) stateDirty.delete(name);
           continue;
         }
-        if (first) {
-          const plan = stateSyncPlan(rev, doc.body == null ? null : doc.body, stateRead(name));
-          if (plan === 'adopt') stateSyncApply(name, doc.body == null ? null : doc.body);
-          else if (plan === 'upload') { stateDirty.add(name); }
-        } else if (rev > 0 && !stateInFlight.has(name)) {
+        if (rev > 0 && !stateInFlight.has(name)) {
           // A push from another browser. Not while our own write is in flight: the ack settles
           // that document, and applying an older body underneath it would undo the edit we made.
-          stateSyncApply(name, doc.body == null ? null : doc.body);
+          stateSyncApply(name, body);
+          stateClearPending(name, body);
         }
       }
       // Edits made while the answer was in the air, plus anything the seed decided to upload.
       for (const name of Array.from(stateDirty)) stateSyncFlush(name);
+      // And the work that was held back until the index was real. A pane the relay's index has
+      // never heard of still deserves a conversation — it just has to be decided against the
+      // adopted document rather than against an empty one.
+      if (first) {
+        try { if (typeof convAutoJoin === 'function') convAutoJoin(); }
+        catch (e) { /* the view is not loaded (vm slice), or not up yet */ }
+        try { if (typeof convLiveWarmRecent === 'function') convLiveWarmRecent(); }
+        catch (e) { /* the live reader is unavailable in this build */ }
+      }
     }
 
     function stateSyncAck(msg) {
@@ -239,22 +350,46 @@
       if (!STATE_DOCS[name]) return;
       stateRev[name] = msg.rev || 0;
       stateInFlight.delete(name);
+      stateClearPending(name, stateSent[name]);
+      delete stateSent[name];
       if (stateDirty.has(name)) stateSyncFlush(name);
     }
 
-    // Someone else wrote this document between our read and our write. Their version wins and ours
-    // is dropped — not retried. Retrying is exactly what turns a guarded last-write-wins back into
-    // an unguarded one, and the copy stateSyncApply leaves behind is what makes the loss survivable.
+    // Someone else wrote first. Existing backend rows win; only locally-created, unacknowledged
+    // conversations are rebased onto the returned document.
     function stateSyncConflict(msg) {
       const name = msg && msg.name;
       if (!STATE_DOCS[name]) return;
+      const remote = msg.body == null ? null : msg.body;
+      // Only a document with an outbox has anything to carry across. For the others this is the
+      // plain adopt it has always been: their loser is dropped, not retried, because retrying is
+      // what turns a guarded last-write-wins back into an unguarded one.
+      const pending = statePending(name);
+      const merged = pending ? stateMerge(name, remote, stateRead(name), pending) : null;
       stateRev[name] = msg.rev || 0;
       stateInFlight.delete(name);
-      stateDirty.delete(name);
+      delete stateSent[name];
       clearTimeout(stateTimers[name]);
       delete stateTimers[name];
-      stateSyncApply(name, msg.body == null ? null : msg.body);
+      if (merged !== null && merged !== remote) {
+        stateSyncApply(name, merged);
+        stateDirty.add(name);
+        stateSyncFlush(name);
+        return;
+      }
+      stateDirty.delete(name);
+      stateSyncApply(name, remote);
+      stateClearPending(name, remote);
     }
+
+    // Whether the first answer is still in the air. The app must not *invent* a document while
+    // this is true: a browser that has never connected reads its own empty localStorage, and
+    // anything built from that emptiness — an auto conversation per live pane, say — is then a
+    // local edit, which the dirty branch in stateSyncReceive protects from being adopted over.
+    // The result is a new browser overwriting the shared index with a fabricated copy of it.
+    // Editing is still fine here; what is not fine is manufacturing state from an absence that is
+    // about to be filled.
+    function stateSyncPending() { return stateMode === 'pulling'; }
 
     // A relay older than this client answers state_get with its unknown-message-type error. That is
     // a fact about the relay, not a failure to put in front of the user — swallow it once, run
@@ -275,3 +410,5 @@
     window.stateSyncAck = stateSyncAck;
     window.stateSyncConflict = stateSyncConflict;
     window.stateSyncNoteError = stateSyncNoteError;
+    window.stateSyncPending = stateSyncPending;
+    window.stateMerge = stateMerge;

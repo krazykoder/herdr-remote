@@ -96,6 +96,11 @@
       search.value = '';
       search.placeholder = mode === 'prompts' ? 'Search prompts…' : 'Search commands…';
       filterCommands();
+      // Not on a touch screen. Focusing the field summons the on-screen keyboard, and this sheet is
+      // a short list someone opened in order to *tap* one row of — the search is for the rare long
+      // one. The keyboard covered half of what they came to look at, to filter a list that mostly
+      // shows every item it has. On a pointer device the focus costs nothing and saves a click.
+      if (!matchMedia('(hover: hover) and (pointer: fine)').matches) return;
       search.focus();
     }
 

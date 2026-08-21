@@ -117,8 +117,12 @@
     const MAX_TERM_SHORTCUTS = 24;
 
     // Read-only, every one of them. Nothing that writes ships as a default — a destructive
-    // command in a grid the user did not choose is one mis-tap from a bad afternoon.
+    // command in a grid the user did not choose is one mis-tap from a bad afternoon. `RPROMPT=`
+    // is the one that changes anything, and what it changes is a variable in the shell's own
+    // session: it is the relay's HERDR_TERMINAL_INIT by hand, for a terminal the app did not open
+    // or a relay too old to send it.
     const DEFAULT_TERM_SHORTCUTS = [
+      { label: 'tidy prompt', text: 'RPROMPT=; clear' },
       { label: 'ls', text: 'ls -la' },
       { label: 'git status', text: 'git status' },
       { label: 'git log', text: 'git log --oneline -10' },
@@ -137,6 +141,39 @@
           typeof s.text === 'string' && s.text && s.text.length <= SEND_TEXT_MAX)
         .slice(0, MAX_TERM_SHORTCUTS)
         .map(s => ({ label: s.label, text: s.text, danger: !!s.danger }));
+    }
+
+    // --- What was typed at a terminal, kept so it can be typed again ---
+    //
+    // Not the shortcuts above and not a second copy of them: a shortcut is a command the user
+    // decided was worth keeping, this is every command they ran. Ten of them, most recent last,
+    // because a terminal is read bottom-up and the newest thing is the one being repeated.
+    const TERM_HIST_KEY = 'herdr_term_history';
+    const TERM_HIST_VERSION = 1;
+    const MAX_TERM_HISTORY = 10;
+
+    // Same contract as parseTermShortcuts: a corrupt or foreign-version blob loads as nothing.
+    // Plain strings rather than objects — there is nothing to say about a history entry except
+    // what it was.
+    function parseTermHistory(raw) {
+      let data;
+      try { data = JSON.parse(raw); } catch (e) { return []; }
+      if (!data || data.version !== TERM_HIST_VERSION || !Array.isArray(data.items)) return [];
+      return data.items
+        .filter(t => typeof t === 'string' && t && t.length <= SEND_TEXT_MAX)
+        .slice(-MAX_TERM_HISTORY);
+    }
+
+    // One entry in, oldest out. Unique by exact text: a command run twice is one thing the user
+    // does repeatedly, and two rows of it in a ten-row list is one row of history lost. The repeat
+    // moves to the end rather than staying where it was — the list is ordered by when it was last
+    // useful, not by when it was first seen.
+    function pushTermHistory(items, text) {
+      const t = String(text || '').trim();
+      if (!t || t.length > SEND_TEXT_MAX) return items;
+      // Multi-line pastes are not commands and read as one unreadable row in a list this narrow.
+      if (/[\r\n]/.test(t)) return items;
+      return items.filter(x => x !== t).concat(t).slice(-MAX_TERM_HISTORY);
     }
 
     function escapeHtml(s) {

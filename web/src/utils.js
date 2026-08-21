@@ -12,6 +12,16 @@
         // their fingers; zooming back out fires this again and restores the fit.
         if (vv.scale > 1.01) return;
         document.body.style.height = vv.height + 'px';
+        // The same measurement, published for anything that *cannot* be sized by shrinking the
+        // body: a `position: fixed` element is laid out against the layout viewport, which the
+        // keyboard does not shrink on Safari, so `bottom: 0` puts it behind the keyboard however
+        // short the body is. The bottom sheets are all fixed — see .sheet — and this is the number
+        // they need. Zero on Chrome, where the meta tag already shrank the layout viewport and
+        // `bottom: 0` is right by itself.
+        const root = document.documentElement.style;
+        root.setProperty('--kb-inset',
+                         Math.max(0, window.innerHeight - vv.height - vv.offsetTop) + 'px');
+        root.setProperty('--vv-height', vv.height + 'px');
         // Safari also scrolls the layout viewport up to reveal the focused field, taking the
         // header off screen. With the body already short enough to fit, there is nothing to reveal.
         if (vv.offsetTop) window.scrollTo(0, 0);
