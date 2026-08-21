@@ -1000,7 +1000,7 @@ questions and their answers have one shape and one place to disagree.
 
 A paused session is armed by `arb_resume`. Pausing is a control a person uses constantly, so what a
 pause costs must not depend on which millisecond it landed in. **`arb_resume` resumes from wherever
-the session stopped**, and there are three places that can be. They are checked in this order:
+the session stopped**, and there are four places that can be. They are checked in this order:
 
 1. **A decision was written and never read.** `collect` runs only off the arbitrator ending a turn
    (§12.1 step 4). If the relay died — or a person paused — between the write and the read, that
@@ -1011,26 +1011,33 @@ the session stopped**, and there are three places that can be. They are checked 
    as it would have been. Nothing is re-decided: `collect` compares the content hash, so a record
    already acted on is left alone. This is the window `restart` (§9.4) leaves open, and closing it
    is why the pause at boot costs nothing but time.
-2. **A member finished while it was stopped.** `turn_ended` drops that trigger — the session was not
+2. **A question is still out.** A prompt at the current sequence that no *valid* decision answers —
+   the session was `awaiting` when it stopped and the arbitrator is still reading, or was asked for
+   a correction and has not made it. Coming back `active` throws that question away for the same
+   reason as case 1: `arbitrator_finished` reads the drop box only for an `awaiting` session, so
+   the answer would be ignored whenever it arrived. So the **wait** is what resumes, and nothing is
+   sent. `kick` overrides this and asks a fresh question at the next sequence, which is the way out
+   of an arbitrator that is never going to answer the old one.
+3. **A member finished while it was stopped.** `turn_ended` drops that trigger — the session was not
    armed — and writes it to the path (§14.9). A resume that only armed the loop would then wait for
    ever for a wake-up that has already been and gone, so an unhandled trigger since the last stop is
    asked **now**, whether or not `kick` was given. Unhandled is read off the path: a `trigger` event
    newer than the last `paused`, `asked` or `resumed`. If that prompt cannot be spent — a budget was
    what stopped the session and nobody raised it — the session pauses again saying so, and the
    resume itself does not fail: a person who pressed Resume did not ask for that trigger.
-3. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`.
+4. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`.
 
 So there are two buttons, and the person picks:
 
-* **Resume** — the three cases above. Right after a pause a person took to type at a member
+* **Resume** — the four cases above. Right after a pause a person took to type at a member
   themselves: that member's turn will end, and that is the trigger.
-* **Resume and trigger** (`kick: true`) — as above, and in case 3 ask for a decision now rather than
-  waiting. With two idle members and both clocks off (§10, their default) there is no trigger
+* **Resume and trigger** (`kick: true`) — as above, replacing an unanswered question in case 2 and
+  asking for a decision now in case 4 rather than waiting. With two idle members and both clocks off (§10, their default) there is no trigger
   coming, and this is the way out of that. Refused at a busy arbitrator (N7); plain Resume is not,
-  because in case 3 it writes nothing. A `kick` that cannot be spent *is* reported as an error — it
+  because in cases 2, 3 and 4 it writes nothing of its own. A `kick` that cannot be spent *is* reported as an error — it
   was asked for by hand.
 
-A prompt sent by case 2 or by `kick` is the ordinary trigger prompt of §11.3, over the turns since
+A prompt sent by case 3 or by `kick` is the ordinary trigger prompt of §11.3, over the turns since
 the session last looked, with one extra line under `Trigger:` saying what stopped it and that a
 person has started it again.
 

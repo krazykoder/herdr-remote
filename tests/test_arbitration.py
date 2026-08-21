@@ -1763,7 +1763,9 @@ class ResumingAfterABreak(Harness):
         self.arb.resume(s["id"])
         self.arb.pause(s["id"], "user")
         self.sent.clear()
-        self.assertEqual("active", self.arb.resume(s["id"])["state"])
+        # And the question that trigger produced is still out, so the second resume goes back to
+        # waiting for it rather than asking a second time.
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
         self.assertEqual([], self.sent, "the prompt it produced is the watermark")
 
     def test_a_trigger_from_before_the_last_stop_is_not_replayed(self):
@@ -1771,7 +1773,41 @@ class ResumingAfterABreak(Harness):
         self.arb.turn_ended("p1", [])       # acted on while armed
         self.arb.pause(s["id"], "user")
         self.sent.clear()
-        self.assertEqual("active", self.arb.resume(s["id"])["state"])
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
+        self.assertEqual([], self.sent)
+
+    def test_a_question_still_out_is_what_resumes(self):
+        s = self.start()
+        p = self.step(s["id"])              # asked, and the arbitrator is reading it
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"])
+        self.assertEqual("awaiting", back["state"], "the wait is what was interrupted")
+        self.assertEqual([], self.sent, "nothing is asked twice")
+        self.assertEqual(p["sequence"], back["sequence"])
+        # And the answer, whenever it comes, is still read — which it would not be from `active`.
+        self.write(s["id"], p["sequence"])
+        self.assertEqual("sent", self.arb.arbitrator_finished("pA")["outcome"])
+
+    def test_asking_by_hand_replaces_a_question_the_arbitrator_never_answered(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"], kick=True)
+        # The way out of an arbitrator that is never going to answer the old one.
+        self.assertEqual(p["sequence"] + 1, back["sequence"])
+        self.assertEqual(1, len(self.sent))
+
+    def test_a_rejected_record_leaves_the_question_out(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.write(s["id"], p["sequence"], gate="nonsense")
+        self.assertEqual("reprompt", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        # A row at that sequence, and none of it valid: the correction is still owed.
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
         self.assertEqual([], self.sent)
 
     def test_a_spent_budget_does_not_turn_a_plain_resume_into_an_error(self):

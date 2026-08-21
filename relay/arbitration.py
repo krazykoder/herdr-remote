@@ -1226,15 +1226,22 @@ class Arbitration:
              bytes nobody has judged this call is a collection rather than an arming. Nothing is
              re-decided: `collect` compares the content hash, so a record already judged is left
              alone.
-          2. **A member finished while it was stopped.** `turn_ended` drops that trigger — the
+          2. **A question is still out.** The session was `awaiting` when it stopped and the
+             arbitrator has not written yet — it is still reading, and the pause interrupted the
+             wait rather than anything else. Coming back `active` throws that question away:
+             `arbitrator_finished` reads the drop box only for an `awaiting` session, so the answer
+             to it, whenever it arrives, would be ignored exactly as in case 1. So the wait is what
+             resumes. `kick` overrides this and asks a fresh question, which is the way out of an
+             arbitrator that is never going to answer the old one.
+          3. **A member finished while it was stopped.** `turn_ended` drops that trigger — the
              session was not armed — and records it on the path. A resume that only armed the loop
              would then sit there for ever waiting for a wake-up that has already been and gone, so
              an unhandled trigger since the last stop is asked now, whether or not `kick` was given.
-          3. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`, which asks
+          4. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`, which asks
              for a decision immediately. Two idle members and no clocks is a session that is
              `active` and will never do anything, and `kick` is the way out of that.
 
-        Cases 2 and 3-with-`kick` carry a note saying what stopped the session, because two of
+        Cases 3 and 4-with-`kick` carry a note saying what stopped the session, because two of
         those reasons change what the next decision may safely be.
 
         Both forms refuse an arbitrator that is gone. Resuming a session whose decider has exited
@@ -1263,16 +1270,23 @@ class Arbitration:
         # starting one.
         sequence = session["sequence"]
         pending = self._unread_decision(session_id, sequence)
-        dropped = session["state"] == "paused" and self._dropped_trigger(session_id)
-        # Back to `awaiting` when there is an answer on disk: `collect` refuses to read anything in
-        # any other state, and this is the state the session was in when it was written.
+        # The question is still out: a prompt at this sequence that no valid decision answers. Not
+        # a stored flag — the two rows already say it, and a second place recording the same fact
+        # is a second place for it to be wrong.
+        outstanding = not pending and not kick and self._unanswered_prompt(session_id, sequence)
+        dropped = (not outstanding and session["state"] == "paused"
+                   and self._dropped_trigger(session_id))
+        # Back to `awaiting` for both of the first two cases. `collect` and `arbitrator_finished`
+        # read the drop box in that state and no other, and it is the state the session was in when
+        # it stopped — which is what "resume where it stopped" has to mean here.
         self.conn.execute(
             "UPDATE sessions SET state=?, pause_reason=NULL, window_at=?, consecutive=0, "
             "arbitrator_pane=? WHERE id=?",
-            ("awaiting" if pending else "active", self.clock(), arb, session_id))
+            ("awaiting" if pending or outstanding else "active", self.clock(), arb, session_id))
         self.conn.commit()
         self._event(session_id, "resumed",
                     f"reading the decision written for #{sequence} before the stop" if pending
+                    else f"still waiting on the decision asked for at #{sequence}" if outstanding
                     else "a turn ended while it was stopped — asking for a decision now" if dropped
                     else "asked for a decision now" if kick
                     else "armed, waiting for a trigger")
@@ -1288,6 +1302,8 @@ class Arbitration:
                 self._event(session_id, "error", f"reading the drop box on a resume: {e!r}",
                             sequence=sequence)
             return self.session(session_id)
+        if outstanding:
+            return self.session(session_id)     # the arbitrator has the question; nothing to ask
         if kick or dropped:
             entries = []
             if self.entries:
@@ -1326,6 +1342,22 @@ class Arbitration:
             "SELECT raw_sha256 FROM decisions WHERE session_id=? AND sequence=? "
             "ORDER BY id DESC LIMIT 1", (session_id, sequence)).fetchone()
         return None if prior and prior["raw_sha256"] == sha else row["id"]
+
+    def _unanswered_prompt(self, session_id, sequence):
+        """Was a question out when this session stopped? See `resume`, case 2."""
+        if not sequence:
+            return False
+        asked = self.conn.execute(
+            "SELECT 1 FROM prompts WHERE session_id=? AND sequence=? LIMIT 1",
+            (session_id, sequence)).fetchone()
+        if asked is None:
+            return False
+        # Valid, not merely present: a rejected record leaves a row and a re-prompt, and that
+        # sequence is still waiting for an answer it can use.
+        answered = self.conn.execute(
+            "SELECT 1 FROM decisions WHERE session_id=? AND sequence=? AND valid=1 LIMIT 1",
+            (session_id, sequence)).fetchone()
+        return answered is None
 
     def _dropped_trigger(self, session_id):
         """Did a member finish a turn since this session last stopped? See `resume`, case 2.
