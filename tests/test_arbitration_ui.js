@@ -162,12 +162,26 @@ test('a paused session is resumed quietly, or with a decision asked for now', ()
                    [{type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
 });
 
-test('the last decision is shown by gate, target and why — never its instruction', () => {
+test('the strip says which of the three is working, not what was last said', () => {
+  // One line, and the line is where the session *is*. The last decision's sentence used to live
+  // here and wrapped to three lines on a phone, pushing the thread down by all of them — and it
+  // answers a different question, which the Log button is for.
   const {g} = ctx();
   const s = {...SESSION, last_decision: {sequence: 1, gate: 'review', to: 'member-2',
                                          why: 'Ready for an independent check.', ambiguity: 'low'}};
-  const html = g.arbStripHtml(s, CONV, true, false);
-  assert.ok(html.includes('review · Reviewer 1 · Ready for an independent check.'), html);
+  const html = g.arbStripHtml(s, CONV, true);
+  assert.equal(html.includes('Ready for an independent check.'), false);
+  assert.match(html, /arbOpenDetail\(\)[^>]*>Log</);
+  assert.match(html, /arbEditHere\(\)[^>]*>Edit</);
+  // member-2 is `working` in the fixture, so it is the one being waited on.
+  assert.match(html, /Reviewer 1 · working/);
+  assert.match(html, /openTerminal\('w1:p2'\)/);
+
+  // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
+  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /⚖ Arbitrator · deciding/);
+  // And nobody working at all is said as such rather than left blank.
+  const quiet = {...SESSION, members: SESSION.members.map(m => ({...m, status: 'idle'}))};
+  assert.match(g.arbStripHtml(quiet, CONV, true), /⚖ Arbitrator · waiting/);
 });
 
 test('an ended session leaves no strip behind', () => {
@@ -339,11 +353,17 @@ test('a blocked arbitrator is said out loud, with the way to its pane', () => {
   const {g} = ctx();
   const stuck = {...SESSION, state: 'awaiting',
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
-  const html = g.arbStripHtml(stuck, CONV, true, null);
-  assert.match(html, /Arbitrator needs you/);
+  const html = g.arbStripHtml(stuck, CONV, true);
+  assert.match(html, /⚖ Arbitrator · needs you/);
+  assert.match(html, /class="arb-btn arb-active warn"/);
   assert.match(html, /openTerminal\('w1:p3'\)/);
-  assert.ok(!/Arbitrator needs you/.test(g.arbStripHtml(SESSION, CONV, true, null)),
-            'and an arbitrator that is merely working is not news');
+  assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,
+               'and an arbitrator that is merely working is not news');
+  // A member stuck on a permission prompt is the same problem seen from the other end, and the
+  // strip is the only thing on screen that would say so.
+  const held = {...SESSION, members: [SESSION.members[0],
+                                      {...SESSION.members[1], status: 'blocked'}]};
+  assert.match(g.arbStripHtml(held, CONV, true), /Reviewer 1 · needs you/);
 });
 
 test('an empty scope is refused here rather than on the wire', () => {
@@ -912,15 +932,13 @@ test('a badge writes its phrase into the line, and a second tap takes it out aga
   assert.equal(els.arbRoleFirst.value, 'review only, minimal focused test');
 });
 
-test('a running session says what each member is for, and the form opens on it', () => {
+test('the form opens on what each member is for', () => {
   const roled = Object.assign({}, CREW_SESSION, {members: [
     {id: 'member-1', pane_id: 'w1:p1', label: 'Architect 1', status: 'idle', role: 'review'},
     {id: 'member-2', pane_id: 'w1:p2', label: 'Reviewer 1', status: 'idle', role: 'fix-code'},
   ]});
   const {g, els, sent} = ctx();
   g.arbReceiveSession({session: roled});
-  assert.match(g.arbStripHtml(roled, CONV, true),
-               /Architect 1 \(review\) · Reviewer 1 \(fix-code\)/);
 
   // The form opens on what the roster already says, so an edit that only swaps a pane does not
   // quietly drop the roles the person typed the first time.
@@ -975,6 +993,73 @@ function withDecisions() {
   c.g.arbReceiveDetail({session: 's-20260817-1103', decisions: DECISIONS});
   return c;
 }
+
+// --- The path, in the thread ---------------------------------------------------------------
+//
+// What the arbitrator decided is only half of what happened. The other half — what it was asked,
+// the record it wrote, the instruction typed at a member, and every stop and error on the way — had
+// no way to be seen at all: a session that stopped between two steps showed a state, a reason, and
+// nothing about which step it stopped on.
+
+const EVENTS = [
+  {kind: 'trigger', detail: 'member-1 ended a turn (turn_end)', at: 880, sequence: 0},
+  {kind: 'asked', detail: 'w1:p3 for decision #1 (turn_end), 392 chars', at: 900, sequence: 1},
+  {kind: 'waiting', detail: 'no decision file yet at 0001-decision.json', at: 920, sequence: 1},
+  {kind: 'record', detail: 'decision #1 written, 210 bytes', at: 980, sequence: 1},
+  {kind: 'decided', detail: 'review -> Reviewer 1', at: 1000, sequence: 1},
+  {kind: 'sent', detail: 'review to Reviewer 1 (w1:p2), 180 chars', at: 1010, sequence: 1},
+  {kind: 'error', detail: 'reading the drop box: OSError(21)', at: 2500, sequence: 2},
+  {kind: 'paused', detail: 'invalid record', at: 2600, sequence: 2},
+];
+
+function withPath() {
+  const c = ctx();
+  c.g.arbReceiveSession({session: CREW_SESSION});
+  c.g.arbReceiveDetail({session: 's-20260817-1103', decisions: DECISIONS, events: EVENTS});
+  return c;
+}
+
+test('every step of the path is in the thread, in the order it happened', () => {
+  const {g} = withPath();
+  const entries = g.arbThreadEntries('c-1');
+  // Merged with the decisions by time, because the whole point is reading down one column.
+  assert.deepEqual(entries.map(e => e.lede || ('decision: ' + e.gate)),
+                   ['trigger', 'asked', 'waiting', 'record written', 'decision: review', 'sent',
+                    'error', 'paused', 'decision: call_human']);
+  // `decided` is left out: the decision bubble under it says the same gate, the same member and
+  // the arbitrator's own sentence about why.
+  assert.equal(entries.some(e => e.kind === 'decided'), false);
+  // The two a person looks for when a session stopped are marked as such.
+  assert.deepEqual(entries.filter(e => e.warn).map(e => e.kind), ['error', 'paused']);
+  assert.equal(entries.find(e => e.kind === 'sent').text,
+               'review to Reviewer 1 (w1:p2), 180 chars');
+});
+
+test('the path goes with the bubbles it belongs to', () => {
+  const {g} = withPath();
+  g.toggleArbBubbles();
+  assert.deepEqual(g.arbThreadEntries('c-1'), [], 'hidden means hidden — steps included');
+  g.toggleArbBubbles();
+  assert.equal(g.arbThreadEntries('c-1').length, 9);
+
+  // A relay too old to send them is not a session that did nothing: the decisions still draw.
+  const {g: old} = ctx();
+  old.arbReceiveSession({session: CREW_SESSION});
+  old.arbReceiveDetail({session: 's-20260817-1103', decisions: DECISIONS});
+  assert.deepEqual(old.arbThreadEntries('c-1').map(e => e.gate), ['review', 'call_human']);
+});
+
+test('the sheet opens on where the session got to', () => {
+  const {g} = withPath();
+  const html = g.arbDetailHtml(DECISIONS, CREW_SESSION, EVENTS);
+  assert.match(html, /class="arb-path"/);
+  // Every step, this time — the sheet is the place that holds the whole path, not a reading of it.
+  for (const e of EVENTS) assert.ok(html.includes(g.escapeHtml(e.detail)), e.kind);
+  assert.match(html, /class="arb-step bad"[\s\S]*?reading the drop box/);
+  // And a session with nothing decided yet still shows the steps that got it there.
+  assert.match(g.arbDetailHtml([], CREW_SESSION, EVENTS), /class="arb-path"/);
+  assert.equal(/arb-path/.test(g.arbDetailHtml(DECISIONS, CREW_SESSION, null)), false);
+});
 
 test('a decision is drawn under the agent’s own name, never as member-2', () => {
   const {g} = withDecisions();

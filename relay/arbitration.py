@@ -89,6 +89,8 @@ TRIGGER_MAX_MS = 6 * 60 * 60 * 1000
 # ceiling on a payload rather than a policy — and the text fields are the prompt an arbitrator was
 # given and the instruction it produced, both of which are whole agent turns.
 DETAIL_DECISIONS = 20
+DETAIL_EVENTS = 200
+EVENT_TEXT = 400
 DETAIL_TEXT = 8_000
 # A role is a short phrase, not a brief. Several members may carry the same one — overlapping roles
 # are the point: two agents that can both review is what lets the arbitrator keep the loop moving
@@ -173,6 +175,24 @@ CREATE TABLE IF NOT EXISTS sends (
   text              TEXT NOT NULL,
   at                INTEGER NOT NULL
 );
+
+-- Where the session has been, step by step. Not a second copy of anything: `prompts`, `decisions`
+-- and `sends` each hold one *artifact*, and none of them holds the path between two of them — the
+-- drop-box that was read and found empty, the send that raised, the pause, the resume, the roster
+-- that was edited. A session that stopped halfway used to leave a state and a reason and no way to
+-- see which step it stopped on, which is the question a person actually has.
+--
+-- Free text on purpose: `kind` is what a client renders by and `detail` is a sentence for a human.
+-- Nothing reads `detail` to decide anything (N1).
+CREATE TABLE IF NOT EXISTS events (
+  id                INTEGER PRIMARY KEY,
+  session_id        TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  sequence          INTEGER NOT NULL DEFAULT 0,
+  kind              TEXT NOT NULL,
+  detail            TEXT NOT NULL DEFAULT '',
+  at                INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_session ON events(session_id, id);
 
 -- There used to be a unique index here that allowed exactly one `active`/`awaiting` session. It is
 -- dropped rather than merely unused: sessions share nothing — each has its own roster, arbitrator,
@@ -590,8 +610,12 @@ class Arbitration:
             conn.close()
             self._local.conn = None
 
-    def _send(self, pane_id, text):
+    def _send(self, pane_id, text, session_id=None, what=""):
         """Deliver, and say whether it was *proven* delivered. False is never guessed into a yes.
+
+        `session_id` and `what` are for the record only: a delivery that raised is the commonest
+        way the path breaks, and "send_unconfirmed" with no step attached is a stop a person cannot
+        act on.
 
         `is not False` rather than a truth test: a sender that returns nothing is one that does not
         report, and treating its None as a failure would pause every session running against it.
@@ -604,7 +628,37 @@ class Arbitration:
             # Logged rather than swallowed: this pauses a session, and "send_unconfirmed" with no
             # cause anywhere is the kind of stop a person cannot act on.
             log.warning("arbitration: delivery to %s raised: %r", pane_id, e)
+            if session_id:
+                self._event(session_id, "error", f"sending {what or 'text'} to {pane_id}: {e!r}")
             return False
+
+    def _event(self, session_id, kind, detail="", sequence=None, once=False):
+        """One step of the path, written down. Never raises into the loop that called it.
+
+        Observability that can stop the thing it observes is worse than none: a full disk or a
+        locked database must not turn a working send into a paused session. So this swallows, and
+        says so in the relay log — the one place a failure to record can still be seen.
+
+        `once` is for the steps the poll loop reaches over and over — waiting on a record, a
+        trigger arriving at a stopped session. Those are worth saying and worth saying *once*: at
+        four polls a minute the path would otherwise be nothing but the step that is not moving,
+        which is the opposite of what it is for.
+        """
+        try:
+            if sequence is None:
+                row = self.conn.execute("SELECT sequence FROM sessions WHERE id=?",
+                                        (session_id,)).fetchone()
+                sequence = row["sequence"] if row else 0
+            if once and self.conn.execute(
+                    "SELECT 1 FROM events WHERE session_id=? AND sequence=? AND kind=? AND detail=?"
+                    " LIMIT 1", (session_id, sequence, kind, str(detail)[:EVENT_TEXT])).fetchone():
+                return
+            self.conn.execute(
+                "INSERT INTO events (session_id, sequence, kind, detail, at) VALUES (?,?,?,?,?)",
+                (session_id, sequence, kind, str(detail)[:EVENT_TEXT], self.clock()))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            log.warning("arbitration %s: event %s not recorded: %r", session_id, kind, e)
 
     # --- reading ---
 
@@ -725,6 +779,21 @@ class Arbitration:
                     "text": send["text"][:DETAIL_TEXT]},
             })
         return out
+
+    def events(self, session_id, last=DETAIL_EVENTS):
+        """Where this session has been, oldest first. §15.2's `events`.
+
+        The path rather than the artifacts: what was asked and when, the drop-box being read, a
+        record arriving, a rejection, the instruction typed at a member, every pause and every
+        error. `detail` answers "what was decided"; this answers "where did it get to", which is
+        the question a stopped session leaves.
+        """
+        self.session(session_id)        # raises no_session, which is the client's answer
+        rows = self.conn.execute(
+            "SELECT sequence, kind, detail, at FROM events WHERE session_id=? ORDER BY id DESC "
+            "LIMIT ?", (session_id, max(1, min(int(last or DETAIL_EVENTS), DETAIL_EVENTS)))
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
 
     def roster(self, session_id):
         """The roster as `validate` and `trigger_prompt` want it: resolution and status per member.
@@ -868,7 +937,12 @@ class Arbitration:
         self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
-        if not self._send(arbitrator["pane_id"], starter_prompt(scope, gates, self._query_path())):
+        self._event(session_id, "started",
+                    "{} arbitrating {}".format(
+                        arbitrator.get("label") or arbitrator["pane_id"],
+                        " and ".join(m.get("label") or m["pane_id"] for m in members)))
+        if not self._send(arbitrator["pane_id"], starter_prompt(scope, gates, self._query_path()),
+                          session_id, "the opening brief"):
             # Ended, not paused, and raised like every other start precondition. The starter prompt
             # is the only thing that tells the arbitrator what it is and where to write; a session
             # resumed without it has an agent that will never produce a decision file, so it would
@@ -1006,6 +1080,13 @@ class Arbitration:
                  ", scope changed" if scope is not None else "",
                  ", triggers changed" if triggers is not None else "")
 
+        self._event(session_id, "edited", ", ".join(filter(None, [
+            "roster " + ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
+                                  for mid, m in roster.items()) if moved else "",
+            "roles changed" if reroled else "",
+            f"arbitrator {was} -> {arb}" if swapped else "",
+            "scope changed" if scope is not None else "",
+            "clocks changed" if triggers is not None else ""])) or "nothing")
         if swapped:
             # A brief, not an announcement. The new pane was not here for any of this, so telling
             # it "the roster changed" would be telling it about a change from a state it never saw.
@@ -1017,7 +1098,7 @@ class Arbitration:
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
             (session_id, s["sequence"], "roster", body, at))
         self.conn.commit()
-        if not self._send(arb, body):
+        if not self._send(arb, body, session_id, "the roster announcement"):
             # The roster is already changed — it is a row, and the row is written. What could not
             # be proven is that the arbitrator was *told*, and an arbitrator deciding against a
             # roster it does not know about is the one thing this whole call exists to prevent.
@@ -1047,7 +1128,8 @@ class Arbitration:
             (session_id, s["sequence"], trigger, body, at))
         self.conn.commit()
         log.info("arbitration %s: %s briefed (%s)", session_id, arb, trigger)
-        if not self._send(arb, body):
+        self._event(session_id, "briefed", f"{arb} ({trigger}), {len(body)} chars")
+        if not self._send(arb, body, session_id, "the brief"):
             return self.pause(session_id, "send_unconfirmed")
         return self.session(session_id)
 
@@ -1100,6 +1182,7 @@ class Arbitration:
         self.conn.commit()
         s = self.session(session_id)
         log.info("arbitration %s paused: %s", session_id, reason)
+        self._event(session_id, "paused", str(reason).replace("_", " "))
         if self.notify:
             try:
                 self.notify(s, reason)
@@ -1148,6 +1231,8 @@ class Arbitration:
             "UPDATE sessions SET state='active', pause_reason=NULL, window_at=?, "
             "arbitrator_pane=? WHERE id=?", (self.clock(), arb, session_id))
         self.conn.commit()
+        self._event(session_id, "resumed",
+                    "asked for a decision now" if kick else "armed, waiting for a trigger")
         if kick:
             entries = []
             if self.entries:
@@ -1170,6 +1255,7 @@ class Arbitration:
             "UPDATE sessions SET state='ended', ended_at=?, ended_reason=? WHERE id=?",
             (self.clock(), reason, session_id))
         self.conn.commit()
+        self._event(session_id, "ended", str(reason).replace("_", " "))
         return self.session(session_id)
 
     def recover(self):
@@ -1209,14 +1295,30 @@ class Arbitration:
         Never raises. A trigger that cannot proceed pauses the session and says why, and the poll
         loop that called this has fifty other panes to get through.
         """
-        for s in self.running_all():
-            if s["state"] != "active":
-                continue
+        # Every unfinished session, not only the armed ones: a turn that ends at a member of a
+        # *paused* session is the fact a person resuming most needs, and skipping those outright is
+        # what made it invisible. The answer is still None — nothing is asked — but it is a
+        # deliberate None with a line in the path behind it.
+        for s in self.open_sessions():
             try:
                 member_id = next((mid for mid, m in self.roster(s["id"]).items()
                                   if m["pane_id"] == pane_id), None)
                 if member_id is None:
                     continue
+                if s["state"] != "active":
+                    # A trigger that lands on a session which is not armed. Both cases are ordinary
+                    # and both are invisible from outside: `awaiting` folds this turn into the next
+                    # prompt's digest, and `paused` drops it — which is why resuming offers to ask
+                    # for a decision now (`kick`), and why a person looking at a stopped session
+                    # needs to see that the work they were waiting on did finish.
+                    self._event(s["id"], "trigger",
+                                "{} ended a turn — {}".format(
+                                    member_id,
+                                    "a decision is already outstanding" if s["state"] == "awaiting"
+                                    else "the session is paused, so nothing was asked"),
+                                once=True)
+                    return None
+                self._event(s["id"], "trigger", f"{member_id} ended a turn ({kind})")
                 return self.prompt(s["id"], f"{kind} — {member_id}", entries)
             except (ArbiterError, sqlite3.Error, OSError):
                 return None
@@ -1303,7 +1405,11 @@ class Arbitration:
                 if row is None:
                     return None
                 return self.collect(s["id"], row["id"])
-            except (ArbiterError, sqlite3.Error, OSError):
+            except (ArbiterError, sqlite3.Error, OSError) as e:
+                # Swallowed so one broken session cannot stop the poll loop — but not silently:
+                # this is the step where a decision goes missing and nothing else records it.
+                log.warning("arbitration %s: reading the drop box raised: %r", s["id"], e)
+                self._event(s["id"], "error", f"reading the drop box: {e!r}")
                 return None
         return None
 
@@ -1358,7 +1464,10 @@ class Arbitration:
         self.conn.commit()
         with open(path.replace("-decision.json", "-prompt.txt"), "w") as fh:
             fh.write(body)          # so a decision can be read against exactly what was seen
-        if not self._send(arb, body):
+        self._event(session_id, "asked",
+                    f"{arb} for decision #{sequence} ({trigger}), {len(body)} chars",
+                    sequence=sequence)
+        if not self._send(arb, body, session_id, f"prompt #{sequence}"):
             self.pause(session_id, "send_unconfirmed")
             return None
         log.info("arbitration %s seq %d: asked %s (%s, %d bytes)",
@@ -1377,7 +1486,13 @@ class Arbitration:
         try:
             with open(path, "rb") as fh:
                 raw = fh.read()
-        except OSError:
+        except FileNotFoundError:
+            return None, None            # not written yet, which is the ordinary case
+        except OSError as e:
+            # A file that is there and unreadable is not the same as one that has not been written,
+            # and the loop treats both as "waiting" — for ever, in this case, with nothing said.
+            self._event(session_id, "error", f"reading {os.path.basename(path)}: {e!r}",
+                        sequence=sequence)
             return None, None
         return raw, hashlib.sha256(raw).hexdigest()
 
@@ -1424,7 +1539,8 @@ class Arbitration:
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
             (s["id"], s["sequence"], "reprompt", body, self.clock()))
         self.conn.commit()
-        if not self._send(arb, body):
+        self._event(s["id"], "reprompt", f"asked {arb} to correct decision #{s['sequence']}: {code}")
+        if not self._send(arb, body, s["id"], "the correction"):
             self.pause(s["id"], "send_unconfirmed")
             return None
         return cur.lastrowid
@@ -1442,6 +1558,13 @@ class Arbitration:
         sequence = s["sequence"]
         raw, sha = self.read_dropbox(session_id, sequence)
         if raw is None:
+            # Said once per sequence, not once per poll. "Nothing has been written yet" is the
+            # ordinary state of a session between the ask and the answer, and it is also exactly
+            # what a session that has quietly stopped deciding looks like.
+            self._event(session_id, "waiting",
+                        "no decision file yet at {}".format(
+                            os.path.basename(self.drop_path(session_id, sequence))),
+                        sequence=sequence, once=True)
             return {"outcome": "waiting"}
         prior = self.conn.execute(
             "SELECT raw_sha256, valid FROM decisions WHERE session_id=? AND sequence=? "
@@ -1468,6 +1591,13 @@ class Arbitration:
              doc.get("why") or "", doc.get("ambiguity"), doc.get("decision_complexity"), sha, now))
         decision_id = cur.lastrowid
         self.conn.commit()
+        self._event(session_id, "record", f"decision #{sequence} written, {len(raw)} bytes",
+                    sequence=sequence)
+        self._event(session_id, "rejected" if code else "decided",
+                    code.replace("_", " ") if code else
+                    "{} -> {}".format(doc["gate"], roster.get(doc.get("to"), {}).get("label")
+                                      or doc.get("to") or "you"),
+                    sequence=sequence)
         # A whole successful session used to leave nothing in the relay log — only refusals were
         # written down, so the one run that worked was indistinguishable from one that never
         # started. These three lines (asked, decided, paused) are the session's trace on disk.
@@ -1500,7 +1630,8 @@ class Arbitration:
             # otherwise re-prompt forever, spending no step and tripping no budget.
             return self._reject(s, decision_id, "target_not_live")
         text = render(json.loads(s["gates_json"]), doc["gate"], doc["instruction"])
-        if not self._send(fresh["pane_id"], text):
+        if not self._send(fresh["pane_id"], text, s["id"],
+                          f"the {doc['gate']} instruction for {fresh.get('label') or doc['to']}"):
             # Unconfirmed is not "not delivered". submit_paste says False when it could not *prove*
             # the pane took it, and its commonest False — a pane already working — is one where the
             # text very probably landed and queued. So the thread gets the row (N8: an automated
@@ -1522,6 +1653,10 @@ class Arbitration:
             "consecutive=consecutive+1 WHERE id=?", (s["id"],))
         self.conn.commit()
         self._record_turn(s, kind="arbitrated", text=text, decision_id=decision_id, who=fresh)
+        self._event(s["id"], "sent",
+                    "{} to {} ({}), {} chars".format(doc["gate"],
+                                                     fresh.get("label") or doc["to"],
+                                                     fresh["pane_id"], len(text)))
         return {"outcome": "sent", "to": doc["to"], "pane_id": fresh["pane_id"],
                 "text": text, "decision_id": decision_id}
 

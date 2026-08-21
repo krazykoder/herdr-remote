@@ -2109,8 +2109,10 @@ async def handle_client(ws, listener="lan"):
                     # instruction and the text that was typed at a member — and prose goes only
                     # where it was asked for, exactly as `conv_log` does.
                     try:
-                        decisions = await asyncio.to_thread(
-                            arbitration.detail, msg.get("session") or "")
+                        session_id = msg.get("session") or ""
+                        decisions, events = await asyncio.to_thread(
+                            lambda: (arbitration.detail(session_id),
+                                     arbitration.events(session_id)))
                     except ArbiterError as e:
                         await ws.send(json.dumps({
                             "type": "error", "code": e.code, "message": str(e)}))
@@ -2121,7 +2123,7 @@ async def handle_client(ws, listener="lan"):
                         continue
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
-                        "decisions": decisions}))
+                        "decisions": decisions, "events": events}))
                     continue
                 try:
                     if msg_type == "arb_start":

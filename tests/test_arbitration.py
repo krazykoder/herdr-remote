@@ -1546,3 +1546,87 @@ class Edits(Harness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Events(Harness):
+    """Where the session got to, step by step.
+
+    `detail` answers what was decided. This answers the question a session that stopped halfway
+    leaves behind — which step it stopped on — and it is the only thing that records the steps
+    between the artifacts: the drop box being read, the instruction being typed, the send that
+    raised.
+    """
+
+    def kinds(self, session_id):
+        return [e["kind"] for e in self.arb.events(session_id)]
+
+    def find(self, session_id, kind):
+        return [e for e in self.arb.events(session_id) if e["kind"] == kind]
+
+    def test_a_whole_turn_is_a_path_that_can_be_read_back(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.write(s["id"], p["sequence"])
+        self.assertEqual("sent", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
+        self.assertEqual(["started", "asked", "record", "decided", "sent"], self.kinds(s["id"]))
+        # Named, not numbered: `member-2` is this session's own bookkeeping.
+        self.assertIn("p2", self.find(s["id"], "sent")[0]["detail"])
+        self.assertIn("review", self.find(s["id"], "sent")[0]["detail"])
+        # And filed under the decision it belongs to, so a path and a record line up.
+        self.assertEqual([p["sequence"]] * 3,
+                         [e["sequence"] for e in self.arb.events(s["id"])[2:]])
+
+    def test_a_rejected_record_says_so_and_says_what_was_asked_next(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.write(s["id"], p["sequence"], gate="nonsense")
+        self.arb.collect(s["id"], p["prompt_id"])
+        self.assertEqual(["started", "asked", "record", "rejected", "reprompt"],
+                         self.kinds(s["id"]))
+        self.assertIn("unknown gate", self.find(s["id"], "rejected")[0]["detail"])
+
+    def test_every_stop_and_every_start_again_is_on_the_path(self):
+        s = self.start()
+        self.arb.pause(s["id"], "call_human")
+        self.arb.resume(s["id"])
+        self.assertEqual(["started", "paused", "resumed"], self.kinds(s["id"]))
+        self.assertIn("call human", self.find(s["id"], "paused")[0]["detail"])
+        self.assertIn("waiting for a trigger", self.find(s["id"], "resumed")[0]["detail"])
+        self.arb.end(s["id"], "cancelled")
+        self.assertEqual("ended", self.kinds(s["id"])[-1])
+
+    def test_a_send_that_raised_names_the_step_it_raised_on(self):
+        s = self.start()
+        self.arb.send = lambda pid, text: (_ for _ in ()).throw(RuntimeError("no such pane"))
+        self.assertIsNone(self.step(s["id"]))
+        self.assertEqual("paused", self.arb.session(s["id"])["state"])
+        error = self.find(s["id"], "error")[0]
+        self.assertIn("prompt #1", error["detail"])
+        self.assertIn("no such pane", error["detail"])
+
+    def test_a_drop_box_that_cannot_be_read_is_not_silence(self):
+        s = self.start()
+        p = self.step(s["id"])
+        # A directory where the record should be: openable, unreadable, and indistinguishable from
+        # "not written yet" to a loop that only catches OSError.
+        Path(self.arb.drop_path(s["id"], p["sequence"])).mkdir(parents=True, exist_ok=True)
+        self.assertEqual("waiting", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
+        self.assertIn("0001-decision.json", self.find(s["id"], "error")[0]["detail"])
+
+    def test_editing_a_running_session_is_on_the_path(self):
+        s = self.start()
+        spare = pane("pB", agent="claude", cwd="/arb")
+        self.live.append(spare)
+        self.arb.edit(s["id"], scope="Ship the header instead.")
+        self.assertIn("scope changed", self.find(s["id"], "edited")[0]["detail"])
+        self.arb.edit(s["id"], arbitrator={"pane_id": "pB"})
+        # A swapped arbitrator is briefed from scratch, and the brief is a step like any other.
+        self.assertEqual(["edited", "briefed"], self.kinds(s["id"])[-2:])
+
+    def test_events_belong_to_their_own_session(self):
+        first, second = self.start(), self.start_other()
+        self.arb.pause(second["id"], "user")
+        self.assertEqual(["started"], self.kinds(first["id"]))
+        self.assertEqual(["started", "paused"], self.kinds(second["id"]))
+        with self.assertRaises(ArbiterError):
+            self.arb.events("s-nope")

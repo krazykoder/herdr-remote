@@ -819,6 +819,19 @@
         // "this happened between two messages" fact, the gate and the agent that was called.
         if (e.who === 'arbiter') {
           const when = convClock(e);
+          // A step of the session's path — asked, record written, sent, paused, error. Drawn in
+          // the commit strip's shape and for its reason: a small thing that happened at this point
+          // in the thread, under nothing, said in one line and read past unless it is the line
+          // being looked for.
+          if (e.event) {
+            last = at;
+            return `<div class="conv-arb-to">` +
+              `<span class="conv-commits-lede">⚖ ${escapeHtml(e.lede || '')}</span>` +
+              (e.text ? `<span class="conv-commit${e.warn ? ' warn' : ''}">` +
+                        `${escapeHtml(e.text)}</span>` : '') +
+              (when ? `<span class="conv-commit quiet">${escapeHtml(when)}</span>` : '') +
+              '</div>';
+          }
           const badge = e.toAgent ? agentBadge(e.toAgent) : '';
           const gate = escapeHtml(e.gate || 'decided');
           // The member's own label and never `member-2`. That id is this session's bookkeeping and

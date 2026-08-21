@@ -2953,7 +2953,13 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
+      /* One line, always. What used to be here was a sentence — the last decision's gate, target
+         and why — which wrapped to three lines on a phone and pushed the thread down by all of
+         them. What replaced it is short and fixed, so a strip that still does not fit scrolls
+         sideways rather than growing. */
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       padding: 6px 12px;
@@ -2977,16 +2983,6 @@
 
     .arb-strip[data-state="paused"] .arb-state {
       color: var(--orange);
-    }
-
-    /* The gate, who it went to, and why — the line that gives up the width, because the other two
-       are short and fixed and this one is a sentence. */
-    .arb-strip .arb-last {
-      flex: 1 1 120px;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .arb-strip .arb-budget {
@@ -3080,18 +3076,6 @@
       resize: vertical;
     }
 
-    /* The last-decision line is the way into the sheet, so it is a button that looks like the
-       text it replaced — a second control beside the sentence would be chrome beside the answer. */
-    .arb-strip button.arb-last {
-      font: inherit;
-      text-align: left;
-      background: none;
-      border: none;
-      padding: 0;
-      color: inherit;
-      cursor: pointer;
-    }
-
     /* One decision per block: what it decided, why, and the three texts behind it. */
     .arb-dec {
       border-bottom: 1px solid var(--border);
@@ -3159,6 +3143,55 @@
       padding: 16px;
       font-size: 0.72rem;
       color: var(--muted);
+    }
+
+    /* Where the session got to, step by step, above the decisions in the sheet. Dense on purpose:
+       it is read down, looking for the step that is missing or the one that went red. */
+    .arb-path {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 14px 10px;
+    }
+
+    .arb-path > summary {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .arb-step {
+      display: flex;
+      gap: 8px;
+      margin: 6px 0 0;
+      font-size: 0.68rem;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .arb-step.bad {
+      color: var(--red);
+    }
+
+    .arb-step-at {
+      color: var(--muted);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* The verb, in a fixed column, so the shape of a run is readable without reading it. */
+    .arb-step-kind {
+      flex: 0 0 5.5em;
+      color: var(--muted);
+    }
+
+    /* The one on the strip that says where the session is. It is a state, not a control that does
+       something to the session, so it recedes until it is the thing that needs attention. */
+    .arb-strip .arb-active {
+      max-width: 45%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     /* The same fields, inside the dialog instead of above the thread. No bar of its own, and

@@ -31,7 +31,7 @@
     //
     // `arbDetailSeq` is the sequence of the last decision the held copy covers, so a re-ask happens
     // when the session actually decided something and not on every poll that repeats a budget.
-    let arbDetail = null, arbDetailFor = '', arbDetailSeq = -1;
+    let arbDetail = null, arbEvents = null, arbDetailFor = '', arbDetailSeq = -1;
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
@@ -42,6 +42,7 @@
       closeArbSetup();
       arbHtmlLast = '';
       arbDetail = null;
+      arbEvents = null;
       arbDetailFor = '';
       arbDetailSeq = -1;
       closeArbDetail();
@@ -314,7 +315,7 @@
       if (!ws || ws.readyState !== 1) return;
       const seq = (session.last_decision || {}).sequence || 0;
       if (arbDetailFor === session.id && arbDetailSeq >= seq) return;
-      if (arbDetailFor !== session.id) arbDetail = null;   // never the previous session's
+      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; }
       arbDetailFor = session.id;
       arbDetailSeq = seq;
       arbSend({type: 'arb_detail', session: session.id});
@@ -341,7 +342,7 @@
       if (arbDetailFor !== s.id || !Array.isArray(arbDetail)) return [];
       const arb = s.arbitrator || {};
       const members = s.members || [];
-      return arbDetail.filter(d => d.valid).map(d => {
+      return arbEventEntries(arb).concat(arbDetail.filter(d => d.valid).map(d => {
         const to = members.find(m => m.id === d.to);
         return {
           who: 'arbiter', text: d.why || '', at: d.at || 0, seen: d.at || 0, at_src: 'sent',
@@ -357,13 +358,35 @@
           toRole: to ? to.role || '' : '',
           delivered: !!d.send,
         };
-      });
+      })).sort((a, b) => (a.at || 0) - (b.at || 0));
     }
 
-    // A member on the strip: who, and what they are for. The roles are the only part of a roster
-    // a person cannot read off the pane list itself.
-    function arbMemberLine(m) {
-      return (m.label || m.id) + (m.role ? ` (${m.role})` : '');
+    // The steps between the decisions: what the arbitrator was asked, the record it wrote, what
+    // was typed at a member because of it, and every stop and error on the way. Drawn in the same
+    // shape a commit strip and a `call_human` rail are drawn in — a small thing that happened at
+    // this point in the thread, not a message anybody sent — because that is what they are.
+    //
+    // `decided` is left out: the decision bubble directly beneath it says the same gate, the same
+    // member and the arbitrator's own sentence about why. Everything else has no other way to be
+    // seen, which is the whole reason the path is recorded.
+    const ARB_EVENT_LEDE = {
+      started: 'session started', briefed: 'briefed', trigger: 'trigger', asked: 'asked',
+      waiting: 'waiting', record: 'record written', decided: '', rejected: 'record refused',
+      reprompt: 're-asked', sent: 'sent', paused: 'paused', resumed: 'resumed',
+      edited: 'session edited', ended: 'session ended', error: 'error',
+    };
+
+    function arbEventEntries(arb) {
+      if (!Array.isArray(arbEvents)) return [];
+      return arbEvents.filter(e => ARB_EVENT_LEDE[e.kind]).map(e => ({
+        who: 'arbiter', event: true, kind: e.kind, lede: ARB_EVENT_LEDE[e.kind],
+        text: e.detail || '', at: e.at || 0, seen: e.at || 0, at_src: 'sent',
+        key: ARB_ENTRY_KEY, member: 0, live: true,
+        label: arb.label || 'Arbitrator', agent: arb.agent || '',
+        // The two a person is looking for when a session stopped, in the colour the thread already
+        // uses for "this is the part that went wrong".
+        warn: e.kind === 'error' || e.kind === 'rejected' || e.kind === 'paused',
+      }));
     }
 
     function arbStateLabel(s) {
@@ -371,39 +394,6 @@
         return 'Paused — ' + String(s.pause_reason || 'stopped').replace(/_/g, ' ');
       }
       return s.state === 'awaiting' ? 'Deciding…' : 'Arbitrating';
-    }
-
-    // What the last decision was, in one line: the gate, who it went to, and the arbitrator's own
-    // sentence about why. The instruction is not here and never arrives — it is an entry in the
-    // thread below, which is where a person reads what was actually said.
-    function arbLastLine(s) {
-      const d = s.last_decision;
-      if (!d) return 'No decision yet.';
-      const to = (s.members || []).find(m => m.id === d.to);
-      const who = d.gate === 'call_human' ? 'you' : (to ? to.label || d.to : d.to || '—');
-      return `${d.gate || '?'} · ${who} · ${d.why || ''}`;
-    }
-
-    // The way to the arbitrator's own pane, which is a place a person is allowed to go.
-    //
-    // It used to appear only when the pane was `blocked`. But talking to the arbitrator directly —
-    // correcting its reading of the scope, answering a question it asked in its own terminal — is
-    // an ordinary thing to want, and a session where the only route to the deciding agent is
-    // hunting for it in the pane list is one nobody talks to. So the button is always here, and
-    // `blocked` only changes what it says: that one is a permission prompt nobody is looking at,
-    // and from a strip it is indistinguishable from thinking.
-    //
-    // What it opens is a pane like any other. Typing there is still asked twice — see
-    // `arbGuardSend` — because what is typed at an arbitrator is read by something whose whole
-    // instruction is to answer with a file.
-    function arbArbitratorNote(s) {
-      const arb = s.arbitrator || {};
-      if (!arb.pane_id) return '';
-      const blocked = arb.status === 'blocked';
-      return `<button class="arb-btn${blocked ? ' warn' : ''}" ` +
-        `onclick="openTerminal('${escapeHtml(arb.pane_id)}')" ` +
-        `aria-label="Open the arbitrator's pane">⚖ ` +
-        (blocked ? 'Arbitrator needs you' : escapeHtml(arb.label || 'Arbitrator')) + '</button>';
     }
 
     function arbBudgetLine(s) {
@@ -424,15 +414,20 @@
       const s = session, paused = s.state === 'paused';
       return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
         `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
-        // The arbitrator's own pane, when it is the thing holding the session up. A blocked
-        // arbitrator is a permission prompt nobody is looking at, and from the strip it is
-        // indistinguishable from thinking — this says which, and goes to the pane.
-        arbArbitratorNote(s) +
-        // The line is the control: what a person wants after reading "review · Reviewer 1 · …"
-        // is the rest of it, and a separate button for that would be chrome beside the answer.
-        `<button class="arb-last" onclick="arbOpenDetail()"` +
-        ` aria-label="What this session decided">${escapeHtml(arbLastLine(s))}</button>` +
+        // Which of the three is doing something right now, and the way to its pane. This is the
+        // whole of "where is it": a session is one agent at a time by construction, and the last
+        // decision's sentence — which used to live here — is the answer to a different question
+        // and cost the strip its second and third line to say.
+        arbActiveHtml(s) +
         `<span class="arb-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
+        // The path, in a sheet: what was asked, what was written, what was typed and where it
+        // stopped. A button rather than a line of prose, because the line was never the whole
+        // answer and the sheet always is.
+        `<button class="arb-btn quiet" onclick="arbOpenDetail()"` +
+        ` title="What this session has done, step by step">Log</button>` +
+        // The dialog that appointed it, opened on what it already says.
+        `<button class="arb-btn quiet" onclick="arbEditHere()"` +
+        ` title="Change this session — who, what for, and who decides">Edit</button>` +
         // On the strip and not in the pane menu with the other reading toggles: this one is only
         // ever a question while a session is running, and the strip is the only thing on screen
         // that exists exactly then.
@@ -440,12 +435,6 @@
         ` aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
         ` aria-label="Show what the arbitrator decided, in the thread">` +
         `${arbBubblesOn() ? '⚖ shown' : '⚖ hidden'}</button>` +
-        // Who it is watching, and the way to change it — which is the dialog that appointed it,
-        // opened on what this session already says. Editing a session and starting one ask the
-        // same questions, and two forms asking them was two places for the answers to disagree.
-        `<button class="arb-btn" onclick="arbEditHere()"` +
-        ` aria-label="Change this session — who, what for, and who decides">` +
-        `${escapeHtml((s.members || []).map(arbMemberLine).join(' · '))}</button>` +
         // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
         // clock — and with two idle members and no clocks that is a session that reads as running
         // and never acts. `Resume and trigger` asks for a decision now, carrying what happened
@@ -470,6 +459,44 @@
         `<button class="arb-btn arm-btn" onclick="armButton(this, 'End?',` +
         ` () => arbCommand('arb_cancel'))"` +
         ` aria-label="End this arbitration session">End</button></div>`;
+    }
+
+    // Which of the three panes the session is currently on, and what it is doing there.
+    //
+    // A session is one agent at a time: while it is `awaiting` the arbitrator is reading, and the
+    // rest of the time it is whichever member was written to. So "who is active" is a fact, not a
+    // guess — and it is the fact a person opens this conversation to check. `blocked` is called
+    // out wherever it is, because from a strip a permission prompt nobody is looking at is
+    // indistinguishable from thinking.
+    function arbActive(s) {
+      const arb = s.arbitrator || {};
+      const at = who => ({
+        pane_id: who.pane_id || '', label: who.label || who.id || 'Arbitrator',
+        blocked: who.status === 'blocked',
+      });
+      if (s.state === 'awaiting') {
+        return Object.assign(at(arb), {arbiter: true,
+                                       doing: arb.status === 'blocked' ? 'needs you' : 'deciding'});
+      }
+      const busy = (s.members || []).find(m => m.status === 'blocked') ||
+                   (s.members || []).find(m => m.status === 'working');
+      if (busy) {
+        return Object.assign(at(busy),
+                             {doing: busy.status === 'blocked' ? 'needs you' : 'working'});
+      }
+      // Nobody is working. Paused says so on the state label already; running means the loop is
+      // armed and there is nothing for it to read yet.
+      return Object.assign(at(arb), {arbiter: true, idle: true,
+                                     doing: s.state === 'paused' ? 'stopped' : 'waiting'});
+    }
+
+    function arbActiveHtml(s) {
+      const who = arbActive(s);
+      if (!who.pane_id) return '';
+      return `<button class="arb-btn arb-active${who.blocked ? ' warn' : ''}` +
+        `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
+        ` aria-label="Open ${escapeHtml(who.label)}’s pane">` +
+        `${who.arbiter ? '⚖ ' : ''}${escapeHtml(who.label)} · ${escapeHtml(who.doing)}</button>`;
     }
 
     // --- appointing one -------------------------------------------------------------------
@@ -959,13 +986,32 @@
         `<pre>${escapeHtml(text)}</pre></details>`;
     }
 
-    function arbDetailHtml(decisions, session) {
+    // Every step, newest last, above the decisions. This is what a stopped session is opened for:
+    // the state says it stopped and the reason says what tripped, and neither says which step it
+    // got to — whether the prompt went out, whether a record was ever written, whether the
+    // instruction reached the member.
+    function arbPathHtml(events) {
+      if (!Array.isArray(events) || !events.length) return '';
+      return '<details class="arb-path" open><summary>The path</summary>' +
+        events.map(e => {
+          const when = e.at
+            ? new Date(e.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+          const bad = e.kind === 'error' || e.kind === 'rejected' || e.kind === 'paused';
+          return `<p class="arb-step${bad ? ' bad' : ''}">` +
+            `<span class="arb-step-at">${escapeHtml(when)}</span>` +
+            `<span class="arb-step-kind">${escapeHtml(e.kind || '')}</span>` +
+            `<span>${escapeHtml(e.detail || '')}</span></p>`;
+        }).join('') + '</details>';
+    }
+
+    function arbDetailHtml(decisions, session, events) {
       if (decisions === null) return '<p class="arb-dec-empty">Reading the session…</p>';
       if (!decisions.length) {
-        return '<p class="arb-dec-empty">Nothing decided yet. The first decision is written when ' +
+        return arbPathHtml(events) +
+          '<p class="arb-dec-empty">Nothing decided yet. The first decision is written when ' +
           'a member ends a turn and the arbitrator answers.</p>';
       }
-      return decisions.slice().reverse().map(d => {
+      return arbPathHtml(events) + decisions.slice().reverse().map(d => {
         const when = d.at ? new Date(d.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
         return `<div class="arb-dec${d.valid ? '' : ' bad'}">` +
           `<p class="arb-dec-head"><span>${escapeHtml(arbDecTitle(d, session))}</span>` +
@@ -989,13 +1035,13 @@
 
     function arbRenderDetail() {
       const el = document.getElementById('arbDetailBody');
-      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSessionHere());
+      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSessionHere(), arbEvents);
     }
 
     function arbOpenDetail() {
       const session = arbSessionHere();
       if (!session) return;
-      if (arbDetailFor !== session.id) arbDetail = null;   // never the previous session's
+      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; }
       const el = document.getElementById('arbSheet');
       if (el) el.style.display = 'block';
       arbRenderDetail();
@@ -1019,6 +1065,9 @@
     function arbReceiveDetail(msg) {
       if (!arbDetailFor || (msg.session || '') !== arbDetailFor) return;
       arbDetail = Array.isArray(msg.decisions) ? msg.decisions : [];
+      // A relay too old to send them is not a relay with an empty path — the thread draws none
+      // either way, and the sheet says so rather than showing a session that did nothing.
+      arbEvents = Array.isArray(msg.events) ? msg.events : null;
       arbRenderDetail();
       // And the thread, which draws from the same rows. Only when there is one on screen — this
       // arrives on every decision, and a render is not free.

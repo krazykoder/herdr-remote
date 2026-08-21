@@ -1002,6 +1002,41 @@ minutes. `send_unconfirmed` says the send may or may not have landed and to look
 it; `call_human` says a person was asked and has answered; `restart` says the relay went down and
 nothing was decided while it was.
 
+### 14.9 The path
+
+`decisions` records what was decided. Nothing recorded what happened *between* two decisions — the
+prompt going out, the drop box being read and found empty, the instruction typed at a member, the
+trigger that arrived while the session was paused. A session that stopped halfway showed a state
+and a reason and no way to see which step it stopped on, which is the question a stopped session
+actually raises.
+
+The `events` table is that path: `session_id`, `sequence`, `kind`, a sentence of `detail`, and
+`at`. One row per step, written by every method that takes one.
+
+| Kind | Written when |
+|---|---|
+| `started` / `ended` | The session opened, and the reason it closed |
+| `briefed` | A pane was given the opening brief — a start, a `reinit`, or an arbitrator swapped in |
+| `trigger` | A member ended a turn. Including when nothing was asked because of it: a decision was already outstanding, or the session is paused |
+| `asked` | A prompt went to the arbitrator — which decision, which trigger, how long |
+| `waiting` | The drop box was read and there was nothing in it |
+| `record` | A decision file arrived, and its size |
+| `decided` / `rejected` | It validated, or it did not and why |
+| `reprompt` | The arbitrator was asked to correct the same file |
+| `sent` | An instruction was typed at a member: which gate, which member, which pane, how long |
+| `paused` / `resumed` | Every stop and every start again, with the reason and which kind of resume |
+| `edited` | A running session changed: roster, roles, arbitrator, scope or clocks |
+| `error` | A delivery that raised, a drop box that could not be read |
+
+Two rules keep it readable:
+
+* **Written, never read.** `detail` is a sentence for a person. Nothing in the loop parses it, and
+  no control flow depends on any of it (N1).
+* **Never fatal, and never per poll.** Recording is best-effort — a full disk must not turn a
+  working send into a paused session — and the steps a poll loop reaches repeatedly (`waiting`, a
+  trigger arriving at a stopped session) are written once per sequence. At four polls a minute the
+  path would otherwise be nothing but the step that is not moving.
+
 ## 15. Wire protocol
 
 Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
@@ -1029,7 +1064,7 @@ the same reason: every path is derived from it.
 |---|---|---|
 | `arb_sessions` | After the snapshot, unsolicited | Broadcast — its presence is the client's arbitration gate, the way `start_options` gates Start. Carries **every unfinished session**, newest first, not only the running one: paused sessions accumulate (§9.3) and a client that saw only the newest would lose the Resume control for the rest |
 | `arb_session` | Any session state change | Broadcast |
-| `arb_detail` | Answering `arb_detail` | To the asking client only — it carries prose |
+| `arb_detail` | Answering `arb_detail` | To the asking client only — it carries prose. Two lists: `decisions` (what was decided) and `events` (§14.9, where the session got to). A relay too old to send `events` is not a session that did nothing, so its absence and an empty list are different things to the client |
 | `conv_log` | Answering `conv_log` | To the asking client only |
 
 `arb_session` payload:
@@ -1052,14 +1087,27 @@ the same reason: every path is derived from it.
 
 No second product. The existing conversation thread, plus:
 
-- A **session strip** above the thread — **only while this conversation has a session**: state,
-  budget remaining, the last decision's gate and `why`, and one Pause control. A conversation
-  nobody is arbitrating draws nothing above its messages; the way in is the ⚖ in the thread's
-  controls, which costs no height.
+- A **session strip** above the thread — **only while this conversation has a session**, and
+  **one line**: state, which of the three panes is active right now and what it is doing, the
+  budget, and the controls — `Log`, `Edit`, the bubbles toggle, Pause or Resume, `↻ Brief`, `End`.
+  A conversation nobody is arbitrating draws nothing above its messages; the way in is the ⚖ in
+  the thread's controls, which costs no height.
+  - **Which of the three is active** is a fact, not a guess: `awaiting` means the arbitrator is
+    reading, and otherwise it is whichever member is `working` — or `blocked`, which is called out
+    wherever it is, because from a strip a permission prompt nobody is looking at is
+    indistinguishable from thinking. The button opens that pane.
+  - The last decision's sentence used to live here. It wrapped to three lines on a phone and
+    pushed the thread down by all of them, and it answers a question the log answers better.
+- **The path in the thread** (§14.9), when the arbitrator is shown: each step drawn in the shape
+  the commit strip and the decision rail already use — a small thing that happened at this point,
+  read past unless it is the line being looked for. `error`, `rejected` and `paused` are drawn in
+  the colour the thread already uses for the part that went wrong. `decided` is left out: the
+  decision bubble beneath it says the same gate, the same member and the same why.
 - Arbitrated messages rendered as ordinary entries with a badge. The thread already renders
   provenance per entry (`via`: `typed` / `transfer` / `mixed`), so `arbitrator` is a fourth value and
   a badge, not a new view.
-- A decision detail sheet: the record, the prompt that produced it, and the send.
+- A decision detail sheet, opened by `Log`: the whole path at the top, then per decision the
+  record, the prompt that produced it, and the send.
 - A start dialog, opened by ⚖ and dismissed by a tap outside it: the scope, then one section each
   for the arbitrator and the two members it decides between — a pane for each, the roles for the
   two, and whether the loop is armed on start or only briefed. The clocks of §10 are folded away,
@@ -1107,6 +1155,8 @@ No second product. The existing conversation thread, plus:
 | **T13** | e2e | A decision naming a working member is rejected and re-prompted, and nothing is sent |
 | **T14** | Playwright | Session strip renders, arbitrated badge appears on the right entry, Pause stops the loop |
 | **T15** | Playwright | With `HERDR_ENABLE_ARBITER` unset the app shows no arbitration surface at all |
+| **T17** | Python unit | The path: a whole turn reads back as `asked → record → decided → sent`; a rejection, a pause, a resume and an edit each leave their step; a send that raised names the step it raised on; `waiting` is written once per sequence and not once per poll |
+| **T18** | Playwright | The steps land among the messages, the failed one is marked, and `Log` holds all of them |
 
 ## 17. What was taken from the orchestrator branch, and what was not
 

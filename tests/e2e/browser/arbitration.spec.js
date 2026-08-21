@@ -202,8 +202,13 @@ test('a running session shows what it is doing and how to stop it', async ({page
     ambiguity: 'low', at: Date.now()}}));
   const strip = page.locator('#arbStrip .arb-strip');
   await expect(strip).toContainText('Arbitrating');
-  await expect(strip).toContainText('review · scratch · Ready for an independent check.');
+  // Which of the three is doing something, not what was last said — the sentence lives in the Log.
+  await expect(strip).toContainText('scratch · working');
+  await expect(strip).not.toContainText('Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
+  // One line, whatever the labels are: the strip rides the header and everything under it is the
+  // thread. A wrapped strip is messages pushed off the screen.
+  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
 
   await captureSends(page);
   await strip.getByRole('button', {name: 'Pause'}).click();
@@ -232,7 +237,7 @@ test('a running session is edited through the form that appointed it', async ({p
   await broadcast(page, session());
   await captureSends(page);
   // The roster on the strip is the way in — the same dialog, opened on the answers it already has.
-  await page.locator('#arbStrip').getByRole('button', {name: /Change this session/}).click();
+  await page.locator('#arbStrip').getByRole('button', {name: 'Edit'}).click();
   await expect(page.locator('#arbScope')).toHaveValue('Get the footer reviewed.');
   await expect(page.locator('#arbWho')).toHaveValue('w1:p2');
   await expect(page.locator('#arbSetupBody')).not.toContainText('On start');
@@ -244,6 +249,35 @@ test('a running session is edited through the form that appointed it', async ({p
   // a change nobody made.
   expect(await sent(page)).toEqual([{type: 'arb_edit', session: 's-20260817-1103',
                                      scope: 'Get the footer reviewed, then stop.'}]);
+});
+
+test('the path is drawn in the thread, and the whole of it is in the log', async ({page}) => {
+  await openConv(page);
+  await broadcast(page, session());
+  // The relay's answer to `arb_detail`, fed to the page's own handler: what this asserts is the
+  // half that is the page's — the steps landing among the messages, and the sheet holding all of
+  // them. `tests/test_arbitration.py` is what holds the relay to writing them.
+  await page.evaluate(() => handleMessage({
+    type: 'arb_detail', session: 's-20260817-1103',
+    decisions: [{sequence: 1, at: 1000, valid: true, gate: 'review', to: 'member-2',
+                 why: 'Ready for a look.', send: {pane_id: 'w8:p1'}}],
+    events: [{kind: 'trigger', detail: 'member-1 ended a turn (turn_end)', at: 900, sequence: 0},
+             {kind: 'asked', detail: 'w1:p2 for decision #1 (turn_end), 392 chars', at: 910,
+              sequence: 1},
+             {kind: 'sent', detail: 'review to scratch (w8:p1), 180 chars', at: 1010, sequence: 1},
+             {kind: 'error', detail: 'reading the drop box: OSError(21)', at: 1100, sequence: 1}],
+  }));
+
+  const thread = page.locator('#convViewThread');
+  await expect(thread).toContainText('⚖ trigger');
+  await expect(thread).toContainText('review to scratch (w8:p1), 180 chars');
+  // The step that went wrong is the one that has to be found rather than read past.
+  await expect(thread.locator('.conv-commit.warn', {hasText: 'OSError'})).toBeVisible();
+
+  await page.locator('#arbStrip').getByRole('button', {name: 'Log'}).click();
+  const path = page.locator('#arbSheet .arb-path');
+  await expect(path).toContainText('w1:p2 for decision #1');
+  await expect(path).toContainText('reading the drop box');
 });
 
 test('ending is asked twice, and the strip goes with the session', async ({page}) => {
