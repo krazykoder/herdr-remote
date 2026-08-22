@@ -139,9 +139,11 @@
     // What the bottom strip lists. Scoped to the open pane's Project by default: the strip is for
     // moving between the panes of the thing being worked on, and a machine hosting four projects
     // turns it into a row to scroll rather than one to tap. 'all' is the old behaviour, kept.
-    // 'pairs' is the third: the strip becomes the pairs themselves.
+    // 'pairs' is the third: the strip becomes the pairs themselves. 'thread' is the narrowest —
+    // the panes of the conversation the open pane is reading, which is the row you want while a
+    // thread is on screen and the one 'project' is still too wide to be.
     const TAB_SCOPE_KEY = 'herdr_tab_scope';
-    const TAB_SCOPES = ['project', 'all', 'pairs', 'convs'];
+    const TAB_SCOPES = ['project', 'all', 'pairs', 'convs', 'thread'];
     function tabScope() {
       const v = localStorage.getItem(TAB_SCOPE_KEY);
       return TAB_SCOPES.includes(v) ? v : 'project';
@@ -246,6 +248,17 @@
         const open = paneOf(activePane);
         if (open) live = live.filter(a =>
           projectKey(a) === projectKey(open) || a.pane_id === activePane);
+      }
+      // The conversation the open pane is reading, when that is the setting. Same shape as the
+      // Project filter and the same exemption: the open pane is always in its own strip. A pane
+      // reading nothing narrows to nothing — the strip stays whole rather than emptying, because
+      // a row that vanishes is read as the panes having gone.
+      if (scope === 'thread' && activePane) {
+        const open = paneOf(activePane);
+        const conv = open ? convViewConv(open) : null;
+        const keys = new Set(((conv && conv.members) || []).map(m => m.key));
+        if (keys.size) live = live.filter(a =>
+          keys.has(convMemberKey(a)) || a.pane_id === activePane);
       }
       if (scope === 'pairs') {
         live = pairedTabs(live);

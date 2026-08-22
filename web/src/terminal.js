@@ -466,6 +466,15 @@
           'thread; any other opens the conversation on its own.';
         return;
       }
+      if (scope === 'thread') {
+        const open = activePane ? paneOf(activePane) : null;
+        const conv = open ? convViewConv(open) : null;
+        const n = ((conv && conv.members) || []).length;
+        el.textContent = n
+          ? `Only the ${n} panes of ${conv.name}.`
+          : 'This pane is not reading a conversation, so the strip shows every live pane.';
+        return;
+      }
       if (scope === 'pairs') {
         const n = pairs.filter(p => pairHealth(p, agents).state === 'healthy').length;
         el.textContent = n
