@@ -331,7 +331,9 @@
     async function recordPaneNow(a, key, rows) {
       const now = Date.now();
       const held = await convHold(key, now);
-      const fresh = paneMessages(rows, a.agent);
+      // Against this record's own sends: a prompt drawn the way the agent's reply is drawn comes
+      // back as one block holding both, and cutting it needs to know what was typed (§convSplitEcho).
+      const fresh = convUnmergeSent(paneMessages(rows, a.agent), held.entries);
       const live = paneOf(a.pane_id) || a;
       const working = live.status === 'working';
       const label = paneLabel(a) || held.label || '';

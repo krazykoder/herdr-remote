@@ -37,7 +37,7 @@ const ctx = vm.createContext({
 // change to the payload's shape breaks the classifier's test rather than the classifier.
 // Then the detector and the recorder together — the recorder reads turnSummaries and
 // userInputLines, and proving it against stubs of those would prove it agrees with the stubs.
-const NAMES = ['paneMessages', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
+const NAMES = ['paneMessages', 'convUnmergeSent', 'convSplitEcho', 'backfillEntries', 'splitFirstRead', 'sentTurnEntries', 'turnMessages', 'newTurnMessages', 'recoveredTurn', 'turnEntries',
                'convAt', 'convKey', 'convText', 'convHash', 'convMemberKey',
                'classifyVia', 'outboxAdd', 'tagUserEntries', 'composeTransfer', 'mergeEntries', 'convDedupe',
                'parseConvIndex', 'capEntries', 'fitPrepend', 'deepEntries', 'evictOrder', 'convCopyName',
@@ -48,7 +48,7 @@ vm.runInContext(
   // `const` is a lexical binding and never lands on the context object, so the block exports
   // itself explicitly. A rename in source therefore fails here loudly, not silently.
   + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-const {paneMessages, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
+const {paneMessages, convUnmergeSent, convSplitEcho, backfillEntries, splitFirstRead, sentTurnEntries, turnMessages, newTurnMessages, recoveredTurn, turnEntries,
        convAt, convKey, convText, convHash, convMemberKey, classifyVia,
        outboxAdd, tagUserEntries, composeTransfer, mergeEntries, convDedupe,
        parseConvIndex, capEntries, fitPrepend, deepEntries, evictOrder, convCopyName,
@@ -909,3 +909,43 @@ test('formatConvSize formats bytes to MB, KB, and B correctly', () => {
   assert.strictEqual(formatConvSize(1024 * 1024 * 3.5), '3.50 MB');
 });
 
+
+// --- A prompt merged into the block under it ---
+//
+// Real bytes from a real session: agy was sent a review instruction, answered it without running a
+// tool first, and the pane drew both the same way — two columns of indent under a `>`. The thread
+// showed one message, the instruction with the reviewer's verdict glued to the end of it, in the
+// reviewer's voice. Same fixture and same rule as MergedPrompts in tests/test_conversation_log.py.
+const AGY_MERGED = fs.readFileSync(path.join(__dirname, 'fixtures', 'pane_agy_merged.txt'), 'utf8')
+  .split('\n');
+const AGY_SENT = fs.readFileSync(path.join(__dirname, 'fixtures', 'pane_agy_merged_sent.txt'), 'utf8');
+
+test('a prompt this browser sent is cut off the answer it was merged into', () => {
+  const fresh = paneMessages(AGY_MERGED, 'agy');
+  // The bug, first: one agent message holding both halves.
+  const before = fresh.filter(m => m.who === 'agent');
+  assert.strictEqual(before.length, 1);
+  assert.match(before[0].text, /Review Steps 4\+5, commit 03acc22/);
+
+  const out = convUnmergeSent(fresh, [{who: 'user', at_src: 'sent', text: AGY_SENT}]);
+  const said = out.filter(m => m.who === 'agent');
+  assert.strictEqual(said.length, 1);
+  assert.ok(said[0].text.startsWith('### Review: Steps 4+5 PASSED'), said[0].text.slice(0, 60));
+  assert.match(said[0].text, /Verdict: Review passes\./);
+  assert.doesNotMatch(said[0].text, /Review Steps 4\+5, commit 03acc22/);
+  // The instruction stays in the window as what it is, so the anchor still finds it.
+  assert.match(out.filter(m => m.who === 'user').map(m => m.text).join('\n'),
+    /Review Steps 4\+5, commit 03acc22/);
+});
+
+test('a window is left alone when nothing was sent to it, or a different thing was', () => {
+  const fresh = paneMessages(AGY_MERGED, 'agy');
+  const merged = m => /Review Steps 4\+5, commit 03acc22/.test(m.text) && m.who === 'agent';
+  assert.ok(convUnmergeSent(fresh, []).some(merged), 'nothing sent: nothing to cut against');
+  assert.ok(convUnmergeSent(fresh, [{who: 'user', at_src: 'sent', text:
+    'Something else entirely, at length, so it is long enough to be a candidate for the cut ' +
+    'at all, twice over and then some.'}]).some(merged), 'a different send is not this one');
+  // A read is not a send: a record's own echo of the prompt cannot be used to cut with, or a
+  // window would be cut against a message that came out of the same parse it is fixing.
+  assert.ok(convUnmergeSent(fresh, [{who: 'user', at_src: 'poll', text: AGY_SENT}]).some(merged));
+});

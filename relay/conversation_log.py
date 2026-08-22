@@ -78,6 +78,65 @@ def _key(text):
     return "".join((text or "").split())
 
 
+# A prompt this relay typed can come back merged into the block under it — see `_split_echo`. How
+# many of the pane's own sent prompts a window is checked against, and how much of one has to match
+# at each end for the cut to be made.
+SENT_LOOKBACK = 4
+ECHO_EDGE = 40
+
+
+def _cut_at(text, count):
+    """The offset in `text` just past its `count`th non-whitespace character.
+
+    The comparison runs over `_key`s, which hold no whitespace at all, so an offset found there
+    means nothing to the text it came from until it is walked back like this.
+    """
+    seen = 0
+    for i, ch in enumerate(text):
+        if not ch.isspace():
+            seen += 1
+            if seen == count:
+                return i + 1
+    return len(text)
+
+
+def _split_echo(text, sent):
+    """A block cut into the prompt echoed at the top of it and what the agent said underneath.
+
+    None when it does not begin with that prompt, which is the ordinary case.
+
+    A harness with no glyph of its own — agy — draws a pasted prompt exactly the way it draws its
+    own reply: the first line after the `>` gutter, the rest indented two columns. The parser tells
+    them apart by the blank line agy leaves before it answers, and a *pasted* prompt with a blank
+    line in it defeats that: the prompt's own second paragraph opens the block, and when the agent
+    then answers without running a tool there is no column-0 line anywhere between them. One block,
+    holding the arbitrator's instruction and the member's answer, recorded as the member's words.
+
+    Shape cannot separate them, so this does not try to. The relay knows what it typed, because it
+    typed it — every send is a row in this table — so the echo is matched against that and cut off
+    where it ends. Both ends are checked and the middle is not: a terminal re-wraps what it echoes
+    (`_key` covers that) but it also drops what will not fit and replaces characters it cannot draw,
+    and a prompt found at both ends is the prompt whatever happened between them.
+    """
+    key, skey = _key(text), _key(sent)
+    if len(key) < ECHO_EDGE or len(skey) < 2 * ECHO_EDGE:
+        return None
+    # Where in the prompt the block picks it up, rather than assuming the top of it: the first line
+    # of a send is echoed on the `>` gutter itself and is read as the prompt it is, so the block
+    # under it starts partway down what was typed.
+    begin = skey.find(key[:ECHO_EDGE])
+    if begin < 0 or len(skey) - begin < 2 * ECHO_EDGE:
+        return None
+    at = key.find(skey[-ECHO_EDGE:], ECHO_EDGE)
+    if at < 0:
+        return None
+    cut = _cut_at(text, at + ECHO_EDGE)
+    head, rest = text[:cut].strip(), text[cut:].strip()
+    if not head or not rest:
+        return None        # nothing under it: the block is the echo, and is not the agent speaking
+    return head, rest
+
+
 def _aligns(fresh, i, keys):
     """Does the record's trailing run end at `fresh[i]`?
 
@@ -316,7 +375,7 @@ class ConversationLog:
         agent = pane.get("agent")
         pane_id = pane["pane_id"]
         rows = (content or "").splitlines()
-        fresh = pane_messages(rows, agent)
+        fresh = self._unmerge_sent(pane, pane_messages(rows, agent))
         # First sight of this pane: everything on screen was said before the relay was watching, so
         # the whole window is history rather than one turn. Its order is all that can honestly be
         # claimed about it, which is what `backfill` means — the same answer the browser gives a
@@ -375,6 +434,36 @@ class ConversationLog:
                     kind="agent_blocked" if i == last_agent and status_to == "blocked" else "agent_final",
                     origin="agent", text=text, span=span, at=when,
                     git=git_last if i == len(new) - 1 else git_head, **common))
+        return out
+
+    def _sent_texts(self, pane, limit=SENT_LOOKBACK):
+        """The last few prompts this relay typed at this pane, newest first."""
+        where, params = self._scope(pane)
+        rows = self.conn.execute(
+            f"SELECT text FROM turns WHERE {where} AND at_src = 'sent' AND text != ''"
+            " ORDER BY at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()
+        return [r["text"] for r in rows]
+
+    def _unmerge_sent(self, pane, fresh):
+        """Give back what the agent said, where a prompt the relay sent was merged into it.
+
+        The pieces keep the whole block's span: the two halves are one run of rows on screen, and
+        the span exists to point a reader at them rather than to be arithmetic. The prompt half is
+        already in the record as the send that wrote it, so the anchor recognises it and only the
+        agent's half is new — which is the point. See `_split_echo` for why shape cannot do this.
+        """
+        sent = self._sent_texts(pane)
+        if not sent:
+            return fresh
+        out = []
+        for who, text, span in fresh:
+            split = next((s for s in (_split_echo(text, t) for t in sent) if s), None) \
+                if who == "agent" else None
+            if split:
+                out.append(("user", split[0], span))
+                out.append(("agent", split[1], span))
+            else:
+                out.append((who, text, span))
         return out
 
     def _has_record(self, pane):

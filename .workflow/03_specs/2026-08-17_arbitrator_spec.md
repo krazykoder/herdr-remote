@@ -322,6 +322,22 @@ sent is `human_web` because it did it. An echo it finds in a pane is `human_term
 front end already carries the same honesty — `classifyVia` (`web/src/conversation_pure.js:415`) calls
 an unmatched send `typed`, because provenance is only knowable where the send happened.
 
+**A prompt echoed back merged into the block under it is cut off it, against what was sent.** A
+harness with no speaker glyph — agy — draws a pasted prompt exactly the way it draws its own reply,
+and where the agent answers without running a tool first there is no line between them for the
+detector to find: one block, holding the instruction and the answer, in the agent's voice. That is
+the arbitrator's own words being recorded as what a member said, and the arbitrator then reads them
+back as evidence.
+
+Shape cannot separate them, so nothing tries to. Every send is a row (`at_src = 'sent'`), so the
+echo is matched against the last few of those for that pane and cut where the prompt ends. Both ends
+of the prompt have to be found, keyed the way every other comparison here is keyed — whitespace
+dropped, because a terminal re-wraps what it echoes — and the middle is not checked, because a
+terminal also drops what will not fit and replaces characters it cannot draw. No match, no cut: a
+window is left exactly as it reads rather than given an invented boundary. `_split_echo` in
+`relay/conversation_log.py`, and `convSplitEcho` in `web/src/conversation_pure.js` — the record and
+the thread agree because both do it.
+
 ### 6.4 When it was said — `at` and `at_src`
 
 A timestamp is only as good as its source. The browser grades this already:
