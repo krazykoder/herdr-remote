@@ -706,11 +706,20 @@
       else if (msg.type === 'arb_detail') {
         arbReceiveDetail(msg);
       }
-      // Only failures arrive for a send, and only when the relay could not prove the pane took
-      // the text. Worth a toast: the composer clears either way, so this is the only difference a
-      // person can see between a send that landed and one that may not have.
+      // A send says nothing when it lands cleanly. It says something twice when it does not: once
+      // when the relay could not prove the pane took it, and again when the pane either takes it or
+      // runs out of time. `pending` is the first of those, and it is not a failure — a message
+      // queued behind a working pane is the ordinary case and reads as an error only because
+      // nothing ever came back to say it had gone.
       else if (msg.type === 'command_result' && msg.command === 'send_text') {
-        showToast(`That pane did not confirm the send — check ${paneLabel(paneOf(msg.pane_id) || {}) || msg.pane_id}.`);
+        const where = paneLabel(paneOf(msg.pane_id) || {}) || msg.pane_id;
+        if (msg.pending) {
+          showToast(msg.reason === 'queued'
+            ? `Queued at ${where} — it is working; the message goes in when it finishes.`
+            : `${where} has not confirmed the send yet — watching.`, 'info');
+        }
+        else if (msg.ok) showToast(`${where} took the message.`, 'info');
+        else showToast(`That pane did not confirm the send — check ${where}.`);
       }
       else if (msg.type === 'command_result' &&
                (msg.command === 'start_agent' || msg.command === 'open_terminal')) {

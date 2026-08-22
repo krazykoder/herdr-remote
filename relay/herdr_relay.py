@@ -156,6 +156,10 @@ SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — n
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
 SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
+# How long a send nobody could confirm is watched for afterwards. Minutes, not seconds: the common
+# reason a send is unconfirmed is that the pane was already working, and what it is waiting for is
+# the agent to finish — which is a turn, and a turn is as long as it is.
+CONFIRM_MS = int(os.environ.get("HERDR_CONFIRM_MS", str(10 * 60 * 1000)))
 
 # The longest text one send_text may carry. 4000, not 1000: a transferred selection is usually code
 # or a diff (P3 spec §6). Mirrors SEND_TEXT_MAX in web/src/pairs_pure.js, which is what the browser
@@ -907,6 +911,16 @@ LATE_TURN_MS = int(os.environ.get("HERDR_LATE_TURN_MS", "45000"))
 # pane_id -> {"was", "status", "until"} for panes whose turn end had nothing to record yet.
 late_turns = {}
 
+# pane_id -> {"ws", "until", "idled"} for a send the relay could not prove landed. A send is
+# unconfirmed for one of two reasons and both resolve themselves in time: a pane that was already
+# working takes the queued text when it finishes, and a pane that never moved moves when it takes
+# it. Watching for that costs nothing — the poll already carries every pane's status — and it turns
+# "check that it landed" into an answer instead of an errand.
+#
+# One per pane. A second send to the same pane replaces the first: it is the newer question, and
+# whatever answers it answered both.
+pending_sends = {}
+
 CAPTURE_LINES = 200
 CAPTURE_SOURCE = "recent-unwrapped"
 
@@ -931,6 +945,54 @@ def decides(pane_id):
     except Exception as e:                       # noqa: BLE001 — a lookup, never a reason to stop
         log.warning("arbitration: could not tell whether %s decides: %s", pane_id, e)
         return False
+
+
+async def confirm_pending_sends(agents):
+    """Sends nobody could confirm, answered by the next thing the pane does.
+
+    A pane takes what it was handed by going to work on it. The pane the send could not be proven
+    against is therefore watched for exactly that: it has to *leave* the turn it was in — a queued
+    message is queued behind a turn — and then go back to work, and the second transition is the
+    proof. A pane that was idle and unresponsive has already left, so its next move is the proof on
+    its own.
+
+    Told to the client that sent it and to nobody else. The other browsers did not ask and cannot
+    act on it, and a phone that lights up about a message someone else sent is a notification about
+    another person's business.
+    """
+    if not pending_sends:
+        return
+    by_id = {a["pane_id"]: a for a in agents}
+    now = int(time.time() * 1000)
+    for pid, wait in list(pending_sends.items()):
+        a = by_id.get(pid)
+        status = (a or {}).get("agent_status") or ""
+        if a is None:
+            pending_sends.pop(pid, None)
+            continue        # the pane is gone; there is nothing left to confirm or to tell anyone
+        if not wait["idled"]:
+            wait["idled"] = ends_turn(status)
+        elif status in SUBMIT_TOOK:
+            pending_sends.pop(pid, None)
+            await tell_sender(wait["ws"], {
+                "type": "command_result", "command": "send_text", "ok": True, "pending": False,
+                "pane_id": pid, "message": "the pane took it"})
+            continue
+        if now >= wait["until"]:
+            pending_sends.pop(pid, None)
+            await tell_sender(wait["ws"], {
+                "type": "command_result", "command": "send_text", "ok": False, "pending": False,
+                "pane_id": pid, "message": "the pane never confirmed it — check that it landed"})
+
+
+async def tell_sender(ws, payload):
+    """One client, the one that asked. A closed socket is the ordinary end of a wait this long."""
+    if ws is None:
+        return
+    try:
+        await ws.send(json.dumps(payload))
+    except Exception:                            # noqa: BLE001 — it hung up, which is not an error
+        pass
 
 
 async def collect_late_turns(agents):
@@ -1194,7 +1256,7 @@ def live_panes():
     return [] if err else annotate_agents(dig_panes(data), PROJECTS)
 
 
-async def submit_paste(pane_id, text, remote=None):
+async def submit_paste(pane_id, text, remote=None, out=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
     The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
@@ -1212,6 +1274,12 @@ async def submit_paste(pane_id, text, remote=None):
     A pane already `working` when the paste arrives is a message queued behind what the agent is
     doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
     nothing to watch. One press after the settle, exactly as before, and the return says so.
+
+    `out`, when given, is filled in with `reason` — `queued` for a pane that was already working,
+    `unconfirmed` for one that never moved. Both are False here and they are not the same news: the
+    first almost certainly landed and is waiting its turn, the second may be sitting in a composer.
+    Out of band because the return value is load-bearing elsewhere — arbitration reads `is not
+    False` and a richer type would quietly read as success.
 
     And a pane with no agent skips all of it. Every rule here is about a TUI — booting, laying out a
     paste, showing a permission prompt — and a shell has none of them. It has no status to watch
@@ -1237,6 +1305,8 @@ async def submit_paste(pane_id, text, remote=None):
         # keep reporting either way.
         if first and status == "working":
             await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            if out is not None:
+                out["reason"] = "queued"
             return False
         first = False
         if status in SUBMIT_TOOK:
@@ -1258,6 +1328,8 @@ async def submit_paste(pane_id, text, remote=None):
     # three attempts to find.
     log.warning("submit: pane=%s never left %s after %d Enter press(es) — text may be unsent",
                 pane_id, SUBMIT_READY, presses)
+    if out is not None:
+        out["reason"] = "unconfirmed"
     return False
 
 
@@ -1577,6 +1649,8 @@ async def _poll_once():
         # Turns that ended with nothing on screen yet, given another look now that some time has
         # passed. Before the clocks, because a turn that lands here is a turn that just happened.
         await collect_late_turns(agents)
+        # And sends that could not be proven when they went out, which this same snapshot answers.
+        await confirm_pending_sends(agents)
         # §10's clocks, once per poll and after every transition above has been recorded: an idle
         # clock is "nothing has happened for a while", so it must be evaluated against a record
         # that already knows about anything that just did.
@@ -2403,11 +2477,22 @@ async def handle_client(ws, listener="lan"):
                     # where it very probably queued — and a client that hears nothing draws the
                     # same empty composer either way. The text is still recorded as sent, because
                     # it very likely was; what the client is told is that nobody confirmed it.
-                    if not await submit_paste(pane_id, text, remote=remote):
+                    out = {}
+                    if not await submit_paste(pane_id, text, remote=remote, out=out):
+                        queued = out.get("reason") == "queued"
+                        # Not the end of the story any more: the pane is watched until it goes to
+                        # work on this, and the client is told when it does. `pending` is what says
+                        # so — a client too old to read it sees the same failure it always saw.
+                        pending_sends[pane_id] = {
+                            "ws": ws, "until": int(time.time() * 1000) + CONFIRM_MS,
+                            # A queued message is behind a turn that has to end first; a pane that
+                            # never moved has already ended one, so its next move is the answer.
+                            "idled": not queued}
                         await ws.send(json.dumps({
                             "type": "command_result", "command": "send_text", "ok": False,
-                            "pane_id": pane_id,
-                            "message": "the pane never confirmed it — check that it landed"}))
+                            "pending": True, "pane_id": pane_id, "reason": out.get("reason"),
+                            "message": "queued behind what the pane is doing"
+                                       if queued else "the pane has not confirmed it yet"}))
                 else:
                     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)

@@ -27,7 +27,10 @@ mid-way through — these rows are minutes to weeks old.
     uv run scripts/repair_record.py --drop-echoes       # also drop rows that are *only* an echo
 """
 import argparse
+import json
+import os
 import re
+import subprocess
 import sqlite3
 import sys
 import time
@@ -37,6 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from conversation_log import SENT_LOOKBACK, _key, _split_echo   # noqa: E402
+from pane_summary import pane_messages                          # noqa: E402
 
 DEFAULT_DB = ROOT / ".herdr-remote" / "arbitration.sqlite3"
 
@@ -119,6 +123,15 @@ def plan(conn, drop_echoes):
     return out
 
 
+def snapshot(conn, db):
+    """sqlite's own backup, not a file copy: this database runs in WAL mode under a live relay, and
+    the pages a copy of the main file would miss are exactly the newest turns in it."""
+    path = f"{db}.bak-{int(time.time())}"
+    with sqlite3.connect(path) as dst:
+        conn.backup(dst)
+    return path
+
+
 def show(actions):
     for kind, row, new in actions:
         one = " ".join((row["text"] or "").split())
@@ -135,6 +148,101 @@ def apply(conn, actions):
                 conn.execute("UPDATE turns SET text = ? WHERE id = ?", (new, row["id"]))
             else:
                 conn.execute("DELETE FROM turns WHERE id = ?", (row["id"],))
+
+
+# --- Messages the record never saw ---
+
+
+def herdr(*args):
+    out = subprocess.run([os.environ.get("HERDR_BIN", "/opt/homebrew/bin/herdr"), *args],
+                         capture_output=True, text=True, check=True)
+    return out.stdout
+
+
+def pane_now(pane_id, lines):
+    """The pane, and what the record calls it. Read from herdr rather than taken on trust: a repair
+    that guesses a pane's agent parses its transcript with the wrong glyphs."""
+    info = json.loads(herdr("pane", "get", pane_id))["result"]["pane"]
+    rows = herdr("pane", "read", pane_id, "--source", "recent-unwrapped",
+                 "--lines", str(lines)).splitlines()
+    return info, rows
+
+
+# How much of a message identifies it. See `missed`.
+HEAD_KEY = 80
+
+
+def head(text):
+    return _key(text)[:HEAD_KEY]
+
+
+def missed(conn, pane_id, rows, agent):
+    """Messages the pane still shows that the record has no row for, dated between its neighbours.
+
+    Only the gaps *between* recorded messages. A message newer than everything recorded is the turn
+    in progress, and the relay writes that one itself when the turn ends — filling it here would
+    race a live writer to say the same thing.
+    """
+    # Matched on the opening of a message rather than the whole of it. The rows already in the
+    # table were parsed by the code that had the bug, and a block whose end was read differently is
+    # the *same* message with a different tail — matching on all of it would call that missing and
+    # write a second copy of something the record already holds, which is the one outcome a repair
+    # must not have. Eighty characters in, two different messages have parted company.
+    # Two questions, two sets. *Recorded* is every row: a prompt is in the record from the moment it
+    # was sent, and its echo in the pane is not a message the record is missing. *Anchor* is only
+    # the rows that were read off the pane, because those are the ones a window position can be
+    # trusted against — a send is written before the reply it triggers, so anchoring on one turns
+    # the turn in progress into a gap and fills the record with half a message the relay is about
+    # to write properly.
+    rows_out = conn.execute(
+        "SELECT text, at, at_src FROM turns WHERE pane_id = ? AND text != '' ORDER BY id",
+        (pane_id,)).fetchall()
+    recorded = {head(r[0]) for r in rows_out}
+    anchor = {head(r[0]): r[1] for r in rows_out if r[2] != "sent"}
+    fresh = pane_messages(rows, agent)
+    # Anchored at both ends: a run of unrecorded messages is dated between the recorded message
+    # before it and the recorded message after it, which is all that can honestly be claimed.
+    marks = [i for i, m in enumerate(fresh) if head(m[1]) in anchor]
+    if len(marks) < 2:
+        return []
+    out = []
+    for a, b in zip(marks, marks[1:]):
+        run = [i for i in range(a + 1, b) if head(fresh[i][1]) not in recorded]
+        if not run:
+            continue
+        lo, hi = anchor[head(fresh[a][1])], anchor[head(fresh[b][1])]
+        step = max(1, (hi - lo) // (len(run) + 1))
+        for n, i in enumerate(run, 1):
+            who, text, span = fresh[i]
+            out.append((who, text, span, min(lo + n * step, hi - 1)))
+    return out
+
+
+def backfill(conn, pane_id, lines, apply_it):
+    info, rows = pane_now(pane_id, lines)
+    agent = info.get("agent") or ""
+    found = missed(conn, pane_id, rows, agent)
+    print(f"{pane_id} ({agent}, {info.get('label') or '-'}): {len(found)} message(s) the record "
+          f"never saw")
+    for who, text, span, at in found:
+        when = time.strftime("%H:%M:%S", time.localtime(at / 1000))
+        print(f"  [{who}] {when} rows {span[0]}-{span[1]}  {' '.join(text.split())[:70]}")
+    if not found or not apply_it:
+        return bool(found)
+    for who, text, span, at in found:
+        # `backfill` is the honest stamp: the order is what this recovers, and the time is an
+        # interpolation between two rows that do carry one. `human_terminal` for the same reason
+        # the writer uses it — the relay knows a person typed this and not which person (N4).
+        conn.execute(
+            "INSERT INTO turns (host, agent, cwd, pane_id, label, project, kind, origin, text,"
+            " range_start, range_end, at, at_src) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'backfill')",
+            (info.get("host") or "local", agent, info.get("cwd") or "", pane_id,
+             info.get("label") or "", "",
+             "agent_final" if who == "agent" else "human_prompt",
+             "agent" if who == "agent" else "human_terminal",
+             text, span[0], span[1], at))
+    conn.commit()
+    return True
 
 
 def self_check():
@@ -168,12 +276,22 @@ def main():
     ap.add_argument("--drop-echoes", action="store_true",
                     help="also delete rows that are only a prompt echo, with nothing said under it")
     ap.add_argument("--self-check", action="store_true", help="prove the rules and exit")
+    ap.add_argument("--backfill", metavar="PANE_ID",
+                    help="read this pane and add the messages the record has no row for")
+    ap.add_argument("--lines", type=int, default=400, help="how much pane to read for --backfill")
     args = ap.parse_args()
 
     if args.self_check:
         return self_check()
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
+    if args.backfill:
+        if args.apply:
+            print(f"backup: {snapshot(conn, args.db)}")
+        backfill(conn, args.backfill, args.lines, args.apply)
+        if not args.apply:
+            print("\nDry run. Pass --apply to write.")
+        return
     actions = plan(conn, args.drop_echoes)
     counts = {k: sum(1 for a in actions if a[0] == k) for k in ("chrome", "split", "echo")}
     print(f"{args.db}: {counts['split']} merged, {counts['chrome']} chrome, "
@@ -182,11 +300,7 @@ def main():
     if not actions or not args.apply:
         print("\nDry run. Pass --apply to write." if actions else "\nNothing to repair.")
         return
-    # sqlite's own backup, not a file copy: this database runs in WAL mode under a live relay, and
-    # the pages a copy of the main file would miss are exactly the newest turns in it.
-    backup = f"{args.db}.bak-{int(time.time())}"
-    with sqlite3.connect(backup) as dst:
-        conn.backup(dst)
+    backup = snapshot(conn, args.db)
     apply(conn, actions)
     print(f"\nWritten. Copy of the record as it was: {backup}")
 

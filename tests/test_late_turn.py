@@ -12,6 +12,7 @@ This is the poll loop's half of the answer — the pane is read again on the ord
 says something or the deadline passes. `tests/test_pane_summary.py` holds the other half, which is
 that the footer is not a message.
 """
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -126,6 +127,76 @@ class LateTurns(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("no db")
         with patch.object(herdr_relay, "arbitration", Broken()):
             self.assertFalse(herdr_relay.decides("w1:p1"))
+
+
+class Socket:
+    """A client, holding what it was told and whether it is still there."""
+
+    def __init__(self, open_=True):
+        self.sent, self.open = [], open_
+
+    async def send(self, payload):
+        if not self.open:
+            raise RuntimeError("closed")
+        self.sent.append(json.loads(payload))
+
+
+class PendingSends(unittest.IsolatedAsyncioTestCase):
+    """A send the relay could not prove landed, answered by the next thing the pane does.
+
+    Both reasons resolve themselves: a pane already working takes the queued text when it finishes,
+    and a pane that never moved moves when it takes it. The proof is a transition, so a queued
+    message needs two — out of the turn it was queued behind, then back to work — and a pane that
+    was idle needs only the second.
+    """
+
+    def setUp(self):
+        herdr_relay.pending_sends.clear()
+        self.addCleanup(herdr_relay.pending_sends.clear)
+        self.ws = Socket()
+
+    def wait(self, idled=True, until=None):
+        herdr_relay.pending_sends["w1:p1"] = {
+            "ws": self.ws, "until": _later() if until is None else until, "idled": idled}
+
+    async def test_a_pane_going_to_work_is_the_confirmation(self):
+        self.wait(idled=True)
+        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        self.assertEqual([True], [m["ok"] for m in self.ws.sent])
+        self.assertEqual([False], [m["pending"] for m in self.ws.sent])
+        self.assertEqual({}, herdr_relay.pending_sends)
+
+    async def test_a_queued_message_waits_for_the_turn_it_is_behind_to_end(self):
+        self.wait(idled=False)
+        # Still working on what it was doing when the text arrived. That is not the confirmation —
+        # it is the same `working` the pane was already reporting.
+        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        self.assertEqual([], self.ws.sent)
+        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="idle")])
+        self.assertEqual([], self.ws.sent, "the turn ended; nothing has been taken yet")
+        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        self.assertEqual([True], [m["ok"] for m in self.ws.sent])
+
+    async def test_a_pane_that_never_moves_is_given_up_on_at_the_deadline(self):
+        self.wait(idled=True, until=0)
+        await herdr_relay.confirm_pending_sends([PANE])
+        self.assertEqual([False], [m["ok"] for m in self.ws.sent])
+        self.assertIn("never confirmed", self.ws.sent[0]["message"])
+        self.assertEqual({}, herdr_relay.pending_sends)
+
+    async def test_a_pane_that_vanished_is_dropped_without_a_word(self):
+        # There is nothing left to confirm and nothing a person could do about it.
+        self.wait()
+        await herdr_relay.confirm_pending_sends([])
+        self.assertEqual([], self.ws.sent)
+        self.assertEqual({}, herdr_relay.pending_sends)
+
+    async def test_a_client_that_hung_up_does_not_break_the_poll(self):
+        # This wait is minutes long. A phone that locked in the middle of it is the ordinary end.
+        self.ws.open = False
+        self.wait()
+        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        self.assertEqual({}, herdr_relay.pending_sends)
 
 
 async def _none():

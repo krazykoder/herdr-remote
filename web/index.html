@@ -6670,9 +6670,14 @@
   </div>
 
   <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
-     so a rejected send_text or rename looked identical to one that worked. -->
+     so a rejected send_text or rename looked identical to one that worked.
+
+     At the very top of the viewport, over the header rather than under it. It used to hang below
+     the header, which put it inside whichever view was open — and in the conversation it read as
+     part of the thread, one more bubble among the messages it was warning about. A notice about
+     the app belongs to the app. -->
   <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
   <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same

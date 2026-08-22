@@ -210,13 +210,17 @@
     }
 
     let toastTimer = null;
-    function showToast(text) {
+    // `kind` is 'error' unless something says otherwise. A notice that nothing went wrong — a
+    // message queued behind a working pane, and the pane later taking it — must not wear the red
+    // border or make the sound that means a refusal, or the two stop being distinguishable.
+    function showToast(text, kind) {
       const el = document.getElementById('toast');
       el.textContent = text;
+      el.style.borderColor = kind === 'info' ? 'var(--border)' : 'var(--red)';
       el.style.display = 'block';
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
-      if (window.cue) cue('error');
+      if (window.cue && kind !== 'info') cue('error');
     }
 
     function agentCard(a) {
