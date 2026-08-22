@@ -50,6 +50,9 @@
       // wired to it yet, and step 4's handler returns on a closed gate.
       return `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
         + ` data-tile="${escapeHtml(tile.id)}" aria-disabled="${gate.ok ? 'false' : 'true'}"`
+        // Wired even when the gate is shut: launcherPress refuses and says why, which is the one
+        // thing a reader of a dead button needs. See the aria-disabled note above.
+        + ` onclick="launcherPress('${escapeHtml(tile.id)}')"`
         + ` title="${escapeHtml(gate.reason || payload)}">`
         + `<span class="launcher-kind">${launcherKindLine(tile)}</span>`
         + `<span class="launcher-name">${escapeHtml(tile.label)}</span>`

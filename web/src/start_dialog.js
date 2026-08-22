@@ -112,6 +112,12 @@
                         'success');
         return;
       }
+      // A launcher tile. What it asked for is a whole sequence rather than a destination — a
+      // command to type, or the next member to start — so it is handed the pane and owns the rest.
+      if (intent && intent.ql) {
+        await launcherLanded(a, intent.ql);
+        return;
+      }
       // A respawn asked from a conversation replaces the ended member in that conversation. The
       // old terminal is gone, but its local thread is continued under this new pane's key.
       if (intent && intent.conv) {

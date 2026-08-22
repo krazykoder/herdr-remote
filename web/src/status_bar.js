@@ -736,6 +736,11 @@
             (msg.command === 'open_terminal' ? 'could not open the terminal' : 'start failed'));
           setStartError(error);
           showSpawnStatus(error, 'error');
+          // A refused start leaves nothing to land on, so the intent it was made under has to go
+          // with it — otherwise the next start made from anywhere at all inherits it. Only the
+          // launcher's is dropped here, because only it is mid-sequence: launcherFailed ends the
+          // batch rather than leaving half a roster to be grouped by a pane that never comes.
+          if (typeof launcherFailed === 'function') launcherFailed();
         }
       }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
