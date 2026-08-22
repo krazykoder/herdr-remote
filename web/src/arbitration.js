@@ -386,6 +386,7 @@
       human: 'you typed',
       waiting: 'waiting', record: 'record written', decided: '', rejected: 'record refused',
       reprompt: 're-asked', sent: 'sent', paused: 'paused', resumed: 'resumed',
+      warmed: 'woke',
       edited: 'session edited', ended: 'session ended', error: 'error',
     };
 
@@ -580,7 +581,16 @@
           arbLimitField('arbRuns', 'Stop after this many in a row with nobody joining in',
                         at.arbRuns, ARB_LIMITS.arbRuns) +
           arbLimitField('arbMinutes', 'Stop after this many minutes', at.arbMinutes,
-                        ARB_LIMITS.arbMinutes) + '</details>') +
+                        ARB_LIMITS.arbMinutes) +
+          // A cold agent answers its first prompt with nothing — the harness wakes, redraws, and
+          // the turn ends with no reply — and the arbitrator then reports, correctly and
+          // uselessly, that the member said nothing. agy does it reliably enough to be woken
+          // whether or not this is ticked, which the note says rather than hides.
+          `<label class="arb-check"><input id="arbWarmup" type="checkbox"` +
+          `${at.arbWarmup ? ' checked' : ''}> Wake the members before the first instruction` +
+          '</label>' +
+          '<span class="arb-note">agy is always woken — it is the one that needs it.</span>' +
+          '</details>') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
@@ -631,6 +641,9 @@
        'arbIdle', 'arbRuntime', 'arbSteps', 'arbRuns', 'arbMinutes'].forEach(id => {
         at[id] = (document.getElementById(id) || {}).value || '';
       });
+      // A checkbox answers with `checked`, not `value` — read the same way as the rest, every
+      // session would be a woken one.
+      at.arbWarmup = !!(document.getElementById('arbWarmup') || {}).checked;
       return at;
     }
 
@@ -712,6 +725,7 @@
         arbSteps: String(b.max_steps || ARB_LIMITS.arbSteps[0]),
         arbRuns: String(b.max_consecutive || ARB_LIMITS.arbRuns[0]),
         arbMinutes: String(b.max_minutes || ARB_LIMITS.arbMinutes[0]),
+        arbWarmup: !!s.warmup,
       };
     }
 
@@ -999,6 +1013,7 @@
           max_consecutive: arbLimitValue('arbRuns'),
           max_wall_clock_ms: arbLimitValue('arbMinutes') * 60000,
         },
+        warmup: !!at.arbWarmup,
       };
     }
 
@@ -1015,6 +1030,7 @@
         arbitrator: { pane_id: got.who },
         triggers: { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime },
         budget: got.budget,
+        warmup: got.warmup,
         paused: arbStartPaused,
       });
       // The dialog is done — it asked its questions. Nothing is drawn in its place, though: the
@@ -1044,6 +1060,7 @@
       if (got.idle !== (t.idle_ms || 0) || got.runtime !== (t.runtime_ms || 0)) {
         msg.triggers = { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime };
       }
+      if (got.warmup !== was.arbWarmup) msg.warmup = got.warmup;
       if (String(got.budget.max_steps) !== was.arbSteps ||
           String(got.budget.max_consecutive) !== was.arbRuns ||
           String(got.budget.max_wall_clock_ms / 60000) !== was.arbMinutes) {

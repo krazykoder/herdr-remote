@@ -1089,6 +1089,30 @@ Two rules keep it readable:
   trigger arriving at a stopped session) are written once per sequence. At four polls a minute the
   path would otherwise be nothing but the step that is not moving.
 
+### 14.10 Waking the members
+
+A first prompt into an agent that has been idle a long time is often answered with nothing: the
+harness wakes, redraws, and the turn ends with no reply. The arbitrator then reports — correctly,
+and uselessly — that the member said nothing, and a person reads a session that stopped over a cold
+start. It is not a race the loop can wait out: the turn genuinely ended, and the answer never
+existed.
+
+So a session may **wake its members before anything is asked of them**. One short line
+("are you ready for work…"), sent to each member as its own turn while the arbitrator is still
+reading its brief — the point is that the warm-up costs the session nothing, because the gap it
+fills is the gap the brief already takes.
+
+* **The reply is not a trigger.** `turn_ended` swallows the first turn end from a pane that was
+  woken, and says so on the path. Otherwise every session would open by spending a step deciding
+  what to do about the word "ready".
+* **Off by default, and a checkbox in the setup form.** Except **agy**, which is woken whether or
+  not the box was ticked: it is the harness that reliably needs it, and a default that is right for
+  one harness does not belong to the person setting up the session.
+* **Best effort.** A member that is already `working` or `blocked` is awake, and is not typed at
+  (N7). A send that cannot be confirmed does not pause a session that has not started yet.
+* **Resuming a long stop wakes the room again**, over 30 minutes — the same cold agent, for the
+  same reason. A short pause resumes cold.
+
 ## 15. Wire protocol
 
 Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
@@ -1098,8 +1122,8 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 | Type | Payload | Gate |
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
-| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `paused?` | Arbiter |
-| `arb_edit` | `session`, and any of `scope`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `triggers`, `budget` (§13.1, capped at `BUDGET_MAX`) — what is not named does not move | Arbiter |
+| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `warmup?` (§14.10), `paused?` | Arbiter |
+| `arb_edit` | `session`, and any of `scope`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `triggers`, `budget` (§13.1, capped at `BUDGET_MAX`), `warmup` (§14.10) — what is not named does not move | Arbiter |
 | `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) — the roster half of `arb_edit`, kept for clients that only ever ask for that | Arbiter |
 | `arb_reinit` | `session` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
@@ -1131,6 +1155,7 @@ the same reason: every path is derived from it.
   "budget": {"steps_left": 7, "consecutive_left": 3, "minutes_left": 44,
              "max_steps": 8, "max_consecutive": 8, "max_minutes": 45},
   "triggers": {"on_turn_end": true, "idle_ms": 0, "runtime_ms": 0},
+  "warmup": false,
   "event_at": 41,
   "last_decision": {"sequence": 7, "gate": "review", "to": "member-2",
                     "why": "…", "ambiguity": "low", "at": 1755423862000}

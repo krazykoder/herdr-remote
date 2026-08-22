@@ -1665,6 +1665,9 @@ def arb_session_message(session):
             # The clocks, so the dialog that edits a session can show them as they are. Relay-side
             # policy, never anything the arbitrator sees — it cannot act on a clock.
             "triggers": json.loads(session["triggers_json"]),
+            # Relay-side policy like the clocks, and on this message for the same reason: the
+            # dialog that edits a session has to open on what it already says.
+            "warmup": bool(session["warmup"]),
             "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
                          "pane_id": m["pane_id"], "status": m["status"]}
                         for mid, m in roster.items()],
@@ -2259,6 +2262,10 @@ async def handle_client(ws, listener="lan"):
                                 scope=msg.get("scope") or "",
                                 gates=msg.get("gates"), budget=msg.get("budget"),
                                 triggers=msg.get("triggers"),
+                                # A cold agent answers its first prompt with nothing. Off unless
+                                # the person asked, and on regardless for the harnesses that need
+                                # it — see Arbitration.warm.
+                                warmup=bool(msg.get("warmup")),
                                 # Briefed but not armed: "initialised" and "started" are two
                                 # things, and a person assembling a room wants the first.
                                 paused=bool(msg.get("paused"))))
@@ -2285,7 +2292,7 @@ async def handle_client(ws, listener="lan"):
                             arbitration.edit, msg["session"],
                             scope=msg.get("scope"), members=msg.get("members"),
                             arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers"),
-                            budget=msg.get("budget")))
+                            budget=msg.get("budget"), warmup=msg.get("warmup")))
                     elif msg_type == "arb_resume":
                         # `kick` is what happens first. Without it the loop is armed and waits for
                         # a trigger, which may be a very long time coming; with it the arbitrator is

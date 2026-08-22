@@ -3242,6 +3242,24 @@
       gap: 6px;
     }
 
+    /* A checkbox reads as a row, not a stacked label like the selects around it. */
+    .arb-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .arb-check input {
+      width: auto;
+      flex: none;
+    }
+
+    /* The sentence under it: which harness is warmed whether or not the box is ticked. */
+    .arb-note {
+      color: var(--muted);
+      font-size: 0.62rem;
+    }
+
     /* Nine role badges wrap to three rows twice over, which is most of a phone's height spent on
        suggestions. Smaller than the badges elsewhere on purpose — these are a shortcut for the
        field under them, not the field. */

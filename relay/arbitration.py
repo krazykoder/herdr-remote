@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   window_at         INTEGER NOT NULL,
   created_at        INTEGER NOT NULL,
   ended_at          INTEGER,
-  ended_reason      TEXT
+  ended_reason      TEXT,
+  warmup            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -229,6 +230,27 @@ def fingerprint(pane):
 # Everything below this line and above the class is a function of its arguments. The lifecycle is
 # where the interesting mistakes live, so the rules that govern it are kept somewhere they can be
 # read and tested without a database.
+
+
+# Added to `sessions` after the first release — see the ALTER in `__init__`.
+ADDED_COLUMNS = (("warmup", "INTEGER NOT NULL DEFAULT 0"),)
+
+# What a cold agent is asked before it is asked to work, and which harnesses get it whether or not
+# anybody asked. A first prompt into an agent that has been sitting idle for a long time is often
+# answered with nothing at all — the harness wakes up, redraws, and the turn ends without a reply —
+# and the arbitrator then reports, correctly and uselessly, that the member said nothing. agy does
+# this reliably enough to be the default; every other harness is a checkbox, off.
+WARMUP_TEXT = ("Hi — are you ready for work? I will send you instructions shortly. "
+               "Reply with one short line and do nothing else.")
+WARM_ALWAYS = ("agy",)
+# How long a session has to have been stopped before resuming warms its members again. A pause over
+# lunch is a cold agent by the time it is picked up, which is the same problem as a cold start.
+WARM_AFTER_MS = 30 * 60 * 1000
+
+
+def wants_warmup(session, member):
+    """Is this member warmed? The session's own choice, or the harness's default."""
+    return bool(session["warmup"]) or (member.get("agent") or "") in WARM_ALWAYS
 
 
 def budget_spent(session, now):
@@ -572,12 +594,24 @@ class Arbitration:
         # How long each member has been in the status it is in, for §10's clocks. Held in memory on
         # purpose: it is a fact about this relay's uptime, and a restart pauses the session anyway.
         self._since = {}
+        # Panes that have been sent a warm-up and have not answered it yet. In memory for the same
+        # reason: it is a fact about the last few seconds, and the worst a restart can do is let one
+        # "ready" through as a trigger — which costs one decision and nothing else.
+        self._warming = set()
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, mode=0o700, exist_ok=True)
         os.makedirs(self.dir, mode=0o700, exist_ok=True)
         self._local = threading.local()
         self.conn.executescript(SCHEMA)
+        # Added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS, and this file is
+        # one the user has been accumulating since they turned the feature on — the same reason
+        # conversation_log carries an ADDED_COLUMNS list.
+        for column, decl in ADDED_COLUMNS:
+            try:
+                self.conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {decl}")
+            except sqlite3.OperationalError:
+                pass                      # already there, which is the ordinary case
         self.conn.commit()
 
     @property
@@ -889,7 +923,7 @@ class Arbitration:
     # --- lifecycle ---
 
     def start(self, *, conversation, members, arbitrator, scope, gates=None, budget=None,
-              triggers=None, paused=False):
+              triggers=None, paused=False, warmup=False):
         """Enrol a roster and arm the loop. Preconditions in §9.2's order, each with its own code.
 
         `members` and `arbitrator` are panes as herdr lists them; the front end chose them, because
@@ -919,6 +953,7 @@ class Arbitration:
             raise ArbiterError("bad_gates")
         budget = check_budget(budget)
         triggers = check_triggers(triggers)
+        warmup = bool(warmup)
 
         at = self.clock()
         # Readable enough to recognise in a directory listing, and suffixed because the minute is
@@ -929,14 +964,15 @@ class Arbitration:
         self.conn.execute(
             "INSERT INTO sessions (id, conversation, scope, gates_json, budget_json, "
             "triggers_json, arbitrator_fp, arbitrator_pane, state, pause_reason, window_at, "
-            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at, warmup) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
              json.dumps(triggers),
              json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"],
              # Briefed either way. The starter prompt is what makes an agent an arbitrator, so it
              # goes out on every start; `paused` decides only whether the loop is armed behind it,
              # which is the difference between "this one is ready" and "this one is deciding".
-             "paused" if paused else "active", "not_started" if paused else None, at, at))
+             "paused" if paused else "active", "not_started" if paused else None, at, at,
+             1 if warmup else 0))
         self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
@@ -953,6 +989,9 @@ class Arbitration:
             # button. Failing the start leaves nothing behind and the person simply starts again.
             self.end(session_id, "send_unconfirmed")
             raise ArbiterError("send_unconfirmed", arbitrator["pane_id"])
+        # After the brief, not before it: the members wake up while the arbitrator is reading, which
+        # is the whole gap the warm-up exists to spend.
+        self.warm(session_id, "start")
         return self.session(session_id)
 
     def _write_members(self, session_id, members, at):
@@ -982,7 +1021,7 @@ class Arbitration:
 
     @session_change
     def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None,
-             budget=None):
+             budget=None, warmup=None):
         """Change a running session without starting a new one. Every field, one set of rules.
 
         §14.1 still fixes the roster at two, so a roster edit is a replacement of the whole thing
@@ -1075,6 +1114,9 @@ class Arbitration:
         if budget is not None:
             sets.append("budget_json=?")
             args.append(json.dumps(budget))
+        if warmup is not None:
+            sets.append("warmup=?")
+            args.append(1 if warmup else 0)
         if swapped:
             sets.append("arbitrator_fp=?")
             args.append(json.dumps(fingerprint(chosen)))
@@ -1102,7 +1144,9 @@ class Arbitration:
             f"arbitrator {was} -> {arb}" if swapped else "",
             "scope changed" if scope is not None else "",
             "clocks changed" if triggers is not None else "",
-            "budget changed" if budget is not None else ""])) or "nothing")
+            "budget changed" if budget is not None else "",
+            ("warm-up on" if warmup else "warm-up off") if warmup is not None else ""]))
+            or "nothing")
         if swapped:
             # A brief, not an announcement. The new pane was not here for any of this, so telling
             # it "the roster changed" would be telling it about a change from a state it never saw.
@@ -1120,6 +1164,37 @@ class Arbitration:
             # roster it does not know about is the one thing this whole call exists to prevent.
             return self.pause(session_id, "send_unconfirmed")
         return self.session(session_id)
+
+    def warm(self, session_id, why="start"):
+        """Wake the members that need waking, before anything is asked of them.
+
+        A first prompt into an agent that has been idle a long time is often answered with nothing:
+        the harness wakes, redraws, and the turn ends with no reply. The arbitrator then reports —
+        correctly, and uselessly — that the member said nothing, and a person reads a session that
+        stopped over a cold start.
+
+        Sent as its own turn, well before the work: the point is that the agent is warm by the time
+        an instruction arrives, so this goes out while the arbitrator is still reading its brief.
+        The answer to it is **not** a trigger — see `turn_ended` — or every session would open by
+        spending a decision on the word "ready".
+
+        Best effort throughout. A member that is mid-turn is already awake, and one whose send
+        cannot be confirmed is not worth pausing a session that has not started yet.
+        """
+        s = self.session(session_id)
+        warmed = []
+        for member_id, m in self.roster(session_id).items():
+            pane_id = m.get("pane_id")
+            if not pane_id or m["panes"] != 1 or not wants_warmup(s, m):
+                continue
+            if (m.get("status") or "") in BUSY:
+                continue        # already awake, and N7: a keystroke at a working pane goes missing
+            if self._send(pane_id, WARMUP_TEXT, session_id, f"the warm-up for {member_id}"):
+                self._warming.add(pane_id)
+                warmed.append(m.get("label") or member_id)
+        if warmed:
+            self._event(session_id, "warmed", "{} ({})".format(", ".join(warmed), why))
+        return warmed
 
     def _brief(self, session_id, arb, trigger):
         """Clear a pane and give it the session's opening instruction. `reinit`, and a swap.
@@ -1284,6 +1359,11 @@ class Arbitration:
             "arbitrator_pane=? WHERE id=?",
             ("awaiting" if pending or outstanding else "active", self.clock(), arb, session_id))
         self.conn.commit()
+        # A pause over lunch is a cold agent by the time it is picked up, which is the same problem
+        # a cold start has. Read off the path rather than a column: `paused` is already written
+        # there, with the time on it.
+        if session["state"] == "paused" and self._stopped_for(session_id) >= WARM_AFTER_MS:
+            self.warm(session_id, "resume")
         self._event(session_id, "resumed",
                     f"reading the decision written for #{sequence} before the stop" if pending
                     else f"still waiting on the decision asked for at #{sequence}" if outstanding
@@ -1342,6 +1422,13 @@ class Arbitration:
             "SELECT raw_sha256 FROM decisions WHERE session_id=? AND sequence=? "
             "ORDER BY id DESC LIMIT 1", (session_id, sequence)).fetchone()
         return None if prior and prior["raw_sha256"] == sha else row["id"]
+
+    def _stopped_for(self, session_id):
+        """How long this session has been stopped, in milliseconds. 0 when it was not."""
+        row = self.conn.execute(
+            "SELECT at FROM events WHERE session_id=? AND kind='paused' ORDER BY id DESC LIMIT 1",
+            (session_id,)).fetchone()
+        return max(0, self.clock() - row["at"]) if row else 0
 
     def _unanswered_prompt(self, session_id, sequence):
         """Was a question out when this session stopped? See `resume`, case 2."""
@@ -1447,6 +1534,13 @@ class Arbitration:
                                   if m["pane_id"] == pane_id), None)
                 if member_id is None:
                     continue
+                if pane_id in self._warming:
+                    # The member answering "ready". Not a trigger: a session that spent a decision
+                    # on the word would have opened by asking the arbitrator to arbitrate a
+                    # handshake — and the budget it costs is the one thing a warm-up must not cost.
+                    self._warming.discard(pane_id)
+                    self._event(s["id"], "warmed", f"{member_id} answered — not a trigger")
+                    return None
                 if s["state"] != "active":
                     # A trigger that lands on a session which is not armed. Both cases are ordinary
                     # and both are invisible from outside: `awaiting` folds this turn into the next

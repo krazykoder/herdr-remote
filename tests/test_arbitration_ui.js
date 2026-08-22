@@ -255,6 +255,9 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     // stopped by whichever it spends first and "whatever the relay felt like" is not an answer a
     // person can plan around.
     budget: {max_steps: 8, max_consecutive: 8, max_wall_clock_ms: 45 * 60000},
+    // Off unless the box is ticked. agy is woken regardless, by the relay, because it is the one
+    // that needs it — the box is for the rest.
+    warmup: false,
     // Briefed and armed, which is the default. `Brief only` is the other half of that badge pair.
     paused: false,
   }]);
@@ -1205,6 +1208,30 @@ test('a limit past what the relay accepts is held at the cap', () => {
   const msg = sent.find(m => m.type === 'arb_start');
   assert.equal(msg.budget.max_steps, 50, 'BUDGET_MAX, not a refusal from the relay');
   assert.equal(msg.budget.max_wall_clock_ms, 45 * 60000, 'and nothing is a budget of nothing');
+});
+
+test('waking the members is off unless asked, and sent when it is', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.arbStart();
+  assert.equal(sent.find(m => m.type === 'arb_start').warmup, false);
+  // The relay warms agy either way — this is the choice for everything else, and its default is
+  // off because a warm-up is a turn spent before any work is asked for.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbWarmup" type="checkbox">/);
+
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbWarmup').checked = true;
+  g.arbStart();
+  assert.equal(sent.filter(m => m.type === 'arb_start').at(-1).warmup, true);
 });
 
 test('editing a session opens on the limits it has, and sends only what moved', () => {

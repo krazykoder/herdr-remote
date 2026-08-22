@@ -1602,6 +1602,58 @@ class Edits(Harness):
         self.assertEqual(second["id"], str(caught.exception).split()[-1])
 
 
+
+class WakingTheMembers(Harness):
+    """The warm-up: a first prompt into a long-idle agent is often answered with nothing.
+
+    So the members are woken as their own turn while the arbitrator is still reading its brief,
+    and the reply to that is swallowed rather than spent — a session whose first decision is
+    about the word "ready" has burned a step on a handshake.
+    """
+
+    def test_a_session_wakes_nobody_unless_it_was_asked_to(self):
+        self.start()
+        self.assertEqual([], [t for pid, t in self.sent if "ready for work" in t])
+
+    def test_ticking_it_wakes_both_members_and_not_the_arbitrator(self):
+        s = self.start(warmup=True)
+        woken = [pid for pid, t in self.sent if "ready for work" in t]
+        self.assertEqual(["p1", "p2"], sorted(woken))
+        self.assertIn("warmed", [e["kind"] for e in self.arb.events(s["id"])])
+
+    def test_agy_is_woken_whether_or_not_the_box_was_ticked(self):
+        # The one harness that needs it, which is why it is not left to a checkbox.
+        self.live[1] = pane("p2", agent="agy", cwd="/a")
+        s = self.start(members=[self.live[0], self.live[1]])
+        self.assertEqual(["p2"], [pid for pid, t in self.sent if "ready for work" in t])
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_a_working_member_is_already_awake_and_is_not_typed_at(self):
+        # N7: a keystroke at a working pane goes missing, and a busy agent needs no warming.
+        self.live[0] = pane("p1", cwd="/a", status="working")
+        self.start(members=[self.live[0], self.live[1]], warmup=True)
+        self.assertEqual(["p2"], [pid for pid, t in self.sent if "ready for work" in t])
+
+    def test_the_answer_to_a_warm_up_is_not_a_trigger(self):
+        s = self.start(warmup=True)
+        self.assertIsNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Ready."}]))
+        # The one after it is the real turn, and does fire.
+        self.assertIsNotNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
+        self.assertEqual(s["id"], self.arb.open()["id"])
+
+    def test_a_short_stop_resumes_cold_and_a_long_one_wakes_the_room(self):
+        s = self.start(warmup=True)
+        self.sent.clear()
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        self.arb.resume(s["id"])
+        self.assertEqual([], [t for pid, t in self.sent if "ready for work" in t])
+        self.arb.pause(s["id"], "user")
+        self.now += 31 * 60_000
+        self.arb.resume(s["id"])
+        self.assertEqual(["p1", "p2"],
+                         sorted(pid for pid, t in self.sent if "ready for work" in t))
+
 if __name__ == "__main__":
     unittest.main()
 
