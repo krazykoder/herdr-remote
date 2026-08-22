@@ -90,6 +90,19 @@ def sent_before(conn, row):
         " AND id < ? ORDER BY id DESC LIMIT ?", (row["pane_id"], row["id"], SENT_LOOKBACK))]
 
 
+def unmerge_sent(fresh, sent):
+    """The repair's port of ConversationLog._unmerge_sent for a live pane read."""
+    out = []
+    for who, text, span in fresh:
+        split = next((s for s in (_split_echo(text, prompt) for prompt in sent) if s), None) \
+            if who == "agent" else None
+        if split:
+            out.extend((("user", split[0], span), ("agent", split[1], span)))
+        else:
+            out.append((who, text, span))
+    return out
+
+
 def is_echo(text, sent):
     """Is this row nothing but the echo of one of those prompts?
 
@@ -199,7 +212,10 @@ def missed(conn, pane_id, rows, agent):
         (pane_id,)).fetchall()
     recorded = {head(r[0]) for r in rows_out}
     anchor = {head(r[0]): r[1] for r in rows_out if r[2] != "sent"}
-    fresh = pane_messages(rows, agent)
+    sent = [r[0] for r in conn.execute(
+        "SELECT text FROM turns WHERE pane_id = ? AND at_src = 'sent' AND text != ''"
+        " ORDER BY at DESC, id DESC LIMIT ?", (pane_id, SENT_LOOKBACK))]
+    fresh = unmerge_sent(pane_messages(rows, agent), sent)
     # Anchored at both ends: a run of unrecorded messages is dated between the recorded message
     # before it and the recorded message after it, which is all that can honestly be claimed.
     marks = [i for i, m in enumerate(fresh) if head(m[1]) in anchor]
@@ -264,6 +280,8 @@ def self_check():
               "it does not.")
     assert _split_echo(prompt + "\n\n### It passes.", prompt) == (prompt.strip(), "### It passes.")
     assert _split_echo("### It passes.", prompt) is None
+    assert unmerge_sent([("agent", prompt + "\n\n### It passes.", (1, 4))], [prompt]) == [
+        ("user", prompt, (1, 4)), ("agent", "### It passes.", (1, 4))]
     assert is_echo(prompt, [prompt])
     assert not is_echo("### It passes.", [prompt])
     print("self-check ok")
