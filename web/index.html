@@ -2949,36 +2949,124 @@
     /* The session strip: what is arbitrating this conversation, above the thread it is
        arbitrating. Opaque like .conv-panel and for the same reason — it rides the sticky header
        and the thread scrolls under it. */
+    /* A floating panel over the thread rather than a band across it. The strip is chrome for a
+       session, not part of the conversation, and a solid bar the width of the screen reads as the
+       latter — so the ground is translucent and only the controls are solid. Blurred where the
+       browser has it: over a thread of monospace text, a plain alpha wash makes the glyphs behind
+       the buttons legible enough to be read as part of the strip. */
     .arb-strip {
       display: flex;
-      align-items: center;
-      gap: 6px;
-      /* One line, always. What used to be here was a sentence — the last decision's gate, target
-         and why — which wrapped to three lines on a phone and pushed the thread down by all of
-         them. What replaced it is short and fixed, so a strip that still does not fit scrolls
-         sideways rather than growing. */
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 6px 12px;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 8px 6px;
+      padding: 5px 6px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       font-size: 0.68rem;
       color: var(--muted);
     }
 
-    /* Nothing is running: one button, and no bar of chrome pretending to be a status. */
+    /* One line, always. What used to be here was a sentence — the last decision's gate, target
+       and why — which wrapped to three lines on a phone and pushed the thread down by all of
+       them. What replaced it is short and fixed, so a bar that still does not fit scrolls
+       sideways rather than growing. */
+    .arb-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      /* With the scrollbar hidden, the only thing saying there is more of this row is the edge
+         fading out. Without it a clipped button reads as a broken one. */
+      mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    }
+
+    .arb-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* The sentence the chip cannot hold, under the controls rather than in a `title` no phone can
+       open. Its own floating panel: it is prose about the state, and it must not make the row of
+       buttons taller or move them as the state changes. */
+    .arb-say {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 4px 4px 2px;
+      border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      line-height: 1.35;
+    }
+
+    /* What Resume will do — the one line somebody acts on, so it is the one that is not grey. */
+    .arb-say-line {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .arb-say-why {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .arb-say-more {
+      flex: none;
+      align-self: center;
+    }
+
+    /* Opaque, over a translucent ground: a control you can see the thread through does not read
+       as pressable. */
+    .arb-strip .arb-btn {
+      background: var(--surface);
+    }
+
+    /* The lifecycle four. Square, glyph-only, and the same size as each other whatever the glyph
+       is — they are aimed at rather than read. */
+    .arb-ico {
+      flex: none;
+      min-width: 32px;
+      padding: 4px 0;
+      font-size: 0.8rem;
+      line-height: 1;
+      text-align: center;
+    }
+
+    /* Nothing is running: one button, and no panel of chrome pretending to be a status. */
     .arb-strip.idle {
-      border-bottom: none;
+      border: none;
       background: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
       padding: 4px 12px;
-      justify-content: flex-end;
+      align-items: flex-end;
     }
 
     .arb-strip .arb-state {
+      flex: none;
       color: var(--text);
       font-weight: 600;
       white-space: nowrap;
+    }
+
+    .arb-strip .arb-budget {
+      flex: none;
+    }
+
+    /* On a phone the row is wider than the screen, and what scrolls off is whatever is last —
+       which was the controls. The countdown is the one thing here that is only ever read, and it
+       is read again in the Edit dialog, so it is what gives way. */
+    @media (max-width: 480px) {
+      .arb-strip .arb-budget {
+        display: none;
+      }
+
+      .arb-strip .arb-active {
+        max-width: 34%;
+      }
     }
 
     .arb-strip[data-state="paused"] .arb-state {
@@ -3179,6 +3267,66 @@
       flex: none;
     }
 
+    /* The resume dialog's own table. A table and not a list of paragraphs: four short columns
+       that line up down the page are read at a glance, which is the whole job — find the last
+       thing that happened, and the row it stopped at. */
+    .arb-rows {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.68rem;
+      color: var(--text);
+    }
+
+    .arb-rows th {
+      position: sticky;
+      top: 0;
+      text-align: left;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--surface);
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .arb-rows td {
+      padding: 5px 8px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .arb-rows tr.bad td {
+      color: var(--red);
+    }
+
+    .arb-rows tr.stop td {
+      font-weight: 600;
+      background: color-mix(in srgb, var(--orange) 10%, transparent);
+    }
+
+    .arb-row-at,
+    .arb-row-seq {
+      white-space: nowrap;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .arb-row-kind {
+      white-space: nowrap;
+      color: var(--muted);
+    }
+
+    /* The plan, above the table: what the button will do, and the button. */
+    .arb-plan-hint {
+      margin: 2px 0 0;
+      font-size: 0.66rem;
+      color: var(--muted);
+      flex: 1 1 100%;
+    }
+
     /* Which rows of the path are shown. Two states, so two buttons rather than a select: the
        choice is made with a thumb while reading, and a menu costs a tap to see the options. */
     .arb-path-bar {
@@ -3265,8 +3413,11 @@
     }
 
     /* The one on the strip that says where the session is. It is a state, not a control that does
-       something to the session, so it recedes until it is the thing that needs attention. */
+       something to the session, so it recedes until it is the thing that needs attention.
+       Never shrunk: in a row that scrolls, squeezing this to a sliver loses the answer to "where
+       is it" while keeping every button that acts on it. */
     .arb-strip .arb-active {
+      flex: none;
       max-width: 45%;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -6828,6 +6979,23 @@
   <!-- What an arbitration session decided, and what it typed because of it. Read-only and fetched
        on open: it carries prose, so the relay answers it to the client that asked and never
        broadcasts it. -->
+  <!-- What Resume will do, and the last few things that happened before it stopped. Its own
+       sheet rather than a banner on the log: the log is a reading of everything the session did
+       and keeps growing, and this is the one question asked at the one moment somebody is stood
+       at a stopped session with a finger over a button. -->
+  <div id="arbResumeSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeArbResume()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">Resume from here</span>
+        <button onclick="closeArbResume()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="arbResumeBody"></div>
+    </div>
+  </div>
+
   <div id="arbSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeArbDetail()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div

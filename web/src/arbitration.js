@@ -37,7 +37,7 @@
     // than read off the session message every render: the session message is broadcast on state
     // changes and the plan moves without one — a member goes idle, a drop box gains a file — so
     // the copy that arrived with the path is the one that matches the path being read.
-    let arbPlan = null;
+    let arbPlan = null, arbResumeOpen = false;
 
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
@@ -53,6 +53,7 @@
       arbDetailAt = '';
       arbPlan = null;
       closeArbDetail();
+      closeArbResume();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
       arbSyncOpenButton();
@@ -410,9 +411,29 @@
       }));
     }
 
+    // The relay's pause codes, in the words a person would use. The codes are exact and several
+    // of them name their own mechanism rather than the reader's problem — `budget_consecutive` is
+    // a count of automated sends nobody joined in on, which is "needs a human" and nothing else.
+    // The sentence under the strip still gives the whole of it; this is the two words on the chip.
+    const ARB_PAUSE_SHORT = {
+      budget_steps: 'out of steps',
+      budget_consecutive: 'needs a human',
+      budget_time: 'out of time',
+      call_human: 'needs you',
+      invalid_record: 'bad decision file',
+      send_unconfirmed: 'send not confirmed',
+      arbitrator_gone: 'arbitrator gone',
+      member_gone: 'member gone',
+      member_ambiguous: 'two panes match',
+      restart: 'relay restarted',
+      not_started: 'not started',
+      user: 'by you',
+    };
+
     function arbStateLabel(s) {
       if (s.state === 'paused') {
-        return 'Paused — ' + String(s.pause_reason || 'stopped').replace(/_/g, ' ');
+        const code = String(s.pause_reason || 'stopped');
+        return 'Paused · ' + (ARB_PAUSE_SHORT[code] || code.replace(/_/g, ' '));
       }
       return s.state === 'awaiting' ? 'Deciding…' : 'Arbitrating';
     }
@@ -464,15 +485,43 @@
     function arbStripHtml(session, conv, on) {
       if (!on || !conv || !session || session.conversation !== conv.id) return '';
       const s = session, paused = s.state === 'paused';
+      // The lifecycle four, as icons. They are the controls a person reaches for without reading —
+      // stop it, start it, start it and ask — and a row of words for them crowded out the state,
+      // which is the thing the strip is for. Every one keeps a full label for a screen reader and
+      // a title for a pointer; the glyph is the affordance, never the name.
+      // The name is what it is called — the accessible name, and the only thing a screen reader
+      // or a test has to go on. The title is the sentence about it, which is a tooltip and must
+      // never be the name: "Resume — arm the loop and wait for the next turn to end" is not what
+      // anybody calls that button.
+      const icon = (glyph, name, why, onclick, cls) =>
+        `<button class="arb-btn arb-ico${cls ? ' ' + cls : ''}" ${onclick}` +
+        ` title="${escapeHtml(why)}" aria-label="${escapeHtml(name)}">${glyph}</button>`;
+      const lead = arbLeadsWithTrigger(s);
+      const acts = paused
+        // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
+        // clock — and with two idle members and no clocks that is a session that reads as running
+        // and never acts. `Resume and trigger` asks for a decision now. Two buttons rather than
+        // one that guesses, and which of them is the quiet one comes from the plan: the relay has
+        // already worked out whether arming alone would do anything.
+        ? icon('▶', 'Resume', 'Arm the loop and wait for the next turn to end',
+               'onclick="arbCommand(\'arb_resume\')"', lead ? 'quiet' : '') +
+          icon('⏭', 'Resume and trigger', 'Arm the loop and ask for a decision now',
+               'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? '' : 'quiet')
+        : icon('⏸', 'Pause', 'Stop the loop — nothing is sent until it is resumed',
+               'onclick="arbCommand(\'arb_pause\')"', 'quiet');
       return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
-        `<span class="arb-state" title="${escapeHtml(arbStateTitle(s))}">` +
-        `${escapeHtml(arbStateLabel(s))}</span>` +
+        '<div class="arb-bar">' +
+        `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
         // Which of the three is doing something right now, and the way to its pane. This is the
-        // whole of "where is it": a session is one agent at a time by construction, and the last
-        // decision's sentence — which used to live here — is the answer to a different question
-        // and cost the strip its second and third line to say.
+        // whole of "where is it": a session is one agent at a time by construction.
         arbActiveHtml(s) +
         `<span class="arb-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
+        acts +
+        // Asked twice: ending a session is not undoable, and the loop it stops is the reason
+        // somebody left two agents running unattended.
+        `<button class="arb-btn arm-btn arb-ico" onclick="armButton(this, '■?',` +
+        ` () => arbCommand('arb_cancel'))" title="End this session for good"` +
+        ` aria-label="End session">■</button>` +
         // The path, in a sheet: what was asked, what was written, what was typed and where it
         // stopped. A button rather than a line of prose, because the line was never the whole
         // answer and the sheet always is.
@@ -488,30 +537,40 @@
         ` aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
         ` aria-label="Show what the arbitrator decided, in the thread">` +
         `${arbBubblesOn() ? '⚖ shown' : '⚖ hidden'}</button>` +
-        // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
-        // clock — and with two idle members and no clocks that is a session that reads as running
-        // and never acts. `Resume and trigger` asks for a decision now, carrying what happened
-        // while it was stopped and what stopped it. Two buttons rather than one that guesses:
-        // a person who paused to type at a member themselves wants the first, and a person who
-        // paused to read wants the second, and neither can be inferred from the pause.
-        (paused
-          ? '<button class="arb-btn" onclick="arbCommand(\'arb_resume\')"' +
-            ' title="Arm the loop and wait for the next turn to end">Resume</button>' +
-            '<button class="arb-btn" onclick="arbCommand(\'arb_resume\', {kick: true})"' +
-            ' title="Arm the loop and ask for a decision now">Resume and trigger</button>'
-          : '<button class="arb-btn" onclick="arbCommand(\'arb_pause\')">Pause</button>') +
         // The brief again, in an empty pane. A long session pushes the opening instruction out
         // of an agent's context and what is left is an arbitrator writing prose where the drop
         // box should be — this is the way back without losing the session. Armed, because it
         // clears the arbitrator's context and that is not undoable.
-        `<button class="arb-btn arm-btn" onclick="armButton(this, 'Re-brief?',` +
+        `<button class="arb-btn arm-btn quiet" onclick="armButton(this, 'Re-brief?',` +
         ` () => arbCommand('arb_reinit'))"` +
         ` aria-label="Clear the arbitrator and give it its brief again">↻ Brief</button>` +
-        // Asked twice: ending a session is not undoable, and the loop it stops is the reason
-        // somebody left two agents running unattended.
-        `<button class="arb-btn arm-btn" onclick="armButton(this, 'End?',` +
-        ` () => arbCommand('arb_cancel'))"` +
-        ` aria-label="End this arbitration session">End</button></div>`;
+        '</div>' + arbNoteHtml(s) + '</div>';
+    }
+
+    // Whether arming alone would do nothing — which is the relay's answer, not a guess from the
+    // pause reason. See `resume_plan`: `ask` has a trigger waiting to be spent, and `stale` is a
+    // member that finished while nobody was listening.
+    function arbLeadsWithTrigger(s) {
+      const plan = s.plan;
+      return !!plan && (!!plan.stale || plan.action === 'ask');
+    }
+
+    // What the strip cannot say in a word, under the buttons rather than in a `title` nobody on a
+    // phone can open. Two lines at most: what this state means, and — stopped — what Resume will
+    // do about it.
+    function arbNoteHtml(s) {
+      const why = arbStateTitle(s);
+      const paused = s.state === 'paused';
+      const said = paused && s.plan ? arbPlanLine(s.plan, s) : null;
+      if (!why && !said) return '';
+      return '<div class="arb-say">' +
+        (said ? `<span class="arb-say-line">${escapeHtml(said.line)}</span>` : '') +
+        `<span class="arb-say-why">${escapeHtml(why)}</span>` +
+        (paused
+          ? '<button class="arb-btn quiet arb-say-more" onclick="arbOpenResume()"' +
+            ' title="The last steps, and what Resume will do">Steps</button>'
+          : '') +
+        '</div>';
     }
 
     // Which of the three panes the session is currently on, and what it is doing there.
@@ -1167,51 +1226,49 @@
     // Resume and the session says paused — and one of them, `wait`, does nothing you can see.
     // That is the session left armed and idle while a member sits finished, which is the single
     // most expensive way this feature fails.
+    // What Resume will do, in as few words as it takes — and the detail under it, for the reader
+    // who wants it. Two fields rather than one sentence: the first line answers "can I press it",
+    // and everything that made the old single sentence long (which member, how long ago, what the
+    // other button does) is the second, which nobody has to read to act.
+    //
+    // The reason this exists: four resumes read identically from outside — the button says Resume
+    // and the session says paused — and one of them, `wait`, does nothing you can see. That is a
+    // session left armed while a member sits finished, which is the most expensive way this
+    // feature fails.
     function arbPlanLine(plan, session) {
       const seq = plan.sequence;
       if (plan.action === 'collect') {
-        return `A decision for #${seq} is written and unread — Resume reads it and sends it.`;
+        return {line: 'A decision is written and ready to send.',
+                hint: `Resume sends what the arbitrator decided for step #${seq}.`};
       }
       if (plan.action === 'await') {
-        return `Question #${seq} is still out with the arbitrator — Resume goes back to waiting ` +
-          'for it. Resume and trigger asks a fresh one instead.';
+        return {line: 'The arbitrator is still deciding.',
+                hint: `Resume goes back to waiting on step #${seq}. Resume and trigger asks a ` +
+                  'fresh question instead.'};
       }
       if (plan.action === 'ask') {
-        return 'A turn ended while it was stopped — Resume asks for a decision about it now.';
+        return {line: 'A turn ended while it was stopped.',
+                hint: 'Resume asks the arbitrator to decide about it now.'};
       }
       if (plan.stale) {
         const who = plan.stale.label || plan.stale.member;
-        return `Nothing pending — but ${who} was written to ${arbAgo(plan.stale.at)} and has not ` +
-          'ended a turn since. Resume alone will wait for a wake-up that may never come.';
+        return {line: `Waiting on ${who} to finish its turn.`,
+                hint: `Written to ${arbAgo(plan.stale.at)}, and it has not ended a turn since. ` +
+                  'Resume alone waits for a wake-up that may never come — Resume and trigger ' +
+                  'asks now.'};
       }
-      return 'Nothing pending — Resume arms the loop and waits for the next turn to end.';
+      return {line: 'Armed — waiting for the next turn to end.',
+              hint: 'Nothing is pending. Resume and trigger asks for a decision now instead.'};
     }
 
-    function arbPlanHtml(plan, session) {
-      if (!plan || plan.action === 'none' || !session) return '';
-      const paused = session.state === 'paused';
-      // `stale` is the one case where the second button is the answer and the first is the trap,
-      // so it is the one case that leads with it.
-      const lead = plan.stale || plan.action === 'ask';
-      const buttons = !paused ? '' :
-        `<span class="arb-plan-do">` +
-        `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbCommand('arb_resume')">` +
-        'Resume</button>' +
-        `<button class="arb-btn${lead ? '' : ' quiet'}"` +
-        ` onclick="arbCommand('arb_resume', {kick: true})">Resume and trigger</button></span>`;
-      return `<div class="arb-plan${plan.stale ? ' warn' : ''}">` +
-        `<p class="arb-plan-line">${escapeHtml(arbPlanLine(plan, session))}</p>${buttons}</div>`;
-    }
-
-    function arbDetailHtml(decisions, session, events, plan) {
+    function arbDetailHtml(decisions, session, events) {
       if (decisions === null) return '<p class="arb-dec-empty">Reading the session…</p>';
       if (!decisions.length) {
-        return arbPlanHtml(plan, session) + arbPathHtml(events) +
+        return arbPathHtml(events) +
           '<p class="arb-dec-empty">Nothing decided yet. The first decision is written when ' +
           'a member ends a turn and the arbitrator answers.</p>';
       }
-      return arbPlanHtml(plan, session) + arbPathHtml(events) +
-        decisions.slice().reverse().map(d => {
+      return arbPathHtml(events) + decisions.slice().reverse().map(d => {
         const when = d.at ? new Date(d.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
         return `<div class="arb-dec${d.valid ? '' : ' bad'}">` +
           `<p class="arb-dec-head"><span>${escapeHtml(arbDecTitle(d, session))}</span>` +
@@ -1233,14 +1290,99 @@
       }).join('');
     }
 
+    // --- the resume dialog --------------------------------------------------------------
+    //
+    // Its own sheet, not a banner on the log. The log is a reading of everything this session did
+    // and it will keep growing; this is the one question asked at the one moment a person is
+    // standing at a stopped session with a finger over a button: what happens if I press it, and
+    // what was the last thing that happened before it stopped.
+
+    const ARB_RESUME_ROWS = 15;
+
+    function arbResumeRows(events) {
+      if (!Array.isArray(events)) return [];
+      return events.filter(e => !ARB_STEP_NOISE.includes(e.kind)).slice(-ARB_RESUME_ROWS);
+    }
+
+    function arbResumeHtml(session, events, plan) {
+      if (!session) return '';
+      const rows = arbResumeRows(events);
+      const paused = session.state === 'paused';
+      const said = plan ? arbPlanLine(plan, session) : null;
+      // The one case where Resume is the wrong button and the second one is the answer, so it is
+      // the one case that leads with it.
+      const lead = !!plan && (!!plan.stale || plan.action === 'ask');
+      const head = said
+        ? `<p class="arb-plan-line">${escapeHtml(said.line)}</p>` +
+          `<p class="arb-plan-hint">${escapeHtml(said.hint)}</p>`
+        : '<p class="arb-plan-line">Reading the session…</p>';
+      const acts = !paused ? '' :
+        '<div class="arb-plan-do">' +
+        `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbCommand('arb_resume')">` +
+        '▶ Resume</button>' +
+        `<button class="arb-btn${lead ? '' : ' quiet'}"` +
+        ` onclick="arbCommand('arb_resume', {kick: true})">⏭ Resume and trigger</button></div>`;
+      // Where it is stopped *now*: the last pause with no resume under it. Not the last row — a
+      // trigger that arrived after the stop sits below it and reads like progress.
+      const stopped = rows.map(e => e.kind).lastIndexOf('paused');
+      const mark = stopped >= 0 && !rows.slice(stopped + 1).some(e => e.kind === 'resumed')
+        ? stopped : -1;
+      const body = rows.length
+        ? rows.map((e, i) => {
+            const when = e.at
+              ? new Date(e.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+            const bad = e.kind === 'error' || e.kind === 'rejected' || e.kind === 'paused';
+            return `<tr class="${bad ? 'bad' : ''}${i === mark ? ' stop' : ''}">` +
+              `<td class="arb-row-at">${escapeHtml(when)}</td>` +
+              `<td class="arb-row-seq">${e.sequence ? '#' + escapeHtml(String(e.sequence)) : ''}</td>` +
+              `<td class="arb-row-kind">${escapeHtml(e.kind || '')}</td>` +
+              `<td>${escapeHtml(e.detail || '')}` +
+              `${i === mark ? '<span class="arb-step-stop"> ◀ stopped here</span>' : ''}</td></tr>`;
+          }).join('')
+        : '<tr><td colspan="4" class="arb-dec-empty">Nothing has happened yet.</td></tr>';
+      return `<div class="arb-plan${plan && plan.stale ? ' warn' : ''}">${head}${acts}</div>` +
+        '<table class="arb-rows"><thead><tr><th>Time</th><th>Step</th><th>What</th>' +
+        '<th>Detail</th></tr></thead><tbody>' + body + '</tbody></table>';
+    }
+
+    function arbRenderResume() {
+      const el = document.getElementById('arbResumeBody');
+      if (!el || !arbResumeOpen) return;
+      const here = arbSessionHere();
+      // The copy that came with the path when there is one, and the session message's own
+      // otherwise — which is what an older relay leaves, and what this shows in the moment before
+      // its own answer arrives.
+      el.innerHTML = arbResumeHtml(here, arbEvents, arbPlan || (here || {}).plan || null);
+    }
+
+    function arbOpenResume() {
+      const session = arbSessionHere();
+      if (!session) return;
+      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; arbPlan = null; }
+      arbResumeOpen = true;
+      const el = document.getElementById('arbResumeSheet');
+      if (el) el.style.display = 'block';
+      arbRenderResume();
+      // Always asked, never taken from the held copy: what Resume would do is exactly the thing
+      // that moves while a session sits stopped, and this is somebody looking now.
+      arbDetailFor = session.id;
+      arbDetailAt = arbDetailStamp(session);
+      arbSend({type: 'arb_detail', session: session.id});
+    }
+
+    function closeArbResume() {
+      arbResumeOpen = false;
+      const el = document.getElementById('arbResumeSheet');
+      if (el) el.style.display = 'none';
+    }
+
     function arbRenderDetail() {
       const el = document.getElementById('arbDetailBody');
       const here = arbSessionHere();
-      // The copy that came with the path when there is one, and the session message's own
-      // otherwise — which is what a relay too old to answer with a plan leaves, and what the
-      // sheet shows in the moment before its answer arrives.
-      if (el) el.innerHTML = arbDetailHtml(arbDetail, here, arbEvents,
-                                           arbPlan || (here || {}).plan || null);
+      if (el) el.innerHTML = arbDetailHtml(arbDetail, here, arbEvents);
+      // The resume dialog reads the same two answers — the path and the plan that came with it —
+      // and is open or not independently of this one.
+      arbRenderResume();
     }
 
     function arbOpenDetail() {

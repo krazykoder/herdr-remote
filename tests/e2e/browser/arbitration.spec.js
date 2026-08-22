@@ -206,9 +206,11 @@ test('a running session shows what it is doing and how to stop it', async ({page
   await expect(strip).toContainText('scratch · working');
   await expect(strip).not.toContainText('Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
-  // One line, whatever the labels are: the strip rides the header and everything under it is the
-  // thread. A wrapped strip is messages pushed off the screen.
-  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
+  // One line of controls, whatever the labels are: the strip floats over the thread and the row
+  // of buttons must not wrap. The sentence under it is its own panel and may be two lines.
+  expect(await page.locator('#arbStrip .arb-bar')
+    .evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
+  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(110);
 
   await captureSends(page);
   await strip.getByRole('button', {name: 'Pause'}).click();
@@ -219,7 +221,7 @@ test('a paused session says why, and offers the way back', async ({page}) => {
   await openConv(page);
   await broadcast(page, session({state: 'paused', pause_reason: 'budget_steps'}));
   const strip = page.locator('#arbStrip .arb-strip');
-  await expect(strip).toContainText('Paused — budget steps');
+  await expect(strip).toContainText('Paused · out of steps');
   await captureSends(page);
   await strip.getByRole('button', {name: 'Resume', exact: true}).click();
   expect(await sent(page)).toEqual([{type: 'arb_resume', session: 's-20260817-1103'}]);

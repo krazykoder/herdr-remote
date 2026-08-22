@@ -141,7 +141,7 @@ test('a paused session says why, and offers Resume instead of Pause', () => {
   const {g} = ctx();
   const html = g.arbStripHtml({...SESSION, state: 'paused', pause_reason: 'budget_steps'},
                               CONV, true, false);
-  assert.ok(html.includes('Paused — budget steps'), html);
+  assert.ok(html.includes('Paused · out of steps'), html);
   assert.ok(html.includes('arb_resume'), html);
   assert.ok(!html.includes('arb_pause'), html);
 });
@@ -189,7 +189,7 @@ test('a pause says what its reason means, not only what it is called', () => {
   // joined in on, and a person cannot know that from the label.
   const {g} = ctx();
   const paused = r => g.arbStripHtml({...SESSION, state: 'paused', pause_reason: r}, CONV, true);
-  assert.match(paused('budget_consecutive'), /Paused — budget consecutive/);
+  assert.match(paused('budget_consecutive'), /Paused · needs a human/);
   assert.match(paused('budget_consecutive'), /nobody joining in[\s\S]*Resuming clears the run/);
   assert.match(paused('invalid_record'), /↻ Brief/);
   // A reason this page has never heard of still says something true.
@@ -851,7 +851,7 @@ test('the brief can be given again, and is asked twice before it is', () => {
   const html = g.arbStripHtml(SESSION, CONV, true, null);
   assert.match(html, /arbCommand\('arb_reinit'\)/);
   // Armed like End is: it empties the arbitrator's context, which is not undoable.
-  assert.match(html, /class="arb-btn arm-btn"[^>]*Re-brief\?/);
+  assert.match(html, /arm-btn[^>]*Re-brief\?/);
   g.arbCommand('arb_reinit');
   assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
                    [{type: 'arb_reinit', session: 's-20260817-1103'}]);
@@ -1280,25 +1280,27 @@ function withPlan(plan, session = PAUSED) {
   const c = ctx();
   c.g.arbReceiveSession({session: session});
   c.g.arbReceiveDetail({session: session.id, decisions: DECISIONS, events: EVENTS, plan: plan});
-  return c.g.arbDetailHtml(DECISIONS, session, EVENTS, plan);
+  return c.g.arbResumeHtml(session, EVENTS, plan);
 }
 
-test('the sheet says which of the four resumes this one is', () => {
+test('the resume dialog says which of the four resumes this one is', () => {
   assert.match(withPlan({action: 'collect', sequence: 3, stale: null}),
-               /decision for #3 is written and unread/);
+               /A decision is written and ready to send/);
   assert.match(withPlan({action: 'await', sequence: 3, stale: null}),
-               /Question #3 is still out/);
+               /The arbitrator is still deciding/);
   assert.match(withPlan({action: 'ask', sequence: 3, stale: null}),
-               /turn ended while it was stopped/);
+               /A turn ended while it was stopped/);
   assert.match(withPlan({action: 'wait', sequence: 3, stale: null}),
-               /arms the loop and waits/);
+               /Armed — waiting for the next turn to end/);
 });
 
 test('a member that was written to and went quiet is named, and leads with the trigger', () => {
   const html = withPlan({action: 'wait', sequence: 3,
                          stale: {member: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2',
                                  at: Date.now() - 40 * 60000}});
-  assert.match(html, /Reviewer 1 was written to 40 min ago/);
+  // The line a person acts on says one thing; how long ago and what to do is the line under it.
+  assert.match(html, /Waiting on Reviewer 1 to finish its turn/);
+  assert.match(html, /Written to 40 min ago/);
   assert.match(html, /class="arb-plan warn"/);
   // The quiet button is Resume, because here it is the one that does nothing.
   assert.match(html, /class="arb-btn quiet" onclick="arbCommand\('arb_resume'\)/);
@@ -1307,32 +1309,30 @@ test('a member that was written to and went quiet is named, and leads with the t
 
 test('a running session is told the plan and offered no resume', () => {
   const html = withPlan({action: 'wait', sequence: 3, stale: null}, CREW_SESSION);
-  assert.match(html, /arms the loop and waits/);
+  assert.match(html, /Armed — waiting for the next turn to end/);
   assert.equal(/arb_resume/.test(html), false, 'nothing to resume — it is running');
 });
 
-test('a relay too old to send a plan draws no banner at all', () => {
-  const html = g_none();
-  assert.equal(/arb-plan/.test(html), false);
-});
-
-function g_none() {
+test('a relay too old to send a plan still draws the steps', () => {
   const c = ctx();
   c.g.arbReceiveSession({session: PAUSED});
   c.g.arbReceiveDetail({session: PAUSED.id, decisions: DECISIONS, events: EVENTS});
-  return c.g.arbDetailHtml(DECISIONS, PAUSED, EVENTS, null);
-}
+  const html = c.g.arbResumeHtml(PAUSED, EVENTS, null);
+  assert.match(html, /Reading the session…/);
+  assert.match(html, /class="arb-rows"/);
+});
 
-test('the path marks where it is stopped, not simply where it ends', () => {
+test('the steps mark where it is stopped, not simply where they end', () => {
   const after = EVENTS.concat(
     [{kind: 'trigger', detail: 'member-1 ended a turn — the session is paused', at: 2700,
       sequence: 2}]);
-  const html = withPlan({action: 'ask', sequence: 2, stale: null});
-  assert.match(html, /arb-step-stop/);
+  assert.match(withPlan({action: 'ask', sequence: 2, stale: null}), /arb-step-stop/);
   const c = ctx();
   c.g.arbReceiveSession({session: PAUSED});
-  const drawn = c.g.arbDetailHtml(DECISIONS, PAUSED, after, {action: 'ask', sequence: 2,
-                                                             stale: null});
   // The marker stays on the pause, though a dropped trigger was recorded under it.
+  const drawn = c.g.arbResumeHtml(PAUSED, after, {action: 'ask', sequence: 2, stale: null});
   assert.match(drawn, /invalid record<span class="arb-step-stop">/);
+  // And the poll loop's own repeats are never rows here: this table is the last few things that
+  // happened, not a reading of the whole path.
+  assert.equal(drawn.includes('no decision file yet'), false);
 });
