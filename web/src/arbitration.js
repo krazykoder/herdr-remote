@@ -33,6 +33,12 @@
     // the session actually moved and not on every poll that repeats a budget.
     let arbDetail = null, arbEvents = null, arbDetailFor = '', arbDetailAt = '';
 
+    // What Resume would do, as of the answer that opened the sheet. Held beside the events rather
+    // than read off the session message every render: the session message is broadcast on state
+    // changes and the plan moves without one — a member goes idle, a drop box gains a file — so
+    // the copy that arrived with the path is the one that matches the path being read.
+    let arbPlan = null;
+
     // Per connection, never cached: a capability is a fact about the relay on the other end of
     // this socket, and the next one may be a different relay entirely.
     function arbReset() {
@@ -45,6 +51,7 @@
       arbEvents = null;
       arbDetailFor = '';
       arbDetailAt = '';
+      arbPlan = null;
       closeArbDetail();
       const el = document.getElementById('arbStrip');
       if (el) el.innerHTML = '';
@@ -315,7 +322,7 @@
       if (!ws || ws.readyState !== 1) return;
       const at = arbDetailStamp(session);
       if (arbDetailFor === session.id && arbDetailAt === at) return;
-      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; }
+      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; arbPlan = null; }
       arbDetailFor = session.id;
       arbDetailAt = at;
       arbSend({type: 'arb_detail', session: session.id});
@@ -1097,28 +1104,114 @@
     // the state says it stopped and the reason says what tripped, and neither says which step it
     // got to — whether the prompt went out, whether a record was ever written, whether the
     // instruction reached the member.
+    // The steps the poll loop repeats while nothing is moving. Worth recording and not worth
+    // reading: at four polls a minute a stopped session's path is mostly these, and the row a
+    // person opened the sheet for is the one they scroll past looking for them.
+    const ARB_STEP_NOISE = ['waiting', 'warmed'];
+    const ARB_PATH_KEY = 'herdr_arb_path';
+
+    function arbPathFilter() {
+      return localStorage.getItem(ARB_PATH_KEY) === 'all' ? 'all' : 'key';
+    }
+
+    function setArbPathFilter(v) {
+      try { localStorage.setItem(ARB_PATH_KEY, v === 'all' ? 'all' : 'key'); }
+      catch (e) { /* private mode: this session only */ }
+      arbRenderDetail();
+    }
+
     function arbPathHtml(events) {
       if (!Array.isArray(events) || !events.length) return '';
+      const filter = arbPathFilter();
+      const rows = filter === 'all' ? events
+        : events.filter(e => !ARB_STEP_NOISE.includes(e.kind));
+      const toggle = ['key', 'all'].map(v =>
+        `<button class="arb-filter" aria-pressed="${filter === v ? 'true' : 'false'}"` +
+        ` onclick="setArbPathFilter('${v}')">${v === 'key' ? 'Key steps' : 'All'}</button>`).join('');
+      // Where it is stopped *now*: the last pause with no resume under it. Marked rather than
+      // left to be inferred from the last row, because the last row of a stopped session is
+      // often a trigger that arrived after the stop and was dropped — which reads like progress.
+      const stopped = rows.map(e => e.kind).lastIndexOf('paused');
+      const breakpoint = stopped >= 0 && !rows.slice(stopped + 1).some(e => e.kind === 'resumed')
+        ? stopped : -1;
       return '<details class="arb-path" open><summary>The path</summary>' +
-        events.map(e => {
+        `<p class="arb-path-bar">${toggle}` +
+        `<span class="arb-path-count">${rows.length} of ${events.length} steps</span></p>` +
+        rows.map((e, i) => {
           const when = e.at
             ? new Date(e.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
           const bad = e.kind === 'error' || e.kind === 'rejected' || e.kind === 'paused';
-          return `<p class="arb-step${bad ? ' bad' : ''}">` +
+          return `<p class="arb-step${bad ? ' bad' : ''}${i === breakpoint ? ' stop' : ''}">` +
             `<span class="arb-step-at">${escapeHtml(when)}</span>` +
             `<span class="arb-step-kind">${escapeHtml(e.kind || '')}</span>` +
-            `<span>${escapeHtml(e.detail || '')}</span></p>`;
+            `<span>${escapeHtml(e.detail || '')}` +
+            `${i === breakpoint ? '<span class="arb-step-stop"> ◀ stopped here</span>' : ''}` +
+            '</span></p>';
         }).join('') + '</details>';
     }
 
-    function arbDetailHtml(decisions, session, events) {
+    // How long ago, in the coarsest unit that is still true. A member that went quiet is read as
+    // "did I forget this?", and the answer to that is minutes and hours, never seconds.
+    function arbAgo(at) {
+      const ms = Date.now() - (at || 0);
+      if (ms < 90_000) return 'just now';
+      const mins = Math.round(ms / 60000);
+      return mins < 60 ? `${mins} min ago`
+        : `${Math.round(mins / 60)} h ago`;
+    }
+
+    // What Resume will do, in the words of the thing it will do — the relay works the case out
+    // with the same code that acts on it (`resume_plan`), so this only has to say it.
+    //
+    // The reason this exists: four of these read identically from outside — the button says
+    // Resume and the session says paused — and one of them, `wait`, does nothing you can see.
+    // That is the session left armed and idle while a member sits finished, which is the single
+    // most expensive way this feature fails.
+    function arbPlanLine(plan, session) {
+      const seq = plan.sequence;
+      if (plan.action === 'collect') {
+        return `A decision for #${seq} is written and unread — Resume reads it and sends it.`;
+      }
+      if (plan.action === 'await') {
+        return `Question #${seq} is still out with the arbitrator — Resume goes back to waiting ` +
+          'for it. Resume and trigger asks a fresh one instead.';
+      }
+      if (plan.action === 'ask') {
+        return 'A turn ended while it was stopped — Resume asks for a decision about it now.';
+      }
+      if (plan.stale) {
+        const who = plan.stale.label || plan.stale.member;
+        return `Nothing pending — but ${who} was written to ${arbAgo(plan.stale.at)} and has not ` +
+          'ended a turn since. Resume alone will wait for a wake-up that may never come.';
+      }
+      return 'Nothing pending — Resume arms the loop and waits for the next turn to end.';
+    }
+
+    function arbPlanHtml(plan, session) {
+      if (!plan || plan.action === 'none' || !session) return '';
+      const paused = session.state === 'paused';
+      // `stale` is the one case where the second button is the answer and the first is the trap,
+      // so it is the one case that leads with it.
+      const lead = plan.stale || plan.action === 'ask';
+      const buttons = !paused ? '' :
+        `<span class="arb-plan-do">` +
+        `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbCommand('arb_resume')">` +
+        'Resume</button>' +
+        `<button class="arb-btn${lead ? '' : ' quiet'}"` +
+        ` onclick="arbCommand('arb_resume', {kick: true})">Resume and trigger</button></span>`;
+      return `<div class="arb-plan${plan.stale ? ' warn' : ''}">` +
+        `<p class="arb-plan-line">${escapeHtml(arbPlanLine(plan, session))}</p>${buttons}</div>`;
+    }
+
+    function arbDetailHtml(decisions, session, events, plan) {
       if (decisions === null) return '<p class="arb-dec-empty">Reading the session…</p>';
       if (!decisions.length) {
-        return arbPathHtml(events) +
+        return arbPlanHtml(plan, session) + arbPathHtml(events) +
           '<p class="arb-dec-empty">Nothing decided yet. The first decision is written when ' +
           'a member ends a turn and the arbitrator answers.</p>';
       }
-      return arbPathHtml(events) + decisions.slice().reverse().map(d => {
+      return arbPlanHtml(plan, session) + arbPathHtml(events) +
+        decisions.slice().reverse().map(d => {
         const when = d.at ? new Date(d.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
         return `<div class="arb-dec${d.valid ? '' : ' bad'}">` +
           `<p class="arb-dec-head"><span>${escapeHtml(arbDecTitle(d, session))}</span>` +
@@ -1142,13 +1235,18 @@
 
     function arbRenderDetail() {
       const el = document.getElementById('arbDetailBody');
-      if (el) el.innerHTML = arbDetailHtml(arbDetail, arbSessionHere(), arbEvents);
+      const here = arbSessionHere();
+      // The copy that came with the path when there is one, and the session message's own
+      // otherwise — which is what a relay too old to answer with a plan leaves, and what the
+      // sheet shows in the moment before its answer arrives.
+      if (el) el.innerHTML = arbDetailHtml(arbDetail, here, arbEvents,
+                                           arbPlan || (here || {}).plan || null);
     }
 
     function arbOpenDetail() {
       const session = arbSessionHere();
       if (!session) return;
-      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; }
+      if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; arbPlan = null; }
       const el = document.getElementById('arbSheet');
       if (el) el.style.display = 'block';
       arbRenderDetail();
@@ -1175,6 +1273,9 @@
       // A relay too old to send them is not a relay with an empty path — the thread draws none
       // either way, and the sheet says so rather than showing a session that did nothing.
       arbEvents = Array.isArray(msg.events) ? msg.events : null;
+      // Worked out at the moment this answer was built, which is the only copy that matches the
+      // path beside it. Absent from an older relay, and then the session message's own is used.
+      arbPlan = msg.plan || null;
       arbRenderDetail();
       // And the thread, which draws from the same rows. Only when there is one on screen — this
       // arrives on every decision, and a render is not free.

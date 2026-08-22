@@ -1929,3 +1929,98 @@ class EditingTheBudget(Harness):
         self.assertEqual([], self.sent, "the arbitrator cannot act on a budget")
         self.assertIn("budget changed",
                       [e["detail"] for e in self.arb.events(s["id"]) if e["kind"] == "edited"][-1])
+
+
+class ThePlan(Harness):
+    """What Resume would do, answered before it is pressed.
+
+    A paused session's Resume used to be a button with four possible behaviours and no way to tell
+    which one you were about to get — and the commonest of the four does nothing visible at all,
+    which is how a session sits armed and idle for an hour while its member waits. So the four
+    cases are named, by the same code that acts on them.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.arb.entries = lambda sid: [{"label": "member-1", "text": "Landed the fix."}]
+
+    def test_an_unread_decision_is_a_collect(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.recover()
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("collect", plan["action"])
+        self.assertEqual(1, plan["sequence"])
+
+    def test_a_question_still_out_is_a_wait_on_the_arbitrator(self):
+        s = self.start()
+        self.step(s["id"])                  # asked, nothing written
+        self.arb.pause(s["id"], "user")
+        self.assertEqual("await", self.arb.resume_plan(s["id"])["action"])
+
+    def test_a_turn_that_ended_while_stopped_is_an_ask(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.assertEqual("ask", self.arb.resume_plan(s["id"])["action"])
+
+    def test_nothing_pending_is_a_plain_wait(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("wait", plan["action"])
+        self.assertIsNone(plan["stale"], "nothing has been sent, so nobody is owed a turn")
+
+    def test_a_member_that_was_written_to_and_went_quiet_is_named(self):
+        # The case none of the four cover, and the one that wastes an hour: the member did the
+        # work, the turn end never reached the session — a restart, an edit, a trigger spent on a
+        # prompt that failed — and a plain resume will wait for a wake-up that has already been.
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")          # decision executed: member-2 was written to
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("wait", plan["action"])
+        self.assertEqual("member-2", plan["stale"]["member"])
+        self.assertEqual("p2", plan["stale"]["pane_id"])
+
+    def test_a_member_still_working_is_not_stale(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")
+        self.arb.pause(s["id"], "user")
+        self.live[1] = pane("p2", agent="codex", cwd="/a", status="working")
+        self.assertIsNone(self.arb.resume_plan(s["id"])["stale"],
+                          "its turn end is coming; the loop will catch it")
+
+    def test_a_member_that_came_back_is_not_stale(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        self.arb.turn_ended("p2", [{"label": "member-2", "text": "Done."}])
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("ask", plan["action"], "the trigger is there to be spent")
+        self.assertIsNone(plan["stale"])
+
+    def test_the_plan_is_what_the_resume_then_does(self):
+        # The whole point of the preview: one computation, read twice. If these two ever disagree
+        # the button is lying, which is worse than having no preview at all.
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.assertEqual("ask", self.arb.resume_plan(s["id"])["action"])
+        self.arb.resume(s["id"])
+        path = [e for e in self.arb.events(s["id"]) if e["kind"] == "resumed"]
+        self.assertIn("asking for a decision now", path[-1]["detail"])
+
+    def test_an_ended_session_has_no_plan(self):
+        s = self.start()
+        self.arb.end(s["id"], "cancelled")
+        self.assertEqual("none", self.arb.resume_plan(s["id"])["action"])

@@ -1801,6 +1801,13 @@ def arb_session_message(session):
             "last_decision": None if last is None else {
                 "sequence": last["sequence"], "gate": last["gate"], "to": last["to_member"],
                 "why": last["why"], "ambiguity": last["ambiguity"], "at": last["at"]},
+            # What pressing Resume would do, worked out by the code that does it — see
+            # `resume_plan`. On the session message rather than answered on request, because the
+            # question is asked by a person looking at a stopped session and the strip is what
+            # they are looking at. `prompt_id` is dropped: it is how the relay finds an unread
+            # decision, and a client that had it could do nothing with it.
+            "plan": {k: v for k, v in arbitration.resume_plan(session["id"]).items()
+                     if k != "prompt_id"},
             # How far this session's path has got, as one number. Not the path itself — that is
             # prose and goes only to the client that asks for it — but a watermark, so a client
             # holding an older copy knows to ask again. Without it the thread's steps only
@@ -2342,9 +2349,10 @@ async def handle_client(ws, listener="lan"):
                     # where it was asked for, exactly as `conv_log` does.
                     try:
                         session_id = msg.get("session") or ""
-                        decisions, events = await asyncio.to_thread(
+                        decisions, events, plan = await asyncio.to_thread(
                             lambda: (arbitration.detail(session_id),
-                                     arbitration.events(session_id)))
+                                     arbitration.events(session_id),
+                                     arbitration.resume_plan(session_id)))
                     except ArbiterError as e:
                         await ws.send(json.dumps({
                             "type": "error", "code": e.code, "message": str(e)}))
@@ -2355,7 +2363,11 @@ async def handle_client(ws, listener="lan"):
                         continue
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
-                        "decisions": decisions, "events": events}))
+                        "decisions": decisions, "events": events,
+                        # Freshly worked out, unlike the copy on the held session message: the
+                        # sheet is somebody looking *now*, and what Resume would do is exactly
+                        # the thing that changes while a session sits stopped.
+                        "plan": {k: v for k, v in plan.items() if k != "prompt_id"}}))
                     continue
                 try:
                     if msg_type == "arb_start":

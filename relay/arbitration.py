@@ -1282,6 +1282,64 @@ class Arbitration:
         return s
 
     @session_change
+    def resume_plan(self, session_id):
+        """What pressing Resume would do right now, without doing it.
+
+        The four cases `resume` chooses between are computed here and nowhere else, so the sentence
+        a person is shown before they press is produced by the same code that acts when they do —
+        a preview derived from a second reading of the same rows would be a second place to be
+        wrong, and the one thing worse than not knowing what a button does is being told wrongly.
+
+        `stale` is the case none of the four cover. A resume arms the loop and waits for a trigger,
+        and `ask` covers a turn that ended *while the relay was watching*. A turn that ended while
+        it was not — a restart, a session edited mid-flight, a trigger consumed by a prompt that
+        then failed — leaves a member that has done its work, a session that will wait for ever,
+        and nothing in the path to say so. So: the last thing this session sent, to a member that
+        is not working now and has not ended a turn since. That is a session whose Resume does
+        nothing, said before it is pressed rather than discovered ten minutes later.
+        """
+        return self._plan(self.session(session_id))
+
+    def _plan(self, session, kick=False):
+        session_id = session["id"]
+        if session["state"] == "ended":
+            return {"action": "none", "sequence": session["sequence"], "prompt_id": None,
+                    "stale": None}
+        sequence = session["sequence"]
+        pending = self._unread_decision(session_id, sequence)
+        # The question is still out: a prompt at this sequence that no valid decision answers. Not
+        # a stored flag — the two rows already say it, and a second place recording the same fact
+        # is a second place for it to be wrong.
+        outstanding = not pending and not kick and self._unanswered_prompt(session_id, sequence)
+        dropped = (not pending and not outstanding and session["state"] == "paused"
+                   and self._dropped_trigger(session_id))
+        action = ("collect" if pending else "await" if outstanding
+                  else "ask" if dropped else "wait")
+        return {"action": action, "sequence": sequence, "prompt_id": pending,
+                "stale": self._stale_member(session_id) if action == "wait" else None}
+
+    def _stale_member(self, session_id):
+        """A member that was written to, is not working, and never came back. See `resume_plan`.
+
+        Three rows and a status, in that order because each is cheaper than the next to be wrong
+        about: the last send, any trigger after it, and what that member's pane is doing now. A
+        member still `working` needs no help — its turn end is coming and the loop will catch it.
+        """
+        row = self.conn.execute(
+            "SELECT to_member, at FROM sends WHERE session_id=? ORDER BY id DESC LIMIT 1",
+            (session_id,)).fetchone()
+        if row is None:
+            return None
+        if self.conn.execute(
+                "SELECT 1 FROM events WHERE session_id=? AND kind='trigger' AND at >= ? LIMIT 1",
+                (session_id, row["at"])).fetchone():
+            return None
+        who = self.roster(session_id).get(row["to_member"])
+        if not who or not who["pane_id"] or who["status"] in BUSY:
+            return None
+        return {"member": row["to_member"], "label": who["label"] or row["to_member"],
+                "pane_id": who["pane_id"], "at": row["at"]}
+
     def resume(self, session_id, kick=False):
         """Back to `active`, with a fresh wall-clock window.
 
@@ -1344,13 +1402,12 @@ class Arbitration:
         # hard cap on how much a session may do at all, and a person who wants more says so by
         # starting one.
         sequence = session["sequence"]
-        pending = self._unread_decision(session_id, sequence)
-        # The question is still out: a prompt at this sequence that no valid decision answers. Not
-        # a stored flag — the two rows already say it, and a second place recording the same fact
-        # is a second place for it to be wrong.
-        outstanding = not pending and not kick and self._unanswered_prompt(session_id, sequence)
-        dropped = (not outstanding and session["state"] == "paused"
-                   and self._dropped_trigger(session_id))
+        # The same four-way choice the Resume button previewed — see `resume_plan`, which is where
+        # it is made. Read once here, so what happens is what was shown.
+        plan = self._plan(session, kick=kick)
+        pending = plan["prompt_id"]
+        outstanding = plan["action"] == "await"
+        dropped = plan["action"] == "ask"
         # Back to `awaiting` for both of the first two cases. `collect` and `arbitrator_finished`
         # read the drop box in that state and no other, and it is the state the session was in when
         # it stopped — which is what "resume where it stopped" has to mean here.

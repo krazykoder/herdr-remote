@@ -3145,6 +3145,85 @@
       color: var(--muted);
     }
 
+    /* What Resume would do, at the top of the sheet where the Resume buttons are. A stopped
+       session's four resume behaviours are indistinguishable from outside — same button, same
+       state — and one of them does nothing visible, so the sentence goes above the path rather
+       than in it. */
+    .arb-plan {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    /* The one case where Resume is the wrong button: a member finished and nobody asked. Tinted,
+       because it is the case this banner exists for and it arrives looking like the quiet one. */
+    .arb-plan.warn {
+      border-left: 3px solid var(--orange);
+    }
+
+    .arb-plan-line {
+      margin: 0;
+      flex: 1 1 220px;
+      min-width: 0;
+      font-size: 0.72rem;
+      color: var(--text);
+    }
+
+    .arb-plan-do {
+      display: flex;
+      gap: 6px;
+      flex: none;
+    }
+
+    /* Which rows of the path are shown. Two states, so two buttons rather than a select: the
+       choice is made with a thumb while reading, and a menu costs a tap to see the options. */
+    .arb-path-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 6px 0 0;
+    }
+
+    .arb-filter {
+      font: inherit;
+      font-size: 0.62rem;
+      padding: 2px 8px;
+      min-height: 24px;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .arb-filter[aria-pressed="true"] {
+      color: var(--text);
+      border-color: var(--blue);
+    }
+
+    .arb-path-count {
+      margin-left: auto;
+      font-size: 0.62rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Where the session is stopped, on the row it stopped at. The last row is not the answer: a
+       trigger that arrived after the stop sits below it and reads like progress. */
+    .arb-step.stop {
+      font-weight: 600;
+    }
+
+    .arb-step-stop {
+      color: var(--muted);
+      font-weight: 400;
+      white-space: nowrap;
+    }
+
     /* Where the session got to, step by step, above the decisions in the sheet. Dense on purpose:
        it is read down, looking for the step that is missing or the one that went red. */
     .arb-path {
