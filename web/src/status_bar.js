@@ -718,7 +718,10 @@
             ? `Queued at ${where} — it is working; the message goes in when it finishes.`
             : `${where} has not confirmed the send yet — watching.`, 'info');
         }
-        else if (msg.ok) showToast(`${where} took the message.`, 'info');
+        // The same sentence the composer says the moment a send lands cleanly — a message that
+        // took a minute to be confirmed is not a different outcome from one that took none, and
+        // wording it differently made the slow path read as a warning.
+        else if (msg.ok) showToast(`✓ Sent to ${where}`, 'ok');
         else showToast(`That pane did not confirm the send — check ${where}.`);
       }
       else if (msg.type === 'command_result' &&

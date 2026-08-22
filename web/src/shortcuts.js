@@ -216,11 +216,15 @@
     function showToast(text, kind) {
       const el = document.getElementById('toast');
       el.textContent = text;
-      el.style.borderColor = kind === 'info' ? 'var(--border)' : 'var(--red)';
+      // Three kinds, and the default is the loud one: a toast with no kind is something that went
+      // wrong, which is what most of them are. `ok` is the other end — a send that landed — and it
+      // is a colour rather than only a ✓ because the tick is 8px of a line read at arm's length.
+      el.style.borderColor = kind === 'ok' ? 'var(--green)'
+        : kind === 'info' ? 'var(--border)' : 'var(--red)';
       el.style.display = 'block';
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
-      if (window.cue && kind !== 'info') cue('error');
+      if (window.cue && kind !== 'info' && kind !== 'ok') cue('error');
     }
 
     function agentCard(a) {

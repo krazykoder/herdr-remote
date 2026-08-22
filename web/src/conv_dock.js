@@ -1077,7 +1077,7 @@
       dockPicks = [];
       closeDockMenu();
       renderConvDock();
-      showToast(`Sent to ${paneLabel(live) || target}`);
+      showToast(`✓ Sent to ${paneLabel(live) || target}`, 'ok');
       burstPoll(target);
     }
 
@@ -1178,8 +1178,8 @@
       drawDockPicks();
       closeDockMenu();
       renderConvDock();
-      showToast(`Sent ${picked.length} message${picked.length === 1 ? '' : 's'} ` +
-        `to ${paneLabel(live) || target}`);
+      showToast(`✓ Sent ${picked.length} message${picked.length === 1 ? '' : 's'} ` +
+        `to ${paneLabel(live) || target}`, 'ok');
       burstPoll(target);
     }
 

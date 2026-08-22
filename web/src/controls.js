@@ -104,7 +104,7 @@
         // The screen the pane repaints after a clear is the live frame; the backlog behind it is
         // history the user did not ask to keep looking at. Undone by Load more or reopening it.
         paneSource = 'visible';
-        showToast(`Sent ${line} — Load more or reopen for history`);
+        showToast(`✓ Sent ${line} — Load more or reopen for history`, 'ok');
       });
     }
 
@@ -113,7 +113,7 @@
         closeFireMenu();
         const line = isShell(activePane) ? 'exit' : '/quit';
         if (!sendLine(line)) return;
-        showToast(`Sent ${line}`);
+        showToast(`✓ Sent ${line}`, 'ok');
       });
     }
 
