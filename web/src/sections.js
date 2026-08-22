@@ -11,9 +11,10 @@
     const SECTION_KEYS = Object.keys(SECTION_IDS);
     // Today's layout, so an install that never opens Settings sees no change at all — except for
     // the launcher, which leads. That is the one deliberate departure: a section that defaults to
-    // invisible is a feature nobody finds, and it is one checkbox to undo. It also costs an
-    // install nothing until a tile exists, because an empty launcher renders '' and applySections
-    // takes the whole section off screen.
+    // invisible is a feature nobody finds, and it is one checkbox to undo. A *new* install
+    // therefore opens on an empty launcher offering + New, which is how the first tile is made;
+    // an existing one is unaffected, because its stored order does not name the launcher and
+    // applySections takes a section outside the order off screen whatever it has drawn.
     const SECTION_DEFAULT = ['launcher', 'agents', 'terminals', 'pairs', 'recents', 'conversations'];
     let sectionOrder = SECTION_DEFAULT.slice();
 

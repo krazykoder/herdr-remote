@@ -1274,11 +1274,149 @@
       white-space: nowrap;
     }
 
-    .launcher-empty {
-      grid-column: 1 / -1;
+    /* --- the tile editor --- */
+    /* A repointable tile is one tap from being fixed, so the tile that cannot be pressed is still
+       pointable at: the not-allowed cursor above is for the gates that are about the relay. */
+    .launcher-tile[aria-disabled="true"][data-repoint="true"] {
+      cursor: pointer;
+    }
+
+    /* One row per tile: what it is, then move, move, gone. The name button takes the space and the
+       four controls stay the same width whatever is in them, so the arrows line up down the list
+       rather than stepping in and out with the length of each name. */
+    .ql-row {
+      display: flex;
+      align-items: stretch;
+      gap: 4px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ql-row-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 4px 6px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: none;
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .ql-row-main:hover { border-color: var(--border); }
+
+    .ql-row-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .ql-row-payload {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* 36px, which is the smallest a control on a phone can be and still be hit reliably. */
+    .ql-move, .ql-del {
+      flex: none;
+      width: 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .ql-del { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+    .ql-move[disabled] { opacity: 0.3; cursor: default; }
+
+    .ql-members {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .ql-member {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ql-member input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ql-member-kind {
+      flex: none;
+      font-size: 0.72rem;
+      font-weight: 600;
+      min-width: 4.5em;
+      overflow-wrap: anywhere;
+    }
+
+    .ql-member .ql-del { min-height: 32px; }
+
+    .ql-none {
       font-size: 0.7rem;
       color: var(--muted);
-      margin: 0;
+      margin: 6px 0 0;
+    }
+
+    .ql-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .ql-primary, .ql-secondary {
+      flex: 1;
+      padding: 11px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .ql-primary {
+      border: none;
+      background: var(--blue);
+      color: var(--bg);
+    }
+
+    .ql-secondary {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    /* The same shape as a toggle-option's row, so the group reads as one block rather than as a
+       list with a button stuck under it. */
+    .setting-action {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
     }
 
     /* Side by side at every width, phone included: two agents working together is what a pair is,
@@ -5991,6 +6129,11 @@
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
         to stay on.</div>
+      <!-- The launcher's own tiles are reachable from its section header too. Here as well because
+           an install whose stored order predates the launcher has that section switched off — and
+           the first tile saved is what switches it back on, so there has to be somewhere to save
+           one from that is not the section itself. -->
+      <button class="setting-action" onclick="openLauncherEdit()">Edit launcher tiles…</button>
     </div>
 
     <div class="setting-group">
@@ -6917,6 +7060,26 @@
     </div>
   </div>
 
+  <!-- The launcher's tiles, added and edited. Same shape as the New agent and Arbitrate dialogs
+       beside it — a scrim that closes on a tap outside, and fields that are badges wherever the
+       answer is a choice — because a tile *is* the answers those two dialogs ask, kept.
+
+       One dialog and two views: the list of tiles, where they are reordered and deleted, and the
+       form for one of them. Reordering a handful of tiles is two arrows, not a drag layer, and a
+       second dialog to hold them would be a second thing to close. -->
+  <div id="launcherModal" style="display:none;position:fixed;inset:0;z-index:121;">
+    <div onclick="closeLauncherEdit()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="Launcher"
+      style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1" id="launcherEditTitle">Launcher</span>
+        <button onclick="closeLauncherEdit()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div class="new-agent-body" id="launcherEditBody"></div>
+    </div>
+  </div>
+
   <!-- Recent — every live pane, agents and terminals, in the order this device opened them. -->
   <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
@@ -6999,6 +7162,7 @@
        after sections.js, whose applySections it calls to take an empty section off screen. -->
   <script src="src/launcher_ui.js"></script>
   <script src="src/launcher_exec.js"></script>
+  <script src="src/launcher_edit.js"></script>
   <script src="src/summary_detect.js"></script>
   <script src="src/conversation_pure.js"></script>
   <script src="src/conversation_store.js"></script>

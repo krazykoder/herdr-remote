@@ -68,6 +68,13 @@
       if (!tile) return false;
       const env = launcherEnv();
       const gate = launcherGate(tile, env);
+      // A Project that has gone is the one closed gate the person pressing can actually fix, and
+      // fixing it is picking a different one — so the press opens the tile on that field rather
+      // than reporting a dead end. Every other refusal is about the relay, not the tile.
+      if (!gate.ok && gate.badge === 'Missing Project' && typeof launcherRepoint === 'function') {
+        launcherRepoint(tile.id);
+        return false;
+      }
       // The tile is already drawn with this reason in its title and a badge on it, so a press is
       // either a stale render or a keyboard reaching an aria-disabled button. Say it either way —
       // a button that does nothing is worse than one that says why.

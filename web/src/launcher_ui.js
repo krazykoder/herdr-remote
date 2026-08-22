@@ -51,6 +51,9 @@
       // wired to it yet, and step 4's handler returns on a closed gate.
       return `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
         + ` data-tile="${escapeHtml(tile.id)}" aria-disabled="${gate.ok ? 'false' : 'true'}"`
+        // A gone Project is the one closed gate the presser can fix, so this tile is still worth
+        // a pointer: the press opens it on that field rather than reporting a dead end.
+        + (gate.badge === 'Missing Project' ? ' data-repoint="true"' : '')
         // Wired even when the gate is shut: launcherPress refuses and says why, which is the one
         // thing a reader of a dead button needs. See the aria-disabled note above.
         + ` onclick="launcherPress('${escapeHtml(tile.id)}')"`
@@ -66,12 +69,15 @@
       const el = document.getElementById('launcher');
       if (!el) return;
       const tiles = loadLauncher();
-      // Emptiness is this renderer's own business, exactly as it is for Recents: writing '' is
-      // what lets applySections take the section off screen rather than leave a bare separator
-      // above nothing. So an install with no tiles sees no launcher at all, which is why leading
-      // the default order costs an existing install nothing.
-      el.innerHTML = tiles.length
-        ? '<div class="section-header">Launcher</div>' + tiles.map(launcherTileHtml).join('')
-        : '';
+      // The header is drawn whether or not there is anything under it — the one place this
+      // section differs from Recents, and the same exception Conversations makes for its own +:
+      // an entry point that only appears once you already have a tile cannot be how the first one
+      // is made. An install that never switched the launcher on still sees nothing, because
+      // applySections takes a section outside the order off screen regardless of its content.
+      el.innerHTML = '<div class="section-header">Launcher'
+        + '<button class="section-action" onclick="openLauncherEdit()"'
+        + ' title="Add, edit and reorder tiles" aria-label="Edit the launcher">'
+        + (tiles.length ? 'Edit' : '+ New') + '</button></div>'
+        + tiles.map(launcherTileHtml).join('');
       applySections();
     }
