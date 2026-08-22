@@ -171,8 +171,9 @@ test('the strip says which of the three is working, not what was last said', () 
                                          why: 'Ready for an independent check.', ambiguity: 'low'}};
   const html = g.arbStripHtml(s, CONV, true);
   assert.equal(html.includes('Ready for an independent check.'), false);
-  assert.match(html, /arbOpenDetail\(\)[^>]*>Log</);
-  assert.match(html, /arbEditHere\(\)[^>]*>Edit</);
+  // Icons now, so the name a screen reader and this test read is the aria-label.
+  assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
+  assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
   // member-2 is `working` in the fixture, so it is the one being waited on.
   assert.match(html, /Reviewer 1 · working/);
   assert.match(html, /openTerminal\('w1:p2'\)/);
@@ -851,7 +852,7 @@ test('the brief can be given again, and is asked twice before it is', () => {
   const html = g.arbStripHtml(SESSION, CONV, true, null);
   assert.match(html, /arbCommand\('arb_reinit'\)/);
   // Armed like End is: it empties the arbitrator's context, which is not undoable.
-  assert.match(html, /arm-btn[^>]*Re-brief\?/);
+  assert.match(html, /arm-btn[^>]*'↻\?'/);
   g.arbCommand('arb_reinit');
   assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
                    [{type: 'arb_reinit', session: 's-20260817-1103'}]);

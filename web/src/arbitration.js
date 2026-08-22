@@ -482,69 +482,75 @@
     // pushes every message down by its own height, and a person reading a conversation nobody is
     // arbitrating was paying that for a button. Appointing one is the ⚖ in the header, which costs
     // no height and is there whether or not the thread is scrolled to the top.
+    // The eye, for the one control here that is a view toggle rather than an action. Inline
+    // rather than a glyph: nothing in the emoji set reads as "shown/hidden" at 13px, and the two
+    // states are the same drawing in two colours, which a font cannot give.
+    const ARB_EYE =
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" />' +
+      '<circle cx="12" cy="12" r="3" /></svg>';
+
     function arbStripHtml(session, conv, on) {
       if (!on || !conv || !session || session.conversation !== conv.id) return '';
       const s = session, paused = s.state === 'paused';
-      // The lifecycle four, as icons. They are the controls a person reaches for without reading —
-      // stop it, start it, start it and ask — and a row of words for them crowded out the state,
-      // which is the thing the strip is for. Every one keeps a full label for a screen reader and
-      // a title for a pointer; the glyph is the affordance, never the name.
+      // Drawn as the same 28px chip as the row in the opposite corner — see `.hang-float`. They
+      // float over one thread and belong to it equally, and a second visual language for the
+      // controls on the left would read as a second kind of thing.
+      //
       // The name is what it is called — the accessible name, and the only thing a screen reader
       // or a test has to go on. The title is the sentence about it, which is a tooltip and must
       // never be the name: "Resume — arm the loop and wait for the next turn to end" is not what
       // anybody calls that button.
       const icon = (glyph, name, why, onclick, cls) =>
-        `<button class="arb-btn arb-ico${cls ? ' ' + cls : ''}" ${onclick}` +
+        `<button class="hang-btn arb-ico${cls ? ' ' + cls : ''}" ${onclick}` +
         ` title="${escapeHtml(why)}" aria-label="${escapeHtml(name)}">${glyph}</button>`;
       const lead = arbLeadsWithTrigger(s);
       const acts = paused
         // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
         // clock — and with two idle members and no clocks that is a session that reads as running
         // and never acts. `Resume and trigger` asks for a decision now. Two buttons rather than
-        // one that guesses, and which of them is the quiet one comes from the plan: the relay has
-        // already worked out whether arming alone would do anything.
+        // one that guesses, and which of them is lit comes from the plan: the relay has already
+        // worked out whether arming alone would do anything.
         ? icon('▶', 'Resume', 'Arm the loop and wait for the next turn to end',
-               'onclick="arbCommand(\'arb_resume\')"', lead ? 'quiet' : '') +
+               'onclick="arbCommand(\'arb_resume\')"', lead ? '' : 'lit') +
           icon('⏭', 'Resume and trigger', 'Arm the loop and ask for a decision now',
-               'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? '' : 'quiet')
+               'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? 'lit' : '')
         : icon('⏸', 'Pause', 'Stop the loop — nothing is sent until it is resumed',
-               'onclick="arbCommand(\'arb_pause\')"', 'quiet');
+               'onclick="arbCommand(\'arb_pause\')"');
       return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
-        '<div class="arb-bar">' +
-        `<span class="arb-state">${escapeHtml(arbStateLabel(s))}</span>` +
-        // Which of the three is doing something right now, and the way to its pane. This is the
-        // whole of "where is it": a session is one agent at a time by construction.
-        arbActiveHtml(s) +
-        `<span class="arb-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
-        acts +
+        '<div class="arb-bar">' + acts +
+        // The last few steps and what Resume will do, in a sheet of its own. Only while it is
+        // stopped: that is the only time the question is asked.
+        (paused
+          ? icon('ⓘ', 'Steps', 'The last steps, and what Resume will do',
+                 'onclick="arbOpenResume()"')
+          : '') +
         // Asked twice: ending a session is not undoable, and the loop it stops is the reason
-        // somebody left two agents running unattended.
-        `<button class="arb-btn arm-btn arb-ico" onclick="armButton(this, '■?',` +
-        ` () => arbCommand('arb_cancel'))" title="End this session for good"` +
-        ` aria-label="End session">■</button>` +
-        // The path, in a sheet: what was asked, what was written, what was typed and where it
-        // stopped. A button rather than a line of prose, because the line was never the whole
-        // answer and the sheet always is.
-        `<button class="arb-btn quiet" onclick="arbOpenDetail()"` +
-        ` title="What this session has done, step by step">Log</button>` +
+        // somebody left two agents running unattended. A glyph and not an SVG, because arming
+        // swaps the label and swapping it back is text.
+        icon('■', 'End session', 'End this session for good',
+             `onclick="armButton(this, '■?', () => arbCommand('arb_cancel'))"`, 'arm-btn') +
+        // The path: what was asked, what was written, what was typed and where it stopped.
+        icon('☰', 'Log', 'What this session has done, step by step',
+             'onclick="arbOpenDetail()"') +
         // The dialog that appointed it, opened on what it already says.
-        `<button class="arb-btn quiet" onclick="arbEditHere()"` +
-        ` title="Change this session — who, what for, and who decides">Edit</button>` +
-        // On the strip and not in the pane menu with the other reading toggles: this one is only
-        // ever a question while a session is running, and the strip is the only thing on screen
-        // that exists exactly then.
-        `<button class="arb-btn quiet" onclick="toggleArbBubbles()"` +
-        ` aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
-        ` aria-label="Show what the arbitrator decided, in the thread">` +
-        `${arbBubblesOn() ? '⚖ shown' : '⚖ hidden'}</button>` +
-        // The brief again, in an empty pane. A long session pushes the opening instruction out
-        // of an agent's context and what is left is an arbitrator writing prose where the drop
-        // box should be — this is the way back without losing the session. Armed, because it
-        // clears the arbitrator's context and that is not undoable.
-        `<button class="arb-btn arm-btn quiet" onclick="armButton(this, 'Re-brief?',` +
-        ` () => arbCommand('arb_reinit'))"` +
-        ` aria-label="Clear the arbitrator and give it its brief again">↻ Brief</button>` +
-        '</div>' + arbNoteHtml(s) + '</div>';
+        icon('✎', 'Edit', 'Change this session — who, what for, and who decides',
+             'onclick="arbEditHere()"') +
+        // The brief again, in an empty pane. A long session pushes the opening instruction out of
+        // an agent's context and what is left is an arbitrator writing prose where the drop box
+        // should be — this is the way back without losing the session. Armed: it clears the
+        // arbitrator's context, and that is not undoable.
+        icon('↻', 'Re-brief', 'Clear the arbitrator and give it its brief again',
+             `onclick="armButton(this, '↻?', () => arbCommand('arb_reinit'))"`, 'arm-btn') +
+        // Here and not in the pane menu with the other reading toggles: this one is only ever a
+        // question while a session is running, and the strip is the only thing on screen that
+        // exists exactly then.
+        `<button class="hang-btn arb-ico${arbBubblesOn() ? ' lit' : ''}"` +
+        ` onclick="toggleArbBubbles()" aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
+        ' title="Show what the arbitrator decided, in the thread"' +
+        ` aria-label="Arbitrator’s decisions in the thread">${ARB_EYE}</button>` +
+        '</div>' + arbSayHtml(s) + '</div>';
     }
 
     // Whether arming alone would do nothing — which is the relay's answer, not a guess from the
@@ -555,21 +561,24 @@
       return !!plan && (!!plan.stale || plan.action === 'ask');
     }
 
-    // What the strip cannot say in a word, under the buttons rather than in a `title` nobody on a
-    // phone can open. Two lines at most: what this state means, and — stopped — what Resume will
-    // do about it.
-    function arbNoteHtml(s) {
-      const why = arbStateTitle(s);
+    // What the row of icons cannot say, under it rather than in a `title` no phone can open.
+    // Three lines, each shorter-lived than the one above it: what state this is in, what Resume
+    // would do about it, and what the state means. Each carries its own background — the strip
+    // itself is transparent, so a line without one is prose over a thread of monospace text.
+    function arbSayHtml(s) {
       const paused = s.state === 'paused';
       const said = paused && s.plan ? arbPlanLine(s.plan, s) : null;
-      if (!why && !said) return '';
       return '<div class="arb-say">' +
+        // The state, what is left of the budget, and which of the three panes is doing something
+        // — one row of chips, because all three answer "where is this session" and none of them
+        // is a control of it. The last is a way to the pane, which is why it is a button.
+        '<span class="arb-say-top">' +
+        `<span class="arb-say-state">${escapeHtml(arbStateLabel(s))}</span>` +
+        `<span class="arb-say-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
+        arbActiveHtml(s) +
+        '</span>' +
         (said ? `<span class="arb-say-line">${escapeHtml(said.line)}</span>` : '') +
-        `<span class="arb-say-why">${escapeHtml(why)}</span>` +
-        (paused
-          ? '<button class="arb-btn quiet arb-say-more" onclick="arbOpenResume()"' +
-            ' title="The last steps, and what Resume will do">Steps</button>'
-          : '') +
+        `<span class="arb-say-why">${escapeHtml(arbStateTitle(s))}</span>` +
         '</div>';
     }
 

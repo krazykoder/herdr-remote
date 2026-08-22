@@ -2949,90 +2949,130 @@
     /* The session strip: what is arbitrating this conversation, above the thread it is
        arbitrating. Opaque like .conv-panel and for the same reason — it rides the sticky header
        and the thread scrolls under it. */
-    /* A floating panel over the thread rather than a band across it. The strip is chrome for a
-       session, not part of the conversation, and a solid bar the width of the screen reads as the
-       latter — so the ground is translucent and only the controls are solid. Blurred where the
-       browser has it: over a thread of monospace text, a plain alpha wash makes the glyphs behind
-       the buttons legible enough to be read as part of the strip. */
+    /* The session's controls, floating over the top-left of the thread and level with the row in
+       the opposite corner (`.hang-float`). Nothing here has a ground of its own: the strip is
+       transparent and every button and every line of text carries its own, which is what lets a
+       thread scroll under it without either one becoming unreadable. */
+    .conv-view-top #arbStrip {
+      position: absolute;
+      top: 100%;
+      margin-top: 6px;
+      left: var(--hang-right, 22px);
+      z-index: 5;
+      /* The thread owns everything between the two floating corners. Only the chips take taps. */
+      pointer-events: none;
+      max-width: calc(100% - 160px);
+    }
+
     .arb-strip {
       display: flex;
       flex-direction: column;
+      align-items: flex-start;
       gap: 4px;
-      margin: 4px 8px 6px;
-      padding: 5px 6px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      font-size: 0.68rem;
+      font-size: 0.62rem;
       color: var(--muted);
     }
 
-    /* One line, always. What used to be here was a sentence — the last decision's gate, target
-       and why — which wrapped to three lines on a phone and pushed the thread down by all of
-       them. What replaced it is short and fixed, so a bar that still does not fit scrolls
-       sideways rather than growing. */
+    .arb-strip > * {
+      pointer-events: auto;
+      max-width: 100%;
+    }
+
+    /* One line, always: these are aimed at rather than read, and a row that wrapped would push
+       the thread's first message down every time a state changed. It scrolls instead. */
     .arb-bar {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: none;
       /* With the scrollbar hidden, the only thing saying there is more of this row is the edge
          fading out. Without it a clipped button reads as a broken one. */
-      mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
     }
 
     .arb-bar::-webkit-scrollbar {
       display: none;
     }
 
-    /* The sentence the chip cannot hold, under the controls rather than in a `title` no phone can
-       open. Its own floating panel: it is prose about the state, and it must not make the row of
-       buttons taller or move them as the state changes. */
+    /* The row is drawn from `.hang-btn`, which is hidden until something turns it on. Here they
+       are all on: the strip only exists while there is a session to control. */
+    .arb-bar .hang-btn {
+      display: inline-flex;
+      flex: none;
+    }
+
+    /* The one to press, and the toggle that is on. Colour rather than weight — these are 28px
+       squares and a heavier border at this size reads as a different-sized button. */
+    .arb-bar .hang-btn.lit {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .arb-ico {
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    /* Under the row: what state this is, what Resume would do, and what the state means. Each
+       line its own opaque chip, because the strip has no ground of its own. */
     .arb-say {
       display: flex;
-      align-items: baseline;
-      gap: 6px;
-      padding: 4px 4px 2px;
-      border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-      line-height: 1.35;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      max-width: min(100%, 320px);
+    }
+
+    /* Opaque, one at a time: the strip has no ground of its own, so a line without a background
+       is prose over a thread of monospace text. */
+    .arb-say > span,
+    .arb-say-top > * {
+      padding: 2px 7px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    /* The chips that say where the session is, on one row and never wrapping into the sentence
+       under them. */
+    .arb-say-top {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 0 !important;
+      border: none !important;
+      background: none !important;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .arb-say-budget {
+      white-space: nowrap;
+      flex: none;
+    }
+
+    .arb-say-state {
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .arb-strip[data-state="paused"] .arb-say-state {
+      color: var(--orange);
     }
 
     /* What Resume will do — the one line somebody acts on, so it is the one that is not grey. */
     .arb-say-line {
       color: var(--text);
-      font-weight: 600;
+      font-size: 0.6rem;
     }
 
     .arb-say-why {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .arb-say-more {
-      flex: none;
-      align-self: center;
-    }
-
-    /* Opaque, over a translucent ground: a control you can see the thread through does not read
-       as pressable. */
-    .arb-strip .arb-btn {
-      background: var(--surface);
-    }
-
-    /* The lifecycle four. Square, glyph-only, and the same size as each other whatever the glyph
-       is — they are aimed at rather than read. */
-    .arb-ico {
-      flex: none;
-      min-width: 32px;
-      padding: 4px 0;
-      font-size: 0.8rem;
-      line-height: 1;
-      text-align: center;
+      font-size: 0.56rem;
+      line-height: 1.4;
     }
 
     /* Nothing is running: one button, and no panel of chrome pretending to be a status. */
@@ -3043,38 +3083,6 @@
       -webkit-backdrop-filter: none;
       padding: 4px 12px;
       align-items: flex-end;
-    }
-
-    .arb-strip .arb-state {
-      flex: none;
-      color: var(--text);
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .arb-strip .arb-budget {
-      flex: none;
-    }
-
-    /* On a phone the row is wider than the screen, and what scrolls off is whatever is last —
-       which was the controls. The countdown is the one thing here that is only ever read, and it
-       is read again in the Edit dialog, so it is what gives way. */
-    @media (max-width: 480px) {
-      .arb-strip .arb-budget {
-        display: none;
-      }
-
-      .arb-strip .arb-active {
-        max-width: 34%;
-      }
-    }
-
-    .arb-strip[data-state="paused"] .arb-state {
-      color: var(--orange);
-    }
-
-    .arb-strip .arb-budget {
-      white-space: nowrap;
     }
 
     .arb-btn {
@@ -3412,13 +3420,13 @@
       color: var(--muted);
     }
 
-    /* The one on the strip that says where the session is. It is a state, not a control that does
-       something to the session, so it recedes until it is the thing that needs attention.
-       Never shrunk: in a row that scrolls, squeezing this to a sliver loses the answer to "where
-       is it" while keeping every button that acts on it. */
+    /* The one that says which pane is doing something. It is a state that happens to be a way to
+       that pane, so it recedes until it is the thing that needs attention — and it is the chip
+       that gives way when the row is too narrow, the other two being fixed-width facts. */
     .arb-strip .arb-active {
-      flex: none;
-      max-width: 45%;
+      min-width: 0;
+      font-size: inherit;
+      min-height: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
