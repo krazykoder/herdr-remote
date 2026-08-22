@@ -80,11 +80,34 @@
       // own reply not at all: that is plain prose two columns in. `speaker: null` is what makes a
       // block start positional rather than a glyph match, and `opens` says which column-0 lines a
       // message may follow. `result` is empty because a column-0 tool call is already an end.
-      agy: { speaker: null, result: [], user: ['>'], opens: ['>', '●', '▸', '─'] },
+      agy: { speaker: null, result: [], user: ['>'], opens: ['>', '●', '▸', '─'], chrome: '>' },
     };
 
     // The character in a harness's gutter column, which is column 0 everywhere but pi.
     function gutterOf(row, g) { return (row || '')[g.indent || 0]; }
+
+    // How far above the bottom of a read the live composer may be found. The footer is a rule, an
+    // empty input line, one or two blanks and a status bar; ten rows covers that and stops a
+    // genuinely empty prompt in the middle of a transcript from cutting the window in half.
+    const CHROME_ROWS = 10;
+
+    // The rows above and including the live composer — the transcript, without the pane's own
+    // footer. agy right-aligns a model and credit line under a rule at the foot of the pane, and a
+    // positional harness reads any indented line under a column-0 line as the start of a message,
+    // so its own chrome was read as its closing words.
+    //
+    // The *empty* composer only: a `>` with text after it is a prompt in the transcript and cannot
+    // be told from the live one by shape. Inclusive of that line, because it is the anchor
+    // findFinalMessage reads back from, and trimmed from the end so every index into the result is
+    // still an index into the pane. Ported from `transcript` in relay/pane_summary.py.
+    function transcriptRows(rows, g) {
+      const mark = (g || {}).chrome;
+      if (!mark || !rows || !rows.length) return rows;
+      for (let j = rows.length - 1; j >= 0 && j > rows.length - 1 - CHROME_ROWS; j--) {
+        if ((rows[j] || '').replace(/\s+$/, '') === mark) return rows.slice(0, j + 1);
+      }
+      return rows;
+    }
 
     // Does this row close the block above it? Anything in column 0 does — the next glyph, the turn
     // footer, a rule, the prompt.
@@ -213,6 +236,7 @@
     function userInputLines(rows, agent) {
       const g = profileFor(agent), lines = new Set();
       if (!g || !rows) return lines;
+      rows = transcriptRows(rows, g);
       let inTurn = false, pending = [];
       rows.forEach((row, i) => {
         if (isUserInput(row, agent, rows, i)) { inTurn = true; pending = []; }
@@ -237,6 +261,7 @@
     function findFinalMessage(rows, agent) {
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
+      rows = transcriptRows(rows, g);
       const lastInput = g.composer === false ? -1 : lastUserInput(rows, agent);
       const before = lastInput < 0 ? rows.length : lastInput;
       for (let i = before - 1; i >= 0; i--) {
@@ -306,6 +331,7 @@
     function messageBlocks(rows, agent) {
       const g = profileFor(agent), out = [];
       if (!g || !rows) return out;
+      rows = transcriptRows(rows, g);
       for (let i = 0; i < rows.length; i++) {
         if (!startsBlock(rows, g, i)) continue;
         const at = blockSpan(rows, g, i);

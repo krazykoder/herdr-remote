@@ -1393,6 +1393,15 @@ class Arbitration:
         """
         return [self.pause(row["id"], "restart") for row in self.running_all()]
 
+    def decides(self, pane_id):
+        """Is this pane the arbitrator of an open session?
+
+        Asked by the relay's poll loop, which holds a member's turn end back until the pane has
+        actually said something and must not hold the arbitrator's: its answer is a file that is
+        already written, and none of it is on the pane.
+        """
+        return any(s["arbitrator_pane"] == pane_id for s in self.open_sessions())
+
     def human_entered(self, session_id, pane_id=""):
         """A person put text into the conversation, which is what "not consecutive" means.
 

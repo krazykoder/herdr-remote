@@ -97,6 +97,26 @@ class FinalMessage(unittest.TestCase):
                 " M web/index.html", "", " Took 0.0s"]
         self.assertIsNone(final_message(rows, "pi"))
 
+    def test_agys_own_footer_is_not_a_message(self):
+        # Read off a live pane on 2026-08-22. agy right-aligns a model and credit line under a rule
+        # at the foot of the pane, and a positional harness reads any indented line under a column-0
+        # line as the start of one. So a turn where agy had not answered yet was recorded as agy
+        # saying `Gemini 3.7 Flash · medium · AI: Out of credits` — and the arbitrator, reading the
+        # record, called a human over it three times.
+        rows = ["────────────────────", "> review the change", "", "  Looks good to me.", "",
+                "────────────────────", ">", "", "",
+                "                              Gemini 3.7 Flash · medium · AI: Out of credits"]
+        self.assertEqual(final_message(rows, "agy"), (3, 3))
+        self.assertEqual([m[1] for m in pane_messages(rows, "agy")],
+                         ["review the change", "Looks good to me."])
+
+    def test_a_prompt_in_the_composer_is_not_a_cut(self):
+        # Only the *empty* composer. A `>` with text after it is a prompt in the transcript and
+        # cannot be told from the live one by shape, so cutting there would drop a real answer.
+        rows = ["────────────────────", "> review the change", "", "  Looks good to me.", ""]
+        self.assertEqual([m[1] for m in pane_messages(rows, "agy")],
+                         ["review the change", "Looks good to me."])
+
     def test_agy_startup_banner_is_not_a_message(self):
         rows = ["────────────────────", "> check the tree", "",
                 "● Bash(git status --short) (ctrl+o to expand)", "", "────────────────────", ">"]

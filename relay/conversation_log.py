@@ -278,6 +278,27 @@ class ConversationLog:
         return row.lastrowid
 
     @_locked
+    def pending(self, pane, content):
+        """How many messages this window holds that the record does not. Reads nothing but sqlite.
+
+        The question behind it is "has this pane said anything yet". A turn end is a *status*
+        transition, and a harness that flips to idle before it paints its answer — agy does it every
+        time — is read at the one moment there is nothing to read. What made that invisible is that
+        the window is never empty: it holds the whole previous turn, so "is there anything on
+        screen" is always yes and "is there anything the record has not got" is the only form of the
+        question that can tell the difference.
+
+        Same parse and same anchor as `record_turn_end`, deliberately: a caller that waits on this
+        and then records must not find a different answer a moment later.
+        """
+        fresh = pane_messages((content or "").splitlines(), pane.get("agent"))
+        if not fresh:
+            return 0
+        if not self._has_record(pane):
+            return len(fresh)
+        return len(self._messages_after_record(pane, fresh))
+
+    @_locked
     def record_turn_end(self, pane, content, status_from, status_to, at=None, git=None):
         """A pane that just stopped working, from the content of its pane.
 

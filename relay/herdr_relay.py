@@ -895,6 +895,18 @@ def read_pane(pane_id, remote=None):
 # this read on 14 of 20, with no pane going the other way. So capture asks for what the browser's
 # recorder asks for — `convReadTurnEnd` in web/src/conversation_store.js — and hands the parser the
 # rows exactly as herdr returned them.
+# How long a pane that ended a turn saying nothing new is given to say it. A turn end is a *status*
+# transition and some harnesses flip to idle before they paint what they are about to say — agy does
+# it every time — so the one read taken at the transition finds the previous turn and nothing else.
+# Nothing ever reads that pane again, because there is no second transition: the answer is on screen
+# for a person to see and is missing from the record and from the arbitrator's prompt for ever.
+#
+# Rechecked on the ordinary poll rather than by sleeping here: the loop is one pass over every pane
+# on every host, and a wait inside it is a wait for all of them. 0 disables the recheck entirely.
+LATE_TURN_MS = int(os.environ.get("HERDR_LATE_TURN_MS", "45000"))
+# pane_id -> {"was", "status", "until"} for panes whose turn end had nothing to record yet.
+late_turns = {}
+
 CAPTURE_LINES = 200
 CAPTURE_SOURCE = "recent-unwrapped"
 
@@ -902,6 +914,63 @@ CAPTURE_SOURCE = "recent-unwrapped"
 def read_pane_for_record(pane_id, remote=None):
     return run_herdr("pane", "read", pane_id, "--lines", str(CAPTURE_LINES),
                      "--source", CAPTURE_SOURCE, remote=remote)
+
+
+def decides(pane_id):
+    """Is this pane the arbitrator of an open session?
+
+    The one pane whose turn end must not wait. A member finishing is a wake-up and can be held back
+    until it has said what it finished with; the arbitrator finishing is the signal to read the drop
+    box (§12.1), and that answer is a *file* — it is already written, and nothing about it is on the
+    pane at all.
+    """
+    if arbitration is None:
+        return False
+    try:
+        return arbitration.decides(pane_id)
+    except Exception as e:                       # noqa: BLE001 — a lookup, never a reason to stop
+        log.warning("arbitration: could not tell whether %s decides: %s", pane_id, e)
+        return False
+
+
+async def collect_late_turns(agents):
+    """Panes that ended a turn with nothing on screen yet, read again.
+
+    A harness that flips to idle before it paints leaves no second transition to be caught by, so
+    without this the answer is on screen for a person to read and absent from the record and from
+    the arbitrator's prompt for ever. Held open for `LATE_TURN_MS` and then recorded anyway — the
+    tail fallback is what a turn with nothing readable has always got, and it is still better than
+    a turn that vanished.
+
+    A pane that goes back to work has answered the question a different way: whatever it says now
+    belongs to the turn it is in, and that turn will end and be read like any other.
+    """
+    if not late_turns:
+        return
+    by_id = {a["pane_id"]: a for a in agents}
+    now = int(time.time() * 1000)
+    for pid, late in list(late_turns.items()):
+        a = by_id.get(pid)
+        if a is None or not ends_turn(a.get("agent_status") or ""):
+            late_turns.pop(pid, None)
+            continue
+        try:
+            captured = await asyncio.to_thread(read_pane_for_record, pid, remote=a.get("remote"))
+            said = await asyncio.to_thread(conv_log.pending, a, captured)
+            if not said and now < late["until"]:
+                continue
+            late_turns.pop(pid, None)
+            git = await probe_git(a)
+            await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git)
+            log.info("late turn at %s: %s", pid,
+                     f"{said} message(s) after the status changed" if said
+                     else "nothing said before the deadline")
+        except (sqlite3.Error, OSError) as e:
+            late_turns.pop(pid, None)
+            log.warning("conversation log write failed for %s: %s", pid, e)
+        if arbitration is not None:
+            await asyncio.to_thread(arbitrate_turn_end, a, pid)
 
 
 def detect_options(text):
@@ -1477,6 +1546,19 @@ async def _poll_once():
                 try:
                     captured = await asyncio.to_thread(
                         read_pane_for_record, pid, remote=a.get("remote"))
+                    # Has it actually said anything? The window is never empty — it holds the whole
+                    # previous turn — so this is the only form of the question that can tell a pane
+                    # that answered from one that flipped to idle before it painted. When it has
+                    # not, the turn is left open and picked up by `collect_late_turns`: recording
+                    # now would write the pane's own footer as the agent's closing words, and
+                    # asking the arbitrator now would ask it to decide on that.
+                    if LATE_TURN_MS and not await asyncio.to_thread(conv_log.pending, a, captured) \
+                            and not decides(pid):
+                        late_turns[pid] = {"was": was, "status": status,
+                                           "until": int(time.time() * 1000) + LATE_TURN_MS}
+                        last_statuses[pid] = status
+                        continue
+                    late_turns.pop(pid, None)
                     git = await probe_git(a)
                     await asyncio.to_thread(
                         conv_log.record_turn_end, a, captured, was, status, git=git)
@@ -1492,6 +1574,9 @@ async def _poll_once():
                 if arbitration is not None:
                     await asyncio.to_thread(arbitrate_turn_end, a, pid)
             last_statuses[pid] = status
+        # Turns that ended with nothing on screen yet, given another look now that some time has
+        # passed. Before the clocks, because a turn that lands here is a turn that just happened.
+        await collect_late_turns(agents)
         # §10's clocks, once per poll and after every transition above has been recorded: an idle
         # clock is "nothing has happened for a while", so it must be evaluated against a record
         # that already knows about anything that just did.

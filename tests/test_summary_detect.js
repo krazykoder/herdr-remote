@@ -220,6 +220,20 @@ test('agy: the request is ruled, and the reply below it is not', () => {
   assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
 });
 
+test("agy: its own footer is not something it said", () => {
+  // Read off a live pane on 2026-08-22. agy right-aligns a model and credit line under a rule at
+  // the foot of the pane, and a positional harness reads any indented line under a column-0 line
+  // as the start of a message. So a turn where agy had not answered yet was read as agy saying
+  // `Gemini 3.7 Flash · medium · AI: Out of credits`. Ported from
+  // tests/test_pane_summary.py::test_agys_own_footer_is_not_a_message.
+  const rows = ['────────────────────', '> review the change', '', '  Looks good to me.', '',
+                '────────────────────', '>', '', '',
+                '                    Gemini 3.7 Flash · medium · AI: Out of credits'];
+  assert.deepEqual(find(rows, 'agy'), [3, 3]);
+  assert.deepEqual(ctx.messageBlocks(rows, 'agy'), [[3, 3]]);
+  assert.equal(ctx.userInputLines(rows, 'agy').has(9), false, 'nor something the user typed');
+});
+
 // agy wraps its own lines, on both sides of the transcript, and each wrap breaks the positional
 // rule in its own way. A tool call too long for the pane continues in column 0 with no glyph on
 // it, so the marker above the closing message is two lines up rather than one; a prompt too long
