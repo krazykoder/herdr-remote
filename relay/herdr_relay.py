@@ -155,6 +155,13 @@ SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something t
 SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
+# …for the first few seconds. After that the question has changed: the presses are spent, nothing
+# more will be typed, and the loop is only waiting for a status to move. Every look is a `herdr
+# pane list` subprocess — over SSH for a remote pane — and 45 seconds of them at the fast rate is
+# a hundred process spawns to learn one bit. Slow down instead; the cost of arriving 2s late to
+# the answer is a toast that lands 2s late.
+SUBMIT_FAST = 4.0                   # how long the fast rate lasts — the presses fit inside it
+SUBMIT_POLL_SLOW = 2.0              # and after it, when there is nothing left to do but watch
 SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
 # Harnesses that need longer than that, by herdr agent kind. Eight seconds is generous for a
 # harness whose status field moves as soon as its composer takes the text, and far too short for
@@ -1262,6 +1269,15 @@ def live_panes():
     return [] if err else annotate_agents(dig_panes(data), PROJECTS)
 
 
+def submit_delay(waited):
+    """How long to wait before looking at the pane again, given how long this send has been open.
+
+    Two rates, because there are two phases: while Enters are still going in, the loop wants to see
+    the result of each one; once they are spent it is only watching. See SUBMIT_POLL.
+    """
+    return SUBMIT_POLL if waited < SUBMIT_FAST else SUBMIT_POLL_SLOW
+
+
 def submit_window(pane_id):
     """How long this pane gets to say it took the paste, by which harness is in it.
 
@@ -1313,7 +1329,8 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     if pane_id in shell_panes:
         await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
         return True
-    deadline = time.monotonic() + submit_window(pane_id)
+    start = time.monotonic()
+    deadline = start + submit_window(pane_id)
     presses, first = 0, True
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
@@ -1339,7 +1356,7 @@ async def submit_paste(pane_id, text, remote=None, out=None):
         # Anything else is a pane herdr has no status for — `unknown` from a real pane list, or an
         # empty string from a pane it did not list — which is a TUI still starting. Wait for it
         # rather than pressing into a terminal that is not listening yet.
-        await asyncio.sleep(SUBMIT_POLL)
+        await asyncio.sleep(submit_delay(time.monotonic() - start))
     # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is
     # in the composer and a person has to press Enter. Silence here is what made this bug take
     # three attempts to find.
