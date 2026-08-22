@@ -16,8 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
-from pane_summary import (final_message, is_user_input, last_user_input, pane_messages,
-                          summary_body, turn_messages)
+from pane_summary import (block_span, final_message, is_user_input, last_user_input, pane_messages,
+                          profile_for, summary_body, turn_messages)
 
 
 def fixture(name):
@@ -96,6 +96,23 @@ class FinalMessage(unittest.TestCase):
         rows = [" ⏺ Checking the tree first.", "", " $ git status --short",
                 " M web/index.html", "", " Took 0.0s"]
         self.assertIsNone(final_message(rows, "pi"))
+
+    def test_a_result_glyph_quoted_in_prose_does_not_make_a_message_a_tool_call(self):
+        # Read off a live pane on 2026-08-22, where this cost a whole message: an agent writing
+        # *about* the terminal quoted claude's own result glyph, the wrap put it at the start of a
+        # line, and the summary was read as a tool execution — not shown, and never recorded. A
+        # real result hangs directly under the call that produced it, so a blank line above the
+        # glyph is what says this one is prose.
+        rows = ["⏺ Pinned as a fixture, asserted from both copies.", "",
+                "  Verdict: go. No code change needed.", "",
+                "  ⎿ is claude's result glyph; agy's profile has result: [], so the reply gets",
+                "  swallowed into the prompt run above it.", ""]
+        self.assertEqual(final_message(rows, "claude"), (0, 5))
+
+    def test_a_result_glyph_under_the_call_still_means_a_tool_ran(self):
+        rows = ["⏺ Bash(git status --short)", "  ⎿  M web/index.html", "", "⏺ Done."]
+        self.assertIsNone(block_span(rows, profile_for("claude"), 0))
+        self.assertEqual(final_message(rows, "claude"), (3, 3))
 
     def test_agys_own_footer_is_not_a_message(self):
         # Read off a live pane on 2026-08-22. agy right-aligns a model and credit line under a rule

@@ -485,9 +485,15 @@ class ConversationLog:
         """
         keys = self._anchor_keys(pane, ANCHOR_CONTEXT)
         if keys:
+            # A prompt committed at the send sits after that anchor already, and its echo is in the
+            # window: the record holds the send, the pane holds what the send typed, and both are
+            # the same words. Without this every prompt sent from a client was recorded twice — once
+            # when it went out, once when the turn it started ended.
+            said = self._sent_after_read(pane)
             for i in range(len(fresh) - 1, -1, -1):
                 if _aligns(fresh, i, keys):
-                    return fresh[i + 1:]
+                    return [m for m in fresh[i + 1:]
+                            if not (m[0] == "user" and _key(m[1]) in said)]
         # The window cannot be placed against the record: a `/clear`, a record holding nothing read
         # off this pane, or a message whose text changed. The last-block rule cannot see an input
         # made mid-turn, but it does see the turn — and a turn recorded without its interruptions
@@ -528,6 +534,25 @@ class ConversationLog:
             " AND at_src != 'sent' AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
             (*params, limit)).fetchall()
         return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
+
+    def _sent_after_read(self, pane):
+        """The prompts written since the record's newest row that was *read off the pane*.
+
+        Everything above that row is already in the window's past; everything after it is a send
+        this relay performed and has not yet seen echoed. The port of the `said` set in
+        `messagesAfterRecord` — the browser has always dropped these and the record never did.
+        """
+        where, params = self._scope(pane)
+        rows = self.conn.execute(
+            f"SELECT kind, text, at_src FROM turns WHERE {where} AND text != ''"
+            " ORDER BY at DESC, id DESC LIMIT ?", (*params, TRAILING_USER_MAX)).fetchall()
+        out = set()
+        for r in rows:
+            if r["at_src"] != "sent":
+                break
+            if _who(r["kind"]) == "user":
+                out.add(_key(r["text"]))
+        return out
 
     def _trailing_user_keys(self, pane):
         """The prompts the record already ends on: the trailing run of user rows, past any agent

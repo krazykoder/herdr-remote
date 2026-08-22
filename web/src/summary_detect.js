@@ -163,13 +163,24 @@
       if (g.tool && g.tool.test(((rows[start] || '').slice(g.indent || 0).replace(/^\S\s*/, ''))))
         return null;
       let end = start;
+      // A result glyph hangs *directly* under the call that produced it — the call line, its
+      // wrapped remainder, then the output. Nothing separates them, so a glyph found past the
+      // block's first blank line is not one: it is prose that happens to start a wrapped line with
+      // the character, which is what an agent writing about a terminal does constantly. That cost
+      // a whole message: a summary quoting `⎿` was read as a tool execution and never shown.
+      //
+      // Not on an indented harness. There a result glyph *is* an end (`endsBlock`), so it is read
+      // in its own column rather than at the start of a wrapped line, and pi does put a blank line
+      // between a reply and the command under it — the one case this rule would get backwards.
+      let gap = false;
       for (let j = start + 1; j < rows.length; j++) {
         const line = (rows[j] || '').trimStart();
         // A result glyph means this block ran something rather than said something. Tested before
         // the end check, because on an indented harness a result glyph is itself an end.
-        if (line && g.result.includes(line[0])) return null;
+        if (line && (!gap || g.indent) && g.result.includes(line[0])) return null;
         if (endsBlock(rows[j], g)) break;
         if (line) end = j;
+        else gap = true;
       }
       return [start, end];
     }

@@ -180,6 +180,26 @@ class Capture(Log):
         self.assertEqual(len(said), 1)
         self.assertIn("Ready. Name the change.", said[0])
 
+    def test_a_prompt_this_relay_sent_is_not_recorded_again_when_its_echo_is_read(self):
+        # Every send was going into the record twice: once when it went out, once when the turn it
+        # started ended and the pane's echo of it came back in the window. The browser has always
+        # dropped that echo; the record's anchored path never did, so a thread showed each prompt
+        # twice — which is also what made the anchor fail later, since the record then held a run
+        # of messages the pane could not reproduce.
+        self.seen(fixture("pane_claude_done.txt"))
+        self.log.record(agent="claude", pane_id="%1", cwd="/tmp/proj", label="Architect 1",
+                        kind="human_prompt", origin="human_web", at_src="sent",
+                        text="so are we good to go")
+        rows = fixture("pane_claude_done.txt").splitlines()
+        # The pane, one turn on: the prompt echoed at the foot of it and the reply under it.
+        content = "\n".join(rows + ["", "❯ so are we good to go", "", "⏺ Good to go.", "", "❯"])
+        self.log.record_turn_end(PANE, content, "working", "idle")
+        rows_out, _ = self.log.query()
+        said = [r for r in rows_out if r["text"] == "so are we good to go"]
+        self.assertEqual(1, len(said), [r["at_src"] for r in said])
+        self.assertEqual("sent", said[0]["at_src"])
+        self.assertTrue(any(r["text"] == "Good to go." for r in rows_out))
+
     def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
         # N4. The relay knows a person put those words in the pane and does not know which person;
         # only a send it performed itself may say more than that.

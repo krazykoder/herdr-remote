@@ -179,6 +179,21 @@ test('pi: the newest turn is the one below the last request', () => {
   assert.deepEqual(ctx.turnSummaries(rows, 'pi'), [find(rows, 'pi')]);
 });
 
+test('claude: a result glyph quoted in prose is not a tool call', () => {
+  // Read off a live pane on 2026-08-22, where this cost a whole message: an agent writing *about*
+  // the terminal quoted claude's own result glyph, the wrap put it at the start of a line, and the
+  // summary was read as a tool execution — not offered, and never recorded. A real result hangs
+  // directly under the call that produced it, so a blank line above the glyph says this one is
+  // prose. Same rows as test_pane_summary.py, so the two copies stay one answer.
+  const rows = ['⏺ Pinned as a fixture, asserted from both copies.', '',
+                '  Verdict: go. No code change needed.', '',
+                "  ⎿ is claude's result glyph; agy's profile has result: [], so the reply gets",
+                '  swallowed into the prompt run above it.', ''];
+  assert.deepEqual(find(rows, 'claude'), [0, 5]);
+  // And a result directly under its call still means a tool ran.
+  assert.equal(find(['⏺ Bash(git status --short)', '  ⎿  M web/index.html'], 'claude'), null);
+});
+
 test('pi: a reply followed by a command is not the closing message', () => {
   const rows = [
     ' ⏺ Checking the tree first.',

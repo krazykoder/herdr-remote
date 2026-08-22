@@ -200,15 +200,27 @@ def block_span(rows, g, start):
     closes with three paragraphs, and ending on the first blank would take only the last one.
     """
     end = start
+    # A result glyph hangs *directly* under the call that produced it — the call line, its wrapped
+    # remainder, then the output. Nothing separates them, so a glyph found past the block's first
+    # blank line is not one: it is prose that happens to start a wrapped line with the character,
+    # which is what an agent writing about a terminal does constantly. That cost a whole message: a
+    # summary quoting `⎿` was read as a tool execution and never recorded at all.
+    #
+    # Not on an indented harness. There a result glyph *is* an end (`ends_block`), so it is read in
+    # its own column rather than at the start of a wrapped line, and pi does put a blank line
+    # between a reply and the command under it — the one case this rule would get backwards.
+    gap = False
     for j in range(start + 1, len(rows)):
         line = (rows[j] or "").lstrip()
         # Tested before the end check: on an indented harness a result glyph is itself an end.
-        if line and line[0] in g.get("result", []):
+        if line and (not gap or g.get("indent")) and line[0] in g.get("result", []):
             return None
         if ends_block(rows[j], g):
             break
         if line:
             end = j
+        else:
+            gap = True
     return (start, end)
 
 
