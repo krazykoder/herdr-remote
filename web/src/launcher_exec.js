@@ -13,6 +13,17 @@
     // first would interleave two rosters through one cursor, and there is exactly one user.
     let launcherLive = null;
 
+    // The three signals a tile is gated on, read in one place so the tile and the press cannot
+    // disagree about them. `arb` is arbitration.js's own gate — whether this relay sent
+    // arb_sessions on this connection — read through typeof so this file still works in a build
+    // that does not carry arbitration at all.
+    function launcherEnv() {
+      return {
+        projects: projects, startOptions: startOptions,
+        arb: typeof arbOn !== 'undefined' && arbOn,
+      };
+    }
+
     // What the confirm says. Pure and returned as lines rather than written, so a test can read
     // what a user would have been shown without a DOM.
     //
@@ -30,12 +41,17 @@
       if (tile.action === 'run') {
         return [`Run this in a new terminal on ${where}?`, '', tile.command];
       }
-      const members = (tile.members || []).map(m => m.name).join(', ');
-      const many = (tile.members || []).length > 1;
-      return [`Start ${many ? (tile.members || []).length + ' sessions' : 'a session'} on ${where}?`,
-              '', members,
+      // The arbitrator counts. It is a third pane started on the same relay in the same Project,
+      // and a confirm that said "2 sessions" before starting three would be the one number on
+      // screen that was wrong.
+      const roster = launcherRoster(tile);
+      const many = roster.length > 1;
+      const arb = launcherWantsArb(tile);
+      return [`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
+              '', roster.map(m => m.name).join(', '),
               many ? '' : null,
-              many ? 'They are started one at a time and grouped into a conversation.' : null]
+              arb ? `${tile.arbitrator.name} decides between the other two, on: ${String(tile.scope || '').trim()}`
+                : many ? 'They are started one at a time and grouped into a conversation.' : null]
         .filter(l => l !== null);
     }
 
@@ -50,7 +66,7 @@
     function launcherPress(id) {
       const tile = loadLauncher().find(t => t.id === id);
       if (!tile) return false;
-      const env = {projects: projects, startOptions: startOptions};
+      const env = launcherEnv();
       const gate = launcherGate(tile, env);
       // The tile is already drawn with this reason in its title and a badge on it, so a press is
       // either a stale render or a keyboard reaching an aria-disabled button. Say it either way —
@@ -141,7 +157,26 @@
       if (!conv) { openTerminal(a.pane_id); return; }
       renderConversations();
       openConversation(conv.id);
+      if (launcherWantsArb(batch.tile)) return launcherAppoint(batch, conv);
       showSpawnStatus(`${batch.tile.label} started — ${batch.panes.length} in "${conv.name}".`,
+                      'success');
+    }
+
+    // The third pane, told what it is for. Exactly the message the setup dialog sends — same
+    // fields, same shape, built by launcherArbMsg — because a session appointed from a tile and
+    // one appointed by hand must be the same session, not two kinds the rest of arbitration.js
+    // has to tell apart.
+    //
+    // Nothing is drawn in its place. The session exists when the relay says it does, and it
+    // answers with arb_session, which arbitration.js already listens for.
+    function launcherAppoint(batch, conv) {
+      // A refusal comes back as a plain `error`, which status_bar already toasts. The two panes
+      // and the conversation survive it, so the fallback is the setup dialog that conversation
+      // already has — one tap, with the roster it needs already in it. That is why this does not
+      // retry: the pane the relay is most likely to have refused is an arbitrator whose TUI is
+      // still coming up, and a retry loop here would be guessing at how long.
+      arbSend(launcherArbMsg(batch.tile, conv.id, batch.panes));
+      showSpawnStatus(`${batch.tile.label} started — ${batch.tile.arbitrator.name} is deciding.`,
                       'success');
     }
 
@@ -160,13 +195,17 @@
       // the same thing, and two conversations called the same are two the user cannot tell apart.
       let name = batch.tile.label;
       for (let n = 2; taken.has(name) && n < 100; n++) name = `${batch.tile.label} ${n}`;
+      // The members, not the roster. An arbitrator is deliberately outside the conversation it
+      // decides about — it is not a participant in it, it is the one reading it — and a
+      // conversation carrying it would show its brief as a third voice in the thread.
+      const inside = batch.panes.slice(0, (batch.tile.members || []).length);
       const conv = {
         id: 'c_' + Math.random().toString(36).slice(2, 10),
-        name: name, created: Date.now(), members: batch.panes.map(convMemberOf),
+        name: name, created: Date.now(), members: inside.map(convMemberOf),
       };
       saveConvIndex([conv].concat(items));
       // Each pane opens on this grouping rather than on whatever it would default to: they were
       // started together, and a member that opens alone is the grouping not having happened.
-      batch.panes.forEach(p => convSetView(p, conv.id));
+      inside.forEach(p => convSetView(p, conv.id));
       return conv;
     }

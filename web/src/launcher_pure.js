@@ -98,6 +98,18 @@
       if (!members.length) return 'Add at least one agent';
       if (members.length > LAUNCHER_MEMBERS_MAX) return `At most ${LAUNCHER_MEMBERS_MAX} agents`;
       if (members.some(m => !m || typeof m.name !== 'string' || !m.name)) return 'Every agent needs a kind';
+      // Only when the arbitrator is one this tile can actually use. A tile edited from three
+      // members back to two keeps whatever arbitrator it had — see launcherWantsArb — and the
+      // same rule has to hold going the other way: three members with a leftover arbitrator is a
+      // tile that still spawns three agents, not one the editor may refuse to save.
+      if (launcherWantsArb(tile)) {
+        if (typeof tile.arbitrator.name !== 'string' || !tile.arbitrator.name) {
+          return 'The arbitrator needs a kind';
+        }
+        // The relay refuses an empty scope outright, and rightly: the scope is the whole of what
+        // the arbitrator is told the session is for, and one with none decides about nothing.
+        if (!String(tile.scope || '').trim()) return 'Say what the arbitrator is deciding about';
+      }
       return '';
     }
 
@@ -129,10 +141,19 @@
           : { ok: false, reason: 'Terminal mode is off on this relay', badge: 'No terminals' };
       }
       const kinds = opts.agents || [];
-      const missing = (tile.members || []).map(m => m.name).filter(n => kinds.indexOf(n) < 0);
+      // The arbitrator is started by the same start_agent as the members, so it is checked against
+      // the same allowlist. A tile that could start its two and not the third would come up as a
+      // conversation the arbitration it promised never joined.
+      const missing = launcherRoster(tile).map(m => m.name).filter(n => kinds.indexOf(n) < 0);
       if (missing.length) {
         return { ok: false, reason: `This relay does not start ${missing.join(', ')}`,
                  badge: 'Unknown agent' };
+      }
+      // `arb` is arbOn — whether this relay sent arb_sessions on this connection, which is the
+      // app's gate for arbitration everywhere else. A tile is refused rather than quietly
+      // downgraded to a plain conversation: what was asked for was the third agent.
+      if (launcherWantsArb(tile) && !e.arb) {
+        return { ok: false, reason: 'Arbitration is off on this relay', badge: 'No arbitration' };
       }
       return { ok: true, reason: '', badge: '' };
     }
@@ -144,7 +165,11 @@
       if (!tile) return '';
       if (tile.action === 'run') return String(tile.command || '');
       const members = Array.isArray(tile.members) ? tile.members : [];
-      return members.map(m => (m && m.name) || '?').join(' + ');
+      const line = members.map(m => (m && m.name) || '?').join(' + ');
+      // The arbitrator is named apart from the two rather than joined into them: it is not a third
+      // participant, it is the one deciding between the other two, and a preview reading
+      // "claude + codex + claude" would be three of a kind that this tile is not.
+      return launcherWantsArb(tile) ? `${line} ⚖ ${tile.arbitrator.name}` : line;
     }
 
     // Throws if `msg` carries a key the relay would refuse. The relay's check is
@@ -201,9 +226,21 @@
     // A tile's members are spawned in order and one at a time, so the queue is just the list with
     // a cursor. Kept pure so the sequencing can be tested without a socket: `launcherBatchNext`
     // answers "what goes out now", and `launcherBatchDone` answers "was that the last one".
+    // Everything a spawn starts, in the order it starts it. The arbitrator is last and flagged,
+    // which is what lets one cursor drive all three: it is started by the same start_agent as the
+    // other two, and the only thing that makes it different happens after every pane exists.
+    //
+    // Last on purpose. It is briefed with the roster it is deciding between, so it is the pane
+    // that most wants the other two to already be there.
+    function launcherRoster(tile) {
+      const members = (tile && Array.isArray(tile.members) ? tile.members : []).slice();
+      if (!launcherWantsArb(tile)) return members;
+      return members.concat([Object.assign({}, tile.arbitrator, { arb: true })]);
+    }
+
     function launcherBatch(tile) {
       return { id: launcherId(), tile: tile, sent: 0, panes: [],
-               members: (tile.members || []).slice() };
+               members: launcherRoster(tile) };
     }
 
     function launcherBatchNext(batch) {
@@ -226,5 +263,33 @@
     function launcherWantsArb(tile) {
       return !!(tile && tile.arbitrator)
         && (Array.isArray(tile.members) ? tile.members.length : 0) === 2;
+    }
+
+    // The arb_start a finished roster turns into. `panes` is what the batch collected, in the order
+    // it was started — so the first two are the members and the last is the arbitrator, which is
+    // the whole reason launcherRoster puts it there.
+    //
+    // Pane ids and a scope, and nothing else about who they are: the relay reads a participant's
+    // identity off its own pane list, because a fingerprint a browser supplies is one it can have
+    // stale. Same rule arbStart follows, and the reason this builds the same message rather than a
+    // launcher-shaped one.
+    function launcherArbMsg(tile, convId, panes) {
+      const members = (tile.members || []).map((m, i) => {
+        const out = { pane_id: panes[i].pane_id };
+        if (m.role) out.role = m.role;
+        return out;
+      });
+      return {
+        type: 'arb_start', conversation: convId, scope: String(tile.scope || '').trim(),
+        members: members,
+        arbitrator: { pane_id: panes[panes.length - 1].pane_id },
+        // What the setup dialog opens on, so a tile and a hand-appointed session behave the same
+        // until somebody edits one. Both clocks off: a turn ending is the trigger that needs no
+        // guessing, and an idle timer picked here would be a number nobody chose.
+        triggers: { on_turn_end: true, idle_ms: 0, runtime_ms: 0 },
+        // Armed. "Brief only" is the answer for a room being assembled by hand; a tile has already
+        // said what it wants, and a session that arrives paused is one more tap to do nothing.
+        paused: false,
+      };
     }
     // --- Launcher tiles (pure) --- end

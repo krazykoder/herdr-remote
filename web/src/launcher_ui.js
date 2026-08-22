@@ -32,6 +32,7 @@
     function launcherKindLine(tile) {
       const project = (projects.find(p => p.id === tile.project_id) || {}).label || tile.project_id;
       const kind = tile.action === 'run' ? 'Terminal'
+        : launcherWantsArb(tile) ? 'Arbitrated'
         : (tile.members || []).length > 1 ? 'Conversation' : 'Session';
       return `${launcherIcon(tile.action)}<span>${escapeHtml(kind)}</span>`
         + `<span class="badge proj">${escapeHtml(project || '—')}</span>`;

@@ -25,7 +25,7 @@ const STORE = src('launcher_store.js');
 const EXEC = src('launcher_exec.js');
 
 const NAMES = ['launcherPress', 'launcherConfirmLines', 'launcherFailed', 'launcherLanded',
-               'launcherLive', 'saveLauncher', 'launcherGate'];
+               'saveLauncher', 'launcherGate'];
 
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
@@ -35,7 +35,7 @@ const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
 // in: this suite is about the order of the sends, and dragging conversation_store and shortcuts
 // in behind it would make a failure here point at either of them.
 function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTIONS,
-                open = true, convs = []} = {}) {
+                open = true, convs = [], arb = true} = {}) {
   const sent = [];
   const log = [];
   const store = {};
@@ -44,6 +44,10 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     SEND_TEXT_MAX: 4000,
     CONV_CONV_MAX: 20,
     projects, startOptions,
+    // arbitration.js's own gate — whether this relay sent arb_sessions on this connection — and
+    // its one-line sender, which is the only thing launcher_exec uses out of that whole module.
+    arbOn: arb,
+    arbSend: m => sent.push(m),
     // Two states worth having: a socket that takes messages, and one that is not there at all.
     ws: open ? {readyState: 1, send: m => sent.push(JSON.parse(m))} : null,
     localStorage: {
@@ -293,4 +297,134 @@ test('a conversation ceiling leaves the panes started rather than losing them', 
   assert.equal(p.convs.length, 20, 'nothing was pushed past the ceiling');
   assert.ok(p.log.some(l => l[0] === 'toast' && /ungrouped/.test(l[1])));
   assert.ok(p.log.some(l => l[0] === 'openTerminal'), 'and the user still lands somewhere real');
+});
+
+// --- spawn, with an arbitrator ---------------------------------------------------------------
+// A tile of exactly two members that names an arbitrator starts *three* panes and ends in an
+// arbitration session, not a plain conversation. Everything either side of that line is
+// unchanged, which is the other half of what these pin: launcherWantsArb is the only switch.
+
+const ARB = {id: 'ql_d', label: 'Review', action: 'spawn', project_id: 'p1',
+             scope: 'Which approach ships',
+             members: [{name: 'claude', role: 'proposer', label: 'A'},
+                       {name: 'codex', role: 'critic', label: 'B'}],
+             arbitrator: {name: 'claude', label: 'Arb'}};
+
+async function landAll(p, n) {
+  for (let i = 1; i <= n; i++) await p.land(pane('w' + i + ':p1'));
+}
+
+test('an arbitrated tile starts three panes, the arbitrator last', async () => {
+  const p = press({tiles: [ARB]});
+  p.press('ql_d');
+  assert.equal(p.sent.length, 1);
+  await p.land(pane('w1:p1'));
+  await p.land(pane('w2:p1'));
+  assert.equal(p.sent.length, 3, 'the third is the arbitrator, and it is still serial');
+  assert.deepEqual(p.sent.map(m => m.name), ['claude', 'codex', 'claude']);
+  // Last on purpose: it is briefed with the roster it decides between, so it is the pane that
+  // most wants the other two to already exist.
+  assert.equal(p.sent[2].label, 'Arb');
+  assert.deepEqual(kinds(p.sent), ['start_agent', 'start_agent', 'start_agent'],
+    'and nothing is appointed until every pane is real');
+});
+
+test('the finished roster becomes an arbitration session, not just a conversation', async () => {
+  const p = press({tiles: [ARB]});
+  p.press('ql_d');
+  await landAll(p, 3);
+  const start = p.sent.find(m => m.type === 'arb_start');
+  assert.ok(start, 'an arb_start went out');
+  assert.equal(start.conversation, p.convs[0].id, 'against the conversation just made');
+  assert.equal(start.scope, 'Which approach ships');
+  // Pane ids and roles, and nothing else about who they are: the relay reads a participant's
+  // identity off its own pane list, because a fingerprint this browser supplies can be stale.
+  assert.deepEqual(start.members, [{pane_id: 'w1:p1', role: 'proposer'},
+                                   {pane_id: 'w2:p1', role: 'critic'}]);
+  assert.deepEqual(start.arbitrator, {pane_id: 'w3:p1'}, 'the third pane, by position');
+  assert.deepEqual(start.triggers, {on_turn_end: true, idle_ms: 0, runtime_ms: 0});
+  assert.equal(start.paused, false, 'armed — a tile has already said what it wants');
+});
+
+test('the arbitrator is outside the conversation it decides about', async () => {
+  // It is not a participant, it is the one reading. A conversation carrying it would show its
+  // brief as a third voice in the thread.
+  const p = press({tiles: [ARB]});
+  p.press('ql_d');
+  await landAll(p, 3);
+  assert.equal(p.convs[0].members.length, 2);
+  assert.deepEqual(p.convs[0].members.map(m => m.key), ['k_w1:p1', 'k_w2:p1']);
+  assert.deepEqual(p.log.filter(l => l[0] === 'convSetView').map(l => l[1]),
+    ['w1:p1', 'w2:p1'], 'and it is not opened on it either');
+  assert.ok(p.log.some(l => l[0] === 'openConversation'), 'the user still lands on the record');
+});
+
+test('the confirm counts the arbitrator and says what it is deciding about', () => {
+  const p = press({tiles: [ARB]});
+  p.press('ql_d');
+  const text = p.log.find(l => l[0] === 'confirm')[1];
+  assert.match(text, /Start 3 sessions/, 'three, because three panes are started');
+  assert.match(text, /decides between the other two, on: Which approach ships/);
+});
+
+test('a relay with arbitration off refuses the tile rather than downgrading it', () => {
+  // What was asked for was the third agent. Quietly starting two and calling it a conversation
+  // is the tile doing something other than what it says on it.
+  const p = press({tiles: [ARB], arb: false});
+  assert.equal(p.press('ql_d'), false);
+  assert.deepEqual(p.log, [['toast', 'Arbitration is off on this relay']]);
+  assert.deepEqual(p.sent, []);
+});
+
+test('an arbitrator kind this relay will not start is caught with the members', () => {
+  const p = press({tiles: [Object.assign({}, ARB, {arbitrator: {name: 'pi'}})]});
+  assert.equal(p.press('ql_d'), false);
+  assert.match(p.log[0][1], /does not start pi/);
+});
+
+test('an arbitrated tile with no scope is refused before anything starts', () => {
+  // The relay refuses an empty scope outright, and rightly: the scope is the whole of what the
+  // arbitrator is told the session is for.
+  const p = press({tiles: [Object.assign({}, ARB, {scope: '   '})]});
+  assert.equal(p.press('ql_d'), false);
+  assert.match(p.log[0][1], /deciding about/);
+});
+
+// --- and everything that is not exactly two members with an arbitrator ---
+
+test('three members with a leftover arbitrator is still a plain conversation', async () => {
+  // §14.1 fixes an arbitrated roster at two. A tile edited up to three keeps the arbitrator it
+  // had — losing it silently would be worse — and simply does not use it.
+  const p = press({tiles: [Object.assign({}, THREE, {arbitrator: {name: 'claude'}, scope: 'x'})]});
+  p.press('ql_c');
+  await landAll(p, 3);
+  assert.equal(p.sent.length, 3, 'three starts and no fourth pane');
+  assert.equal(p.sent.filter(m => m.type === 'arb_start').length, 0);
+  assert.equal(p.convs[0].members.length, 3, 'all three are in the conversation');
+});
+
+test('two members and no arbitrator is the step-5 path, untouched', async () => {
+  const p = press({tiles: [Object.assign({}, ARB, {arbitrator: undefined})]});
+  p.press('ql_d');
+  await landAll(p, 2);
+  assert.deepEqual(kinds(p.sent), ['start_agent', 'start_agent']);
+  assert.equal(p.convs.length, 1);
+  assert.equal(p.convs[0].members.length, 2);
+});
+
+test('one member and an arbitrator is one pane and no session', async () => {
+  const p = press({tiles: [Object.assign({}, ONE, {arbitrator: {name: 'claude'}, scope: 'x'})]});
+  p.press('ql_b');
+  await landAll(p, 1);
+  assert.equal(p.sent.length, 1, 'an arbitrator with one agent has nobody to decide between');
+  assert.deepEqual(p.convs, []);
+});
+
+test('a refusal partway through an arbitrated roster appoints nothing', async () => {
+  const p = press({tiles: [ARB]});
+  p.press('ql_d');
+  await p.land(pane('w1:p1'));
+  p.fail();
+  assert.equal(p.sent.filter(m => m.type === 'arb_start').length, 0);
+  assert.deepEqual(p.convs, [], 'and files no conversation to appoint against');
 });

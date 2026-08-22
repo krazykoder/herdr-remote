@@ -27,7 +27,8 @@ const NAMES = ['LAUNCHER_KEY', 'LAUNCHER_PENDING_KEY', 'LAUNCHER_MAX', 'LAUNCHER
                'OPEN_TERMINAL_FIELDS', 'START_AGENT_FIELDS',
                'launcherId', 'parseLauncher', 'serializeLauncher', 'launcherValid', 'launcherGate',
                'launcherPreview', 'launcherStrict', 'launcherRunMsg', 'launcherSpawnMsg',
-               'launcherBatch', 'launcherBatchNext', 'launcherBatchDone',
+               'launcherBatch', 'launcherBatchNext', 'launcherBatchDone', 'launcherRoster',
+               'launcherArbMsg',
                'launcherWantsConv', 'launcherWantsArb'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
@@ -71,8 +72,16 @@ const spawnTile = (over = {}) => Object.assign(
 
 const env = (over = {}) => Object.assign(
   {projects: [{id: 'p1', label: 'proj'}],
-   startOptions: {agents: ['claude', 'codex'], roles: ['implementer', 'reviewer'], terminal: true}},
+   startOptions: {agents: ['claude', 'codex'], roles: ['implementer', 'reviewer'], terminal: true},
+   // arbitration.js's arbOn. Read only for a tile that wants an arbitrator, which is why every
+   // gate test above this line is unaffected by it.
+   arb: true},
   over);
+
+// A tile of exactly two that names a third to decide between them. Everything a plain spawn
+// tile has, plus the two fields §14.1 needs: who decides, and what about.
+const arbTile = (over = {}) => spawnTile(Object.assign(
+  {id: 't3', scope: 'Which approach ships', arbitrator: {name: 'claude', label: 'Arb'}}, over));
 
 // --- load-time purity -------------------------------------------------------
 
@@ -253,6 +262,70 @@ test('an arbitrator is only meaningful at exactly two, and is kept when it is no
   assert.equal(three.arbitrator, arb);
 });
 
+test('the roster a spawn starts is the members, plus the arbitrator last when there is one', () => {
+  const {launcherRoster} = pure();
+  assert.deepEqual(launcherRoster(spawnTile()).map(m => m.name), ['claude', 'codex']);
+  const three = launcherRoster(arbTile());
+  assert.deepEqual(three.map(m => m.name), ['claude', 'codex', 'claude']);
+  // Flagged rather than positional-only, and last because it is briefed with the roster it
+  // decides between — so it is the pane that most wants the other two to already be there.
+  assert.equal(three[2].arb, true);
+  assert.equal(three[2].label, 'Arb');
+  assert.equal(launcherRoster(spawnTile({arbitrator: {name: 'claude'},
+    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})).length, 3,
+    'an arbitrator at any size but two is carried and not started');
+});
+
+test('an arbitrated tile needs a kind to decide and something to decide about', () => {
+  const {launcherValid} = pure();
+  assert.equal(launcherValid(arbTile()), '');
+  assert.match(launcherValid(arbTile({arbitrator: {}})), /needs a kind/);
+  // The relay refuses an empty scope outright, so an editor that saved one would be saving a
+  // tile that can only fail.
+  assert.match(launcherValid(arbTile({scope: '  '})), /deciding about/);
+  // But only when it is actually going to be used. A tile widened to three keeps its arbitrator
+  // and must stay savable, or widening a roster becomes a trap.
+  assert.equal(launcherValid(spawnTile({arbitrator: {}, scope: '',
+    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})), '');
+});
+
+test('arbitration being off on the relay closes the gate rather than dropping the arbitrator', () => {
+  const {launcherGate} = pure();
+  assert.equal(launcherGate(arbTile(), env()).ok, true);
+  const off = launcherGate(arbTile(), env({arb: false}));
+  assert.equal(off.ok, false);
+  assert.equal(off.badge, 'No arbitration');
+  // And it is not asked about for a tile that never wanted one, which is what keeps every
+  // pre-arbitrator tile working against a relay that has arbitration switched off.
+  assert.equal(launcherGate(spawnTile(), env({arb: false})).ok, true);
+});
+
+test('the arbitrator is checked against the same allowlist as the members', () => {
+  const {launcherGate} = pure();
+  const g = launcherGate(arbTile({arbitrator: {name: 'pi'}}), env());
+  assert.equal(g.ok, false);
+  assert.match(g.reason, /does not start pi/);
+});
+
+test('the arb_start a finished roster turns into is the one the setup dialog sends', () => {
+  const {launcherArbMsg} = pure();
+  const panes = [{pane_id: 'w1:p1'}, {pane_id: 'w2:p1'}, {pane_id: 'w3:p1'}];
+  const msg = launcherArbMsg(arbTile(), 'c_x', panes);
+  assert.deepEqual(msg, {
+    type: 'arb_start', conversation: 'c_x', scope: 'Which approach ships',
+    members: [{pane_id: 'w1:p1', role: 'implementer'}, {pane_id: 'w2:p1', role: 'reviewer'}],
+    arbitrator: {pane_id: 'w3:p1'},
+    triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0}, paused: false,
+  });
+  // Pane ids and nothing else about who they are: the relay reads a participant's identity off
+  // its own pane list, because a fingerprint this browser supplies is one it can have stale.
+  msg.members.forEach(m => assert.deepEqual(Object.keys(m).sort(), ['pane_id', 'role']));
+  // A member with no role asked for sends none, rather than an empty string the relay would
+  // have to decide what to do with.
+  const bare = launcherArbMsg(arbTile({members: [{name: 'claude'}, {name: 'codex'}]}), 'c_x', panes);
+  assert.deepEqual(bare.members, [{pane_id: 'w1:p1'}, {pane_id: 'w2:p1'}]);
+});
+
 test('a batch hands out its members one at a time and knows when it is finished', () => {
   const {launcherBatch, launcherBatchNext, launcherBatchDone} = pure();
   const b = launcherBatch(spawnTile());
@@ -273,6 +346,9 @@ test('the preview shows the payload, because the label is not evidence of it', (
   assert.equal(launcherPreview(runTile({label: 'Run tests', command: 'rm -rf /tmp/x'})),
                'rm -rf /tmp/x');
   assert.equal(launcherPreview(spawnTile()), 'claude + codex');
+  // The arbitrator is named apart from the two rather than joined into them: "claude + codex +
+  // claude" would read as three of a kind, which is not what this tile is.
+  assert.equal(launcherPreview(arbTile()), 'claude + codex ⚖ claude');
 });
 
 // --- the store and its outbox -----------------------------------------------
