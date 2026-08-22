@@ -156,6 +156,12 @@ SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — n
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
 SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
+# Harnesses that need longer than that, by herdr agent kind. Eight seconds is generous for a
+# harness whose status field moves as soon as its composer takes the text, and far too short for
+# one that repaints its whole frame first: agy routinely reports `idle` for tens of seconds after
+# an Enter it did take. The cost of guessing low is not a slow send — it is an arbitration session
+# paused with `send_unconfirmed` over a message the member went on to answer.
+SUBMIT_SLOW = {"agy": 45.0}
 # How long a send nobody could confirm is watched for afterwards. Minutes, not seconds: the common
 # reason a send is unconfirmed is that the pane was already working, and what it is waiting for is
 # the agent to finish — which is a turn, and a turn is as long as it is.
@@ -1256,6 +1262,17 @@ def live_panes():
     return [] if err else annotate_agents(dig_panes(data), PROJECTS)
 
 
+def submit_window(pane_id):
+    """How long this pane gets to say it took the paste, by which harness is in it.
+
+    One number cannot cover them all — see SUBMIT_SLOW. Read from the poll's own snapshot, so a
+    pane this relay has never listed falls back to the shared window, which is the right answer
+    for a pane whose harness is unknown.
+    """
+    agent = (agent_cache.get(pane_id) or {}).get("agent", "")
+    return SUBMIT_SLOW.get(agent, SUBMIT_TIMEOUT)
+
+
 async def submit_paste(pane_id, text, remote=None, out=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
@@ -1296,7 +1313,7 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     if pane_id in shell_panes:
         await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
         return True
-    deadline = time.monotonic() + SUBMIT_TIMEOUT
+    deadline = time.monotonic() + submit_window(pane_id)
     presses, first = 0, True
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
@@ -1326,8 +1343,8 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is
     # in the composer and a person has to press Enter. Silence here is what made this bug take
     # three attempts to find.
-    log.warning("submit: pane=%s never left %s after %d Enter press(es) — text may be unsent",
-                pane_id, SUBMIT_READY, presses)
+    log.warning("submit: pane=%s never left %s after %d Enter press(es) in %.0fs — text may be "
+                "unsent", pane_id, SUBMIT_READY, presses, submit_window(pane_id))
     if out is not None:
         out["reason"] = "unconfirmed"
     return False

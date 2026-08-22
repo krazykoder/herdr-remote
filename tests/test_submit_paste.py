@@ -43,7 +43,7 @@ class SubmitPaste(unittest.TestCase):
             self.addCleanup(p.stop)
         self.calls = []
 
-    def run_paste(self, statuses, text="hello", shell=False):
+    def run_paste(self, statuses, text="hello", shell=False, agent=None):
         """Drive one submit_paste over a scripted sequence of pane statuses.
 
         The last entry repeats once the script runs out, which is how "and it stays that way" is
@@ -64,8 +64,10 @@ class SubmitPaste(unittest.TestCase):
             return ""
 
         shells = {"w1:p1"} if shell else set()
+        cache = {"w1:p1": {"agent": agent}} if agent else {}
         with patch.object(herdr_relay, "pane_agent_status", status), \
              patch.object(herdr_relay, "shell_panes", shells), \
+             patch.object(herdr_relay, "agent_cache", cache), \
              patch.object(herdr_relay, "run_herdr", herdr):
             took = asyncio.run(herdr_relay.submit_paste("w1:p1", text))
         return took
@@ -109,6 +111,24 @@ class SubmitPaste(unittest.TestCase):
         idle_past_the_presses = ["idle"] * (herdr_relay.SUBMIT_TRIES + 4) + ["working"]
         self.assertTrue(self.run_paste(idle_past_the_presses))
         self.assertEqual(len(self.enters()), herdr_relay.SUBMIT_TRIES)
+
+    def test_a_harness_known_to_be_slow_is_watched_past_the_shared_window(self):
+        # agy reports `idle` for tens of seconds after an Enter it did take, because it repaints
+        # its whole frame before its status moves. Giving up at the shared window paused an
+        # arbitration session with `send_unconfirmed` over a message the member went on to answer,
+        # so the window is per harness — SUBMIT_SLOW, read off the poll's own snapshot.
+        # Idle for 0.8s against a shared window of 0.5s and an agy window of 5s: the same pane
+        # either gives up or waits, and the harness is the only difference.
+        long_idle = ["idle"] * 40 + ["working"]
+        with patch.object(herdr_relay, "SUBMIT_SLOW", {"agy": 5.0}), \
+             patch.object(herdr_relay, "SUBMIT_POLL", 0.02):
+            self.assertFalse(self.run_paste(long_idle))
+            self.assertTrue(self.run_paste(long_idle, agent="agy"))
+
+    def test_an_unknown_pane_gets_the_shared_window(self):
+        # A pane this relay has never listed has no harness to look up, and the fallback is the
+        # number that was always there rather than the longest one anybody registered.
+        self.assertEqual(herdr_relay.submit_window("w9:p9"), herdr_relay.SUBMIT_TIMEOUT)
 
     def test_a_pane_that_never_moves_is_given_up_on_rather_than_hammered(self):
         took = self.run_paste(["idle"])
