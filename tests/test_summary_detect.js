@@ -220,6 +220,16 @@ test('agy: the request is ruled, and the reply below it is not', () => {
   assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
 });
 
+test('agy: the status line it ships now is not a message either', () => {
+  // agy replaced that right-aligned bar with a three-line status block in column 0, read off a live
+  // pane on 2026-08-22. Column 0 is what a positional block cannot start on, so the shape that
+  // caused the bug is gone — and the composer trim still holds it, which is two answers rather than
+  // one. Same fixture as test_pane_summary.py, so the two copies stay one answer.
+  const rows = fixture('pane_agy_statusline.txt');
+  assert.deepEqual(find(rows, 'agy'), [3, 3]);
+  assert.deepEqual(ctx.messageBlocks(rows, 'agy'), [[3, 3]]);
+});
+
 test("agy: its own footer is not something it said", () => {
   // Read off a live pane on 2026-08-22. agy right-aligns a model and credit line under a rule at
   // the foot of the pane, and a positional harness reads any indented line under a column-0 line

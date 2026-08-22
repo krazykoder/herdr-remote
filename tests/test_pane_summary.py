@@ -110,6 +110,17 @@ class FinalMessage(unittest.TestCase):
         self.assertEqual([m[1] for m in pane_messages(rows, "agy")],
                          ["review the change", "Looks good to me."])
 
+    def test_the_status_line_agy_ships_now_is_not_a_message_either(self):
+        # agy replaced that right-aligned bar with a three-line status block in column 0, read off
+        # a live pane on 2026-08-22. Column 0 is what a positional block *cannot* start on, so the
+        # shape that caused the bug is gone — and the composer trim still holds it, which is two
+        # answers rather than one. The fixture is here so a third status line does not quietly
+        # become the fourth thing agy is recorded as having said.
+        rows = fixture("pane_agy_statusline.txt")
+        self.assertEqual(final_message(rows, "agy"), (3, 3))
+        said = [m for m in pane_messages(rows, "agy") if m[0] == "agent"]
+        self.assertEqual([m[1] for m in said], ["Yes, I'm ready! Please share the next instructions."])
+
     def test_a_prompt_in_the_composer_is_not_a_cut(self):
         # Only the *empty* composer. A `>` with text after it is a prompt in the transcript and
         # cannot be told from the live one by shape, so cutting there would drop a real answer.
