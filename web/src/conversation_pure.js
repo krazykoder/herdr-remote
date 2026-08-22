@@ -99,8 +99,10 @@
     // prompt half stays a message: it is what the pane shows, and the record already holds the send
     // that put it there, so the anchor recognises it and only the agent's half is new.
     function convUnmergeSent(fresh, stored) {
+      // Newest first, matching ConversationLog._sent_texts. When two recent sends share enough
+      // wording to match, both recorders must choose the same one.
       const sent = (stored || []).filter(e => e.who === 'user' && e.at_src === 'sent')
-        .slice(-CONV_SENT_LOOKBACK).map(e => e.text);
+        .slice(-CONV_SENT_LOOKBACK).reverse().map(e => e.text);
       if (!sent.length) return fresh || [];
       const out = [];
       (fresh || []).forEach(m => {

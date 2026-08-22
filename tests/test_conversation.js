@@ -949,3 +949,14 @@ test('a window is left alone when nothing was sent to it, or a different thing w
   // window would be cut against a message that came out of the same parse it is fixing.
   assert.ok(convUnmergeSent(fresh, [{who: 'user', at_src: 'poll', text: AGY_SENT}]).some(merged));
 });
+
+test('merged prompt matching prefers the newest sent prompt, like the relay', () => {
+  const prefix = 'p'.repeat(40), oldTail = 'o'.repeat(40), newTail = 'n'.repeat(40);
+  const old = prefix + oldTail, newest = prefix + newTail;
+  const fresh = [{who: 'agent', text: prefix + oldTail + newTail + ' answer'}];
+  const out = convUnmergeSent(fresh, [
+    {who: 'user', at_src: 'sent', text: old},
+    {who: 'user', at_src: 'sent', text: newest},
+  ]);
+  assert.strictEqual(out[0].text, prefix + oldTail + newTail);
+});
