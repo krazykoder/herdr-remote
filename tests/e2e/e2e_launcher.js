@@ -53,6 +53,18 @@ async function waitForPanes(n, ms = 30000) {
   return false;
 }
 
+// A spawn is two herdr calls — the pane is created, and then the agent is attached to it — so a
+// board that has grown is not yet a board with an agent on it. Waiting for the count alone reads
+// the pane in between and finds `agent: ''`.
+async function waitForAgents(n, ms = 60000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (board().filter(p => p.agent).length >= n) return true;
+    await sleep(200);
+  }
+  return false;
+}
+
 async function main() {
   fs.mkdirSync(path.join(TMP, 'logs'), {recursive: true});
   fs.writeFileSync(STATE, JSON.stringify(PANES));
@@ -111,7 +123,9 @@ async function main() {
     await page.click('#qlAdd');
     await page.fill('#qlName', 'Charts tests');
     await page.fill('#qlCommand', 'pytest -q tests/charts');
-    await page.getByRole('button', {name: 'Charts', exact: true}).click();
+    // Scoped to the dialog: the Project strip in the form and the filter chips in the Agents
+    // header are the same label on the same role, so an unscoped byRole matches both.
+    await page.locator('#launcherModal').getByRole('button', {name: 'Charts', exact: true}).click();
     await page.click('#qlSave');
     await page.click('#launcherModal button[aria-label="Close"]');
     check('a tile built in the editor is on the page',
@@ -139,7 +153,10 @@ async function main() {
     await page.waitForFunction(id => activePane === id, shell.pane_id, {timeout: 20000})
       .then(() => check('and the page lands on that pane', true))
       .catch(e => check('and the page lands on that pane', false, String(e)));
-    await page.click('#backBtn').catch(() => {});
+    // Back to the list the way the app gets there. A press that lands on a pane leaves the list
+    // hidden, and the next tile is then not clickable — not flaky, invisible.
+    await page.evaluate(() => closeTerminal());
+    await page.waitForSelector('.launcher-tile', {state: 'visible'});
 
     // --- one agent -------------------------------------------------------------------------
     await page.evaluate(() => {
@@ -147,16 +164,25 @@ async function main() {
                        members: [{name: 'claude', role: 'agent'}]});
       renderLauncher();
     });
-    const beforeOne = board().length;
+    const agentsBefore = board().filter(p => p.agent).length;
     await page.locator('.launcher-tile', {hasText: 'Solo'}).click();
-    check('a one-agent tile starts one session', await waitForPanes(beforeOne + 1),
+    check('a one-agent tile starts one session', await waitForAgents(agentsBefore + 1),
           JSON.stringify(board()));
     const solo = board()[board().length - 1];
     check('with the agent the tile named', solo.agent === 'claude', JSON.stringify(solo));
     check('in the Project the tile named', solo.cwd === '/work/relay', solo.cwd);
+    // Auto conversations are not the launcher's: the app opens one per pane it sees, and the seed
+    // pane on this board has one. What a roster of one must not produce is a made conversation.
     check('and no conversation for a roster of one',
-          (await page.evaluate(() => loadConvIndex().length)) === 0);
-    await page.click('#backBtn').catch(() => {});
+          (await page.evaluate(() => loadConvIndex().filter(c => !c.auto).length)) === 0,
+          JSON.stringify(await page.evaluate(() => loadConvIndex())));
+    // The press navigates to the pane it made, and it does so when the pane turns up in a poll —
+    // after the checks above. Waiting for that before closing is what keeps the next tile clickable.
+    await page.waitForFunction(id => activePane === id, solo.pane_id, {timeout: 20000});
+    // Back to the list the way the app gets there. A press that lands on a pane leaves the list
+    // hidden, and the next tile is then not clickable — not flaky, invisible.
+    await page.evaluate(() => closeTerminal());
+    await page.waitForSelector('.launcher-tile', {state: 'visible'});
 
     // --- two agents and an arbitrator ------------------------------------------------------
     await page.evaluate(() => {
@@ -171,12 +197,25 @@ async function main() {
           (await page.locator('.launcher-tile', {hasText: 'Review pair'}).textContent())
             .includes('Arbitrated'));
 
+    // Enabled before it is pressed. A refused tile does nothing when clicked, and "nothing
+    // happened" is the same shape as a spawn that failed — this says which.
+    const arbTile = page.locator('.launcher-tile[data-tile="ql_arb"]');
+    check('and it is pressable on a relay with arbitration on',
+          (await arbTile.getAttribute('aria-disabled')) === 'false',
+          await arbTile.getAttribute('title'));
+
     const beforeArb = board().length;
     await page.locator('.launcher-tile', {hasText: 'Review pair'}).click();
     // Three, and one at a time: next_role_label reads the live agent list to pick a name, so two
     // starts in flight can choose the same one and the relay renames around the collision.
-    check('it starts three panes', await waitForPanes(beforeArb + 3, 60000),
-          JSON.stringify(board()));
+    // A refusal is a toast, so a press that went nowhere says why here rather than only as a
+    // board that did not grow.
+    const ok3 = await waitForAgents(agentsBefore + 4, 90000);
+    check('it starts three panes', ok3,
+          (await page.evaluate(() => {
+            const t = document.getElementById('toast');
+            return t && t.style.display !== 'none' ? `toast: ${t.textContent}` : '';
+          })) + ' ' + JSON.stringify(board()));
     const three = board().slice(beforeArb);
     check('two members and an arbitrator, in the order the tile lists them',
           three.map(p => p.agent).join(',') === 'claude,codex,claude',
@@ -184,8 +223,9 @@ async function main() {
 
     // The conversation holds the two, and not the third: an arbitrator is not a participant in
     // the conversation it decides about, it is the one reading it.
-    await page.waitForFunction(() => loadConvIndex().length === 1, null, {timeout: 20000});
-    const conv = await page.evaluate(() => loadConvIndex()[0]);
+    await page.waitForFunction(() => loadConvIndex().filter(c => !c.auto).length === 1,
+                               null, {timeout: 20000});
+    const conv = await page.evaluate(() => loadConvIndex().filter(c => !c.auto)[0]);
     check('the two members land in one conversation named for the tile',
           conv.name === 'Review pair' && (conv.members || []).length === 2,
           JSON.stringify(conv));
@@ -216,6 +256,10 @@ async function main() {
           JSON.stringify(panesTyped(three[2].pane_id)).slice(0, 200));
 
     // --- repointing a tile whose Project has gone -------------------------------------------
+    // Reloaded rather than navigated back: the arbitrated press ends in the conversation it made,
+    // and the landing page is one reload away. The tiles come back with it — which is the point.
+    await page.reload();
+    await page.waitForSelector('#agents .agent');
     await page.evaluate(() => {
       putLauncherTile({id: 'ql_stale', label: 'Stale', action: 'run', project_id: 'gone',
                        command: 'echo hi'});
@@ -224,11 +268,13 @@ async function main() {
     const stale = page.locator('.launcher-tile[data-tile="ql_stale"]');
     check('a tile pointing at a Project this relay never heard of is disabled',
           (await stale.getAttribute('aria-disabled')) === 'true');
-    await stale.click();
+    // force: aria-disabled fails the actionability check, and this tile is meant to be pressed —
+    // it is a real <button> whose handler is what offers the repoint.
+    await stale.click({force: true});
     await page.waitForSelector('#qlName', {timeout: 10000});
     check('and pressing it opens the tile on the field that is wrong',
           (await page.textContent('#launcherEditTitle')) === 'Edit tile');
-    await page.getByRole('button', {name: 'Relay', exact: true}).click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Relay', exact: true}).click();
     await page.click('#qlSave');
     await page.click('#launcherModal button[aria-label="Close"]');
     check('repointing re-enables it', (await stale.getAttribute('aria-disabled')) === 'false');

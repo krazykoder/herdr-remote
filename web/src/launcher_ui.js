@@ -39,7 +39,10 @@
     }
 
     function launcherTileHtml(tile) {
-      const gate = launcherGate(tile, {projects: projects, startOptions: startOptions});
+      // launcherEnv and not a second env built here: this one was missing `arb`, so every
+      // arbitrated tile drew as permanently refused on a relay that in fact has arbitration on
+      // — the press path said yes and the tile said no. One builder, one answer.
+      const gate = launcherGate(tile, launcherEnv());
       // The payload, always, and never behind a hover: a tile's text may have been written by
       // another browser, so the name on it is a claim and this line is the evidence. The confirm
       // in step 4 shows the whole of it; two lines here is what fits without the grid going ragged.

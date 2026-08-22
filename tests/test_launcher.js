@@ -110,14 +110,17 @@ test('a spawn member becomes a start_agent carrying no key the relay would refus
   const {launcherSpawnMsg, START_AGENT_FIELDS} = pure();
   const tile = spawnTile();
   const msg = launcherSpawnMsg(tile, tile.members[0]);
-  assert.deepEqual(msg, {type: 'start_agent', name: 'claude', role: 'implementer',
+  // The wire role is the relay's, not the tile's. start_agent knows architect, reviewer and agent
+  // and refuses the whole message for anything else — so a role the user typed to tell the
+  // arbitrator what this member is for rides as the pane's label instead.
+  assert.deepEqual(msg, {type: 'start_agent', name: 'claude', role: 'agent', label: 'implementer',
                          project_id: 'p1', placement: 'new_workspace'});
   for (const k of Object.keys(msg)) assert.ok(START_AGENT_FIELDS.includes(k), `leaked ${k}`);
   assert.ok(!('members' in msg));
   assert.ok(!('id' in msg));
   // Never the tile's label: that names the group, and two panes asking for one name is two
   // collisions the relay has to rename its way out of.
-  assert.ok(!('label' in msg), 'an unnamed member is named by the relay, from its role');
+  assert.notEqual(msg.label, tile.label);
 });
 
 test('a member with its own label carries it, and nothing empty is ever sent', () => {

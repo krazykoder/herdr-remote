@@ -42,6 +42,12 @@
     // herdr reuses pane ids, so a stale one is not merely dead but potentially somebody else's.
     // A tile therefore asks for the one placement that refers to nothing.
     const LAUNCHER_PLACEMENT = 'new_workspace';
+    // The wire role every relay accepts. start_agent knows three — architect, reviewer, agent —
+    // and refuses the *whole message* for anything else. A tile's role is not one of those: it is
+    // what the arbitrator is told this member is for, free text the user typed. So it rides as
+    // the pane's label, exactly as the Start dialog does with its own named roles, and the wire
+    // role stays the neutral one.
+    const LAUNCHER_ROLE = 'agent';
 
     function launcherId() {
       return 'ql_' + Math.random().toString(36).slice(2, 10);
@@ -212,13 +218,14 @@
       return launcherFields({
         type: 'start_agent',
         name: member.name,
-        role: member.role,
+        role: LAUNCHER_ROLE,
         project_id: tile.project_id,
         placement: LAUNCHER_PLACEMENT,
-        // The member's own label when it has one; otherwise absent, and the relay names it for the
-        // role. Never the tile's label — that names the group, and three panes sharing it would be
-        // three collisions the relay has to rename its way out of.
-        label: member.label,
+        // The member's own label when it has one, then the role it was given — which is the name
+        // anybody reading the roster wanted — and otherwise absent, leaving the relay to name it.
+        // Never the tile's label: that names the group, and three panes sharing it would be three
+        // collisions the relay has to rename its way out of.
+        label: member.label || (member.role !== LAUNCHER_ROLE ? member.role : ''),
         slot: tile.slot,
       }, START_AGENT_FIELDS);
     }

@@ -39,6 +39,11 @@ const open = async page => {
   await expect(page.locator('#agents .agent').first()).toBeVisible();
 };
 
+// Everything inside the dialog is reached through this rather than off the page. The Project strip
+// in the form is the same markup as the filter chips in the Agents header — same label, same role
+// — so an unscoped byRole('Charts') is two buttons and a strict-mode violation, not a flaky one.
+const dlg = page => page.locator('#launcherModal');
+
 // Tiles written straight into storage, for the tests that are about what the page does with one
 // rather than about the form that makes it. renderLauncher is the repaint every other writer of
 // this document goes through, so it is the one used here too.
@@ -82,7 +87,11 @@ test('the section leads the page and carries its own way in', async ({page}) => 
 
 test('an empty launcher still offers the one thing there is to do', async ({page}) => {
   await open(page);
-  await page.evaluate(() => { toggleSection('launcher', true); renderLauncher(); });
+  // Seeded empty rather than assumed empty. This file runs its own relay, so the suite's
+  // freshState fixture — which empties the *worker* relay's documents between tests — does not
+  // reach it, and the launcher another test here wrote is still on the relay when this page
+  // connects. Every test below that starts from nothing says so.
+  await seed(page, []);
   await expect(page.locator('#launcher .section-header button')).toHaveText('+ New');
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
 });
@@ -91,13 +100,13 @@ test('an empty launcher still offers the one thing there is to do', async ({page
 
 test('a tile written through the form is on the page, and survives a reload', async ({page}) => {
   await open(page);
-  await page.evaluate(() => { toggleSection('launcher', true); renderLauncher(); });
+  await seed(page, []);
   await page.click('#launcher .section-header button');
   await expect(page.locator('#launcherModal')).toBeVisible();
   await page.click('#qlAdd');
   await page.fill('#qlName', 'Charts tests');
   await page.fill('#qlCommand', 'pytest -q tests/charts');
-  await page.getByRole('button', {name: 'Charts', exact: true}).click();
+  await dlg(page).getByRole('button', {name: 'Charts', exact: true}).click();
   await page.click('#qlSave');
 
   // Back on the list, and on the page behind it.
@@ -115,7 +124,7 @@ test('a tile written through the form is on the page, and survives a reload', as
 
 test('the form refuses a tile the presser could not run, and says which field', async ({page}) => {
   await open(page);
-  await page.evaluate(() => { toggleSection('launcher', true); renderLauncher(); });
+  await seed(page, []);
   await page.click('#launcher .section-header button');
   await page.click('#qlAdd');
   await page.fill('#qlCommand', 'pytest');
@@ -126,19 +135,19 @@ test('the form refuses a tile the presser could not run, and says which field', 
 
 test('an arbitrated tile is built from the form and reads as one', async ({page}) => {
   await open(page);
-  await page.evaluate(() => { toggleSection('launcher', true); renderLauncher(); });
+  await seed(page, []);
   await page.click('#launcher .section-header button');
   await page.click('#qlAdd');
   await page.fill('#qlName', 'Review pair');
-  await page.getByRole('button', {name: 'Start agents'}).click();
-  await page.getByRole('button', {name: '+ claude'}).click();
+  await dlg(page).getByRole('button', {name: 'Start agents'}).click();
+  await dlg(page).getByRole('button', {name: '+ claude'}).click();
   // The arbitrator row is offered at exactly two, which is where §14.1 fixes an arbitrated roster.
-  await expect(page.getByText('Arbitrator', {exact: true})).toHaveCount(0);
-  await page.getByRole('button', {name: '+ codex'}).click();
-  await expect(page.getByText('Arbitrator', {exact: true})).toBeVisible();
+  await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toHaveCount(0);
+  await dlg(page).getByRole('button', {name: '+ codex'}).click();
+  await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toBeVisible();
   await page.fill('#qlRole0', 'proposer');
   await page.fill('#qlRole1', 'critic');
-  await page.locator('.start-field', {hasText: 'Arbitrator'})
+  await dlg(page).locator('.start-field', {hasText: 'Arbitrator'})
     .getByRole('button', {name: 'claude', exact: true}).click();
   await page.fill('#qlScope', 'Which approach ships');
   await page.click('#qlSave');
@@ -158,14 +167,14 @@ test('tiles are reordered from the list, and the order is what was written down'
   await open(page);
   await seed(page, [RUN, Object.assign({}, RUN, {id: 'ql_two', label: 'Second'})]);
   await page.click('#launcher .section-header button');
-  await page.getByRole('button', {name: 'Move Second up'}).click();
+  await dlg(page).getByRole('button', {name: 'Move Second up'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await page.reload();
   expect(await page.evaluate(() => loadLauncher().map(t => t.label)))
     .toEqual(['Second', 'Run the tests']);
   // And on screen in that order, which is the half a stored array cannot answer.
-  const labels = await page.locator('.launcher-tile .launcher-name').allTextContents();
-  expect(labels).toEqual(['Second', 'Run the tests']);
+  await expect(page.locator('.launcher-tile .launcher-name'))
+    .toHaveText(['Second', 'Run the tests']);
 });
 
 test('deleting asks first, and takes the tile off the page', async ({page}) => {
@@ -173,7 +182,7 @@ test('deleting asks first, and takes the tile off the page', async ({page}) => {
   await seed(page, [RUN]);
   page.on('dialog', d => d.accept());
   await page.click('#launcher .section-header button');
-  await page.getByRole('button', {name: 'Delete Run the tests'}).click();
+  await dlg(page).getByRole('button', {name: 'Delete Run the tests'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
 });
@@ -189,12 +198,16 @@ test('a tile whose Project is gone says so, and pressing it offers the fix', asy
 
   // Disabled, never hidden — and a gone Project is the one closed gate the presser can fix, so
   // the press opens the tile on that field rather than reporting a dead end.
-  await tile.click();
+  //
+  // force, because aria-disabled fails Playwright's actionability check and this tile is meant to
+  // be pressed anyway: it is a real <button>, never `disabled`, and its handler is what offers the
+  // repoint. A real finger lands on it; only the harness needs telling.
+  await tile.click({force: true});
   await expect(page.locator('#launcherModal')).toBeVisible();
   await expect(page.locator('#launcherEditTitle')).toHaveText('Edit tile');
   await expect(page.locator('#qlName')).toHaveValue('Run the tests');
 
-  await page.getByRole('button', {name: 'Empty Project'}).click();
+  await dlg(page).getByRole('button', {name: 'Empty Project', exact: true}).click();
   await page.click('#qlSave');
   await page.click('#launcherModal button[aria-label="Close"]');
 
