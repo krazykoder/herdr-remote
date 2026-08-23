@@ -1,6 +1,11 @@
 # Arbitrator as dispatcher and commander — work handed in, and a plan run to the end
 
-Status: proposal, not scoped. Extends
+Status: **parked, 2026-08-23.** Nothing here is scoped or being built. The dispatcher (§1–§5) is
+the half that is ready to build when it is picked up; the commander (§6–§10) is designed but its
+shape is decided and not started — see §9, which records a decision that reverses this document's
+own earlier recommendation.
+
+Extends
 `.workflow/01_concepts/ideas/2026-08-17_arbitrator_proposal.md`, which stays the document of
 record for the loop itself. Nothing here changes the decision record, the gates, the drop box or
 the validator.
@@ -9,10 +14,13 @@ Two features, one document, because they need the same three things: a way for a
 work in, a step budget that survives a long session, and a session that can end itself.
 
 - **Dispatcher** (§1–§5): a person hands in a unit of work and the arbitrator assigns it.
-- **Commander** (§6–§9): the same arbitrator, given a brief that makes it own a plan end to end,
-  and a document it maintains so a person can see the map and point at a step on it.
+- **Commander** (§6–§10): a plan owned end to end, and a document it maintains so a person can see
+  the map and point at a step on it.
 
-**The commander is a setting, not a second kind of agent.** §9 is the argument.
+**The commander is its own entity, and it contains an arbitration session rather than replacing
+one.** §9 records that decision and the analysis it overruled. Everything §6–§8 and §10 describe —
+the gate set, the agenda, the brief, the four holes — holds either way; only who owns the session
+moves.
 
 ## 1. What this is
 
@@ -187,8 +195,10 @@ owns from first step to last: it gets or writes the plan, decides who does each 
 comes back, records what is done and what is next, asks a person when it should, and ends the
 session when the work is finished.
 
-**It is a setting on a session, not a new kind of agent.** `mode: "commander"` at `arb_start`,
-selecting a gate set and a brief. §9 is the argument and the falsifiers.
+**It is its own entity, and it contains an arbitration session rather than being a setting on
+one.** It drives the arbitration API — `start`, `edit`, `pause`, `resume`, `end` — and never
+validates a record, resolves a pane, or types at a terminal. §9 records that decision, why the
+level is different, and the line the commander still may not cross.
 
 The relay's part does not grow. It still reads exactly one JSON schema — the decision record —
 and still types exactly what a validated record tells it to. The plan is not the relay's; it is a
@@ -394,7 +404,8 @@ Everything this document adds or changes. Nothing else on the wire moves.
 |---|---|---|---|
 | `arb_task` | new | `{session, text, step?}` — §4.1 | `HERDR_ENABLE_ARBITER` |
 | `arb_agenda` | new | `{session}` — a request, for a client that joined mid-session | `HERDR_ENABLE_ARBITER` |
-| `arb_start` | changed | gains `mode: "arbitrator" \| "commander"`, default `arbitrator` | unchanged |
+| `cmd_start` etc. | new, deferred | The commander's own lifecycle verbs. Not designed here — §9 decided the shape, not the surface. | `HERDR_ENABLE_ARBITER` plus its own |
+| `arb_start` | unchanged | The commander calls it; it does not learn a `mode`. | unchanged |
 | `arb_edit` | unchanged | — | — |
 
 **Server → Client**
@@ -409,9 +420,122 @@ Everything this document adds or changes. Nothing else on the wire moves.
 accepted or refused). Both render in the resume sheet's table with the badge machinery that is
 already there.
 
-## 9. Setting, not a separate kind
+## 9. A separate entity that contains an arbitrator
 
-The decision, and why.
+**Decided 2026-08-23: the commander is its own object, and it encompasses the arbitrator rather
+than being a setting on one.** This reverses the recommendation this section originally carried;
+the analysis behind that recommendation is kept below, because it is still the argument that
+bounds what the commander may do.
+
+### 9.1 The decision, and the reason for it
+
+The commander operates at a **higher level** than the arbitrator. An arbitrator answers one
+question about one conversation: who acts next. A commander owns a piece of work — its plan, its
+branch, its relationship with the person, its notion of done. Those are not the same job at
+different settings; they are two jobs, and the second one uses the first.
+
+The load-bearing reason is **cross-cutting, and it is about what comes next rather than what is
+in this document**. Everything a commander will grow — a plan document, a notion of a step,
+landing work, reporting to a person, deciding the whole thing is finished, and whatever of the
+orchestrator's job it eventually takes on (§9.5) — cuts across the arbitrator's role rather than
+extending it. Expressed as a mode, each of those arrives as another `if mode == "commander"` in a
+class whose entire value is that it does one narrow thing correctly. The arbitrator is the
+component that types text into somebody's terminal; it is the one place in this system that must
+stay small enough to hold in your head.
+
+The features in §6–§8 would each fit as a mode. It is the ones after them that would not, and by
+the time that is obvious the mode branches are load-bearing and expensive to unpick. The layer is
+being drawn now because it is cheap now.
+
+So the commander is a layer **above**:
+
+```
+Commander                    owns the plan, the branch, the person, "done"
+    │  starts, edits, pauses, resumes, ends
+    ▼
+Arbitration session          owns one conversation: who acts next
+    │  validated decision record
+    ▼
+Relay executor               types it at a pane
+```
+
+**It contains an arbitration session; it does not reimplement one.** That distinction is the whole
+of why this is not the frozen orchestrator. The commander never validates a record, never resolves
+a pane, never types at a terminal, never owns a budget window. It drives the arbitration API —
+`start`, `edit`, `pause`, `resume`, `end` — and everything below that line stays exactly as it is,
+one implementation, one validator, one executor.
+
+### 9.2 What this buys
+
+- **The arbitrator stops growing.** No mode flag, no branch in `_execute`, no second meaning for
+  `sequence`. It keeps being the small correct thing.
+- **The commander can hold state the arbitrator must not.** A plan, a branch, a relationship with
+  a person, a definition of done — none of which belong in an object whose scope is one
+  conversation.
+- **A commander can outlive a session.** Re-brief, swap the roster, end a session and start
+  another over the same work — all of that is ordinary use of an API that already exists, and
+  impossible for a session to do to itself.
+- **The three falsifiers in §9.4 stop being falsifiers** and become ordinary future work, because
+  the layer that would host them now exists.
+- **Part of the frozen orchestrator gets a home.** §9.5. That branch was held off because its unit
+  of work — a run through phases — had nowhere to live that was not a second engine. A commander
+  is exactly that place, minus the engine.
+
+### 9.3 What this costs, and what must not be paid
+
+The costs are real and were the reason for the original recommendation. Recorded so they are
+designed against rather than discovered:
+
+| Cost | Guard |
+|---|---|
+| A second lifecycle: a commander can be running, paused, ended — on top of a session that can also be running, paused, ended | One direction only. The commander's state is derived from its session's wherever it can be, and the UI shows one strip, not two. |
+| Two places for a stuck thing to be stuck | The commander's own events go in the same `events` table, on the session it is driving. One table, one sheet, one story. |
+| Two UIs | There is one. The map (§7.7) is a panel on the existing sheet, not a second surface. |
+| Two sets of pause reasons | The commander does not invent any. It reads the session's, and adds only reasons that are about the *plan* — never about a pane. |
+| Two implementations of the dangerous part | **Never.** The commander does not send, does not validate, does not resolve a pane. If a line of commander code ever types at a terminal, this decision was implemented wrongly. |
+
+### 9.4 The line the commander still may not cross
+
+These were written as "build a separate kind if these come true". They came true by decision
+rather than by evidence, so they are no longer falsifiers — but the third is still a hard boundary
+and the second is still a different security object:
+
+- **Something other than the commander judging a step complete.** Now allowed, because the
+  commander is the thing that may hold a cursor. It still should not: a plan the *agent* owns
+  needs no reconciliation, and a plan the commander owns does. Prefer the document.
+- **A step that runs without a pane** — a required check, a test runner, a commit gate. §4 of the
+  original proposal stands: *prompt text is data; argv, cwd and write scopes are not*. A commander
+  that runs `make test` is a different security object and needs its own review, not an extension
+  of this one.
+- **Two sessions coordinating.** Sessions are independent by construction — one pane in at most
+  one session, roster resolved per session. A commander driving two sessions at once is the first
+  thing that will be asked for and the first thing that will break the pane-exclusivity rule.
+  Out until that rule is re-argued from scratch.
+
+### 9.5 What the layer opens up — including part of the orchestrator's job
+
+Not scoped, not promised, and deliberately listed so the layer is drawn wide enough to hold them.
+`worktree-docs+agent-lifecycle-orchestrator-proposal` was frozen because its unit of work had no
+home; a commander is that home. What could land here later, in rough order of how safe it is:
+
+| Idea from the frozen branch | Fits the commander? | Note |
+|---|---|---|
+| A run through phases of a feature | Yes — this is what the agenda already is | Phases are steps with a convention, not a new object |
+| Creator / reviewer slots | Yes | Roles already exist per member; a commander can assign against them |
+| Working-tree drift detection | Yes, read-only | `git_probe` already runs read-only git at turn end and records branch and commit. Drift is a comparison, not an execution |
+| Owning a worktree or a branch for the run | Probably | Read-only to begin with: know which branch, do not create one |
+| Required-check running (`make test`, a linter, CI) | **Only behind its own review** | This is the line. §4 of the original proposal: *prompt text is data; argv, cwd and write scopes are not.* A commander that runs a command is a different security object |
+| Commits and pushes | **Only behind its own review** | Same line. Today `land` is a prose gate: the commander tells an agent to commit, and the agent does it in its own pane under its own permissions |
+| Run gates and phase templates | Yes, as data | `DEFAULT_GATES` is already a data-shipped list; templates are the same idea one level up |
+
+The pattern: **anything that reads, yes. Anything that executes, a separate decision.** The
+commander layer existing does not move that line — it just gives the things on the safe side of it
+somewhere to live.
+
+### 9.6 The analysis this overruled
+
+Kept intact, because it is the description of how little the *loop* differs — which is exactly why
+the commander must sit above it rather than inside it:
 
 **What is actually different about a commander** is what it is *shown* and what it is *asked
 for* — not what the relay does with the answer:
@@ -433,24 +557,12 @@ bubbles are all untouched, and none of them cares what the decision was about.
 That is the extensibility line the original proposal drew, and it holds literally: *"new
 behaviour arrives as new gate data or a new arbitrator prompt, never as new fields the executor
 has to branch on."* `DEFAULT_GATES` (arbitration.py:68) is already a list of `{name, template}`
-that ships as data. A commander is a different list and a different brief.
+that ships as data.
 
-**A second kind would cost** two engines, two sets of pause reasons, two UIs, two places for a
-stuck session to be stuck, and two implementations of the one part that must never be wrong —
-the thing that types text into somebody's terminal. The frozen orchestrator branch is what that
-costs, measured.
-
-**Build the separate kind only if one of these turns out true** — and watch for the first, which
-creeps:
-
-- **Something other than the commander has to judge a step complete.** The moment the relay
-  decides "step 3 is done", the agenda stops being a document and needs a cursor, and a cursor
-  needs an engine.
-- **A step has to run without a pane** — a required check, a test runner, a commit gate. §4 of
-  the original proposal: *prompt text is data; argv, cwd and write scopes are not*. A commander
-  that runs `make test` is a different security object, not a setting.
-- **Two sessions have to coordinate.** Sessions are independent by construction — one pane in at
-  most one session, roster resolved per session. Cross-session anything is a layer above.
+The reading that lost: because the loop is identical, make the commander a mode. The reading that
+won: because the loop is identical, the commander has no business being *inside* it — it should
+drive it from outside, where the things that are genuinely different can live without touching
+the part that types.
 
 ## 10. The commander's brief
 
@@ -506,7 +618,8 @@ from where. `{agenda_path}` is `os.path.dirname(drop_path) + "/agenda.json"`.
 | Queue or preempt when a member is mid-turn? | Queue — deliver at the next decision point. | Preempting means interrupting a working pane, which is a different feature with its own failures. |
 | Does the arbitrator see the digest as well as the task? | Yes. | It is assigning on top of work in progress; a task read in isolation gets assigned to the member who just finished doing it. |
 | Free-form note with no decision expected? | Out of scope. | That is context injection — a different verb (`arb_note`), no prompt, no step. |
-| Commander: separate kind or a setting? | A setting — `mode: "commander"`, selecting a gate set and a brief. | The loop, the record, the validator and the executor are identical. Two engines is what the frozen orchestrator branch cost. §9. |
+| Commander: separate kind or a setting? | **A separate entity that contains an arbitration session.** Reversed 2026-08-23; the document originally recommended a setting. | The level is different: an arbitrator answers one question about one conversation, a commander owns a piece of work. Everything a commander grows — a plan, a step, landing, a notion of done — cuts across the arbitrator rather than extending it, and the arbitrator is the one component that must stay small. §9. |
+| Does the commander reimplement the loop? | No. It drives `start` / `edit` / `pause` / `resume` / `end` and nothing below them. | One validator, one executor, one thing that types at a terminal. That is what separates this from the frozen orchestrator branch. §9.3. |
 | Who owns the agenda? | The commander. The relay stores nothing about it and parses none of it. | A plan the relay owns needs a cursor, and a cursor needs an engine. |
 | Where does the agenda live? | `arbitration/<session_id>/agenda.json`. | The directory already exists and its path is already in every trigger message, which is also how a commander survives losing its context. |
 | Does the relay validate the agenda? | Size and `json.loads`, nothing else. Bad → keep the last good revision and write an `error` event. | A trust boundary is never simplified away; meaning is not the relay's to check. |
@@ -541,7 +654,7 @@ In order. Each one is usable on its own, which is the test of whether the split 
 | 2 | The task UI | `arbitration.js`, the resume sheet, a `task` badge | The nobody-working state offers the control instead of describing it |
 | 3 | Per-window step budget | `budget_spent`, `resume`, `DEFAULT_BUDGET` | A session runs past 50 decisions without a person raising a ceiling |
 | 4 | The `done` gate | `_execute`, the gate list | A session ends itself and says why, and the strip says so |
-| 5 | `mode: "commander"` | `arb_start`, `gates_json`, the brief (§10) | One real branch, two members, no agenda — the commander keeps the plan in its own notes |
+| 5 | The commander object | A new module driving the arbitration API; `gates_json`, the brief (§10) | One real branch, two members, no agenda — the commander keeps the plan in its own notes |
 | 6 | The agenda | `stat` at turn end, validate, `agenda_rev`, `arb_agenda` | The relay serves a document it has never parsed, and refuses a malformed one without losing the last good copy |
 | 7 | The map, and `step` | front end only, plus 2 lines of passthrough | A person taps a step and the commander answers about that step |
 | 8 | More than two members | `MEMBERS_REQUIRED`, and the digest first | Only if 5–7 prove two is not enough |
