@@ -658,11 +658,13 @@ test('the newest decision is at the top', () => {
 test('opening the sheet asks the relay for the session it is open on', () => {
   const {g, els, sent} = ctx();
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
-  // Twice: the thread asked when the session arrived, because it draws bubbles from the same
-  // rows, and the sheet asks again because somebody is looking at it now — the held copy can be a
-  // poll old, and a rejected record never moves `last_decision` for the thread's ask to notice.
+  // Twice, and not the same ask twice: the thread asked when the session arrived, because it
+  // draws bubbles from the same rows, and it asked *brief* because a bubble draws none of the
+  // prose. The sheet asks again because somebody is looking at it now — the held copy can be a
+  // poll old, a rejected record never moves `last_decision` for the thread's ask to notice, and
+  // that held copy has no prompt or instruction in it to show.
   g.arbOpenDetail();
-  assert.deepEqual(sent, [{type: 'arb_detail', session: 's-20260817-1103'},
+  assert.deepEqual(sent, [{type: 'arb_detail', session: 's-20260817-1103', brief: true},
                           {type: 'arb_detail', session: 's-20260817-1103'}]);
   assert.equal(els.arbSheet.style.display, 'block');
   assert.match(els.arbDetailBody.innerHTML, /Reading the session/);
@@ -1092,6 +1094,25 @@ test('a session that is not deciding anything still refreshes its path', () => {
   g.arbReceiveSession({session: {...CREW_SESSION, event_at: 5, state: 'paused',
                                  pause_reason: 'invalid_record'}});
   assert.equal(asks(), 3, 'and so is stopping');
+});
+
+test('the thread reads without the prose, and a sheet on screen reads with it', () => {
+  // The thread asks on every event a session records, which is what makes a stuck one refresh at
+  // all — and it draws none of the prompt, the instruction or the text that was typed. Against a
+  // real session that prose was 203 KB an ask where the bubbles could use 33 KB. But the sheet
+  // *is* the prose, so while one is open the same watermark asks for all of it.
+  const {g, sent} = ctx();
+  const lastAsk = () => !!sent.filter(m => m.type === 'arb_detail').pop().brief;
+  g.arbReceiveSession({type: 'arb_session', session: {...SESSION, event_at: 4}});
+  assert.equal(lastAsk(), true);
+
+  g.arbOpenDetail();
+  g.arbReceiveSession({type: 'arb_session', session: {...SESSION, event_at: 5}});
+  assert.equal(lastAsk(), false, 'an open sheet needs what it is a sheet of');
+
+  g.closeArbDetail();
+  g.arbReceiveSession({type: 'arb_session', session: {...SESSION, event_at: 6}});
+  assert.equal(lastAsk(), true, 'and stops needing it when it is closed');
 });
 
 test('the sheet opens on where the session got to', () => {

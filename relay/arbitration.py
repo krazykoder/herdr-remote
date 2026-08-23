@@ -776,7 +776,7 @@ class Arbitration:
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM members WHERE session_id = ? ORDER BY member_id", (session_id,))]
 
-    def detail(self, session_id, last=DETAIL_DECISIONS):
+    def detail(self, session_id, last=DETAIL_DECISIONS, brief=False):
         """Every decision this session made, with the prompt it answered and the send it caused.
 
         §15.3's detail sheet. The three things a person checks an automated send against, and the
@@ -787,6 +787,13 @@ class Arbitration:
 
         Text is capped per field rather than dropped. A truncated prompt still says what was asked;
         an absent one leaves a sheet that cannot answer the question it exists for.
+
+        `brief` drops the three prose fields — the prompt body, the instruction, and the text that
+        was typed — and keeps everything a decision *is*: its gate, its target, the arbitrator's
+        sentence about why, and whether it was delivered. That is exactly what the thread's bubbles
+        draw, and they ask on every event; the prose is only ever read in the sheet, which asks
+        when a person opens it. Measured against a real session, the difference is 203 KB an ask
+        against 33 KB.
         """
         self.session(session_id)        # raises no_session, which is the client's answer
         rows = self.conn.execute(
@@ -800,21 +807,25 @@ class Arbitration:
         for r in reversed(rows):
             prompt = prompts.get(r["prompt_id"])
             send = sends.get(r["id"])
-            out.append({
+            one = {
                 "sequence": r["sequence"], "at": r["at"], "valid": bool(r["valid"]),
                 "reject_code": r["reject_code"], "gate": r["gate"], "to": r["to_member"],
-                "why": r["why"], "instruction": (r["instruction"] or "")[:DETAIL_TEXT],
+                "why": r["why"],
                 "ambiguity": r["ambiguity"], "complexity": r["complexity"],
-                "prompt": None if prompt is None else {
-                    "trigger": prompt["trigger"], "at": prompt["sent_at"],
-                    "body": prompt["body"][:DETAIL_TEXT]},
                 # Present only where the relay stands behind the delivery. An unconfirmed send has
                 # no row here on purpose (§13.2), and a sheet that invented one would be saying the
                 # opposite of what the session paused for.
                 "send": None if send is None else {
-                    "pane_id": send["pane_id"], "to": send["to_member"], "at": send["at"],
-                    "text": send["text"][:DETAIL_TEXT]},
-            })
+                    "pane_id": send["pane_id"], "to": send["to_member"], "at": send["at"]},
+            }
+            if not brief:
+                one["instruction"] = (r["instruction"] or "")[:DETAIL_TEXT]
+                one["prompt"] = None if prompt is None else {
+                    "trigger": prompt["trigger"], "at": prompt["sent_at"],
+                    "body": prompt["body"][:DETAIL_TEXT]}
+                if send is not None:
+                    one["send"]["text"] = send["text"][:DETAIL_TEXT]
+            out.append(one)
         return out
 
     def events(self, session_id, last=DETAIL_EVENTS):

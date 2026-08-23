@@ -328,7 +328,18 @@
       if (arbDetailFor !== session.id) { arbDetail = null; arbEvents = null; arbPlan = null; }
       arbDetailFor = session.id;
       arbDetailAt = at;
-      arbSend({type: 'arb_detail', session: session.id});
+      // Without the prose, unless a sheet is open. This ask fires on every event a session
+      // records and the bubbles draw none of the prompt, the instruction or the sent text —
+      // carrying them was a fifth of a megabyte an event, six times what the thread can use.
+      arbSend({type: 'arb_detail', session: session.id, brief: !arbSheetsOpen()});
+    }
+
+    // Either sheet on screen. Read off the DOM rather than tracked: the detail sheet has no open
+    // flag of its own, and a second copy of "is it visible" is a second thing to get wrong.
+    function arbSheetsOpen() {
+      if (arbResumeOpen) return true;
+      const el = document.getElementById('arbSheet');
+      return !!el && el.style.display === 'block';
     }
 
     // How far this session has got, as one comparable string: the last decision, the state it is

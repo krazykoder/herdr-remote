@@ -2380,10 +2380,16 @@ async def handle_client(ws, listener="lan"):
                     # arbitration message that carries prose — an arbitrator's prompt, its
                     # instruction and the text that was typed at a member — and prose goes only
                     # where it was asked for, exactly as `conv_log` does.
+                    #
+                    # `brief` drops that prose and keeps what a decision *is*. The thread's
+                    # bubbles ask on every event a session records — which is the point, a stuck
+                    # session moves its path and not its sequence — and they draw none of the
+                    # prose. A sheet somebody has open asks for all of it.
                     try:
                         session_id = msg.get("session") or ""
+                        brief = bool(msg.get("brief"))
                         decisions, events, plan = await asyncio.to_thread(
-                            lambda: (arbitration.detail(session_id),
+                            lambda: (arbitration.detail(session_id, brief=brief),
                                      arbitration.events(session_id),
                                      arbitration.resume_plan(session_id)))
                     except ArbiterError as e:
@@ -2396,6 +2402,9 @@ async def handle_client(ws, listener="lan"):
                         continue
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
+                        # Echoed, so a client can tell a copy with no prose in it from a session
+                        # that decided nothing — and knows to ask again when a sheet opens.
+                        "brief": brief,
                         "decisions": decisions, "events": events,
                         # Freshly worked out, unlike the copy on the held session message: the
                         # sheet is somebody looking *now*, and what Resume would do is exactly

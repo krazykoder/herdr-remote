@@ -734,6 +734,24 @@ class Detail(Harness):
         self.assertEqual([1, 2], [d["sequence"] for d in out])
         self.assertEqual([2], [d["sequence"] for d in self.arb.detail(s["id"], last=1)])
 
+    def test_brief_drops_the_prose_and_keeps_what_a_decision_is(self):
+        # What the thread's bubbles draw, and nothing else. They ask on every event a session
+        # records, and carrying three 8000-char fields twenty times over was a fifth of a
+        # megabyte an ask for prose no bubble renders.
+        s = self.start()
+        handle = self.step(s["id"])
+        self.write(s["id"], handle["sequence"])
+        self.arb.collect(s["id"], handle["prompt_id"])
+        d, = self.arb.detail(s["id"], brief=True)
+        self.assertEqual((1, "review", "member-2", True), (d["sequence"], d["gate"], d["to"],
+                                                           d["valid"]))
+        self.assertTrue(d["why"])
+        # Delivery is still answerable — the bubble's tick depends on it — without the text.
+        self.assertEqual("p2", d["send"]["pane_id"])
+        self.assertNotIn("text", d["send"])
+        self.assertNotIn("instruction", d)
+        self.assertNotIn("prompt", d)
+
     def test_a_session_that_does_not_exist_is_a_refusal_and_not_an_empty_sheet(self):
         with self.assertRaises(ArbiterError) as caught:
             self.arb.detail("s-nope")
