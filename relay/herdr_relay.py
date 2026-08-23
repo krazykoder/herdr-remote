@@ -28,6 +28,7 @@ from start_agent import (
     ROLES,
     SPACER_LABEL,
     StartAgentConfigError,
+    agent_init_prompts,
     agent_name_from_label,
     agent_start_args,
     claimable_spacer,
@@ -1517,6 +1518,11 @@ def start_agent_exec(plan):
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
 
+    # Before the width, because it is what makes the agent usable at all — and never fatal for the
+    # same reason the width is not: an agent that is up and asking for permission is worth more
+    # than no agent, and a person can type the line themselves.
+    agent_init_exec(pane_id, plan["name"], remote)
+
     # Width last, and never fatal. The session is up and usable at whatever width the placement
     # gave it; failing the start here would roll back a working agent over a layout preference.
     if plan.get("slot"):
@@ -1525,6 +1531,27 @@ def start_agent_exec(plan):
             log.warning("Agent started as %s but slot %r was not applied: %s",
                         pane_id, plan["slot"], slot_err)
     return pane_id, None
+
+
+def agent_init_exec(pane_id, kind, remote):
+    """Type this kind's first prompts into the agent this relay just started. Never fatal.
+
+    `terminal_init_exec`'s opposite number, and it needs none of the waiting that one does:
+    `agent start` has already blocked until herdr saw the agent interactively ready, which is the
+    precondition the shell version has to discover for itself.
+
+    The lines come from AGENT_INIT, which is server-side and keyed by kind — never from the client
+    and never from the label. Most kinds have none.
+    """
+    for line in agent_init_prompts(kind):
+        try:
+            run_herdr("pane", "send-text", pane_id, line, remote=remote)
+            run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+        except Exception as e:
+            # Said out loud rather than raised: this is the difference between an agent that
+            # answers and one that sits on a permission prompt nobody can see.
+            log.warning("Agent started as %s but %r was not delivered: %r", pane_id, line, e)
+            return
 
 
 def terminal_init_exec(pane_id, remote):

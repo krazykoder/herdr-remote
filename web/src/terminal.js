@@ -594,7 +594,10 @@
       const k = (agent || '').toLowerCase();
       if (k.startsWith('claude')) return 'var(--agent-claude)';
       if (k.startsWith('codex')) return 'var(--blue)';
-      if (k.startsWith('pi') || k === 'kiro') return 'var(--green)';
+      // kiro before pi: `startsWith('pi')` does not match it, but the two shared --green until
+      // kiro got a badge of its own, and a reader cannot tell two kinds apart by one colour.
+      if (k.startsWith('kiro')) return 'var(--agent-kiro)';
+      if (k.startsWith('pi')) return 'var(--green)';
       if (k.startsWith('agy')) return 'var(--agent-agy)';
       return '';
     }

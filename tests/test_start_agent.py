@@ -13,6 +13,7 @@ from start_agent import (
     SUFFIX_ALPHABET,
     StartAgentConfigError,
     agent_name_from_label,
+    agent_init_prompts,
     agent_start_args,
     claimable_spacer,
     dig,
@@ -251,6 +252,14 @@ class ArgsTests(unittest.TestCase):
 
     def test_a_kind_that_needs_no_argv_has_no_separator(self):
         self.assertNotIn("--", agent_start_args("claude", "Architect 1", "w3:p1"))
+
+    def test_a_kind_that_needs_a_first_prompt_gets_it_instead_of_argv(self):
+        # kiro has agy's problem and no flag for it: it asks before every tool call, and the answer
+        # is a slash command typed once the TUI is up rather than something argv can carry.
+        self.assertNotIn("--", agent_start_args("kiro", "Architect 1", "w3:p1"))
+        self.assertEqual(["/tools trust-all"], agent_init_prompts("kiro"))
+        self.assertEqual([], agent_init_prompts("claude"))
+        self.assertEqual([], agent_init_prompts("nonesuch"))
 
     def test_pane_split_goes_right_at_the_project_cwd(self):
         args = pane_split_args("w1:p2", "/work/charts")

@@ -81,6 +81,33 @@
       // block start positional rather than a glyph match, and `opens` says which column-0 lines a
       // message may follow. `result` is empty because a column-0 tool call is already an end.
       agy: { speaker: null, result: [], user: ['>'], opens: ['>', '●', '▸', '─'], chrome: '>' },
+      // kiro draws no prompt gutter at all. What marks a prompt is what is *above* it: every turn
+      // opens with a full-width rule and the prompt is the first line under it, indented two
+      // columns exactly like everything kiro says itself. So the rule is what `userLine` reads,
+      // and column 0 is what it refuses — kiro's tool calls, its credit line, its rules and its
+      // status bar all live there, and none of them is ever typed.
+      //
+      // No `chrome`, unlike agy: kiro's whole footer is in column 0, so none of it can open a
+      // positional block, and the composer placeholder under it is indented but sits under the
+      // status bar rather than under a rule — which is the question `userLine` already asks.
+      // `composer: false` for the reason pi has it: the live composer is not a prompt, so the
+      // newest reply is below the newest prompt rather than above it.
+      //
+      // `endLine` is the model's own function-call marker, which kiro draws in the transcript
+      // rather than swallowing. It is a marker and not prose: without it every turn where kiro
+      // reached for a tool before saying anything is recorded as kiro saying `<｜DSML｜function_calls`.
+      kiro: {
+        speaker: null, result: [], user: [], opens: ['●'], composer: false,
+        endLine: /^\s*<｜DSML｜/,
+        userLine: (row, rows, i) => {
+          if (!(row || '').trim() || /^\S/.test(row || '') || !rows) return false;
+          for (let j = i - 1; j >= 0; j--) {
+            if (!(rows[j] || '').trim()) continue;
+            return /^─{20,}\s*$/.test(rows[j]);
+          }
+          return false;
+        },
+      },
     };
 
     // The character in a harness's gutter column, which is column 0 everywhere but pi.
@@ -208,6 +235,8 @@
     // line of every multi-line prompt is read as an agent message and taken out of the blue rule.
     function startsBlock(rows, g, i) {
       const row = rows[i] || '';
+      // A line that closes a block is a marker, and never opens one.
+      if (g.endLine && g.endLine.test(row)) return false;
       if (g.speaker) return gutterOf(row, g) === g.speaker;
       if (!row.trim() || /^\S/.test(row)) return false;
       for (let j = i - 1; j >= 0; j--) {
@@ -217,7 +246,13 @@
         const gap = j < i - 1;
         for (let k = j; k >= 0; k--) {
           const line = rows[k] || '';
-          if (!line.trim() || !/^\S/.test(line)) return false;
+          if (!line.trim()) return false;
+          // A prompt opens the reply to it, wherever the harness draws it. kiro indents its
+          // prompts exactly as it indents everything else, so the walk back to column 0 would run
+          // straight past one — and a turn answered without running a tool has no column-0 line
+          // anywhere in it, which is the whole answer lost rather than a line of it.
+          if (g.userLine && g.userLine(line, rows, k)) return gap;
+          if (!/^\S/.test(line)) return false;
           if (g.opens.includes(line[0])) return gap || !(g.user || []).includes(line[0]);
         }
         return false;

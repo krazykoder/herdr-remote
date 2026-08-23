@@ -47,6 +47,22 @@
         { cmd: '/copy', desc: 'Copy last response', common: false },
         { cmd: '/reload', desc: 'Reload extensions and skills', common: false },
       ],
+      // kiro lists 40, read off its own `/help` menu on 2026-08-23. `/tools trust-all` first
+      // because it is the one a remotely started kiro needs before it can run anything — the relay
+      // sends it at start, and a person who started kiro by hand has no other way to reach it.
+      kiro: [
+        { cmd: '/tools trust-all', desc: 'Stop asking before every tool call', common: true },
+        { cmd: '/compact', desc: 'Compact conversation history', common: true },
+        { cmd: '/clear', desc: 'Clear conversation history', common: true, danger: true },
+        { cmd: '/model', desc: 'Select or list available models', common: true },
+        { cmd: '/effort', desc: 'Set thinking effort for this session', common: true },
+        { cmd: '/context show', desc: 'Show context files and token usage', common: true },
+        { cmd: '/plan', desc: 'Switch to the Plan agent', common: true },
+        { cmd: '/rewind', desc: 'Rewind to a previous turn, forking the session', common: false, danger: true },
+        { cmd: '/copy', desc: 'Copy last response to clipboard', common: false },
+        { cmd: '/usage', desc: 'Show billing and usage information', common: false },
+        { cmd: '/help', desc: 'Show available commands', common: false },
+      ],
       opencode: [
         { cmd: '/compact', desc: 'Compact current session', common: true },
         { cmd: '/new', desc: 'Start new session', common: true, danger: true },
@@ -66,7 +82,7 @@
       if (key.startsWith('claude')) return COMMANDS.claude;
       if (key.startsWith('codex')) return COMMANDS.codex;
       if (key.startsWith('agy')) return COMMANDS.agy;
-      if (key.startsWith('pi') || key === 'kiro') return COMMANDS.pi;
+      if (key.startsWith('pi')) return COMMANDS.pi;
       if (key.startsWith('opencode')) return COMMANDS.opencode;
       return COMMANDS.claude; // fallback
     }

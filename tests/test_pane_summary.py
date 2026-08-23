@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from pane_summary import (block_span, final_message, is_user_input, last_user_input, pane_messages,
-                          profile_for, summary_body, turn_messages)
+                          profile_for, summary_body, turn_messages, user_input_lines)
 
 
 def fixture(name):
@@ -138,6 +138,32 @@ class FinalMessage(unittest.TestCase):
         said = [m for m in pane_messages(rows, "agy") if m[0] == "agent"]
         self.assertEqual([m[1] for m in said], ["Yes, I'm ready! Please share the next instructions."])
 
+    def test_kiro_answers_a_prompt_with_nothing_in_column_zero_between_them(self):
+        # kiro is the second harness with no speaker glyph, and unlike agy it has no prompt gutter
+        # either: a turn opens with a full-width rule and the prompt is the first line under it,
+        # indented exactly as much as everything kiro says itself. The last turn of the fixture is
+        # the one agy's rule cannot reach — answered in prose with no tool call at all, so there is
+        # no column-0 marker anywhere between the prompt and the answer and only the prompt itself
+        # can open the block. Without that, a whole turn is lost rather than a line of it.
+        rows = fixture("pane_kiro_done.txt")
+        self.assertEqual(final_message(rows, "kiro"), (155, 158))
+        self.assertTrue(rows[153].startswith("  In one short paragraph"), rows[153])
+        self.assertTrue(rows[155].startswith("  Git rebase rewrites"), rows[155])
+
+    def test_kiros_own_chrome_is_neither_a_prompt_nor_a_message(self):
+        # Its credit line, its rules and its status bar are in column 0, which a positional block
+        # cannot start on. The composer placeholder under them *is* indented, and is refused
+        # because a status bar and not a rule is what it hangs under — otherwise every kiro pane
+        # records `ask a question or describe a task` as something the user typed.
+        rows = fixture("pane_kiro_done.txt")
+        self.assertEqual(sorted(user_input_lines(rows, "kiro")), [1, 12, 42, 77, 153])
+        said = pane_messages(rows, "kiro")
+        self.assertEqual(said[-1][2], (155, 158))
+        # `<｜DSML｜function_calls` is the model's own call marker, which kiro prints rather than
+        # swallows. A marker opens nothing: without that rule the turn at line 42 — where kiro
+        # reached for a tool before saying anything — is recorded as kiro having said it.
+        self.assertFalse([m for m in said if "DSML" in m[1]], "a call marker was read as prose")
+
     def test_a_prompt_in_the_composer_is_not_a_cut(self):
         # Only the *empty* composer. A `>` with text after it is a prompt in the transcript and
         # cannot be told from the live one by shape, so cutting there would drop a real answer.
@@ -236,6 +262,21 @@ class PaneMessages(unittest.TestCase):
         "pi": ("pane_pi_done.txt", [
             ("user", "explain the last commit"),
             ("agent", "Here's a breakdown"),
+        ]),
+        "kiro": ("pane_kiro_done.txt", [
+            ("user", "What is the status of this repo"),
+            ("agent", "I'll check the status of the current repository"),
+            ("user", "continue"),
+            ("agent", "I'll check the status of the current repository"),
+            ("agent", "Now I'll get more repository information:"),
+            ("agent", "Based on the information gathered"),
+            ("user", "list out all 10 last commits"),
+            ("agent", "Here are the last 10 commits:"),
+            ("user", "review the lasrt commit"),
+            ("agent", "I'll review the last commit"),
+            ("agent", "Based on my review of the last commit"),
+            ("user", "In one short paragraph"),
+            ("agent", "Git rebase rewrites your branch"),
         ]),
         "agy": ("pane_agy_done.txt", [
             ("user", "summarize the last 5 commits"),

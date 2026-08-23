@@ -235,6 +235,32 @@ test('agy: the request is ruled, and the reply below it is not', () => {
   assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
 });
 
+// kiro is the second harness with no speaker glyph, and unlike agy it has no prompt gutter
+// either: a turn opens with a full-width rule and the prompt is the first line under it, indented
+// exactly as much as everything kiro says itself. Read off a live pane on 2026-08-23.
+test('kiro: a prompt is what a rule hangs over, and a reply is what hangs under a prompt', () => {
+  const rows = fixture('pane_kiro_done.txt');
+  // The last turn is the one that matters most and the one agy's rule cannot reach: kiro answered
+  // it in prose with no tool call at all, so there is no column-0 marker between the prompt and
+  // the answer, and only the prompt itself can open the block.
+  assert.deepEqual(find(rows, 'kiro'), [155, 158]);
+  assert.match(rows[153], /^  In one short paragraph/);
+  assert.match(rows[155], /^  Git rebase rewrites/);
+});
+
+test('kiro: its own chrome is neither a prompt nor a message', () => {
+  const rows = fixture('pane_kiro_done.txt');
+  // Every prompt and nothing else. The credit line, the rules and the status bar are in column 0,
+  // which a positional block cannot start on; the composer placeholder under them is indented,
+  // and is refused because a status bar and not a rule is what it hangs under.
+  assert.deepEqual(Array.from(ctx.userInputLines(rows, 'kiro')), [1, 12, 42, 77, 153]);
+  const blocks = ctx.messageBlocks(rows, 'kiro');
+  assert.deepEqual(blocks[blocks.length - 1], [155, 158]);
+  // `<｜DSML｜function_calls` is the model's own call marker, which kiro prints. It is a marker,
+  // so it opens nothing: without that rule the turn at line 42 is recorded as kiro saying it.
+  assert.equal(blocks.some(b => /DSML/.test(rows[b[0]])), false);
+});
+
 test('agy: the status line it ships now is not a message either', () => {
   // agy replaced that right-aligned bar with a three-line status block in column 0, read off a live
   // pane on 2026-08-22. Column 0 is what a positional block cannot start on, so the shape that

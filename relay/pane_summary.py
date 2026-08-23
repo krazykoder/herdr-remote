@@ -84,6 +84,45 @@ GUTTERS["opencode"] = {
     "end_line": re.compile(r"^\s*Thought:"), "user_line": _opencode_user_line,
 }
 
+# kiro rules off every turn with a full-width line and hangs the prompt under it. Twenty is well
+# under the narrowest pane worth reading and well over anything a table border or a wrapped em-dash
+# could produce.
+_KIRO_RULE = re.compile(r"^─{20,}\s*$")
+# The model's own function-call marker, which kiro draws in the transcript rather than swallowing.
+# It is a marker and not prose: without this the turns where kiro says nothing before reaching for
+# a tool are recorded as kiro having said `<｜DSML｜function_calls`.
+_KIRO_CALL = re.compile(r"^\s*<｜DSML｜")
+
+
+def _kiro_user_line(row, rows, i):
+    """Whether this is the user's line, on a harness that draws no prompt gutter at all.
+
+    kiro marks a prompt by what is *above* it: every turn opens with a full-width rule and the
+    prompt is the first line under it, indented two columns exactly like everything kiro says
+    itself. So the rule is what is read, and column 0 is what is refused — kiro's own chrome, its
+    tool calls, its credit line and its status bar all live there, and none of them is ever typed.
+    """
+    row = row or ""
+    if not row.strip() or row[:1].strip() or rows is None:
+        return False
+    for j in range(i - 1, -1, -1):
+        above = rows[j] or ""
+        if not above.strip():
+            continue
+        return bool(_KIRO_RULE.match(above))
+    return False
+
+
+# No `chrome`: kiro's footer needs no cut. Its credit line, its rule and its status bar are all in
+# column 0, so none of them can open a positional block, and the composer placeholder under them is
+# indented but sits under the status bar rather than under a rule — which is exactly the question
+# `_kiro_user_line` asks. `composer: False` for the same reason agy does not need it: kiro's newest
+# reply is *below* its newest prompt, because the live composer is not one.
+GUTTERS["kiro"] = {
+    "speaker": None, "result": [], "user": [], "opens": ["●"], "composer": False,
+    "user_line": _kiro_user_line, "end_line": _KIRO_CALL,
+}
+
 
 def profile_for(agent):
     return GUTTERS.get(agent)
@@ -171,6 +210,9 @@ def starts_block(rows, g, i):
     touching a `>` is the rest of what the user typed.
     """
     row = rows[i] or "" if i < len(rows) else ""
+    end_line = g.get("end_line")
+    if end_line and end_line.match(row):
+        return False        # a line that closes a block is a marker, and never opens one
     if g.get("speaker"):
         return _gutter_of(row, g) == g["speaker"]
     if not row.strip() or row[:1].strip():
@@ -183,9 +225,18 @@ def starts_block(rows, g, i):
         if not opens:
             return bool(above[:1].strip())
         gap = j < i - 1
+        user_line = g.get("user_line")
         for k in range(j, -1, -1):
             line = rows[k] or ""
-            if not line.strip() or not line[:1].strip():
+            if not line.strip():
+                return False
+            # A prompt opens the reply to it, wherever the harness draws it. kiro indents its
+            # prompts exactly as it indents everything else, so the walk back to column 0 would run
+            # straight past one — and a turn answered without running a tool has no column-0 line
+            # anywhere in it, which is the whole answer lost rather than a line of it.
+            if user_line and user_line(line, rows, k):
+                return gap
+            if not line[:1].strip():
                 return False
             if line[0] in opens:
                 return gap or line[0] not in (g.get("user") or [])
