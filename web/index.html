@@ -3310,13 +3310,14 @@
       color: var(--text);
     }
 
-    /* Its own row under the budget it spends, rather than squeezed beside it: two buttons with
-       words in them do not fit on a phone next to two steppers. */
+    /* The right of the two columns: the buttons stacked beside the budget rather than under it,
+       one per line so the longer label sets the width of both and neither wraps. */
     .arb-plan-do {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
+      align-items: stretch;
       gap: 6px;
-      flex: 1 1 100%;
+      flex: 1 1 auto;
     }
 
     /* The same two drawings as the tray's buttons, at the same 24-box: this sheet is what that
@@ -3324,6 +3325,9 @@
     .arb-plan-do .arb-btn {
       display: inline-flex;
       align-items: center;
+      /* Left, not centred: two stacked buttons whose glyphs line up read as a pair of choices,
+         and two centred ones read as two unrelated things that happen to be near each other. */
+      justify-content: flex-start;
       gap: 5px;
     }
 
@@ -3388,7 +3392,9 @@
       grid-template-columns: max-content max-content;
       align-items: center;
       gap: 6px 12px;
-      flex: 1 1 100%;
+      /* The left of two columns. What it may spend and the buttons that spend it are one
+         decision, and the two stacks are the same height — two 32px rows each. */
+      flex: 0 1 auto;
     }
 
     /* The field itself is not a box — it is a label in one column and a stepper in the other. */
