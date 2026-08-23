@@ -1310,7 +1310,7 @@ test('the resume dialog says which of the four resumes this one is', () => {
                /Reviewer 1 is working[\s\S]*asked the moment that turn ends/);
 });
 
-test('an armed session with nobody working says so, and cannot ask about nothing', () => {
+test('an armed session with nobody working says so, and says what to do about it', () => {
   // The most expensive way this feature fails: a session that reads as running, is running, and
   // will never do anything — because arming waits for a turn end and no turn is going to end.
   // Neither the relay's plan nor the state can tell that apart from a healthy armed session; the
@@ -1318,9 +1318,8 @@ test('an armed session with nobody working says so, and cannot ask about nothing
   const html = withPlan({action: 'wait', sequence: 3, stale: null});
   assert.match(html, /Nothing is pending and nobody is working/);
   assert.match(html, /Give an agent something to do/);
-  // Resume arms the loop, but Ask now would spend a step on no trigger, so it is unavailable.
+  // And Ask now leads, because Resume is the button that does nothing here.
   assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
-  assert.match(html, /<button class="arb-btn" disabled[^>]*>.*Ask now/);
 });
 
 test('a question the arbitrator never answered is called that, and leads with asking again', () => {

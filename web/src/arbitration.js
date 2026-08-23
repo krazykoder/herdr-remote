@@ -1348,7 +1348,7 @@
       // is working, and the difference is the whole question a person opens this to ask: a session
       // with a member mid-turn resumes into a decision, and one with nobody working resumes into
       // nothing at all until somebody gives an agent something to do.
-      const busy = arbBusyMembers(s);
+      const busy = (s.members || []).filter(m => m.status === 'working' || m.status === 'blocked');
       if (busy.length) {
         const who = busy.map(m => m.label || m.id).join(' and ');
         return {line: `${who} ${busy.length > 1 ? 'are' : 'is'} working.`,
@@ -1357,17 +1357,8 @@
       }
       return {line: 'Nothing is pending and nobody is working.',
               hint: 'Resume arms the loop, but with every member idle there is no turn end coming ' +
-                'to wake it — it will sit exactly like this. Give an agent something to do first.'};
-    }
-
-    function arbBusyMembers(session) {
-      return (session.members || []).filter(m => m.status === 'working' || m.status === 'blocked');
-    }
-
-    // Asking without a trigger spends a decision step on no work. A future human→arbitrator note
-    // is a separate operation; it must not borrow this loop-control button.
-    function arbCanAskNow(plan, session) {
-      return !!plan && !(plan.action === 'wait' && !plan.stale && !arbBusyMembers(session).length);
+                'to wake it — it will sit exactly like this. Give an agent something to do, or ' +
+                'Ask now to have the arbitrator decide from what has already been said.'};
     }
 
     // Which of the two buttons is the answer here. The relay works out three of these cases
@@ -1378,7 +1369,7 @@
       if (plan.stale || plan.action === 'ask') return true;
       if (plan.action === 'await') return arbColdAsk(session);
       if (plan.action === 'collect') return false;
-      return !arbBusyMembers(session).length;
+      return !(session.members || []).some(m => m.status === 'working' || m.status === 'blocked');
     }
 
     function arbDetailHtml(decisions, session, events) {
@@ -1430,7 +1421,6 @@
       const paused = session.state === 'paused';
       const said = plan ? arbPlanLine(plan, session) : null;
       const lead = arbLeads(plan, session);
-      const canAsk = arbCanAskNow(plan, session);
       // What the tray used to carry as a third row: what Resume would do, and what the state
       // means. It is two paragraphs, so it belongs where there is room for two paragraphs.
       const head = `<p class="arb-plan-line">${escapeHtml(said ? said.line : arbStateLabel(session))}</p>` +
@@ -1460,9 +1450,7 @@
           // *arrives* — a turn ending, a clock — and nothing here can send one; what this does is
           // skip waiting for one and put the question to the arbitrator now.
           `<button class="arb-btn${lead ? '' : ' quiet'}"` +
-          (canAsk
-            ? ' onclick="arbResumeNow(true)" title="Resume and ask the arbitrator for a decision now"'
-            : ' disabled title="Give an agent something to do first"') +
+          ' onclick="arbResumeNow(true)" title="Resume and ask the arbitrator for a decision now"' +
           ` aria-label="Ask the arbitrator now">${arbGlyph('kick')} Ask now</button></div>`;
       // Where it is stopped *now*: the last pause with no resume under it. Not the last row — a
       // trigger that arrived after the stop sits below it and reads like progress.
