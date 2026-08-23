@@ -90,12 +90,17 @@ Its own verb, deliberately. It must not be a flag on `arb_resume`: a loop-contro
 grows a content channel is how the two get confused, and the pause/resume semantics have nothing
 to say about a task. Gated on `HERDR_ENABLE_ARBITER` like the rest of the lifecycle.
 
-Text is capped (the same order as a `state_put` body is capped — a task is a paragraph, not a
-document) and stripped of control characters, like `rename_pane` already does.
+| Field | Required | Rule | Why |
+|---|---|---|---|
+| `session` | yes | An open session id, or `no_session`. | Several sessions run at once, one per conversation. |
+| `text` | yes | Capped at the order of a `state_put` body; control characters stripped as `rename_pane` does; empty is a refusal. | A task is a paragraph, not a document. Text typed into a terminal is a trust boundary. |
+| `step` | no | Opaque string, short, capped, never resolved. Copied into the note verbatim. | The commander's own step id (§7). The relay does not know a step exists, and must not start. |
 
-`step` is optional and **opaque**. It exists for the commander (§7): a person taps a row on the
-map and the id of that row rides along, copied into the note and never resolved. The commander
-knows what `s4` is because it wrote it; the relay does not and must not.
+`step` exists for the commander: a person taps a row on the map and that row's id rides along.
+The commander knows what `s4` is because it wrote it.
+
+**Refusals** reuse the existing codes — `no_session` for a session that is not open, `not_running`
+for one that has ended. A paused session is not a refusal; see below.
 
 ### 4.2 The relay's half
 
@@ -190,7 +195,38 @@ and still types exactly what a validated record tells it to. The plan is not the
 document the commander writes, in the commander's own directory, which the relay serves to the
 front end without reading a field of it.
 
-### 6.1 The prior art this reopens, and what stays shut
+### 6.1 What a commander is made of
+
+Four things, and not one of them is an engine:
+
+| Piece | What it is | Where it goes |
+|---|---|---|
+| A gate set | `DEFAULT_GATES` (arbitration.py:68) is already a list of `{name, template}` shipped as data. A commander is a different list. | `gates_json` on the session, chosen by `mode` at `arb_start`. §6.2 |
+| A brief | One block appended to the existing starter prompt. Teaches the agenda, the ids, and the `done` gate. | §10 |
+| A document it owns | `agenda.json` in the directory the session already has. The relay carries it and parses none of it. | §7 |
+| Two holes filled | A `done` gate so it can finish, and a step budget that survives a long session. | §8 |
+
+Everything else — the trigger, the record schema, the validator, the send path, the pause, the
+resume, the roster resolution, the events log, the sheet, the bubbles — is what it already is.
+
+### 6.2 The gate set
+
+Gates are `{name, template}` where `{instruction}` is the only substitution and the agent supplies
+prose, never a template. That is the existing contract; a commander ships a different file.
+
+| Gate | Template | What it is for |
+|---|---|---|
+| `plan` | `Write or revise the plan for this work.\n\n{instruction}` | Getting the step list out of an architect rather than inventing it alone. |
+| `implement` | `{instruction}` | The default. Same as CRFN's. |
+| `review` | `Please review the work described above.\n\n{instruction}` | Same as CRFN's. |
+| `land` | `{instruction}` | Commit, push, open the PR — whatever the person's scope says landing means. Prose only: the relay supplies no argv, no cwd, no write scope. |
+| `done` | — | Ends the session. No `to`, no `instruction`; `why` is what the person reads. §8. |
+| `call_human` | — | Unchanged. Pauses and asks. |
+
+`land` is deliberately an ordinary prose gate. A gate that ran a command would put the relay back
+in the business of executing, which §9 is the argument against.
+
+### 6.3 The prior art this reopens, and what stays shut
 
 `worktree-docs+agent-lifecycle-orchestrator-proposal` carries a full lifecycle engine —
 `relay/orchestrator.py`, run state, phase templates, drift detection, required-check runners. §2
@@ -277,11 +313,36 @@ the shape move without a relay release.
 **Flat. No sub-steps, no dependency graph.** A tree needs a resolver and a resolver is the relay
 owning the plan again, which is the exact door §6.1 closed.
 
+| Field | Type | Required | Drawn as |
+|---|---|---|---|
+| `title` | string | yes | The map's heading. |
+| `branch` | string | no | A chip beside the heading. Cross-checks against the `branch` the relay already carries per turn from `git_probe`. |
+| `steps[].id` | string | yes | Not drawn. The handle `arb_task`'s `step` names. Never reused, never renumbered. |
+| `steps[].title` | string | yes | The row. |
+| `steps[].status` | `todo` \| `doing` \| `done` \| `blocked` | yes | The badge. Anything unrecognised draws as `todo` rather than breaking the row. |
+| `steps[].to` | member id | no | The member chip. Resolved to a label by the front end against the roster it already holds. |
+| `steps[].why` | string | no | The row's second line. One line — see §14. |
+| `steps[].commit` | sha | no | A commit chip, linking to the range the record can already answer with `git_commits`. |
+
 `commit` is worth carrying because `git_probe` already records branch and commit at every turn
 end, so the front end can put a step next to what actually landed with nobody correlating
 anything.
 
-### 7.6 The UI
+### 7.6 What this costs the relay
+
+| Piece | Rough size |
+|---|---|
+| `stat`, read, cap, `json.loads`, bump `agenda_rev` at the arbitrator's turn end | ~20 lines |
+| `agenda_rev` on `arb_session` | 1 line |
+| `arb_agenda` broadcast, and answering a request for it | ~15 lines |
+| `step` passthrough into `task_note` | 2 lines |
+| The commander's gate set and brief | data and prose |
+| **The map, and the per-step task button** | **the actual work, and all of it in the front end** |
+
+The relay's whole share is under 40 lines, and after it the relay still parses exactly one schema:
+the decision record.
+
+### 7.7 The UI
 
 The map: one row per step, status as a badge, the member it is assigned to, and the commit if it
 has one. On each row, one button — the `arb_task` field with that row's `id` already attached.
@@ -292,34 +353,82 @@ already needs.
 
 Four holes. None of them is the loop.
 
+| Hole | Where | Size | Blocks the commander? |
+|---|---|---|---|
+| A `done` gate | `end()` arbitration.py:1530; `_execute` already branches to `pause` for `call_human` at :1905 | One branch beside it | Yes |
+| Per-window step budget | `DEFAULT_BUDGET` / `BUDGET_MAX` arbitration.py:81–82; `steps_used` never reset | Real — a schema decision, see §4.5 | Yes, outright |
+| The human channel | `arb_task`, §4 | The dispatcher slice | Yes |
+| More than two members | `MEMBERS_REQUIRED = 2` arbitration.py:103, enforced :951 and :1077 | Constant is trivial; the digest is not | No — do it last, or never |
+
 **A `done` gate.** A session ends today on budget, on `call_human`, or on a person pressing End.
-A commander that finishes its plan has no way to say so. `end(session_id, reason)` exists at
-arbitration.py:1530, and `_execute` already calls `pause` for `call_human` at :1905 — `done` is
-the same shape, one branch over.
+A commander that finishes its plan has no way to say so. `done` takes no `to` and no
+`instruction`, exactly as `call_human` does, and its `why` is what the person reads in the thread.
 
 **A step budget that is per-window, not per-session.** `DEFAULT_BUDGET` is 8 steps and 45
 minutes; `BUDGET_MAX` caps at 50 steps and 8 hours. Those are the numbers for a conversation. A
 branch lifecycle is days, and `steps_used` never resets, so today the cap is not a safety rail —
 it is the feature's hard ceiling. §4.5 names this; the commander cannot ship without it.
 
-**The human channel.** `arb_task`, §4. Half of what a commander is for.
+The two candidate shapes, since this is the one real schema decision in the document:
 
-**More than two members** — *last, and maybe never*. `MEMBERS_REQUIRED = 2` (arbitration.py:103,
-enforced at :951 and :1077) is one constant and two checks, and `_write_members` is already
-positional so the table and the prompts take N unchanged. The real cost is elsewhere:
+| Shape | What it means | Cost |
+|---|---|---|
+| A task or a resume raises the ceiling | `max_steps` becomes `spent + N`, which is what `arbResumeNow` already computes in the client | Small, and already half-built — but the ceiling ratchets upward for ever and stops meaning anything |
+| `steps_used` counts within a window | Reset alongside `window_at` and `consecutive`, which `resume` already clears | Honest. Changes what `budget_spent` measures, and every existing session's numbers |
+
+The second is right. The first is what will get built if nobody decides.
+
+**More than two members** — *last, and maybe never*. `_write_members` is already positional
+(`member-{i}`), so the table and the prompts take N unchanged. The real cost is elsewhere:
 `ARB_DIGEST` is six rows across the *whole* roster, so at four members one chatty agent starves
 the rest, and the digest has to become per-member. Run a real branch with two members and a
 commander first. If two is enough, that problem never has to be solved.
+
+### 8.5 The wire, in one place
+
+Everything this document adds or changes. Nothing else on the wire moves.
+
+**Client → Server**
+
+| Message | New? | Shape | Gate |
+|---|---|---|---|
+| `arb_task` | new | `{session, text, step?}` — §4.1 | `HERDR_ENABLE_ARBITER` |
+| `arb_agenda` | new | `{session}` — a request, for a client that joined mid-session | `HERDR_ENABLE_ARBITER` |
+| `arb_start` | changed | gains `mode: "arbitrator" \| "commander"`, default `arbitrator` | unchanged |
+| `arb_edit` | unchanged | — | — |
+
+**Server → Client**
+
+| Message | New? | Shape | Broadcast? |
+|---|---|---|---|
+| `arb_agenda` | new | `{session, rev, body}` — `body` is the raw text, never re-serialised | Only when the file changed. Also answered to a client that asks. |
+| `arb_session` | changed | gains `agenda_rev` (integer) and `mode` | As today, on every state change — which is exactly why the body is not on it |
+| `arb_detail` | unchanged | — | — |
+
+**The events table** gains kinds `task` (a person handed work in) and `agenda` (a revision was
+accepted or refused). Both render in the resume sheet's table with the badge machinery that is
+already there.
 
 ## 9. Setting, not a separate kind
 
 The decision, and why.
 
 **What is actually different about a commander** is what it is *shown* and what it is *asked
-for* — not what the relay does with the answer. The trigger arrives the same way, the record has
-the same schema, the validator runs the same checks, the send goes down the same path, the pause,
-the resume, the budget, the pane resolution, the events log, the sheet and the bubbles are all
-untouched and none of them cares what the decision was about.
+for* — not what the relay does with the answer:
+
+| | Arbitrator | Commander |
+|---|---|---|
+| What wakes it | a turn end, a clock, a person | same |
+| What it is shown | scope, roster, digest | same, plus its own file which it reads itself |
+| What it is asked | who acts next | who acts next, *and keep the plan current* |
+| What it writes | one decision record | same schema, same path, same validator |
+| How it ends | budget, `call_human`, a person | plus `done` |
+| How long it lives | a conversation | a branch |
+| What the relay does | validate, apply the gate template, type it | identical |
+
+Everything below that line is shared: the trigger, the record schema, the validator, the send
+path, the pause, the resume, the budget, the pane resolution, the events log, the sheet and the
+bubbles are all untouched, and none of them cares what the decision was about.
 
 That is the extensibility line the original proposal drew, and it holds literally: *"new
 behaviour arrives as new gate data or a new arbitrator prompt, never as new fields the executor
@@ -424,19 +533,23 @@ from where. `{agenda_path}` is `os.path.dirname(drop_path) + "/agenda.json"`.
 
 ## 13. Slices
 
-1. `arb_task` end to end: wire message, `human_entered` + `task` event + `prompt(..., note=)`,
-   starter-prompt paragraph. No UI — driven from a test client.
-2. The sheet's field and button, and the `task` badge in the events table. The copy in the
-   nobody-working state becomes the control.
-3. Per-window step budget. §4.5, and the gate on everything below.
-4. The `done` gate.
-5. `mode: "commander"` — the gate set and the brief (§10). No agenda yet; the commander keeps its
-   plan in its own head and its own notes, and we find out whether the loop holds for a whole
-   branch.
-6. The agenda: `stat` at turn end, validate, `agenda_rev`, `arb_agenda`.
-7. The map in the front end, and `step` on `arb_task`.
-8. More than two members, if slices 5–7 prove it is needed. Digest first.
-9. Telegram, if wanted.
+In order. Each one is usable on its own, which is the test of whether the split is honest.
+
+| # | Slice | Touches | Done when |
+|---|---|---|---|
+| 1 | `arb_task` end to end | `herdr_relay.py` handler, `task_note`, one brief paragraph | A task typed at a test client makes the arbitrator assign work, and the `prompts` row shows it was shown |
+| 2 | The task UI | `arbitration.js`, the resume sheet, a `task` badge | The nobody-working state offers the control instead of describing it |
+| 3 | Per-window step budget | `budget_spent`, `resume`, `DEFAULT_BUDGET` | A session runs past 50 decisions without a person raising a ceiling |
+| 4 | The `done` gate | `_execute`, the gate list | A session ends itself and says why, and the strip says so |
+| 5 | `mode: "commander"` | `arb_start`, `gates_json`, the brief (§10) | One real branch, two members, no agenda — the commander keeps the plan in its own notes |
+| 6 | The agenda | `stat` at turn end, validate, `agenda_rev`, `arb_agenda` | The relay serves a document it has never parsed, and refuses a malformed one without losing the last good copy |
+| 7 | The map, and `step` | front end only, plus 2 lines of passthrough | A person taps a step and the commander answers about that step |
+| 8 | More than two members | `MEMBERS_REQUIRED`, and the digest first | Only if 5–7 prove two is not enough |
+| 9 | Telegram | `herdr_telegram.py` | Handing a task in from a phone |
+
+**Slice 5 before slice 6 on purpose.** A commander with no agenda still runs a branch; it just
+cannot show anybody the map. Building the document first would mean designing a format for a loop
+nobody has watched run.
 
 ## 14. What would make this fail
 
