@@ -1724,6 +1724,7 @@ async def _poll_once():
 
 
 ARB_DIGEST = 6      # entries of context behind the one that fired, per §11.3
+ARB_DIGEST_SCAN = 6  # digests' worth read before another pane's rows are dropped
 
 
 def arbitration_entries(pane):
@@ -1760,7 +1761,23 @@ def arbitration_entries_of(session_id):
     # one name. The roster line in the trigger message carries both, which is where they belong.
     labels = {(m["host"], m["agent"], m["cwd"]): (m["label"] or m["member_id"])
               for m in members}
-    rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST)
+    # A fingerprint is (host, agent, cwd) and nothing more, because pane ids do not survive a
+    # herdr restart. Which means two panes running the same agent in the same directory are one
+    # fingerprint — and one of them may not be in this session at all. That is not theoretical: a
+    # person's own Claude pane in this repo put their prompts into another conversation's
+    # arbitrator digest, headed with a member's label, so the arbitrator was told a member had
+    # said something nobody in that session ever said.
+    #
+    # A row from a pane that is live *now* and is not one of this session's panes is definitely
+    # not this session's. A row from a pane that is no longer live may well be a member from
+    # before a restart, which is the case the fingerprint exists for, so it stays.
+    ours = {m["pane_id"] for m in arbitration.roster(session_id).values() if m["pane_id"]}
+    others = {p.get("pane_id") for p in live_panes()} - ours
+    # ponytail: over-fetch and drop, rather than teaching the query to exclude panes. The digest is
+    # six rows and the scan is bounded; if a shared fingerprint ever gets busy enough that thirty
+    # rows are all somebody else's, this wants a `not_panes` selector in conv_query.
+    rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST * ARB_DIGEST_SCAN)
+    rows = [r for r in rows if r["pane_id"] not in others][-ARB_DIGEST:]
     return [{"label": labels.get((r["host"], r["agent"], r["cwd"]), r["origin"]),
              "text": r["text"]} for r in rows]
 
