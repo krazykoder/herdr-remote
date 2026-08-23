@@ -169,7 +169,7 @@
       if (chord) {
         e.preventDefault();
         sendKeys([chord]);
-        showToast(`Sent ${chord}`);  // the pane may show nothing for it, and silence reads as broken
+        showToast(`Sent ${chord}`, 'info');  // the pane may show nothing for it, and silence reads as broken
         return;
       }
       const act = enterAction(e, { enterSends: enterSendsOn(), shell: shell });

@@ -155,7 +155,24 @@ SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something t
 SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
+# …for the first few seconds. After that the question has changed: the presses are spent, nothing
+# more will be typed, and the loop is only waiting for a status to move. Every look is a `herdr
+# pane list` subprocess — over SSH for a remote pane — and 45 seconds of them at the fast rate is
+# a hundred process spawns to learn one bit. Slow down instead; the cost of arriving 2s late to
+# the answer is a toast that lands 2s late.
+SUBMIT_FAST = 4.0                   # how long the fast rate lasts — the presses fit inside it
+SUBMIT_POLL_SLOW = 2.0              # and after it, when there is nothing left to do but watch
 SUBMIT_TIMEOUT = 8.0                # total, and generous: an agent's first boot is seconds, not ms
+# Harnesses that need longer than that, by herdr agent kind. Eight seconds is generous for a
+# harness whose status field moves as soon as its composer takes the text, and far too short for
+# one that repaints its whole frame first: agy routinely reports `idle` for tens of seconds after
+# an Enter it did take. The cost of guessing low is not a slow send — it is an arbitration session
+# paused with `send_unconfirmed` over a message the member went on to answer.
+SUBMIT_SLOW = {"agy": 45.0}
+# How long a send nobody could confirm is watched for afterwards. Minutes, not seconds: the common
+# reason a send is unconfirmed is that the pane was already working, and what it is waiting for is
+# the agent to finish — which is a turn, and a turn is as long as it is.
+CONFIRM_MS = int(os.environ.get("HERDR_CONFIRM_MS", str(10 * 60 * 1000)))
 
 # The longest text one send_text may carry. 4000, not 1000: a transferred selection is usually code
 # or a diff (P3 spec §6). Mirrors SEND_TEXT_MAX in web/src/pairs_pure.js, which is what the browser
@@ -589,6 +606,23 @@ def push_tag(pane_id: str) -> str:
     return ("herdr-" + re.sub(r"[^A-Za-z0-9_-]", "-", pane_id or "herd"))[:32]
 
 
+def push_topic(tag: str) -> str:
+    """The same tag, as a value Apple will accept in the Topic header.
+
+    RFC 8030 says Topic is up to 32 characters of the URL-safe base64 alphabet. Apple reads that
+    literally and *decodes* it, so a length of 4n+1 — which no base64 string can have — is rejected
+    with `BadWebPushTopic` and a 400, and the push is never delivered. "herdr-w24-p22" is 13
+    characters, and every notification for a two-digit pane on a two-digit window has been failing
+    on that alone. Verified against web.push.apple.com: 13 and 25 are refused, 11, 14, 24, 26 and
+    32 are accepted, 33 is refused.
+
+    One character of padding rather than a hash of the tag: the header stays the pane it is about,
+    which is what makes a failing push readable in a log.
+    """
+    t = (tag or "herdr-herd")[:32]
+    return t + "-" if len(t) % 4 == 1 else t
+
+
 # Lines a pane draws to frame its own output rather than to say anything.
 _BOXY = re.compile(r"^[\s─-╿▀-▟=~_+*#.\-]*$")
 # The choices under a prompt. They are the least informative part of it on a Lock Screen: the
@@ -651,7 +685,7 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
         payload = json.dumps({"type": "clear", "tag": tag})
     else:
         payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
-    headers = {"Topic": tag, "TTL": "21600"}  # 6h TTL, collapse key
+    headers = {"Topic": push_topic(tag), "TTL": "21600"}  # 6h TTL, collapse key
     dead = []
     for i, sub in enumerate(push_subscriptions):
         try:
@@ -663,7 +697,12 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
                 headers=headers,
             )
         except Exception as e:
-            log.warning("Push failed for sub %d: %s", i, e)
+            # The body, not only the status. Every push to Apple has been failing `400 Bad Request`
+            # and `str(e)` says only that — which is the one part of a 400 that carries no
+            # information, since the reason is always in the response Apple sends with it.
+            detail = getattr(getattr(e, "response", None), "text", "") or ""
+            log.warning("Push failed for sub %d: %s%s", i, e,
+                        f" — {detail.strip()[:300]}" if detail.strip() else "")
             if "410" in str(e) or "404" in str(e):
                 dead.append(i)
     if dead:
@@ -890,6 +929,28 @@ def read_pane(pane_id, remote=None):
 # this read on 14 of 20, with no pane going the other way. So capture asks for what the browser's
 # recorder asks for — `convReadTurnEnd` in web/src/conversation_store.js — and hands the parser the
 # rows exactly as herdr returned them.
+# How long a pane that ended a turn saying nothing new is given to say it. A turn end is a *status*
+# transition and some harnesses flip to idle before they paint what they are about to say — agy does
+# it every time — so the one read taken at the transition finds the previous turn and nothing else.
+# Nothing ever reads that pane again, because there is no second transition: the answer is on screen
+# for a person to see and is missing from the record and from the arbitrator's prompt for ever.
+#
+# Rechecked on the ordinary poll rather than by sleeping here: the loop is one pass over every pane
+# on every host, and a wait inside it is a wait for all of them. 0 disables the recheck entirely.
+LATE_TURN_MS = int(os.environ.get("HERDR_LATE_TURN_MS", "45000"))
+# pane_id -> {"was", "status", "until"} for panes whose turn end had nothing to record yet.
+late_turns = {}
+
+# pane_id -> {"ws", "until", "idled"} for a send the relay could not prove landed. A send is
+# unconfirmed for one of two reasons and both resolve themselves in time: a pane that was already
+# working takes the queued text when it finishes, and a pane that never moved moves when it takes
+# it. Watching for that costs nothing — the poll already carries every pane's status — and it turns
+# "check that it landed" into an answer instead of an errand.
+#
+# One per pane. A second send to the same pane replaces the first: it is the newer question, and
+# whatever answers it answered both.
+pending_sends = {}
+
 CAPTURE_LINES = 200
 CAPTURE_SOURCE = "recent-unwrapped"
 
@@ -897,6 +958,111 @@ CAPTURE_SOURCE = "recent-unwrapped"
 def read_pane_for_record(pane_id, remote=None):
     return run_herdr("pane", "read", pane_id, "--lines", str(CAPTURE_LINES),
                      "--source", CAPTURE_SOURCE, remote=remote)
+
+
+def decides(pane_id):
+    """Is this pane the arbitrator of an open session?
+
+    The one pane whose turn end must not wait. A member finishing is a wake-up and can be held back
+    until it has said what it finished with; the arbitrator finishing is the signal to read the drop
+    box (§12.1), and that answer is a *file* — it is already written, and nothing about it is on the
+    pane at all.
+    """
+    if arbitration is None:
+        return False
+    try:
+        return arbitration.decides(pane_id)
+    except Exception as e:                       # noqa: BLE001 — a lookup, never a reason to stop
+        log.warning("arbitration: could not tell whether %s decides: %s", pane_id, e)
+        return False
+
+
+async def confirm_pending_sends(agents):
+    """Sends nobody could confirm, answered by the next thing the pane does.
+
+    A pane takes what it was handed by going to work on it. The pane the send could not be proven
+    against is therefore watched for exactly that: it has to *leave* the turn it was in — a queued
+    message is queued behind a turn — and then go back to work, and the second transition is the
+    proof. A pane that was idle and unresponsive has already left, so its next move is the proof on
+    its own.
+
+    Told to the client that sent it and to nobody else. The other browsers did not ask and cannot
+    act on it, and a phone that lights up about a message someone else sent is a notification about
+    another person's business.
+    """
+    if not pending_sends:
+        return
+    by_id = {a["pane_id"]: a for a in agents}
+    now = int(time.time() * 1000)
+    for pid, wait in list(pending_sends.items()):
+        a = by_id.get(pid)
+        status = (a or {}).get("agent_status") or ""
+        if a is None:
+            pending_sends.pop(pid, None)
+            continue        # the pane is gone; there is nothing left to confirm or to tell anyone
+        if not wait["idled"]:
+            wait["idled"] = ends_turn(status)
+        elif status in SUBMIT_TOOK:
+            pending_sends.pop(pid, None)
+            await tell_sender(wait["ws"], {
+                "type": "command_result", "command": "send_text", "ok": True, "pending": False,
+                "pane_id": pid, "message": "the pane took it"})
+            continue
+        if now >= wait["until"]:
+            pending_sends.pop(pid, None)
+            await tell_sender(wait["ws"], {
+                "type": "command_result", "command": "send_text", "ok": False, "pending": False,
+                "pane_id": pid, "message": "the pane never confirmed it — check that it landed"})
+
+
+async def tell_sender(ws, payload):
+    """One client, the one that asked. A closed socket is the ordinary end of a wait this long."""
+    if ws is None:
+        return
+    try:
+        await ws.send(json.dumps(payload))
+    except Exception:                            # noqa: BLE001 — it hung up, which is not an error
+        pass
+
+
+async def collect_late_turns(agents):
+    """Panes that ended a turn with nothing on screen yet, read again.
+
+    A harness that flips to idle before it paints leaves no second transition to be caught by, so
+    without this the answer is on screen for a person to read and absent from the record and from
+    the arbitrator's prompt for ever. Held open for `LATE_TURN_MS` and then recorded anyway — the
+    tail fallback is what a turn with nothing readable has always got, and it is still better than
+    a turn that vanished.
+
+    A pane that goes back to work has answered the question a different way: whatever it says now
+    belongs to the turn it is in, and that turn will end and be read like any other.
+    """
+    if not late_turns:
+        return
+    by_id = {a["pane_id"]: a for a in agents}
+    now = int(time.time() * 1000)
+    for pid, late in list(late_turns.items()):
+        a = by_id.get(pid)
+        if a is None or not ends_turn(a.get("agent_status") or ""):
+            late_turns.pop(pid, None)
+            continue
+        try:
+            captured = await asyncio.to_thread(read_pane_for_record, pid, remote=a.get("remote"))
+            said = await asyncio.to_thread(conv_log.pending, a, captured)
+            if not said and now < late["until"]:
+                continue
+            late_turns.pop(pid, None)
+            git = await probe_git(a)
+            await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git)
+            log.info("late turn at %s: %s", pid,
+                     f"{said} message(s) after the status changed" if said
+                     else "nothing said before the deadline")
+        except (sqlite3.Error, OSError) as e:
+            late_turns.pop(pid, None)
+            log.warning("conversation log write failed for %s: %s", pid, e)
+        if arbitration is not None:
+            await asyncio.to_thread(arbitrate_turn_end, a, pid)
 
 
 def detect_options(text):
@@ -936,7 +1102,20 @@ async def record_sent(pane_id, text, kind="human_prompt", origin="human_web"):
     echo in the pane and can never be attributed to anyone, so it is never given this origin.
 
     Agent panes only. A shell has no conversation to be part of.
+
+    Also where a session learns that a person joined in. `max_consecutive` counts automated sends
+    with nobody in between — it is the budget that asks "is this loop talking to itself" — and
+    this is the one place the relay knows the answer is no. Before this it was never told, so the
+    counter only ever went up and every session stopped on `budget_consecutive` three sends in,
+    whatever anybody typed.
     """
+    if arbitration is not None:
+        try:
+            session_id = await asyncio.to_thread(arbitration.session_of_pane, pane_id)
+            if session_id:
+                await asyncio.to_thread(arbitration.human_entered, session_id, pane_id)
+        except Exception as e:                   # noqa: BLE001 — never break a send over this
+            log.warning("arbitration: human entry for %s not recorded: %s", pane_id, e)
     if conv_log is None:
         return
     pane = agent_cache.get(pane_id)
@@ -1107,7 +1286,27 @@ def live_panes():
     return [] if err else annotate_agents(dig_panes(data), PROJECTS)
 
 
-async def submit_paste(pane_id, text, remote=None):
+def submit_delay(waited):
+    """How long to wait before looking at the pane again, given how long this send has been open.
+
+    Two rates, because there are two phases: while Enters are still going in, the loop wants to see
+    the result of each one; once they are spent it is only watching. See SUBMIT_POLL.
+    """
+    return SUBMIT_POLL if waited < SUBMIT_FAST else SUBMIT_POLL_SLOW
+
+
+def submit_window(pane_id):
+    """How long this pane gets to say it took the paste, by which harness is in it.
+
+    One number cannot cover them all — see SUBMIT_SLOW. Read from the poll's own snapshot, so a
+    pane this relay has never listed falls back to the shared window, which is the right answer
+    for a pane whose harness is unknown.
+    """
+    agent = (agent_cache.get(pane_id) or {}).get("agent", "")
+    return SUBMIT_SLOW.get(agent, SUBMIT_TIMEOUT)
+
+
+async def submit_paste(pane_id, text, remote=None, out=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
     The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
@@ -1126,6 +1325,12 @@ async def submit_paste(pane_id, text, remote=None):
     doing, and `working` is what it will keep saying whether the Enter landed or not — so there is
     nothing to watch. One press after the settle, exactly as before, and the return says so.
 
+    `out`, when given, is filled in with `reason` — `queued` for a pane that was already working,
+    `unconfirmed` for one that never moved. Both are False here and they are not the same news: the
+    first almost certainly landed and is waiting its turn, the second may be sitting in a composer.
+    Out of band because the return value is load-bearing elsewhere — arbitration reads `is not
+    False` and a richer type would quietly read as success.
+
     And a pane with no agent skips all of it. Every rule here is about a TUI — booting, laying out a
     paste, showing a permission prompt — and a shell has none of them. It has no status to watch
     either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
@@ -1141,7 +1346,8 @@ async def submit_paste(pane_id, text, remote=None):
     if pane_id in shell_panes:
         await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
         return True
-    deadline = time.monotonic() + SUBMIT_TIMEOUT
+    start = time.monotonic()
+    deadline = start + submit_window(pane_id)
     presses, first = 0, True
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
@@ -1150,6 +1356,8 @@ async def submit_paste(pane_id, text, remote=None):
         # keep reporting either way.
         if first and status == "working":
             await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+            if out is not None:
+                out["reason"] = "queued"
             return False
         first = False
         if status in SUBMIT_TOOK:
@@ -1165,12 +1373,14 @@ async def submit_paste(pane_id, text, remote=None):
         # Anything else is a pane herdr has no status for — `unknown` from a real pane list, or an
         # empty string from a pane it did not list — which is a TUI still starting. Wait for it
         # rather than pressing into a terminal that is not listening yet.
-        await asyncio.sleep(SUBMIT_POLL)
+        await asyncio.sleep(submit_delay(time.monotonic() - start))
     # Out of presses or out of time, and the pane never moved. Said plainly in the log: the text is
     # in the composer and a person has to press Enter. Silence here is what made this bug take
     # three attempts to find.
-    log.warning("submit: pane=%s never left %s after %d Enter press(es) — text may be unsent",
-                pane_id, SUBMIT_READY, presses)
+    log.warning("submit: pane=%s never left %s after %d Enter press(es) in %.0fs — text may be "
+                "unsent", pane_id, SUBMIT_READY, presses, submit_window(pane_id))
+    if out is not None:
+        out["reason"] = "unconfirmed"
     return False
 
 
@@ -1459,6 +1669,19 @@ async def _poll_once():
                 try:
                     captured = await asyncio.to_thread(
                         read_pane_for_record, pid, remote=a.get("remote"))
+                    # Has it actually said anything? The window is never empty — it holds the whole
+                    # previous turn — so this is the only form of the question that can tell a pane
+                    # that answered from one that flipped to idle before it painted. When it has
+                    # not, the turn is left open and picked up by `collect_late_turns`: recording
+                    # now would write the pane's own footer as the agent's closing words, and
+                    # asking the arbitrator now would ask it to decide on that.
+                    if LATE_TURN_MS and not await asyncio.to_thread(conv_log.pending, a, captured) \
+                            and not decides(pid):
+                        late_turns[pid] = {"was": was, "status": status,
+                                           "until": int(time.time() * 1000) + LATE_TURN_MS}
+                        last_statuses[pid] = status
+                        continue
+                    late_turns.pop(pid, None)
                     git = await probe_git(a)
                     await asyncio.to_thread(
                         conv_log.record_turn_end, a, captured, was, status, git=git)
@@ -1474,6 +1697,11 @@ async def _poll_once():
                 if arbitration is not None:
                     await asyncio.to_thread(arbitrate_turn_end, a, pid)
             last_statuses[pid] = status
+        # Turns that ended with nothing on screen yet, given another look now that some time has
+        # passed. Before the clocks, because a turn that lands here is a turn that just happened.
+        await collect_late_turns(agents)
+        # And sends that could not be proven when they went out, which this same snapshot answers.
+        await confirm_pending_sends(agents)
         # §10's clocks, once per poll and after every transition above has been recorded: an idle
         # clock is "nothing has happened for a while", so it must be evaluated against a record
         # that already knows about anything that just did.
@@ -1496,6 +1724,7 @@ async def _poll_once():
 
 
 ARB_DIGEST = 6      # entries of context behind the one that fired, per §11.3
+ARB_DIGEST_SCAN = 6  # digests' worth read before another pane's rows are dropped
 
 
 def arbitration_entries(pane):
@@ -1532,7 +1761,22 @@ def arbitration_entries_of(session_id):
     # one name. The roster line in the trigger message carries both, which is where they belong.
     labels = {(m["host"], m["agent"], m["cwd"]): (m["label"] or m["member_id"])
               for m in members}
-    rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST)
+    # A fingerprint is (host, agent, cwd) and nothing more, because pane ids do not survive a
+    # herdr restart. Which means two panes running the same agent in the same directory are one
+    # fingerprint — and one of them may not be in this session at all. That is not theoretical: a
+    # person's own Claude pane in this repo put their prompts into another conversation's
+    # arbitrator digest, headed with a member's label, so the arbitrator was told a member had
+    # said something nobody in that session ever said.
+    #
+    # An exited stranger is still a stranger; allowing every no-longer-live pane would recreate the
+    # leak on the next digest. The member table holds the pane chosen at enrolment and the live
+    # roster holds its current successor, so their union is the safe set across a restart.
+    ours = {m["pane_id"] for m in members if m["pane_id"]}
+    ours.update(m["pane_id"] for m in arbitration.roster(session_id).values() if m["pane_id"])
+    # ponytail: over-fetch and keep, rather than teaching the query a pane selector. The digest is
+    # six rows and the scan is bounded; add one only if this bounded filter becomes measurable.
+    rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST * ARB_DIGEST_SCAN)
+    rows = [r for r in rows if r["pane_id"] in ours][-ARB_DIGEST:]
     return [{"label": labels.get((r["host"], r["agent"], r["cwd"]), r["origin"]),
              "text": r["text"]} for r in rows]
 
@@ -1547,6 +1791,7 @@ def arb_session_message(session):
     """
     roster = arbitration.roster(session["id"])
     left = budget_left(session, arb_now())
+    limits = json.loads(session["budget_json"])
     last = arbitration.conn.execute(
         "SELECT sequence, gate, to_member, why, ambiguity, at FROM decisions "
         "WHERE session_id=? AND valid=1 ORDER BY id DESC LIMIT 1", (session["id"],)).fetchone()
@@ -1561,6 +1806,9 @@ def arb_session_message(session):
             # The clocks, so the dialog that edits a session can show them as they are. Relay-side
             # policy, never anything the arbitrator sees — it cannot act on a clock.
             "triggers": json.loads(session["triggers_json"]),
+            # Relay-side policy like the clocks, and on this message for the same reason: the
+            # dialog that edits a session has to open on what it already says.
+            "warmup": bool(session["warmup"]),
             "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
                          "pane_id": m["pane_id"], "status": m["status"]}
                         for mid, m in roster.items()],
@@ -1575,11 +1823,24 @@ def arb_session_message(session):
                 "host": arb_fp[0], "agent": arb_fp[1], "cwd": arb_fp[2],
                 "label": next((p.get("label") or "" for p in live_panes()
                                if p.get("pane_id") == arb_pane), "")},
+            # What is left, and what it is left *of*. A countdown alone cannot be edited back
+            # into a limit, so the dialog that raises a spent budget needs the maxima as they
+            # stand — the same reason the clocks are on this message.
             "budget": {"steps_left": left["steps"], "consecutive_left": left["consecutive"],
-                       "minutes_left": left["ms"] // 60000},
+                       "minutes_left": left["ms"] // 60000,
+                       "max_steps": limits["max_steps"],
+                       "max_consecutive": limits["max_consecutive"],
+                       "max_minutes": limits["max_wall_clock_ms"] // 60000},
             "last_decision": None if last is None else {
                 "sequence": last["sequence"], "gate": last["gate"], "to": last["to_member"],
                 "why": last["why"], "ambiguity": last["ambiguity"], "at": last["at"]},
+            # What pressing Resume would do, worked out by the code that does it — see
+            # `resume_plan`. On the session message rather than answered on request, because the
+            # question is asked by a person looking at a stopped session and the strip is what
+            # they are looking at. `prompt_id` is dropped: it is how the relay finds an unread
+            # decision, and a client that had it could do nothing with it.
+            "plan": {k: v for k, v in arbitration.resume_plan(session["id"]).items()
+                     if k != "prompt_id"},
             # How far this session's path has got, as one number. Not the path itself — that is
             # prose and goes only to the client that asks for it — but a watermark, so a client
             # holding an older copy knows to ask again. Without it the thread's steps only
@@ -2121,9 +2382,10 @@ async def handle_client(ws, listener="lan"):
                     # where it was asked for, exactly as `conv_log` does.
                     try:
                         session_id = msg.get("session") or ""
-                        decisions, events = await asyncio.to_thread(
+                        decisions, events, plan = await asyncio.to_thread(
                             lambda: (arbitration.detail(session_id),
-                                     arbitration.events(session_id)))
+                                     arbitration.events(session_id),
+                                     arbitration.resume_plan(session_id)))
                     except ArbiterError as e:
                         await ws.send(json.dumps({
                             "type": "error", "code": e.code, "message": str(e)}))
@@ -2134,7 +2396,11 @@ async def handle_client(ws, listener="lan"):
                         continue
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
-                        "decisions": decisions, "events": events}))
+                        "decisions": decisions, "events": events,
+                        # Freshly worked out, unlike the copy on the held session message: the
+                        # sheet is somebody looking *now*, and what Resume would do is exactly
+                        # the thing that changes while a session sits stopped.
+                        "plan": {k: v for k, v in plan.items() if k != "prompt_id"}}))
                     continue
                 try:
                     if msg_type == "arb_start":
@@ -2149,6 +2415,10 @@ async def handle_client(ws, listener="lan"):
                                 scope=msg.get("scope") or "",
                                 gates=msg.get("gates"), budget=msg.get("budget"),
                                 triggers=msg.get("triggers"),
+                                # A cold agent answers its first prompt with nothing. Off unless
+                                # the person asked, and on regardless for the harnesses that need
+                                # it — see Arbitration.warm.
+                                warmup=bool(msg.get("warmup")),
                                 # Briefed but not armed: "initialised" and "started" are two
                                 # things, and a person assembling a room wants the first.
                                 paused=bool(msg.get("paused"))))
@@ -2174,7 +2444,8 @@ async def handle_client(ws, listener="lan"):
                         session = await asyncio.to_thread(functools.partial(
                             arbitration.edit, msg["session"],
                             scope=msg.get("scope"), members=msg.get("members"),
-                            arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers")))
+                            arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers"),
+                            budget=msg.get("budget"), warmup=msg.get("warmup")))
                     elif msg_type == "arb_resume":
                         # `kick` is what happens first. Without it the loop is armed and waits for
                         # a trigger, which may be a very long time coming; with it the arbitrator is
@@ -2285,11 +2556,32 @@ async def handle_client(ws, listener="lan"):
                     # where it very probably queued — and a client that hears nothing draws the
                     # same empty composer either way. The text is still recorded as sent, because
                     # it very likely was; what the client is told is that nobody confirmed it.
-                    if not await submit_paste(pane_id, text, remote=remote):
+                    out = {}
+                    if await submit_paste(pane_id, text, remote=remote, out=out):
+                        # Said out loud when it *did* land, too. It used to be silence, and a client
+                        # with nothing to show for a send drew its own tick the moment the socket
+                        # took the text — which is a claim about this end of the wire, not about the
+                        # pane. One message per send either way: only the last chunk carries
+                        # `submit`, and this is that chunk's answer.
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": True,
+                            "pending": False, "pane_id": pane_id,
+                            "message": "the pane took it"}))
+                    else:
+                        queued = out.get("reason") == "queued"
+                        # Not the end of the story any more: the pane is watched until it goes to
+                        # work on this, and the client is told when it does. `pending` is what says
+                        # so — a client too old to read it sees the same failure it always saw.
+                        pending_sends[pane_id] = {
+                            "ws": ws, "until": int(time.time() * 1000) + CONFIRM_MS,
+                            # A queued message is behind a turn that has to end first; a pane that
+                            # never moved has already ended one, so its next move is the answer.
+                            "idled": not queued}
                         await ws.send(json.dumps({
                             "type": "command_result", "command": "send_text", "ok": False,
-                            "pane_id": pane_id,
-                            "message": "the pane never confirmed it — check that it landed"}))
+                            "pending": True, "pane_id": pane_id, "reason": out.get("reason"),
+                            "message": "queued behind what the pane is doing"
+                                       if queued else "the pane has not confirmed it yet"}))
                 else:
                     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)

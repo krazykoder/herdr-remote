@@ -210,13 +210,21 @@
     }
 
     let toastTimer = null;
-    function showToast(text) {
+    // `kind` is 'error' unless something says otherwise. A notice that nothing went wrong — a
+    // message queued behind a working pane, and the pane later taking it — must not wear the red
+    // border or make the sound that means a refusal, or the two stop being distinguishable.
+    function showToast(text, kind) {
       const el = document.getElementById('toast');
       el.textContent = text;
+      // Three kinds, and the default is the loud one: a toast with no kind is something that went
+      // wrong, which is what most of them are. `ok` is the other end — a send that landed — and it
+      // is a colour rather than only a ✓ because the tick is 8px of a line read at arm's length.
+      el.style.borderColor = kind === 'ok' ? 'var(--green)'
+        : kind === 'info' ? 'var(--border)' : 'var(--red)';
       el.style.display = 'block';
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
-      if (window.cue) cue('error');
+      if (window.cue && kind !== 'info' && kind !== 'ok') cue('error');
     }
 
     function agentCard(a) {

@@ -136,7 +136,7 @@ test('⚖ over a conversation with no arbitrator opens the dialog that appoints 
   // Three sections, because there are three decisions: who decides, and the two it decides
   // between.
   await expect(page.locator('#arbSetupBody .arb-part-lede')).toHaveText(
-    ['⚖ Arbitrator', 'Agent 1', 'Agent 2']);
+    ['Arbitrator', 'Agent 1', 'Agent 2']);
   // A dialog, so a tap beside it is the way out — and nothing it was over moved to make room.
   await page.mouse.click(5, 5);
   await expect(page.locator('#arbModal')).toBeHidden();
@@ -202,13 +202,28 @@ test('a running session shows what it is doing and how to stop it', async ({page
     ambiguity: 'low', at: Date.now()}}));
   const strip = page.locator('#arbStrip .arb-strip');
   await expect(strip).toContainText('Arbitrating');
-  // Which of the three is doing something, not what was last said — the sentence lives in the Log.
-  await expect(strip).toContainText('scratch · working');
+  // Where the session is, not what was last said — the sentence lives in the Log, and what the
+  // state means lives in the sheet a tap on the tray opens.
   await expect(strip).not.toContainText('Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
-  // One line, whatever the labels are: the strip rides the header and everything under it is the
-  // thread. A wrapped strip is messages pushed off the screen.
-  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
+  // Three rows and no more: a row of controls that must not wrap, the state, and the budget. The
+  // tray hangs over a thread being read, and every pixel of it is a pixel of that thread.
+  expect(await page.locator('#arbStrip .arb-bar')
+    .evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
+  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(90);
+  // Right-aligned with the row of buttons above it, which is what makes the two one stack — and
+  // exactly as wide as its own row of buttons, so a long pause reason wraps rather than reshaping
+  // the tray every time the session moves.
+  const box = await page.evaluate(() => {
+    const at = sel => document.querySelector(sel).getBoundingClientRect();
+    return {floatRight: at('#convView .conv-view-top .hang-float').right,
+            right: at('#arbStrip .arb-strip').right,
+            width: at('#arbStrip .arb-strip').width,
+            bar: at('#arbStrip .arb-bar').width};
+  });
+  expect(Math.abs(box.floatRight - box.right)).toBeLessThan(1.5);
+  // The tray's own padding and border, and nothing else.
+  expect(box.width - box.bar).toBeLessThan(13);
 
   await captureSends(page);
   await strip.getByRole('button', {name: 'Pause'}).click();
@@ -219,7 +234,7 @@ test('a paused session says why, and offers the way back', async ({page}) => {
   await openConv(page);
   await broadcast(page, session({state: 'paused', pause_reason: 'budget_steps'}));
   const strip = page.locator('#arbStrip .arb-strip');
-  await expect(strip).toContainText('Paused — budget steps');
+  await expect(strip).toContainText('Paused · out of steps');
   await captureSends(page);
   await strip.getByRole('button', {name: 'Resume', exact: true}).click();
   expect(await sent(page)).toEqual([{type: 'arb_resume', session: 's-20260817-1103'}]);
@@ -227,7 +242,7 @@ test('a paused session says why, and offers the way back', async ({page}) => {
   // And the other way back, for a session whose members are all sitting idle: arming alone would
   // wait for a turn that is never going to end.
   await page.evaluate(() => { window.__sent = []; });
-  await strip.getByRole('button', {name: 'Resume and trigger'}).click();
+  await strip.getByRole('button', {name: 'Ask the arbitrator now'}).click();
   expect(await sent(page)).toEqual([
     {type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
 });
@@ -269,7 +284,7 @@ test('the path is drawn in the thread, and the whole of it is in the log', async
   }));
 
   const thread = page.locator('#convViewThread');
-  await expect(thread).toContainText('⚖ trigger');
+  await expect(thread).toContainText('trigger');
   await expect(thread).toContainText('review to scratch (w8:p1), 180 chars');
   // The step that went wrong is the one that has to be found rather than read past.
   await expect(thread.locator('.conv-commit.warn', {hasText: 'OSError'})).toBeVisible();
@@ -284,11 +299,17 @@ test('ending is asked twice, and the strip goes with the session', async ({page}
   await openConv(page);
   await broadcast(page, session());
   await captureSends(page);
-  const end = page.locator('#arbStrip').getByRole('button', {name: /End/});
+  // Behind the Edit dialog rather than on the strip: over a scrolling thread, armed is one mistap
+  // from a session that is gone for good.
+  await page.locator('#arbStrip').getByRole('button', {name: 'Edit'}).click();
+  const end = page.locator('#arbSetupBody').getByRole('button', {name: /End session/});
   await end.click();
   expect(await sent(page)).toEqual([]);          // the first tap only arms it
   await end.click();
   expect(await sent(page)).toEqual([{type: 'arb_cancel', session: 's-20260817-1103'}]);
+  // And the dialog it was pressed in closes with it — a Save landing on a session that is ending
+  // is the one thing worse than having the button there in the first place.
+  await expect(page.locator('#arbModal')).toBeHidden();
 
   await broadcast(page, session({state: 'ended'}));
   await expect(page.locator('#arbStrip')).toBeEmpty();

@@ -179,6 +179,21 @@ test('pi: the newest turn is the one below the last request', () => {
   assert.deepEqual(ctx.turnSummaries(rows, 'pi'), [find(rows, 'pi')]);
 });
 
+test('claude: a result glyph quoted in prose is not a tool call', () => {
+  // Read off a live pane on 2026-08-22, where this cost a whole message: an agent writing *about*
+  // the terminal quoted claude's own result glyph, the wrap put it at the start of a line, and the
+  // summary was read as a tool execution — not offered, and never recorded. A real result hangs
+  // directly under the call that produced it, so a blank line above the glyph says this one is
+  // prose. Same rows as test_pane_summary.py, so the two copies stay one answer.
+  const rows = ['⏺ Pinned as a fixture, asserted from both copies.', '',
+                '  Verdict: go. No code change needed.', '',
+                "  ⎿ is claude's result glyph; agy's profile has result: [], so the reply gets",
+                '  swallowed into the prompt run above it.', ''];
+  assert.deepEqual(find(rows, 'claude'), [0, 5]);
+  // And a result directly under its call still means a tool ran.
+  assert.equal(find(['⏺ Bash(git status --short)', '  ⎿  M web/index.html'], 'claude'), null);
+});
+
 test('pi: a reply followed by a command is not the closing message', () => {
   const rows = [
     ' ⏺ Checking the tree first.',
@@ -218,6 +233,30 @@ test('agy: the request is ruled, and the reply below it is not', () => {
   // The blank line between `> say only the word OK` and `  OK` must not carry the rule into the
   // reply — nothing in column 0 separates them, so only the block start does.
   assert.equal(ctx.userInputLines(rows, 'agy').has(37), false);
+});
+
+test('agy: the status line it ships now is not a message either', () => {
+  // agy replaced that right-aligned bar with a three-line status block in column 0, read off a live
+  // pane on 2026-08-22. Column 0 is what a positional block cannot start on, so the shape that
+  // caused the bug is gone — and the composer trim still holds it, which is two answers rather than
+  // one. Same fixture as test_pane_summary.py, so the two copies stay one answer.
+  const rows = fixture('pane_agy_statusline.txt');
+  assert.deepEqual(find(rows, 'agy'), [3, 3]);
+  assert.deepEqual(ctx.messageBlocks(rows, 'agy'), [[3, 3]]);
+});
+
+test("agy: its own footer is not something it said", () => {
+  // Read off a live pane on 2026-08-22. agy right-aligns a model and credit line under a rule at
+  // the foot of the pane, and a positional harness reads any indented line under a column-0 line
+  // as the start of a message. So a turn where agy had not answered yet was read as agy saying
+  // `Gemini 3.7 Flash · medium · AI: Out of credits`. Ported from
+  // tests/test_pane_summary.py::test_agys_own_footer_is_not_a_message.
+  const rows = ['────────────────────', '> review the change', '', '  Looks good to me.', '',
+                '────────────────────', '>', '', '',
+                '                    Gemini 3.7 Flash · medium · AI: Out of credits'];
+  assert.deepEqual(find(rows, 'agy'), [3, 3]);
+  assert.deepEqual(ctx.messageBlocks(rows, 'agy'), [[3, 3]]);
+  assert.equal(ctx.userInputLines(rows, 'agy').has(9), false, 'nor something the user typed');
 });
 
 // agy wraps its own lines, on both sides of the transcript, and each wrap breaks the positional

@@ -1,0 +1,11 @@
+Please review the work described above.
+
+Review Steps 4+5, commit 03acc22: web/src/launcher_exec.js (new, run/spawn dispatch), start_dialog.js intent.ql branch, status_bar.js launcherFailed(), launcher_ui.js onclick wiring, tests/test_launcher_exec.js (19 tests). Full JS suite 588/588, build 36 modules.
+
+Three deviations from your blueprint to check: 1. Confirm shows Project label + host, not a filesystem path - relay/projects.py:142 strips cwd from public_projects on purpose, so the browser never has it; a path would be invented. Confirm this is the right call rather than a gap. 2. send_text goes through the existing sendTextTo (controls.js:158) instead of a hand-built {pane: pane_id} message - gets submit/chunking/arbitration-guard/noteSent for free. Confirm no send_text is written directly to the socket (there's a test for this) and that reuse is correct over rebuilding. 3. Confirm is native confirm(), not a bespoke sheet - matches shortcuts.js:79's existing pattern. Confirm this is acceptable simplicity, not a missed requirement.
+
+Also check three additions test claude made beyond your blueprint: (a) a second press while a batch is running is refused, not queued; (b) launcherFailed() ends the batch and drops the intent on a refused start, so a stranded batch can't wedge the launcher; (c) conversation-name collision handling ("Trio" -> "Trio 2") and a toast when CONV_CONV_MAX is hit. Do these close real gaps or introduce complexity beyond what steps 4/5 needed?
+
+Step 6 (arbitrator on a 2-member tile) is explicitly not built yet - launcherWantsArb exists but unused. Don't flag that as missing, it's deferred by design.
+
+If review passes, say so plainly and step 6 goes to test claude. If you find an issue, name the file and line.

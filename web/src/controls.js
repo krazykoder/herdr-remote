@@ -104,7 +104,7 @@
         // The screen the pane repaints after a clear is the live frame; the backlog behind it is
         // history the user did not ask to keep looking at. Undone by Load more or reopening it.
         paneSource = 'visible';
-        showToast(`Sent ${line} — Load more or reopen for history`);
+        showToast(`Sending ${line} — Load more or reopen for history`, 'info');
       });
     }
 
@@ -113,7 +113,7 @@
         closeFireMenu();
         const line = isShell(activePane) ? 'exit' : '/quit';
         if (!sendLine(line)) return;
-        showToast(`Sent ${line}`);
+        showToast(`Sending ${line}`, 'info');
       });
     }
 
@@ -176,6 +176,9 @@
       const paneId = activePane, text = i.value;
       if (!sendTextTo(paneId, text)) return;
       i.value = ''; autoGrow(i);
+      // What this end knows: the socket took it. The tick comes back from the relay once the
+      // pane has it — see the `send_text` branch of command_result.
+      showToast(`Sending to ${paneLabel(paneOf(paneId) || {}) || paneId}…`, 'info');
       renderQuickActions();   // the pane has a last send now, so Resend has something to offer
       // Only what was typed at a terminal, and only from this composer. A transfer, a shortcut and
       // a resend all reach the wire by other paths, and none of them is the user typing a command.

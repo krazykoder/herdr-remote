@@ -37,12 +37,14 @@ import re
 #   end_line a line that closes a block on its content rather than on its gutter.
 #   user_line a callable (row, rows, i) -> bool, for a harness whose prompt cannot be read off one
 #            character. Takes precedence over `user`.
+#   chrome   the harness's empty composer line. Nothing below it is transcript — see `_in_chrome`.
 GUTTERS = {
     "claude": {"speaker": "⏺", "result": ["⎿"], "user": ["❯", ">"]},
     "codex": {"speaker": "•", "result": ["└", "│"], "user": ["›"]},
     "pi": {"speaker": "⏺", "result": ["$"], "user": ["›"], "ends": ["⋯"],
            "indent": 1, "composer": False},
-    "agy": {"speaker": None, "result": [], "user": [">"], "opens": [">", "●", "▸", "─"]},
+    "agy": {"speaker": None, "result": [], "user": [">"], "opens": [">", "●", "▸", "─"],
+            "chrome": ">"},
 }
 
 _OPENCODE_BAR = re.compile(r"^\s*┃")
@@ -114,6 +116,39 @@ def ends_block(row, g):
             or ch in g.get("result", []) or ch in (g.get("ends") or []))
 
 
+# How far above the bottom of a read the live composer may be found. The footer is a rule, an empty
+# input line, one or two blanks and a status bar; ten rows covers that and stops a genuinely empty
+# prompt in the middle of a transcript from cutting the window in half.
+CHROME_ROWS = 10
+
+
+def transcript(rows, g):
+    """The rows above the live composer — the pane's transcript, without its own footer.
+
+    agy right-aligns a model and credit line under a rule at the foot of the pane, and a positional
+    harness reads *any* indented line under a column-0 line as the start of a message. So the pane's
+    chrome was read as agy's closing words: a turn where agy had not answered yet was recorded as
+    agy saying `Gemini 3.7 Flash · medium · AI: Out of credits`, and that went into the record, into
+    the thread, and into the prompt the arbitrator was asked to decide on. Worse than junk — it is
+    junk that reads like an answer, and the arbitrator called a human over it three times.
+
+    The *empty* composer only. A `>` with text after it is a prompt in the transcript and cannot be
+    told from the live one by shape, so it is not a cut point.
+
+    Trimmed from the end, so every index into the result is an index into the pane — the spans this
+    module returns are read back against the caller's own rows.
+    """
+    mark = (g or {}).get("chrome")
+    if not mark or not rows:
+        return rows
+    for j in range(len(rows) - 1, max(-1, len(rows) - 1 - CHROME_ROWS), -1):
+        if (rows[j] or "").rstrip() == mark:
+            # Inclusive: the composer line is the anchor `final_message` reads back from — the
+            # newest prompt — and it carries no text of its own to be mistaken for one.
+            return rows[:j + 1]
+    return rows
+
+
 def starts_block(rows, g, i):
     """Does a block start here?
 
@@ -165,15 +200,27 @@ def block_span(rows, g, start):
     closes with three paragraphs, and ending on the first blank would take only the last one.
     """
     end = start
+    # A result glyph hangs *directly* under the call that produced it — the call line, its wrapped
+    # remainder, then the output. Nothing separates them, so a glyph found past the block's first
+    # blank line is not one: it is prose that happens to start a wrapped line with the character,
+    # which is what an agent writing about a terminal does constantly. That cost a whole message: a
+    # summary quoting `⎿` was read as a tool execution and never recorded at all.
+    #
+    # Not on an indented harness. There a result glyph *is* an end (`ends_block`), so it is read in
+    # its own column rather than at the start of a wrapped line, and pi does put a blank line
+    # between a reply and the command under it — the one case this rule would get backwards.
+    gap = False
     for j in range(start + 1, len(rows)):
         line = (rows[j] or "").lstrip()
         # Tested before the end check: on an indented harness a result glyph is itself an end.
-        if line and line[0] in g.get("result", []):
+        if line and (not gap or g.get("indent")) and line[0] in g.get("result", []):
             return None
         if ends_block(rows[j], g):
             break
         if line:
             end = j
+        else:
+            gap = True
     return (start, end)
 
 
@@ -205,6 +252,7 @@ def final_message(rows, agent):
     g = profile_for(agent)
     if not g or not rows or g.get("messages") is False:
         return None
+    rows = transcript(rows, g)
     last_input = -1 if g.get("composer") is False else last_user_input(rows, agent)
     before = len(rows) if last_input < 0 else last_input
     for i in range(before - 1, -1, -1):
@@ -265,6 +313,7 @@ def message_blocks(rows, agent):
     out = []
     if not g or not rows:
         return out
+    rows = transcript(rows, g)
     i = 0
     while i < len(rows):
         if starts_block(rows, g, i):
@@ -289,6 +338,7 @@ def user_input_lines(rows, agent):
     lines = set()
     if not g or not rows:
         return lines
+    rows = transcript(rows, g)
     in_turn = False
     pending = []
     for i, row in enumerate(rows):

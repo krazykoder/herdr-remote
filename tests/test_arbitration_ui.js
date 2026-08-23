@@ -133,15 +133,17 @@ test('a running session shows its state, budget and one way to stop it', () => {
   assert.ok(html.includes('Arbitrating'), html);
   assert.ok(html.includes('7 steps · 44 min'), html);
   assert.ok(html.includes('arb_pause'), html);
-  assert.ok(html.includes('arb_cancel'), html);
   assert.ok(!html.includes('arb_resume'), 'a running session is not offered a Resume');
+  // Ending is not on the strip at all: it is one tap over a thread being scrolled, and armed is
+  // one mistap from done. It lives in the Edit dialog with Re-brief.
+  assert.ok(!html.includes('arb_cancel'), html);
 });
 
 test('a paused session says why, and offers Resume instead of Pause', () => {
   const {g} = ctx();
   const html = g.arbStripHtml({...SESSION, state: 'paused', pause_reason: 'budget_steps'},
                               CONV, true, false);
-  assert.ok(html.includes('Paused — budget steps'), html);
+  assert.ok(html.includes('Paused · out of steps'), html);
   assert.ok(html.includes('arb_resume'), html);
   assert.ok(!html.includes('arb_pause'), html);
 });
@@ -162,26 +164,39 @@ test('a paused session is resumed quietly, or with a decision asked for now', ()
                    [{type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
 });
 
-test('the strip says which of the three is working, not what was last said', () => {
-  // One line, and the line is where the session *is*. The last decision's sentence used to live
-  // here and wrapped to three lines on a phone, pushing the thread down by all of them — and it
-  // answers a different question, which the Log button is for.
+test('the tray says where the session is, and nothing that is a paragraph', () => {
+  // Two rows: the controls, and where it is. The last decision's sentence used to live here and
+  // wrapped to three lines on a phone, pushing the thread down by all of them — and so did what
+  // the state means and what Resume would do. All three answer questions that have a sheet.
   const {g} = ctx();
   const s = {...SESSION, last_decision: {sequence: 1, gate: 'review', to: 'member-2',
                                          why: 'Ready for an independent check.', ambiguity: 'low'}};
   const html = g.arbStripHtml(s, CONV, true);
   assert.equal(html.includes('Ready for an independent check.'), false);
-  assert.match(html, /arbOpenDetail\(\)[^>]*>Log</);
-  assert.match(html, /arbEditHere\(\)[^>]*>Edit</);
-  // member-2 is `working` in the fixture, so it is the one being waited on.
-  assert.match(html, /Reviewer 1 · working/);
-  assert.match(html, /openTerminal\('w1:p2'\)/);
+  // Icons now, so the name a screen reader and this test read is the aria-label.
+  assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
+  assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
+  assert.match(html, /arb-say-state">Arbitrating<[\s\S]*arb-say-budget">7 steps · 44 min</);
+  // What the state means is the sheet's, not the tray's.
+  assert.equal(html.includes('the next turn that ends is a decision'), false);
+  // And anywhere that is not a button opens that sheet.
+  assert.match(html, /class="arb-strip" onclick="[^"]*arbOpenResume\(\)"/);
+  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /arb-say-state">Deciding…</);
+});
 
-  // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
-  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /⚖ Arbitrator · deciding/);
-  // And nobody working at all is said as such rather than left blank.
-  const quiet = {...SESSION, members: SESSION.members.map(m => ({...m, status: 'idle'}))};
-  assert.match(g.arbStripHtml(quiet, CONV, true), /⚖ Arbitrator · waiting/);
+test('a pause says what its reason means, not only what it is called', () => {
+  // "budget consecutive" is precise and unactionable on its own: it counts automated sends nobody
+  // joined in on, and a person cannot know that from the label.
+  const {g} = ctx();
+  const at = r => ({...SESSION, state: 'paused', pause_reason: r});
+  // The tray carries the short name of the reason…
+  assert.match(g.arbStripHtml(at('budget_consecutive'), CONV, true), /Paused · needs a human/);
+  // …and the sheet a tap on it opens carries what that means, which is a paragraph.
+  const sheet = r => g.arbResumeHtml(at(r), [], null);
+  assert.match(sheet('budget_consecutive'), /nobody joining in[\s\S]*Resuming clears the run/);
+  assert.match(sheet('invalid_record'), /↻ Brief/);
+  // A reason this page has never heard of still says something true.
+  assert.match(sheet('something_new'), /waiting for you/);
 });
 
 test('an ended session leaves no strip behind', () => {
@@ -239,6 +254,13 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     // Both clocks off unless the form was asked for them: a trigger nobody chose is an
     // unattended loop spending budget on a conversation that had stopped on purpose.
     triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0},
+    // The three hard stops, at their defaults — the form always sends them, because a session is
+    // stopped by whichever it spends first and "whatever the relay felt like" is not an answer a
+    // person can plan around.
+    budget: {max_steps: 8, max_consecutive: 8, max_wall_clock_ms: 45 * 60000},
+    // Off unless the box is ticked. agy is woken regardless, by the relay, because it is the one
+    // that needs it — the box is for the rest.
+    warmup: false,
     // Briefed and armed, which is the default. `Brief only` is the other half of that badge pair.
     paused: false,
   }]);
@@ -279,7 +301,7 @@ test('the arbitrator’s pane is marked, and typing at it is asked twice', () =>
   const {g, toasts} = ctx();
   assert.equal(g.arbMark('w1:p3'), '', 'nothing running, nothing marked');
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
-  assert.match(g.arbMark('w1:p3'), /⚖/);
+  assert.match(g.arbMark('w1:p3'), /badge arb[\s\S]*arb-sign/);
   assert.equal(g.arbMark('w1:p1'), '', 'a member is not the arbitrator');
 
   assert.equal(g.arbGuardSend('w1:p1'), true, 'a member is typed at freely');
@@ -347,23 +369,23 @@ test('arming one arbitrator never arms a later session’s arbitrator', () => {
   assert.equal(g.arbGuardSend('w1:p4'), false);
 });
 
-test('a blocked arbitrator is said out loud, with the way to its pane', () => {
-  // From the strip a blocked arbitrator is indistinguishable from one that is thinking, and the
-  // session will not move until somebody answers the prompt in that pane.
+test('a blocked arbitrator is said out loud, in place of the state it is hiding behind', () => {
+  // From the tray a blocked arbitrator is indistinguishable from one that is thinking — the state
+  // pill says "Deciding…" either way — and the session will not move until somebody answers the
+  // prompt in that pane. So the pill says that instead, and is marked so it can be coloured.
   const {g} = ctx();
   const stuck = {...SESSION, state: 'awaiting',
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
   const html = g.arbStripHtml(stuck, CONV, true);
-  assert.match(html, /⚖ Arbitrator · needs you/);
-  assert.match(html, /class="arb-btn arb-active warn"/);
-  assert.match(html, /openTerminal\('w1:p3'\)/);
+  assert.match(html, /arb-say-state">Arbitrator needs you</);
+  assert.match(html, /class="arb-strip"[^>]*data-blocked="1"/);
   assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,
                'and an arbitrator that is merely working is not news');
   // A member stuck on a permission prompt is the same problem seen from the other end, and the
   // strip is the only thing on screen that would say so.
   const held = {...SESSION, members: [SESSION.members[0],
                                       {...SESSION.members[1], status: 'blocked'}]};
-  assert.match(g.arbStripHtml(held, CONV, true), /Reviewer 1 · needs you/);
+  assert.match(g.arbStripHtml(held, CONV, true), /arb-say-state">Reviewer 1 needs you</);
 });
 
 test('an empty scope is refused here rather than on the wire', () => {
@@ -829,10 +851,15 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
 test('the brief can be given again, and is asked twice before it is', () => {
   const {g, sent} = ctx();
   g.arbReceiveSession({session: SESSION});
-  const html = g.arbStripHtml(SESSION, CONV, true, null);
-  assert.match(html, /arbCommand\('arb_reinit'\)/);
+  // In the dialog that edits the session, not on the strip: emptying an arbitrator's context is
+  // not something to have under a thumb that is scrolling a thread.
+  const html = g.arbSetupHtml([], [], {}, true);
+  assert.match(html, /arbSessionAction\('arb_reinit'\)/);
   // Armed like End is: it empties the arbitrator's context, which is not undoable.
-  assert.match(html, /class="arb-btn arm-btn"[^>]*Re-brief\?/);
+  assert.match(html, /arm-btn[^>]*'Re-brief\?'/);
+  // And both close the dialog they were pressed in, so a Save cannot land on top of them.
+  assert.match(html, /arbSessionAction\('arb_cancel'\)/);
+  assert.ok(!g.arbStripHtml(SESSION, CONV, true, null).includes('arb_reinit'));
   g.arbCommand('arb_reinit');
   assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
                    [{type: 'arb_reinit', session: 's-20260817-1103'}]);
@@ -1071,8 +1098,17 @@ test('the sheet opens on where the session got to', () => {
   const {g} = withPath();
   const html = g.arbDetailHtml(DECISIONS, CREW_SESSION, EVENTS);
   assert.match(html, /class="arb-path"/);
-  // Every step, this time — the sheet is the place that holds the whole path, not a reading of it.
-  for (const e of EVENTS) assert.ok(html.includes(g.escapeHtml(e.detail)), e.kind);
+  // Every step that says something, on the default filter. The poll loop's own repeats — waiting
+  // on a record, a pane warmed — are recorded and are not what the sheet is opened to read.
+  for (const e of EVENTS) {
+    if (e.kind === 'waiting') continue;
+    assert.ok(html.includes(g.escapeHtml(e.detail)), e.kind);
+  }
+  assert.equal(html.includes('no decision file yet'), false, 'the quiet steps are folded away');
+  g.setArbPathFilter('all');
+  const every = g.arbDetailHtml(DECISIONS, CREW_SESSION, EVENTS);
+  for (const e of EVENTS) assert.ok(every.includes(g.escapeHtml(e.detail)), e.kind);
+  g.setArbPathFilter('key');
   assert.match(html, /class="arb-step bad"[\s\S]*?reading the drop box/);
   // And a session with nothing decided yet still shows the steps that got it there.
   assert.match(g.arbDetailHtml([], CREW_SESSION, EVENTS), /class="arb-path"/);
@@ -1151,4 +1187,275 @@ test('a conversation that spans two projects says so instead of offering a sessi
 test('with no projects configured every free pane is still a candidate', () => {
   const {g} = ctx();
   assert.deepEqual(g.arbCandidates(CONV).map(x => x.pane_id), ['w1:p3']);
+});
+
+// --- the hard stops -------------------------------------------------------------------
+//
+// The three budgets are the only thing on this form that can stop a session dead, and until the
+// dialog carried them the answer to a spent one was to throw the session away and start another.
+
+test('starting a session sends the limits the form is holding', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbSteps').value = '20';
+  g.arbStart();
+  const msg = sent.find(m => m.type === 'arb_start');
+  // Untouched fields are the defaults, not absent: the relay fills what it is not sent, and a
+  // form that shows 8 and sends nothing is a form that lied about what it was starting.
+  assert.deepEqual(msg.budget,
+                   {max_steps: 20, max_consecutive: 8, max_wall_clock_ms: 45 * 60000});
+});
+
+test('a limit past what the relay accepts is held at the cap', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbSteps').value = '9999';
+  g.document.getElementById('arbMinutes').value = '0';
+  g.arbStart();
+  const msg = sent.find(m => m.type === 'arb_start');
+  assert.equal(msg.budget.max_steps, 50, 'BUDGET_MAX, not a refusal from the relay');
+  assert.equal(msg.budget.max_wall_clock_ms, 45 * 60000, 'and nothing is a budget of nothing');
+});
+
+test('waking the members is off unless asked, and sent when it is', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.arbStart();
+  assert.equal(sent.find(m => m.type === 'arb_start').warmup, false);
+  // The relay warms agy either way — this is the choice for everything else, and its default is
+  // off because a warm-up is a turn spent before any work is asked for.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbWarmup" type="checkbox">/);
+
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbWarmup').checked = true;
+  g.arbStart();
+  assert.equal(sent.filter(m => m.type === 'arb_start').at(-1).warmup, true);
+});
+
+test('editing a session opens on the limits it has, and sends only what moved', () => {
+  const s = {...SESSION, budget: {steps_left: 0, consecutive_left: 0, minutes_left: 12,
+                                  max_steps: 8, max_consecutive: 8, max_minutes: 45}};
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [s]});
+  g.arbEditHere();
+  // The maximum, not what is left of it — this form sets limits, and a session with no steps left
+  // must not redraw itself as a session that was given none.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbSteps"[\s\S]*?value="8"/);
+  // The fields as the dialog drew them. The stub document does not render, so what a real browser
+  // would be holding after that redraw is set here by hand.
+  Object.entries({arbScope: s.scope, arbWho: 'w1:p3', arbFirst: 'w1:p1', arbSecond: 'w1:p2',
+                  arbSteps: '8', arbRuns: '8', arbMinutes: '45'})
+    .forEach(([id, v]) => { g.document.getElementById(id).value = v; });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'), [], 'nothing moved');
+
+  g.arbEditHere();
+  g.document.getElementById('arbSteps').value = '24';
+  g.arbSave();
+  const msg = sent.find(m => m.type === 'arb_edit');
+  assert.deepEqual(Object.keys(msg).sort(), ['budget', 'session', 'type']);
+  assert.equal(msg.budget.max_steps, 24);
+});
+
+// --- what Resume will do -------------------------------------------------------------------
+//
+// Four resume behaviours, one button, and the commonest of them does nothing you can see. That
+// is a session left armed and idle while a member sits finished — the expensive failure this
+// banner exists to make impossible.
+
+const PAUSED = Object.assign({}, CREW_SESSION, {state: 'paused', pause_reason: 'user'});
+
+function withPlan(plan, session = PAUSED) {
+  const c = ctx();
+  c.g.arbReceiveSession({session: session});
+  c.g.arbReceiveDetail({session: session.id, decisions: DECISIONS, events: EVENTS, plan: plan});
+  return c.g.arbResumeHtml(session, EVENTS, plan);
+}
+
+test('the resume dialog says which of the four resumes this one is', () => {
+  assert.match(withPlan({action: 'collect', sequence: 3, stale: null}),
+               /A decision is written and ready to send/);
+  // EVENTS is timestamped in 1970, so its outstanding question reads as one that is never going
+  // to be answered — which is the interesting half of `await` and the one below covers warm.
+  assert.match(withPlan({action: 'await', sequence: 3, stale: null}),
+               /The arbitrator was asked at step #3 and never answered/);
+  assert.match(withPlan({action: 'ask', sequence: 3, stale: null}),
+               /A turn ended while it was stopped/);
+  // Armed says which of two very different things it is. Both members idle is the one that will
+  // never move; a member mid-turn resumes into a decision the moment that turn ends.
+  assert.match(withPlan({action: 'wait', sequence: 3, stale: null}),
+               /Nothing is pending and nobody is working/);
+  const busy = {...PAUSED,
+                members: [PAUSED.members[0], {...PAUSED.members[1], status: 'working'}]};
+  assert.match(withPlan({action: 'wait', sequence: 3, stale: null}, busy),
+               /Reviewer 1 is working[\s\S]*asked the moment that turn ends/);
+});
+
+test('an armed session with nobody working says so, and says what to do about it', () => {
+  // The most expensive way this feature fails: a session that reads as running, is running, and
+  // will never do anything — because arming waits for a turn end and no turn is going to end.
+  // Neither the relay's plan nor the state can tell that apart from a healthy armed session; the
+  // roster can.
+  const html = withPlan({action: 'wait', sequence: 3, stale: null});
+  assert.match(html, /Nothing is pending and nobody is working/);
+  assert.match(html, /Give an agent something to do/);
+  // And Ask now leads, because Resume is the button that does nothing here.
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+});
+
+test('a question the arbitrator never answered is called that, and leads with asking again', () => {
+  // A real session sat on this for two days: asked at #8, no answer ever written, and every
+  // Resume went straight back to waiting on the same dead question — which the path recorded,
+  // correctly and uselessly, five times over.
+  const c = ctx();
+  c.g.arbReceiveSession({session: PAUSED});
+  const old = [{kind: 'asked', detail: 'w1:p3 for decision #8', at: Date.now() - 3600000,
+                sequence: 8}];
+  c.g.arbReceiveDetail({session: PAUSED.id, decisions: [], events: old,
+                        plan: {action: 'await', sequence: 8, stale: null}});
+  const html = c.g.arbResumeHtml(PAUSED, old, {action: 'await', sequence: 8, stale: null});
+  assert.match(html, /never answered/);
+  assert.match(html, /only way out of an arbitrator that is not going to answer/);
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+
+  // A question asked a moment ago is a session working normally, and Resume leads.
+  const fresh = [{kind: 'asked', detail: 'w1:p3 for decision #8', at: Date.now() - 5000,
+                  sequence: 8}];
+  c.g.arbReceiveDetail({session: PAUSED.id, decisions: [], events: fresh,
+                        plan: {action: 'await', sequence: 8, stale: null}});
+  const warm = c.g.arbResumeHtml(PAUSED, fresh, {action: 'await', sequence: 8, stale: null});
+  assert.match(warm, /The arbitrator is deciding/);
+  assert.match(warm, /class="arb-btn" onclick="arbResumeNow\(false\)/);
+});
+
+test('a member that was written to and went quiet is named, and leads with the trigger', () => {
+  const html = withPlan({action: 'wait', sequence: 3,
+                         stale: {member: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2',
+                                 at: Date.now() - 40 * 60000}});
+  // The line a person acts on says one thing; how long ago and what to do is the line under it.
+  assert.match(html, /Reviewer 1 was written to and never came back/);
+  assert.match(html, /Written to 40 min ago/);
+  assert.match(html, /class="arb-plan warn"/);
+  // The quiet button is Resume, because here it is the one that does nothing.
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+  assert.match(html, /class="arb-btn" onclick="arbResumeNow\(true\)/);
+});
+
+test('a running session is told the plan and offered the way to stop it', () => {
+  const html = withPlan({action: 'wait', sequence: 3, stale: null}, CREW_SESSION);
+  assert.match(html, /Nothing is pending and nobody is working/);
+  assert.equal(/arb_resume/.test(html), false, 'nothing to resume — it is running');
+  // The sheet is opened by tapping the tray, which is a thing people do to a running session.
+  assert.match(html, /class="arb-btn stop" onclick="arbCommand\('arb_pause'\)/);
+  assert.match(html, /class="arb-row-act stop" onclick="arbCommand\('arb_pause'\)/);
+});
+
+test('a relay too old to send a plan still draws the steps', () => {
+  const c = ctx();
+  c.g.arbReceiveSession({session: PAUSED});
+  c.g.arbReceiveDetail({session: PAUSED.id, decisions: DECISIONS, events: EVENTS});
+  const html = c.g.arbResumeHtml(PAUSED, EVENTS, null);
+  // No plan means no sentence about Resume — so the state's own is what the banner says, rather
+  // than a spinner over a session that is not going anywhere.
+  assert.match(html, /Paused · by you[\s\S]*You stopped it\./);
+  assert.match(html, /class="arb-rows"/);
+});
+
+test('the steps offer their one action once, on the row it is still true of', () => {
+  // A Trigger button on all seven historical triggers would be seven copies of one thing, every
+  // one of them doing what the last of them does. The newest trigger is the one a decision would
+  // be asked about, and the stop marker is where the session actually is.
+  const {g} = ctx();
+  const html = g.arbResumeHtml(PAUSED, EVENTS, {action: 'ask', sequence: 2});
+  assert.equal((html.match(/class="arb-row-act"/g) || []).length, 2);
+  // Drawings, not words — the column is scanned. The name is what a screen reader gets.
+  assert.match(html, /arbResumeNow\(true\)[^>]*aria-label="Ask the arbitrator to decide about this now"/);
+  assert.match(html, /arbResumeNow\(false\)[^>]*aria-label="Resume from here"/);
+  // The kind is a badge, so the column can be scanned rather than read.
+  assert.match(html, /<span class="arb-badge" data-kind="trigger">trigger<\/span>/);
+  // Nothing to act on while it is running: both buttons resume, and it has not stopped.
+  const live = g.arbResumeHtml({...PAUSED, state: 'active', pause_reason: null}, EVENTS, null);
+  assert.equal(/class="arb-row-act"/.test(live), false);
+});
+
+test('the budget nudges by its own unit, and never past what the relay allows', () => {
+  // Nobody grants a session one more minute, and nobody grants it fifteen more steps.
+  const {g} = ctx();
+  const steps = g.document.getElementById('arbResumeSteps');
+  const mins = g.document.getElementById('arbResumeMins');
+  steps.value = '8'; mins.value = '45';
+  g.arbStepBy('arbResumeSteps', 1, 1);
+  g.arbStepBy('arbResumeMins', 1, 15);
+  assert.deepEqual([steps.value, mins.value], ['9', '60']);
+  // The relay refuses a budget out of range, so neither button can ask for one.
+  steps.value = '50';
+  g.arbStepBy('arbResumeSteps', 1, 1);
+  assert.equal(steps.value, '50');
+  mins.value = '1';
+  g.arbStepBy('arbResumeMins', -1, 15);
+  assert.equal(mins.value, '1');
+});
+
+test('resuming spends what the two fields ask for, and asks for it first', () => {
+  // The one place a spent budget can be raised from the button it stopped. Steps are counted from
+  // the start of the session and a resume does not clear them, so "8 more" is a ceiling of
+  // spent + 8 — the field says what the session will have, not what its limit reads.
+  const {g, sent} = ctx();
+  g.arbReceiveSession({session: {...PAUSED,
+                                 budget: {steps_left: 0, minutes_left: 0, max_steps: 8,
+                                          max_consecutive: 8, max_minutes: 45}}});
+  g.document.getElementById('arbResumeSteps').value = '8';
+  g.document.getElementById('arbResumeMins').value = '30';
+  g.arbResumeNow(false);
+  assert.deepEqual(sent.filter(m => m.type !== 'arb_detail'), [
+    {type: 'arb_edit', session: PAUSED.id,
+     budget: {max_steps: 16, max_consecutive: 8, max_wall_clock_ms: 30 * 60000}},
+    {type: 'arb_resume', session: PAUSED.id},
+  ]);
+});
+
+test('a resume that changes nothing sends nothing but the resume', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSession({session: {...PAUSED,
+                                 budget: {steps_left: 3, minutes_left: 10, max_steps: 11,
+                                          max_consecutive: 8, max_minutes: 45}}});
+  g.document.getElementById('arbResumeSteps').value = '3';
+  g.document.getElementById('arbResumeMins').value = '45';
+  g.arbResumeNow(true);
+  assert.deepEqual(sent.filter(m => m.type !== 'arb_detail'),
+                   [{type: 'arb_resume', session: PAUSED.id, kick: true}]);
+});
+
+test('the steps mark where it is stopped, not simply where they end', () => {
+  const after = EVENTS.concat(
+    [{kind: 'trigger', detail: 'member-1 ended a turn — the session is paused', at: 2700,
+      sequence: 2}]);
+  assert.match(withPlan({action: 'ask', sequence: 2, stale: null}), /arb-step-stop/);
+  const c = ctx();
+  c.g.arbReceiveSession({session: PAUSED});
+  // The marker stays on the pause, though a dropped trigger was recorded under it.
+  const drawn = c.g.arbResumeHtml(PAUSED, after, {action: 'ask', sequence: 2, stale: null});
+  assert.match(drawn, /invalid record<span class="arb-step-stop">/);
+  // And the poll loop's own repeats are never rows here: this table is the last few things that
+  // happened, not a reading of the whole path.
+  assert.equal(drawn.includes('no decision file yet'), false);
 });

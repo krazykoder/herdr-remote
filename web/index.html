@@ -3196,44 +3196,159 @@
     /* The session strip: what is arbitrating this conversation, above the thread it is
        arbitrating. Opaque like .conv-panel and for the same reason — it rides the sticky header
        and the thread scrolls under it. */
+    /* The session's controls, floating over the top-left of the thread and level with the row in
+       the opposite corner (`.hang-float`). Nothing here has a ground of its own: the strip is
+       transparent and every button and every line of text carries its own, which is what lets a
+       thread scroll under it without either one becoming unreadable. */
+    .conv-view-top #arbStrip {
+      position: absolute;
+      top: 100%;
+      /* Under the floating row rather than opposite it: 6px of inset, that row's 28px, and the
+         6px gap the floating pieces keep everywhere else. Same right edge, so the buttons and the
+         tray read as one stack about one thread instead of two things at opposite ends of it. */
+      margin-top: calc(6px + 28px + 6px);
+      right: var(--hang-right, 22px);
+      z-index: 5;
+      display: flex;
+      justify-content: flex-end;
+      /* The thread owns everything around it. Only the tray takes taps. */
+      pointer-events: none;
+      max-width: min(72%, 340px);
+    }
+
     .arb-strip {
       display: flex;
-      align-items: center;
-      gap: 6px;
-      /* One line, always. What used to be here was a sentence — the last decision's gate, target
-         and why — which wrapped to three lines on a phone and pushed the thread down by all of
-         them. What replaced it is short and fixed, so a strip that still does not fit scrolls
-         sideways rather than growing. */
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      scrollbar-width: none;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 6px 12px;
-      font-size: 0.68rem;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      font-size: 0.62rem;
       color: var(--muted);
     }
 
-    /* Nothing is running: one button, and no bar of chrome pretending to be a status. */
-    .arb-strip.idle {
-      border-bottom: none;
-      background: none;
-      padding: 4px 12px;
-      justify-content: flex-end;
+    /* The tray itself takes taps now — it is one object, and a thread scrolling under a hole in
+       the middle of it is worse than one that cannot be scrolled through it at all. Anywhere that
+       is not one of its buttons opens the sheet: the two rows left here are a summary, and the
+       thing a person wants when they read a summary is the rest of it. */
+    .arb-strip {
+      pointer-events: auto;
+      cursor: pointer;
     }
 
-    .arb-strip .arb-state {
+    .arb-strip > * {
+      max-width: 100%;
+    }
+
+    /* One line, always: these are aimed at rather than read, and a row that wrapped would push
+       the thread's first message down every time a state changed. It scrolls instead. */
+    .arb-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      max-width: 100%;
+    }
+
+    .arb-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* The row is drawn from `.hang-btn`, which is hidden until something turns it on. Here they
+       are all on: the strip only exists while there is a session to control.
+
+       Lifted off the page rather than sharing the surface everything else uses: this floats over a
+       thread of monospace text with no ground of its own, and at 28px a chip the same colour as
+       the card behind it reads as part of the card. --arb-chip is the one value both the buttons
+       and the chips under them are drawn in, so they stay one thing. */
+    .arb-bar .hang-btn {
+      display: inline-flex;
+      flex: none;
+      background: var(--arb-chip);
       color: var(--text);
-      font-weight: 600;
-      white-space: nowrap;
     }
 
-    .arb-strip[data-state="paused"] .arb-state {
+    /* The one to press, and the toggle that is on. Colour rather than weight — these are 28px
+       squares and a heavier border at this size reads as a different-sized button. */
+    .arb-bar .hang-btn.lit {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .arb-ico {
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    /* Under the row: where the session is, and nothing else. What Resume would do and what the
+       state means used to hang here too, and two paragraphs of prose floating over a thread is a
+       second thread. They are in the sheet a tap on the tray opens. */
+    .arb-say {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 3px;
+      /* The tray is exactly as wide as its row of buttons, and this is what keeps it that way: a
+         flex item of zero width contributes nothing to the column's intrinsic size, and then
+         stretches to whatever the buttons above settled on. Without it the widest pause reason
+         would set the width of the tray, and the tray would change shape every time the session
+         did. */
+      width: 0;
+      min-width: 100%;
+    }
+
+    .arb-strip {
+      /* A quiet blue tint distinguishes arbitration from the conversation surface in every theme. */
+      --arb-tray: color-mix(in srgb, var(--blue) 12%, var(--surface));
+      --arb-chip: color-mix(in srgb, var(--text) 10%, var(--arb-tray));
+      /* One tray holding all four rows — the controls, the state, the sentence and who is working.
+         They are one thing about one session, and four floating pieces over a scrolling thread
+         read as four. The ground is blurred rather than solid, so the thread stays visible under
+         it and the buttons on top stay the only opaque thing. */
+      padding: 5px;
+      border-radius: 14px;
+      /* The blue the tint is mixed from, at an edge rather than only in the ground: over a thread
+         a blurred panel with a grey border is another card, and this is the one thing on the page
+         that is not the conversation. */
+      border: 1px solid color-mix(in srgb, var(--blue) 55%, var(--border));
+      background: color-mix(in srgb, var(--arb-tray) 88%, transparent);
+      backdrop-filter: blur(4px) saturate(115%);
+      -webkit-backdrop-filter: blur(4px) saturate(115%);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+    }
+
+    /* The state and the budget, each its own pill: the tray's ground is blurred rather than
+       solid, and a line without one of its own is prose over a thread of monospace text. */
+    .arb-say > * {
+      padding: 2px 7px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--arb-chip);
+    }
+
+    .arb-say-budget {
+      white-space: nowrap;
+      /* The same weight of text as the state beside it. It is a number a person acts on — it is
+         what the resume sheet's two fields are set from — and grey read as decoration. */
+      color: var(--text);
+    }
+
+    .arb-say-state {
+      font-weight: 600;
+      color: var(--text);
+      /* Free to wrap, because the tray's width is the buttons' and a pause reason is not asked
+         how long it is. Two lines of state is a taller tray; a clipped one is a lie. */
+      white-space: normal;
+    }
+
+    .arb-strip[data-state="paused"] .arb-say-state {
       color: var(--orange);
     }
 
-    .arb-strip .arb-budget {
-      white-space: nowrap;
+    /* One of the three is on a permission prompt. Louder than paused because nothing is stopped —
+       the session still reads as running, and it will not move until somebody answers it. */
+    .arb-strip[data-blocked="1"] .arb-say-state {
+      color: var(--red);
     }
 
     .arb-btn {
@@ -3260,6 +3375,28 @@
     .arb-btn.warn {
       color: var(--red);
       border-color: var(--red);
+    }
+
+    /* Re-brief and End, which used to be two taps away on the strip. A row of their own at the
+       bottom of the dialog, under everything that is a field — they are not settings, and putting
+       them among the selects is how a Save lands on a session somebody meant to end. */
+    .arb-danger {
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .arb-danger .arb-note {
+      flex-basis: 100%;
+    }
+
+    /* Drawn on the text's own line rather than the baseline the box sits on: at 11px next to a
+       label, a glyph-sized SVG that sits on the baseline reads as a dropped character. */
+    .arb-sign {
+      vertical-align: -2px;
+      flex: none;
     }
 
     /* The mark a pane carries while it is arbitrating, wherever that pane is drawn. */
@@ -3392,6 +3529,332 @@
       color: var(--muted);
     }
 
+    /* What Resume would do, at the top of the sheet where the Resume buttons are. A stopped
+       session's four resume behaviours are indistinguishable from outside — same button, same
+       state — and one of them does nothing visible, so the sentence goes above the path rather
+       than in it. */
+    .arb-plan {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    /* The one case where Resume is the wrong button: a member finished and nobody asked. Tinted,
+       because it is the case this banner exists for and it arrives looking like the quiet one. */
+    .arb-plan.warn {
+      border-left: 3px solid var(--orange);
+    }
+
+    .arb-plan-line {
+      margin: 0;
+      flex: 1 1 220px;
+      min-width: 0;
+      font-size: 0.72rem;
+      color: var(--text);
+    }
+
+    /* The right of the two columns: both buttons on one line beside the budget. Two words each,
+       which is what makes that fit — the long name is on the second button's tooltip and its
+       accessible name, and its glyph is the same one the table's own action carries. */
+    .arb-plan-do {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex: 1 1 auto;
+    }
+
+    /* The same two drawings as the tray's buttons, at the same 24-box: this sheet is what that
+       row opens, and a ▶ from the font next to an SVG ▶ reads as two different buttons. */
+    /* The two ways out of a stop, and the row buttons that are the same two actions from inside
+       the table. Green, because they are the only controls in this sheet that make the session go
+       — sober in the ground so a sheet of them is not a traffic light, bright at the edge so each
+       one is unmistakably the button rather than a tinted cell. */
+    .arb-plan-do .arb-btn,
+    .arb-row-act {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--green) 16%, transparent);
+      border: 1px solid var(--green);
+    }
+
+    .arb-plan-do .arb-btn:hover,
+    .arb-row-act:hover {
+      background: color-mix(in srgb, var(--green) 28%, transparent);
+      border-color: var(--green);
+      color: var(--text);
+    }
+
+    /* Pause is not a go button. Same shape, the colour of the state it produces — the tray says
+       Paused in this orange, so the button that gets there says it too. */
+    .arb-plan-do .arb-btn.stop,
+    .arb-row-act.stop {
+      background: color-mix(in srgb, var(--orange) 14%, transparent);
+      border-color: var(--orange);
+    }
+
+    .arb-plan-do .arb-btn.stop:hover,
+    .arb-row-act.stop:hover {
+      background: color-mix(in srgb, var(--orange) 26%, transparent);
+      border-color: var(--orange);
+    }
+
+    /* The one the plan says is not the answer here. Still green — it still resumes — but a quieter
+       edge, so the pair are one kind of thing with one of them leading. */
+    .arb-plan-do .arb-btn.quiet {
+      background: color-mix(in srgb, var(--green) 8%, transparent);
+      border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+      color: var(--muted);
+    }
+
+    /* The resume dialog's own table. A table and not a list of paragraphs: four short columns
+       that line up down the page are read at a glance, which is the whole job — find the last
+       thing that happened, and the row it stopped at. */
+    .arb-rows {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.68rem;
+      color: var(--text);
+    }
+
+    .arb-rows th {
+      position: sticky;
+      top: 0;
+      text-align: left;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--surface);
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .arb-rows td {
+      padding: 5px 8px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .arb-rows tr.bad td {
+      color: var(--red);
+    }
+
+    .arb-rows tr.stop td {
+      font-weight: 600;
+      background: color-mix(in srgb, var(--orange) 10%, transparent);
+    }
+
+    .arb-row-at,
+    .arb-row-seq {
+      white-space: nowrap;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .arb-row-kind {
+      white-space: nowrap;
+      color: var(--muted);
+    }
+
+    /* What kind of step it was, as a badge rather than a word: this column is scanned down rather
+       than read across, and a shape is faster to find than a string. The three that matter carry a
+       colour — the trigger that would be spent, the stop, and anything that went wrong — and every
+       other kind stays the quiet default, so the coloured ones are the ones that stand out. */
+    .arb-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      font-size: 0.6rem;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+
+    .arb-badge[data-kind="trigger"] {
+      color: var(--blue);
+      border-color: color-mix(in srgb, var(--blue) 55%, var(--border));
+      background: color-mix(in srgb, var(--blue) 14%, transparent);
+    }
+
+    .arb-badge[data-kind="paused"] {
+      color: var(--orange);
+      border-color: color-mix(in srgb, var(--orange) 55%, var(--border));
+      background: color-mix(in srgb, var(--orange) 14%, transparent);
+    }
+
+    .arb-badge[data-kind="error"],
+    .arb-badge[data-kind="rejected"] {
+      color: var(--red);
+      border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+      background: color-mix(in srgb, var(--red) 14%, transparent);
+    }
+
+    /* The actions column, left of the detail it acts on. Narrow by construction — at most one
+       button, on at most two rows, and the button is a glyph. */
+    .arb-row-act-cell {
+      width: 1%;
+      white-space: nowrap;
+      padding-left: 0;
+      padding-right: 4px;
+    }
+
+    .arb-row-act {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font: inherit;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    /* What the session may spend when it starts again, on its own row above the buttons that
+       spend it. A grid of two columns rather than two fields side by side: the labels line up
+       down the left and the two steppers line up down the right, which is the only arrangement
+       where "one more step" and "fifteen more minutes" read as the same kind of control. */
+    .arb-plan-budget {
+      display: grid;
+      grid-template-columns: max-content max-content;
+      align-items: center;
+      gap: 6px 12px;
+      /* The left of two columns. What it may spend and the buttons that spend it are one
+         decision, and the two stacks are the same height — two 32px rows each. */
+      flex: 0 1 auto;
+    }
+
+    /* The field itself is not a box — it is a label in one column and a stepper in the other. */
+    .arb-bud-field {
+      display: contents;
+    }
+
+    .arb-bud-label {
+      font-size: 0.66rem;
+      color: var(--muted);
+    }
+
+    /* One control, not three: the minus, the number and the plus share a border and a ground, so
+       the pair of buttons read as belonging to the number between them. */
+    .arb-bud-stepper {
+      display: inline-flex;
+      align-items: stretch;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .arb-bud-btn {
+      font: inherit;
+      font-size: 0.9rem;
+      line-height: 1;
+      /* 32px, not the 44px a menu row gets: this sits in a sheet beside two other buttons and the
+         thing being adjusted is one line of it. Wide enough for a thumb, square enough to pair. */
+      width: 32px;
+      min-height: 32px;
+      padding: 0;
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      border: none;
+      cursor: pointer;
+    }
+
+    .arb-bud-btn:hover {
+      background: color-mix(in srgb, var(--text) 16%, transparent);
+    }
+
+    .arb-bud-stepper input {
+      font: inherit;
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      /* Both steppers the same width whatever is in them, so the two rows are one shape. */
+      width: 3.2em;
+      padding: 0 2px;
+      color: var(--text);
+      background: none;
+      border: none;
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+
+    /* The spinners the browser draws are a second pair of steppers, half a millimetre tall. */
+    .arb-bud-stepper input::-webkit-inner-spin-button,
+    .arb-bud-stepper input::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .arb-bud-stepper input {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+
+    /* The plan, above the table: what the button will do, and the button. */
+    .arb-plan-hint {
+      margin: 2px 0 0;
+      font-size: 0.66rem;
+      color: var(--muted);
+      flex: 1 1 100%;
+    }
+
+    /* Which rows of the path are shown. Two states, so two buttons rather than a select: the
+       choice is made with a thumb while reading, and a menu costs a tap to see the options. */
+    .arb-path-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 6px 0 0;
+    }
+
+    .arb-filter {
+      font: inherit;
+      font-size: 0.62rem;
+      padding: 2px 8px;
+      min-height: 24px;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .arb-filter[aria-pressed="true"] {
+      color: var(--text);
+      border-color: var(--blue);
+    }
+
+    .arb-path-count {
+      margin-left: auto;
+      font-size: 0.62rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Where the session is stopped, on the row it stopped at. The last row is not the answer: a
+       trigger that arrived after the stop sits below it and reads like progress. */
+    .arb-step.stop {
+      font-weight: 600;
+    }
+
+    .arb-step-stop {
+      color: var(--muted);
+      font-weight: 400;
+      white-space: nowrap;
+    }
+
     /* Where the session got to, step by step, above the decisions in the sheet. Dense on purpose:
        it is read down, looking for the step that is missing or the one that went red. */
     .arb-path {
@@ -3432,14 +3895,8 @@
       color: var(--muted);
     }
 
-    /* The one on the strip that says where the session is. It is a state, not a control that does
-       something to the session, so it recedes until it is the thing that needs attention. */
-    .arb-strip .arb-active {
-      max-width: 45%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+    /* The label recedes until it is the thing that needs attention: a pane sitting on a permission
+       prompt is the one state this strip cannot fix from the strip. */
 
     /* The same fields, inside the dialog instead of above the thread. No bar of its own, and
        roomier controls: a dialog is not competing with messages for height. */
@@ -3487,6 +3944,24 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
+    }
+
+    /* A checkbox reads as a row, not a stacked label like the selects around it. */
+    .arb-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .arb-check input {
+      width: auto;
+      flex: none;
+    }
+
+    /* The sentence under it: which harness is warmed whether or not the box is ticked. */
+    .arb-note {
+      color: var(--muted);
+      font-size: 0.62rem;
     }
 
     /* Nine role badges wrap to three rows twice over, which is most of a phone's height spent on
@@ -4458,6 +4933,15 @@
     .conv-view-top .hang-working {
       top: 100%;
       margin-top: calc(6px + 28px + 6px);
+    }
+
+    /* The tray takes that row when there is a session, so the chips take the one under it. 84px is
+       the tray at its three single-line rows — 28px of buttons and two pills — which is what every
+       state this draws actually measures: the widest label is shorter than the row of buttons the
+       tray is sized by. A state long enough to wrap grows into the gap under it rather than
+       through the chips. */
+    .conv-view-top:has(#arbStrip .arb-strip) .hang-working {
+      margin-top: calc(6px + 28px + 6px + 84px + 6px);
     }
 
     /* Centred between the two floating corners and level with the right-hand one, because it is
@@ -6355,7 +6839,7 @@
            pane, or it has none and this opens the form that gives it one. Hidden when neither is
            true, because a button whose answer is "nothing" is one a person taps twice. -->
       <button class="hang-btn hang-arbitrator" id="convArbitrator" onclick="arbOpenFromConv()"
-        aria-label="Arbitrate this conversation">⚖</button>
+        aria-label="Arbitrate this conversation"><svg class="arb-sign" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8.37" r="4" fill="var(--red)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="7.8" cy="15.64" r="4" fill="var(--orange)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="16.2" cy="15.64" r="4" fill="var(--green)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /></svg></button>
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">
@@ -6593,6 +7077,7 @@
             <option value="all">Every live pane</option>
             <option value="pairs">Every pair</option>
             <option value="convs">Conversations</option>
+            <option value="thread">This conversation only</option>
           </select>
           <div id="tabScopeHint" style="font-size:0.65rem;color:var(--muted);margin-top:5px"></div>
           <!-- Same reason: a shell never belongs to a pair, so it has no pair bar to place. -->
@@ -6645,7 +7130,7 @@
         <!-- Only when this pane is in a session. A pane view has no conversation and no strip,
              so the one thing this can mean here is "take me to the arbitrator reading this". -->
         <button class="hang-btn hang-arbitrator" id="paneArbitrator" onclick="arbOpenFromPane()"
-          aria-label="Open the arbitrator’s pane">⚖</button>
+          aria-label="Open the arbitrator’s pane"><svg class="arb-sign" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8.37" r="4" fill="var(--red)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="7.8" cy="15.64" r="4" fill="var(--orange)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="16.2" cy="15.64" r="4" fill="var(--green)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /></svg></button>
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
           aria-label="Refresh and tidy">
@@ -6908,9 +7393,14 @@
   </div>
 
   <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
-     so a rejected send_text or rename looked identical to one that worked. -->
+     so a rejected send_text or rename looked identical to one that worked.
+
+     At the very top of the viewport, over the header rather than under it. It used to hang below
+     the header, which put it inside whichever view was open — and in the conversation it read as
+     part of the thread, one more bubble among the messages it was warning about. A notice about
+     the app belongs to the app. -->
   <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
   <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
@@ -6981,6 +7471,23 @@
   <!-- What an arbitration session decided, and what it typed because of it. Read-only and fetched
        on open: it carries prose, so the relay answers it to the client that asked and never
        broadcasts it. -->
+  <!-- What Resume will do, and the last few things that happened before it stopped. Its own
+       sheet rather than a banner on the log: the log is a reading of everything the session did
+       and keeps growing, and this is the one question asked at the one moment somebody is stood
+       at a stopped session with a finger over a button. -->
+  <div id="arbResumeSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+    <div onclick="closeArbResume()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span id="arbResumeTitle" style="font-size:0.8rem;font-weight:600;flex:1">Resume from here</span>
+        <button onclick="closeArbResume()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div id="arbResumeBody"></div>
+    </div>
+  </div>
+
   <div id="arbSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeArbDetail()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
@@ -7052,7 +7559,7 @@
     <div role="dialog" aria-label="Arbitrate this conversation"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">⚖ Arbitrate · <span id="arbSetupConvName"></span></span>
+        <span style="font-size:0.8rem;font-weight:600;flex:1;display:flex;align-items:center;gap:6px"><svg class="arb-sign" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8.37" r="4" fill="var(--red)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="7.8" cy="15.64" r="4" fill="var(--orange)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /><circle cx="16.2" cy="15.64" r="4" fill="var(--green)" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" /></svg> Arbitrate · <span id="arbSetupConvName"></span></span>
         <button onclick="closeArbSetup()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>

@@ -185,7 +185,7 @@ class Budgets(Harness):
 
     def test_consecutive(self):
         self.assertEqual("budget_consecutive",
-                         budget_spent(self.session_with(consecutive=3), self.now))
+                         budget_spent(self.session_with(consecutive=8), self.now))
 
     def test_wall_clock(self):
         s = self.session_with()
@@ -264,8 +264,10 @@ class Start(Harness):
         self.assertIn("You are the arbitrator", self.sent[0][1])
         # And it does not act until a person says so.
         self.assertIsNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
-        self.arb.resume(s["id"])
-        self.assertIsNotNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
+        # That turn end is not lost, though — the resume inherits it and asks. See
+        # `ResumingAfterABreak`; the next turn to end folds into the outstanding prompt.
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
+        self.assertIsNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
 
     def test_three_members_are_refused(self):
         with self.assertRaises(ArbiterError) as caught:
@@ -1461,6 +1463,62 @@ class Resuming(Harness):
         self.assertEqual("active", self.arb.resume(s["id"])["state"])
 
 
+class Consecutive(Harness):
+    """The budget that asks whether the loop is talking to itself.
+
+    Every automated send raises it and only a person lowers it, so a session nobody joins stops
+    after a run of them — which is the point. What was wrong is that nothing could lower it: the
+    relay never told a session that somebody had typed, and a resume did not either, so
+    `budget_consecutive` was a stop with no way past it.
+    """
+
+    def spend(self, session_id, count):
+        """`count` arbitrated sends in a row, which is what the counter counts."""
+        for _ in range(count):
+            p = self.arb.prompt(session_id, "turn_end — member-1", [])
+            self.write(session_id, p["sequence"])
+            self.assertEqual("sent", self.arb.collect(session_id, p["prompt_id"])["outcome"])
+
+    def test_a_run_of_sends_with_nobody_joining_in_stops_the_session(self):
+        # A bigger step budget on purpose: steps are checked first, and this is about the other one.
+        s = self.start(budget={"max_steps": 40})
+        self.spend(s["id"], 8)
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.assertEqual("budget_consecutive", caught.exception.code)
+        self.assertEqual("budget_consecutive", self.arb.session(s["id"])["pause_reason"])
+
+    def test_a_person_typing_at_a_member_lets_the_loop_go_on(self):
+        s = self.start(budget={"max_steps": 40})
+        self.spend(s["id"], 7)
+        self.arb.human_entered(s["id"], "p1")
+        self.spend(s["id"], 7)          # would have tripped at the eighth without the line above
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_resuming_is_itself_a_person_joining_in(self):
+        # A session that stopped on this used to resume straight into the same wall at its next
+        # trigger — a Resume button that did nothing. The person pressing it is the human the
+        # counter is counting the absence of.
+        s = self.start(budget={"max_steps": 40})
+        self.spend(s["id"], 8)
+        with self.assertRaises(ArbiterError):
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.arb.resume(s["id"])
+        self.assertEqual(0, self.arb.session(s["id"])["consecutive"])
+        self.spend(s["id"], 1)
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_the_steps_budget_is_not_forgiven_by_a_resume(self):
+        # Consecutive asks "is anyone watching"; steps asks "how much may this session do at all".
+        # A resume answers the first question and must not answer the second.
+        s = self.start(budget={"max_steps": 2, "max_consecutive": 20})
+        self.spend(s["id"], 2)
+        self.arb.resume(s["id"])
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.prompt(s["id"], "turn_end — member-1", [])
+        self.assertEqual("budget_steps", caught.exception.code)
+
+
 class Edits(Harness):
     """Changing a session instead of starting a new one.
 
@@ -1544,6 +1602,58 @@ class Edits(Harness):
         self.assertEqual(second["id"], str(caught.exception).split()[-1])
 
 
+
+class WakingTheMembers(Harness):
+    """The warm-up: a first prompt into a long-idle agent is often answered with nothing.
+
+    So the members are woken as their own turn while the arbitrator is still reading its brief,
+    and the reply to that is swallowed rather than spent — a session whose first decision is
+    about the word "ready" has burned a step on a handshake.
+    """
+
+    def test_a_session_wakes_nobody_unless_it_was_asked_to(self):
+        self.start()
+        self.assertEqual([], [t for pid, t in self.sent if "ready for work" in t])
+
+    def test_ticking_it_wakes_both_members_and_not_the_arbitrator(self):
+        s = self.start(warmup=True)
+        woken = [pid for pid, t in self.sent if "ready for work" in t]
+        self.assertEqual(["p1", "p2"], sorted(woken))
+        self.assertIn("warmed", [e["kind"] for e in self.arb.events(s["id"])])
+
+    def test_agy_is_woken_whether_or_not_the_box_was_ticked(self):
+        # The one harness that needs it, which is why it is not left to a checkbox.
+        self.live[1] = pane("p2", agent="agy", cwd="/a")
+        s = self.start(members=[self.live[0], self.live[1]])
+        self.assertEqual(["p2"], [pid for pid, t in self.sent if "ready for work" in t])
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_a_working_member_is_already_awake_and_is_not_typed_at(self):
+        # N7: a keystroke at a working pane goes missing, and a busy agent needs no warming.
+        self.live[0] = pane("p1", cwd="/a", status="working")
+        self.start(members=[self.live[0], self.live[1]], warmup=True)
+        self.assertEqual(["p2"], [pid for pid, t in self.sent if "ready for work" in t])
+
+    def test_the_answer_to_a_warm_up_is_not_a_trigger(self):
+        s = self.start(warmup=True)
+        self.assertIsNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Ready."}]))
+        # The one after it is the real turn, and does fire.
+        self.assertIsNotNone(self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}]))
+        self.assertEqual(s["id"], self.arb.open()["id"])
+
+    def test_a_short_stop_resumes_cold_and_a_long_one_wakes_the_room(self):
+        s = self.start(warmup=True)
+        self.sent.clear()
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        self.arb.resume(s["id"])
+        self.assertEqual([], [t for pid, t in self.sent if "ready for work" in t])
+        self.arb.pause(s["id"], "user")
+        self.now += 31 * 60_000
+        self.arb.resume(s["id"])
+        self.assertEqual(["p1", "p2"],
+                         sorted(pid for pid, t in self.sent if "ready for work" in t))
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -1615,6 +1725,11 @@ class Events(Harness):
         self.assertEqual("waiting", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
         self.assertEqual(1, len(self.find(s["id"], "error")), "one broken file is one event")
 
+    def test_a_person_typing_ends_the_run_of_automated_sends(self):
+        s = self.start()
+        self.arb.human_entered(s["id"], "p1")
+        self.assertIn("p1", self.find(s["id"], "human")[0]["detail"])
+
     def test_editing_a_running_session_is_on_the_path(self):
         s = self.start()
         spare = pane("pB", agent="claude", cwd="/arb")
@@ -1632,3 +1747,280 @@ class Events(Harness):
         self.assertEqual(["started", "paused"], self.kinds(second["id"]))
         with self.assertRaises(ArbiterError):
             self.arb.events("s-nope")
+
+
+class ResumingAfterABreak(Harness):
+    """Resume picks up where the session stopped — wherever that was.
+
+    Pause is the control a person uses constantly, so what it costs must not depend on which
+    millisecond it landed in. Two windows used to lose work outright: a decision written between
+    the arbitrator's turn ending and the relay reading it (the relay restarts, `recover` pauses,
+    and nothing ever reads that file again), and a member finishing a turn while the session was
+    stopped (the trigger is dropped, and a plain resume waits for a wake-up that already happened).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.arb.entries = lambda sid: [{"label": "member-1", "text": "Landed the fix."}]
+
+    def test_a_decision_written_before_the_stop_is_read_on_resume(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)              # the arbitrator answered...
+        self.arb.recover()                  # ...and the relay restarted before it was read
+        self.sent.clear()
+        back = self.arb.resume(s["id"])
+        self.assertEqual("active", back["state"], "the decision was executed, not re-asked")
+        self.assertEqual("p2", self.sent[-1][0])
+        self.assertIn("Take a look.", self.sent[-1][1])
+        self.assertEqual(1, back["steps_used"])
+
+    def test_reading_it_is_not_a_second_prompt(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.recover()
+        self.sent.clear()
+        self.arb.resume(s["id"], kick=True)
+        # Even asked to trigger: the answer to the outstanding question is on disk, and asking
+        # again would have the arbitrator decide twice about the same turn.
+        self.assertEqual([p for p, _ in self.sent], ["p2"])
+
+    def test_a_decision_already_acted_on_is_not_acted_on_twice(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        # The file is still in the drop box; the content hash says it has been judged.
+        self.assertEqual("active", self.arb.resume(s["id"])["state"])
+        self.assertEqual([], self.sent)
+
+    def test_a_turn_that_ended_while_it_was_stopped_wakes_it_up(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.assertIsNone(self.arb.turn_ended("p1", []), "dropped, and written down")
+        self.sent.clear()
+        back = self.arb.resume(s["id"])
+        self.assertEqual("awaiting", back["state"], "asked, without anyone having to say kick")
+        self.assertEqual(1, len(self.sent))
+        self.assertIn("Trigger: resume", self.sent[0][1])
+        self.assertIn("Landed the fix.", self.sent[0][1])
+
+    def test_a_dropped_trigger_is_spent_once(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [])
+        self.arb.resume(s["id"])
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        # And the question that trigger produced is still out, so the second resume goes back to
+        # waiting for it rather than asking a second time.
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
+        self.assertEqual([], self.sent, "the prompt it produced is the watermark")
+
+    def test_a_trigger_from_before_the_last_stop_is_not_replayed(self):
+        s = self.start()
+        self.arb.turn_ended("p1", [])       # acted on while armed
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
+        self.assertEqual([], self.sent)
+
+    def test_a_question_still_out_is_what_resumes(self):
+        s = self.start()
+        p = self.step(s["id"])              # asked, and the arbitrator is reading it
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"])
+        self.assertEqual("awaiting", back["state"], "the wait is what was interrupted")
+        self.assertEqual([], self.sent, "nothing is asked twice")
+        self.assertEqual(p["sequence"], back["sequence"])
+        # And the answer, whenever it comes, is still read — which it would not be from `active`.
+        self.write(s["id"], p["sequence"])
+        self.assertEqual("sent", self.arb.arbitrator_finished("pA")["outcome"])
+
+    def test_asking_by_hand_replaces_a_question_the_arbitrator_never_answered(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        back = self.arb.resume(s["id"], kick=True)
+        # The way out of an arbitrator that is never going to answer the old one.
+        self.assertEqual(p["sequence"] + 1, back["sequence"])
+        self.assertEqual(1, len(self.sent))
+
+    def test_a_rejected_record_leaves_the_question_out(self):
+        s = self.start()
+        p = self.step(s["id"])
+        self.write(s["id"], p["sequence"], gate="nonsense")
+        self.assertEqual("reprompt", self.arb.collect(s["id"], p["prompt_id"])["outcome"])
+        self.arb.pause(s["id"], "user")
+        self.sent.clear()
+        # A row at that sequence, and none of it valid: the correction is still owed.
+        self.assertEqual("awaiting", self.arb.resume(s["id"])["state"])
+        self.assertEqual([], self.sent)
+
+    def test_a_spent_budget_does_not_turn_a_plain_resume_into_an_error(self):
+        s = self.start(budget={"max_steps": 1})
+        self.arb.conn.execute("UPDATE sessions SET steps_used=1 WHERE id=?", (s["id"],))
+        self.arb.conn.commit()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [])
+        back = self.arb.resume(s["id"])     # inherits the trigger, and cannot spend it
+        self.assertEqual("paused", back["state"])
+        self.assertEqual("budget_steps", back["pause_reason"], "said, not raised")
+
+    def test_asking_by_hand_for_something_that_cannot_be_spent_is_reported(self):
+        s = self.start(budget={"max_steps": 1})
+        self.arb.conn.execute("UPDATE sessions SET steps_used=1 WHERE id=?", (s["id"],))
+        self.arb.conn.commit()
+        self.arb.pause(s["id"], "user")
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.resume(s["id"], kick=True)
+        self.assertEqual("budget_steps", caught.exception.code)
+
+    def test_the_path_says_which_of_the_three_a_resume_was(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.recover()
+        self.arb.resume(s["id"])
+        detail = [e["detail"] for e in self.arb.events(s["id"]) if e["kind"] == "resumed"]
+        self.assertEqual(1, len(detail))
+        self.assertIn("decision written for #1", detail[0])
+
+
+class EditingTheBudget(Harness):
+    """The way out of a spent budget.
+
+    `resume` deliberately does not raise a limit nobody asked it to, so before this the only answer
+    to `budget_steps` was to throw the session away and start another — losing everything it had
+    decided. Relay-side accounting, like the clocks: nothing is announced to the arbitrator, which
+    already reads what is left of the budget in every prompt.
+    """
+
+    def test_a_limit_can_be_raised_on_a_running_session(self):
+        s = self.start(budget={"max_steps": 2})
+        self.arb.edit(s["id"], budget={"max_steps": 20})
+        budget = json.loads(self.arb.session(s["id"])["budget_json"])
+        self.assertEqual(20, budget["max_steps"])
+
+    def test_raising_one_leaves_what_has_been_spent_alone(self):
+        s = self.start(budget={"max_steps": 2})
+        self.arb.conn.execute("UPDATE sessions SET steps_used=2 WHERE id=?", (s["id"],))
+        self.arb.conn.commit()
+        self.arb.edit(s["id"], budget={"max_steps": 20})
+        self.assertEqual(2, self.arb.session(s["id"])["steps_used"])
+        self.assertIsNone(budget_spent(self.arb.session(s["id"]), self.now), "and it may go on")
+
+    def test_a_limit_over_the_cap_is_refused(self):
+        s = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.edit(s["id"], budget={"max_steps": 5000})
+        self.assertEqual("budget_out_of_range", caught.exception.code)
+        self.assertEqual(8, json.loads(self.arb.session(s["id"])["budget_json"])["max_steps"])
+
+    def test_nothing_is_typed_at_anyone(self):
+        s = self.start()
+        self.sent.clear()
+        self.arb.edit(s["id"], budget={"max_consecutive": 12})
+        self.assertEqual([], self.sent, "the arbitrator cannot act on a budget")
+        self.assertIn("budget changed",
+                      [e["detail"] for e in self.arb.events(s["id"]) if e["kind"] == "edited"][-1])
+
+
+class ThePlan(Harness):
+    """What Resume would do, answered before it is pressed.
+
+    A paused session's Resume used to be a button with four possible behaviours and no way to tell
+    which one you were about to get — and the commonest of the four does nothing visible at all,
+    which is how a session sits armed and idle for an hour while its member waits. So the four
+    cases are named, by the same code that acts on them.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.arb.entries = lambda sid: [{"label": "member-1", "text": "Landed the fix."}]
+
+    def test_an_unread_decision_is_a_collect(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.recover()
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("collect", plan["action"])
+        self.assertEqual(1, plan["sequence"])
+
+    def test_a_question_still_out_is_a_wait_on_the_arbitrator(self):
+        s = self.start()
+        self.step(s["id"])                  # asked, nothing written
+        self.arb.pause(s["id"], "user")
+        self.assertEqual("await", self.arb.resume_plan(s["id"])["action"])
+
+    def test_a_turn_that_ended_while_stopped_is_an_ask(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.assertEqual("ask", self.arb.resume_plan(s["id"])["action"])
+
+    def test_nothing_pending_is_a_plain_wait(self):
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("wait", plan["action"])
+        self.assertIsNone(plan["stale"], "nothing has been sent, so nobody is owed a turn")
+
+    def test_a_member_that_was_written_to_and_went_quiet_is_named(self):
+        # The case none of the four cover, and the one that wastes an hour: the member did the
+        # work, the turn end never reached the session — a restart, an edit, a trigger spent on a
+        # prompt that failed — and a plain resume will wait for a wake-up that has already been.
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")          # decision executed: member-2 was written to
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("wait", plan["action"])
+        self.assertEqual("member-2", plan["stale"]["member"])
+        self.assertEqual("p2", plan["stale"]["pane_id"])
+
+    def test_a_member_still_working_is_not_stale(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")
+        self.arb.pause(s["id"], "user")
+        self.live[1] = pane("p2", agent="codex", cwd="/a", status="working")
+        self.assertIsNone(self.arb.resume_plan(s["id"])["stale"],
+                          "its turn end is coming; the loop will catch it")
+
+    def test_a_member_that_came_back_is_not_stale(self):
+        s = self.start()
+        self.step(s["id"])
+        self.write(s["id"], 1)
+        self.arb.arbitrator_finished("pA")
+        self.arb.pause(s["id"], "user")
+        self.now += 60_000
+        self.arb.turn_ended("p2", [{"label": "member-2", "text": "Done."}])
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("ask", plan["action"], "the trigger is there to be spent")
+        self.assertIsNone(plan["stale"])
+
+    def test_the_plan_is_what_the_resume_then_does(self):
+        # The whole point of the preview: one computation, read twice. If these two ever disagree
+        # the button is lying, which is worse than having no preview at all.
+        s = self.start()
+        self.arb.pause(s["id"], "user")
+        self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.assertEqual("ask", self.arb.resume_plan(s["id"])["action"])
+        self.arb.resume(s["id"])
+        path = [e for e in self.arb.events(s["id"]) if e["kind"] == "resumed"]
+        self.assertIn("asking for a decision now", path[-1]["detail"])
+
+    def test_an_ended_session_has_no_plan(self):
+        s = self.start()
+        self.arb.end(s["id"], "cancelled")
+        self.assertEqual("none", self.arb.resume_plan(s["id"])["action"])

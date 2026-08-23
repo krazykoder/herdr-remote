@@ -48,6 +48,77 @@
     // Stored text stays exactly as it was extracted; only what the recorder compares is normalized.
     function convKey(text) { return String(text == null ? '' : text).replace(/\s+/g, ''); }
 
+    // A prompt this browser sent can come back merged into the block underneath it. How many of a
+    // pane's own sends are checked for that, and how much of one has to match at each end for the
+    // cut to be made. The port of SENT_LOOKBACK and ECHO_EDGE in relay/conversation_log.py.
+    const CONV_SENT_LOOKBACK = 4;
+    const CONV_ECHO_EDGE = 40;
+
+    // The offset in `text` just past its `count`th non-whitespace character. The comparison runs
+    // over `convKey`s, which hold no whitespace at all, so an offset found there means nothing to
+    // the text it came from until it is walked back like this.
+    function convCutAt(text, count) {
+      let seen = 0;
+      for (let i = 0; i < text.length; i++) {
+        if (/\s/.test(text[i])) continue;
+        if (++seen === count) return i + 1;
+      }
+      return text.length;
+    }
+
+    // A block cut into the prompt echoed at the top of it and what the agent said underneath, or
+    // null when it does not hold that prompt — the ordinary case.
+    //
+    // A harness with no glyph of its own — agy — draws a pasted prompt exactly the way it draws its
+    // own reply: the first line after the `>` gutter, the rest indented two columns. The detector
+    // tells them apart by the blank line agy leaves before it answers, and a *pasted* prompt with a
+    // blank line in it defeats that: the prompt's own second paragraph opens the block, and when the
+    // agent then answers without running a tool there is no column-0 line anywhere between them. One
+    // block, holding the instruction and the answer, attributed to the agent.
+    //
+    // Shape cannot separate them, so this does not try to. What was sent is known, because this
+    // browser sent it, so the echo is matched against that and cut off where it ends. Both ends are
+    // checked and the middle is not: a terminal re-wraps what it echoes (`convKey` covers that) but
+    // it also drops what will not fit and replaces characters it cannot draw.
+    function convSplitEcho(text, sent) {
+      const key = convKey(text), skey = convKey(sent);
+      if (key.length < CONV_ECHO_EDGE || skey.length < 2 * CONV_ECHO_EDGE) return null;
+      // Where in the prompt the block picks it up, rather than assuming the top of it: the first
+      // line of a send is echoed on the prompt gutter itself and is read as the prompt it is.
+      const begin = skey.indexOf(key.slice(0, CONV_ECHO_EDGE));
+      if (begin < 0 || skey.length - begin < 2 * CONV_ECHO_EDGE) return null;
+      const at = key.indexOf(skey.slice(-CONV_ECHO_EDGE), CONV_ECHO_EDGE);
+      if (at < 0) return null;
+      const cut = convCutAt(text, at + CONV_ECHO_EDGE);
+      const head = text.slice(0, cut).trim(), rest = text.slice(cut).trim();
+      // Nothing under it: the block is the echo, and is not the agent speaking.
+      return head && rest ? [head, rest] : null;
+    }
+
+    // The window, with any prompt of this record's own cut off the block it was merged into. The
+    // prompt half stays a message: it is what the pane shows, and the record already holds the send
+    // that put it there, so the anchor recognises it and only the agent's half is new.
+    function convUnmergeSent(fresh, stored) {
+      // Newest first, matching ConversationLog._sent_texts. When two recent sends share enough
+      // wording to match, both recorders must choose the same one.
+      const sent = (stored || []).filter(e => e.who === 'user' && e.at_src === 'sent')
+        .slice(-CONV_SENT_LOOKBACK).reverse().map(e => e.text);
+      if (!sent.length) return fresh || [];
+      const out = [];
+      (fresh || []).forEach(m => {
+        let split = null;
+        if (m.who === 'agent') {
+          for (let i = 0; i < sent.length && !split; i++) split = convSplitEcho(m.text, sent[i]);
+        }
+        if (!split) { out.push(m); return; }
+        // Both halves keep the whole block's range: they are one run of rows on screen, and the
+        // range exists to point a reader at them rather than to be arithmetic.
+        out.push(Object.assign({}, m, { who: 'user', text: split[0] }));
+        out.push(Object.assign({}, m, { text: split[1] }));
+      });
+      return out;
+    }
+
     // Everything said in this window, in window order: the agent's closing message per turn, and
     // each run of the user's own lines as one message rather than one per line.
     //

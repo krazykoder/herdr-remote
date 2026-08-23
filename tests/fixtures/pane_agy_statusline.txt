@@ -1,0 +1,17 @@
+────────────────────────────────────────────────────────────
+> hello are you ready for next instructions
+
+  Yes, I'm ready! Please share the next instructions.
+
+> /statusline
+  ⎿  Statusline off. Run /statusline to re-enable.
+
+> /statusline
+  ⎿  Statusline on. (~/.gemini/antigravity-cli/statusline.sh)
+
+───────────────────────────────────────────────────────────────────────────────
+>
+───────────────────────────────────────────────────────────────────────────────
+Gemini 3.7 Flash (Medium) | 286.5k/1m (22%) | turn: +225.1K/40 | 5h 80% @11:45
+herdr-remote@feat/arbitrator
+mode: manual | skip-permission: on | someone@example.com | v1.1.13

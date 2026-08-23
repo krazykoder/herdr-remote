@@ -180,6 +180,26 @@ class Capture(Log):
         self.assertEqual(len(said), 1)
         self.assertIn("Ready. Name the change.", said[0])
 
+    def test_a_prompt_this_relay_sent_is_not_recorded_again_when_its_echo_is_read(self):
+        # Every send was going into the record twice: once when it went out, once when the turn it
+        # started ended and the pane's echo of it came back in the window. The browser has always
+        # dropped that echo; the record's anchored path never did, so a thread showed each prompt
+        # twice — which is also what made the anchor fail later, since the record then held a run
+        # of messages the pane could not reproduce.
+        self.seen(fixture("pane_claude_done.txt"))
+        self.log.record(agent="claude", pane_id="%1", cwd="/tmp/proj", label="Architect 1",
+                        kind="human_prompt", origin="human_web", at_src="sent",
+                        text="so are we good to go")
+        rows = fixture("pane_claude_done.txt").splitlines()
+        # The pane, one turn on: the prompt echoed at the foot of it and the reply under it.
+        content = "\n".join(rows + ["", "❯ so are we good to go", "", "⏺ Good to go.", "", "❯"])
+        self.log.record_turn_end(PANE, content, "working", "idle")
+        rows_out, _ = self.log.query()
+        said = [r for r in rows_out if r["text"] == "so are we good to go"]
+        self.assertEqual(1, len(said), [r["at_src"] for r in said])
+        self.assertEqual("sent", said[0]["at_src"])
+        self.assertTrue(any(r["text"] == "Good to go." for r in rows_out))
+
     def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
         # N4. The relay knows a person put those words in the pane and does not know which person;
         # only a send it performed itself may say more than that.
@@ -239,6 +259,56 @@ class Capture(Log):
         self.assertIsNotNone(rowid)
         self.assertEqual(rows[0]["text"], "")
         self.assertIn("line two", rows[0]["tail"])
+
+
+class MergedPrompts(Log):
+    """A prompt this relay typed, coming back merged into the block underneath it.
+
+    Real bytes from a real session: agy was sent a review instruction, answered it without running
+    a tool first, and the pane drew both the same way — two columns of indent under a `>`. The
+    record kept one message, the arbitrator's instruction with the reviewer's verdict glued to the
+    end of it, filed as the reviewer's own words.
+    """
+
+    AGY = {"pane_id": "w24:p2R", "agent": "agy", "host": "local",
+           "cwd": "/tmp/proj", "label": "Reviewer", "project": "proj"}
+
+    def sent(self):
+        text = fixture("pane_agy_merged_sent.txt")
+        self.log.record(agent="agy", pane_id="w24:p2R", cwd="/tmp/proj", label="Reviewer",
+                        kind="arbitrated", origin="arbitrator", at_src="sent", text=text)
+        return text
+
+    def test_the_instruction_is_cut_off_the_answer_it_was_glued_to(self):
+        self.sent()
+        self.log.record_turn_end(self.AGY, fixture("pane_agy_merged.txt"), "working", "idle")
+        rows, _ = self.log.query()
+        said = [r for r in rows if r["origin"] == "agent"]
+        self.assertEqual(1, len(said))
+        self.assertTrue(said[0]["text"].startswith("### Review: Steps 4+5 PASSED"), said[0]["text"])
+        self.assertIn("Verdict: Review passes.", said[0]["text"])
+        # And not a word of what it was asked, which is the half that was being misattributed.
+        self.assertNotIn("Review Steps 4+5, commit 03acc22", said[0]["text"])
+
+    def test_a_pane_the_relay_never_typed_at_is_left_exactly_as_it_reads(self):
+        # The cut is made against what the relay knows it sent. With nothing sent, nothing moves —
+        # a merged block is still one block, and inventing a boundary would be worse than keeping it.
+        self.log.record_turn_end(self.AGY, fixture("pane_agy_merged.txt"), "working", "idle")
+        rows, _ = self.log.query()
+        said = [r for r in rows if r["origin"] == "agent"]
+        self.assertEqual(1, len(said))
+        self.assertIn("Review Steps 4+5, commit 03acc22", said[0]["text"])
+
+    def test_a_prompt_that_is_not_in_the_block_leaves_it_alone(self):
+        # Same pane, a different send. The cut needs both ends of the prompt to be there.
+        self.log.record(agent="agy", pane_id="w24:p2R", cwd="/tmp/proj", label="Reviewer",
+                        kind="arbitrated", origin="arbitrator", at_src="sent",
+                        text="Something else entirely, at length, so it is long enough to be "
+                             "considered a candidate for the cut at all, twice over and then some.")
+        self.log.record_turn_end(self.AGY, fixture("pane_agy_merged.txt"), "working", "idle")
+        rows, _ = self.log.query()
+        said = [r for r in rows if r["origin"] == "agent"]
+        self.assertIn("Review Steps 4+5, commit 03acc22", said[0]["text"])
 
 
 class Origins(Log):

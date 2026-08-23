@@ -322,6 +322,22 @@ sent is `human_web` because it did it. An echo it finds in a pane is `human_term
 front end already carries the same honesty — `classifyVia` (`web/src/conversation_pure.js:415`) calls
 an unmatched send `typed`, because provenance is only knowable where the send happened.
 
+**A prompt echoed back merged into the block under it is cut off it, against what was sent.** A
+harness with no speaker glyph — agy — draws a pasted prompt exactly the way it draws its own reply,
+and where the agent answers without running a tool first there is no line between them for the
+detector to find: one block, holding the instruction and the answer, in the agent's voice. That is
+the arbitrator's own words being recorded as what a member said, and the arbitrator then reads them
+back as evidence.
+
+Shape cannot separate them, so nothing tries to. Every send is a row (`at_src = 'sent'`), so the
+echo is matched against the last few of those for that pane and cut where the prompt ends. Both ends
+of the prompt have to be found, keyed the way every other comparison here is keyed — whitespace
+dropped, because a terminal re-wraps what it echoes — and the middle is not checked, because a
+terminal also drops what will not fit and replaces characters it cannot draw. No match, no cut: a
+window is left exactly as it reads rather than given an invented boundary. `_split_echo` in
+`relay/conversation_log.py`, and `convSplitEcho` in `web/src/conversation_pure.js` — the record and
+the thread agree because both do it.
+
 ### 6.4 When it was said — `at` and `at_src`
 
 A timestamp is only as good as its source. The browser grades this already:
@@ -546,7 +562,7 @@ All must hold, checked in this order, each with its own error:
 |---|---|---|
 | `user` | Someone pressed Pause | Resume |
 | `budget_steps` | `steps_used ≥ max_steps` | Resume, after the person raises the budget |
-| `budget_consecutive` | `consecutive ≥ max_consecutive` | Any human message into the conversation clears `consecutive`; then Resume |
+| `budget_consecutive` | `consecutive ≥ max_consecutive` | Resume — which itself clears the run (§13.1), as does typing at either member |
 | `budget_time` | Wall clock exceeded | Resume with a new window |
 | `member_blocked` | A member reached `blocked` | Resume once it is unblocked — the existing approval UI already owns answering it |
 | `member_gone` | A member's fingerprint matches no live pane | Re-enrol, then Resume |
@@ -777,12 +793,28 @@ target or `call_human`.
 | Budget | Default | Max | Counts |
 |---|---|---|---|
 | `max_steps` | 8 | 50 | Every send |
-| `max_consecutive` | 3 | 20 | Sends since a human last put text into the conversation |
+| `max_consecutive` | 8 | 20 | Sends since a human last put text into the conversation |
 | `max_wall_clock` | 45 min | 8 h | Since `created_at`, or since the last resume |
 
-Conservative on purpose: raised only on evidence from real sessions. `consecutive` resets to zero on
-any `human_web` or `human_terminal` entry — a person touching the conversation is what "not
-consecutive" means.
+Conservative on purpose: raised only on evidence from real sessions — `max_consecutive` was 3, and
+the first real ones raised it. Three was chosen when nothing could lower the count at all: the relay
+never told a session that a person had typed and a resume did not clear the run, so the number was
+academic and a small one looked safe. With both of those working, ask, implement, ask is three, and
+a leash a review loop trips on its first lap is a leash nobody is served by.
+
+**All three are editable on a running session** (§14.7). A spent budget is a hard stop and `resume`
+deliberately does not raise a limit it was not asked to, so without an edit the only answer to
+`budget_steps` was to abandon the session and start another — losing every decision it had made.
+Raising one leaves `steps_used` and `consecutive` alone: what has been spent is a fact.
+ `consecutive` resets to zero on
+any `human_web` entry — every send this relay makes on a person's behalf, which is the one entry it
+can attribute — and on **a resume**, because a person reading a stopped session and pressing the
+button is the human the counter is counting the absence of. Without the second, a session that
+stopped on `budget_consecutive` resumed into the same wall at its very next trigger: a Resume
+button that did nothing.
+
+`max_steps` is not forgiven that way. The two budgets ask different questions — "is anybody
+watching this" and "how much may this session do at all" — and a resume answers only the first.
 
 ### 13.2 Steps
 
@@ -953,7 +985,8 @@ like any other send, and an unconfirmed one pauses the session.
 ### 14.7 Editing a running session
 
 Everything a person answered when the session opened can be answered again: the scope, which two
-panes are being arbitrated, what each of them is for, which pane decides, and the clocks. One
+panes are being arbitrated, what each of them is for, which pane decides, the clocks and the three
+budgets (§13.1). One
 message (`arb_edit`, §15.1) carrying only the fields that moved — a field that is not named is not
 touched, so a scope edit does not re-announce a roster nobody changed.
 
@@ -973,26 +1006,56 @@ What the session tells its participants depends on what moved:
   cleared and given the same starter prompt the session opened with, carrying the current scope and
   the current roster. This is `arb_reinit` (§14.6) pointed at a different pane, and it is the same
   code path.
-* **the clocks alone** — nothing is sent. A trigger is the loop's business and not the
-  arbitrator's.
+* **the clocks or the budgets alone** — nothing is sent. A trigger is the loop's business and not
+  the arbitrator's, and the arbitrator already reads what is left of the budget in every prompt.
 
 The front end asks all of it through the dialog that appointed the session (§15.3), so the
 questions and their answers have one shape and one place to disagree.
 
 ### 14.8 Resuming
 
-A paused session is armed by `arb_resume`. Armed is all that is: the loop waits for a trigger, and
-with two idle members and both clocks off (§10, their default) there is no trigger coming — a
-session that reads as running and never acts.
+A paused session is armed by `arb_resume`. Pausing is a control a person uses constantly, so what a
+pause costs must not depend on which millisecond it landed in. **`arb_resume` resumes from wherever
+the session stopped**, and there are four places that can be. They are checked in this order:
 
-So there are two ways back, and the person picks:
+1. **A decision was written and never read.** `collect` runs only off the arbitrator ending a turn
+   (§12.1 step 4). If the relay died — or a person paused — between the write and the read, that
+   turn end is gone and nothing will ask again: the file sits in the drop box for ever, and the next
+   prompt bumps the sequence and unlinks a different path. So a resume reads the drop box for the
+   outstanding sequence first, and when it holds bytes no `decisions` row has judged, the session
+   goes back to `awaiting` and that record is collected — validated, executed and recorded exactly
+   as it would have been. Nothing is re-decided: `collect` compares the content hash, so a record
+   already acted on is left alone. This is the window `restart` (§9.4) leaves open, and closing it
+   is why the pause at boot costs nothing but time.
+2. **A question is still out.** A prompt at the current sequence that no *valid* decision answers —
+   the session was `awaiting` when it stopped and the arbitrator is still reading, or was asked for
+   a correction and has not made it. Coming back `active` throws that question away for the same
+   reason as case 1: `arbitrator_finished` reads the drop box only for an `awaiting` session, so
+   the answer would be ignored whenever it arrived. So the **wait** is what resumes, and nothing is
+   sent. `kick` overrides this and asks a fresh question at the next sequence, which is the way out
+   of an arbitrator that is never going to answer the old one.
+3. **A member finished while it was stopped.** `turn_ended` drops that trigger — the session was not
+   armed — and writes it to the path (§14.9). A resume that only armed the loop would then wait for
+   ever for a wake-up that has already been and gone, so an unhandled trigger since the last stop is
+   asked **now**, whether or not `kick` was given. Unhandled is read off the path: a `trigger` event
+   newer than the last `paused`, `asked` or `resumed`. If that prompt cannot be spent — a budget was
+   what stopped the session and nobody raised it — the session pauses again saying so, and the
+   resume itself does not fail: a person who pressed Resume did not ask for that trigger.
+4. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`.
 
-* **Resume** — arm it and wait. Right after a pause a person took to type at a member themselves:
-  that member's turn will end, and that is the trigger.
-* **Resume and trigger** (`kick: true`) — arm it and ask for a decision now. The prompt is the
-  ordinary trigger prompt of §11.3, over the turns since the session last looked, with one extra
-  line under `Trigger:` saying what stopped it and that a person has started it again. Refused at a
-  busy arbitrator (N7); plain Resume is not, because it writes nothing.
+So there are two buttons, and the person picks:
+
+* **Resume** — the four cases above. Right after a pause a person took to type at a member
+  themselves: that member's turn will end, and that is the trigger.
+* **Resume and trigger** (`kick: true`) — as above, replacing an unanswered question in case 2 and
+  asking for a decision now in case 4 rather than waiting. With two idle members and both clocks off (§10, their default) there is no trigger
+  coming, and this is the way out of that. Refused at a busy arbitrator (N7); plain Resume is not,
+  because in cases 2, 3 and 4 it writes nothing of its own. A `kick` that cannot be spent *is* reported as an error — it
+  was asked for by hand.
+
+A prompt sent by case 3 or by `kick` is the ordinary trigger prompt of §11.3, over the turns since
+the session last looked, with one extra line under `Trigger:` saying what stopped it and that a
+person has started it again.
 
 Both refuse an arbitrator whose pane is gone (`arbitrator_gone`) — a session armed over a dead
 arbitrator is one that spends its next trigger discovering that.
@@ -1042,6 +1105,30 @@ Two rules keep it readable:
   trigger arriving at a stopped session) are written once per sequence. At four polls a minute the
   path would otherwise be nothing but the step that is not moving.
 
+### 14.10 Waking the members
+
+A first prompt into an agent that has been idle a long time is often answered with nothing: the
+harness wakes, redraws, and the turn ends with no reply. The arbitrator then reports — correctly,
+and uselessly — that the member said nothing, and a person reads a session that stopped over a cold
+start. It is not a race the loop can wait out: the turn genuinely ended, and the answer never
+existed.
+
+So a session may **wake its members before anything is asked of them**. One short line
+("are you ready for work…"), sent to each member as its own turn while the arbitrator is still
+reading its brief — the point is that the warm-up costs the session nothing, because the gap it
+fills is the gap the brief already takes.
+
+* **The reply is not a trigger.** `turn_ended` swallows the first turn end from a pane that was
+  woken, and says so on the path. Otherwise every session would open by spending a step deciding
+  what to do about the word "ready".
+* **Off by default, and a checkbox in the setup form.** Except **agy**, which is woken whether or
+  not the box was ticked: it is the harness that reliably needs it, and a default that is right for
+  one harness does not belong to the person setting up the session.
+* **Best effort.** A member that is already `working` or `blocked` is awake, and is not typed at
+  (N7). A send that cannot be confirmed does not pause a session that has not started yet.
+* **Resuming a long stop wakes the room again**, over 30 minutes — the same cold agent, for the
+  same reason. A short pause resumes cold.
+
 ## 15. Wire protocol
 
 Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
@@ -1051,8 +1138,8 @@ Additive. With `HERDR_ENABLE_ARBITER` unset, none of these are sent or accepted.
 | Type | Payload | Gate |
 |---|---|---|
 | `conv_log` | `session`, optional `member`, `fingerprints`, `last`, `grep`, `since`, `kind` | `HERDR_CONV_LOG` |
-| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `paused?` | Arbiter |
-| `arb_edit` | `session`, and any of `scope`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `triggers` — what is not named does not move | Arbiter |
+| `arb_start` | `conversation`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `scope`, `gates?`, `budget?`, `triggers?`, `warmup?` (§14.10), `paused?` | Arbiter |
+| `arb_edit` | `session`, and any of `scope`, `members[]` (2, each `pane_id` + `role?`), `arbitrator`, `triggers`, `budget` (§13.1, capped at `BUDGET_MAX`), `warmup` (§14.10) — what is not named does not move | Arbiter |
 | `arb_members` | `session`, `members[]` (2, each `pane_id` + `role?`) — the roster half of `arb_edit`, kept for clients that only ever ask for that | Arbiter |
 | `arb_reinit` | `session` | Arbiter |
 | `arb_pause` | `session` | Arbiter |
@@ -1081,8 +1168,10 @@ the same reason: every path is derived from it.
   "members": [{"id": "member-1", "label": "Architect 1", "agent": "claude",
                "role": "Architect", "pane_id": "…", "status": "idle"}],
   "arbitrator": {"pane_id": "…", "label": "Arbitrator", "status": "idle"},
-  "budget": {"steps_left": 7, "consecutive_left": 3, "minutes_left": 44},
+  "budget": {"steps_left": 7, "consecutive_left": 3, "minutes_left": 44,
+             "max_steps": 8, "max_consecutive": 8, "max_minutes": 45},
   "triggers": {"on_turn_end": true, "idle_ms": 0, "runtime_ms": 0},
+  "warmup": false,
   "event_at": 41,
   "last_decision": {"sequence": 7, "gate": "review", "to": "member-2",
                     "why": "…", "ambiguity": "low", "at": 1755423862000}

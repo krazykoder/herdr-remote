@@ -75,7 +75,10 @@ DEFAULT_GATES = [
 
 # Conservative on purpose, and raised only on evidence from real sessions. The maxima are the point:
 # a person who wants a longer loop can have one, and cannot have an unbounded one by typo.
-DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 3, "max_wall_clock_ms": 45 * 60 * 1000}
+# `max_consecutive` was 3, from before anything could lower it: `human_entered` was never called
+# and a resume did not clear the run, so the number was academic and a small one looked safe. Now
+# that both do, 3 is a leash a review loop trips on its first lap — ask, implement, ask is three.
+DEFAULT_BUDGET = {"max_steps": 8, "max_consecutive": 8, "max_wall_clock_ms": 45 * 60 * 1000}
 BUDGET_MAX = {"max_steps": 50, "max_consecutive": 20, "max_wall_clock_ms": 8 * 60 * 60 * 1000}
 
 MAX_SCOPE = 4_000
@@ -121,7 +124,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   window_at         INTEGER NOT NULL,
   created_at        INTEGER NOT NULL,
   ended_at          INTEGER,
-  ended_reason      TEXT
+  ended_reason      TEXT,
+  warmup            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -226,6 +230,27 @@ def fingerprint(pane):
 # Everything below this line and above the class is a function of its arguments. The lifecycle is
 # where the interesting mistakes live, so the rules that govern it are kept somewhere they can be
 # read and tested without a database.
+
+
+# Added to `sessions` after the first release — see the ALTER in `__init__`.
+ADDED_COLUMNS = (("warmup", "INTEGER NOT NULL DEFAULT 0"),)
+
+# What a cold agent is asked before it is asked to work, and which harnesses get it whether or not
+# anybody asked. A first prompt into an agent that has been sitting idle for a long time is often
+# answered with nothing at all — the harness wakes up, redraws, and the turn ends without a reply —
+# and the arbitrator then reports, correctly and uselessly, that the member said nothing. agy does
+# this reliably enough to be the default; every other harness is a checkbox, off.
+WARMUP_TEXT = ("Hi — are you ready for work? I will send you instructions shortly. "
+               "Reply with one short line and do nothing else.")
+WARM_ALWAYS = ("agy",)
+# How long a session has to have been stopped before resuming warms its members again. A pause over
+# lunch is a cold agent by the time it is picked up, which is the same problem as a cold start.
+WARM_AFTER_MS = 30 * 60 * 1000
+
+
+def wants_warmup(session, member):
+    """Is this member warmed? The session's own choice, or the harness's default."""
+    return bool(session["warmup"]) or (member.get("agent") or "") in WARM_ALWAYS
 
 
 def budget_spent(session, now):
@@ -569,12 +594,24 @@ class Arbitration:
         # How long each member has been in the status it is in, for §10's clocks. Held in memory on
         # purpose: it is a fact about this relay's uptime, and a restart pauses the session anyway.
         self._since = {}
+        # Panes that have been sent a warm-up and have not answered it yet. In memory for the same
+        # reason: it is a fact about the last few seconds, and the worst a restart can do is let one
+        # "ready" through as a trigger — which costs one decision and nothing else.
+        self._warming = set()
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, mode=0o700, exist_ok=True)
         os.makedirs(self.dir, mode=0o700, exist_ok=True)
         self._local = threading.local()
         self.conn.executescript(SCHEMA)
+        # Added after the first release. SQLite has no ADD COLUMN IF NOT EXISTS, and this file is
+        # one the user has been accumulating since they turned the feature on — the same reason
+        # conversation_log carries an ADDED_COLUMNS list.
+        for column, decl in ADDED_COLUMNS:
+            try:
+                self.conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {decl}")
+            except sqlite3.OperationalError:
+                pass                      # already there, which is the ordinary case
         self.conn.commit()
 
     @property
@@ -886,7 +923,7 @@ class Arbitration:
     # --- lifecycle ---
 
     def start(self, *, conversation, members, arbitrator, scope, gates=None, budget=None,
-              triggers=None, paused=False):
+              triggers=None, paused=False, warmup=False):
         """Enrol a roster and arm the loop. Preconditions in §9.2's order, each with its own code.
 
         `members` and `arbitrator` are panes as herdr lists them; the front end chose them, because
@@ -916,6 +953,7 @@ class Arbitration:
             raise ArbiterError("bad_gates")
         budget = check_budget(budget)
         triggers = check_triggers(triggers)
+        warmup = bool(warmup)
 
         at = self.clock()
         # Readable enough to recognise in a directory listing, and suffixed because the minute is
@@ -926,14 +964,15 @@ class Arbitration:
         self.conn.execute(
             "INSERT INTO sessions (id, conversation, scope, gates_json, budget_json, "
             "triggers_json, arbitrator_fp, arbitrator_pane, state, pause_reason, window_at, "
-            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at, warmup) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
              json.dumps(triggers),
              json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"],
              # Briefed either way. The starter prompt is what makes an agent an arbitrator, so it
              # goes out on every start; `paused` decides only whether the loop is armed behind it,
              # which is the difference between "this one is ready" and "this one is deciding".
-             "paused" if paused else "active", "not_started" if paused else None, at, at))
+             "paused" if paused else "active", "not_started" if paused else None, at, at,
+             1 if warmup else 0))
         self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
@@ -950,6 +989,9 @@ class Arbitration:
             # button. Failing the start leaves nothing behind and the person simply starts again.
             self.end(session_id, "send_unconfirmed")
             raise ArbiterError("send_unconfirmed", arbitrator["pane_id"])
+        # After the brief, not before it: the members wake up while the arbitrator is reading, which
+        # is the whole gap the warm-up exists to spend.
+        self.warm(session_id, "start")
         return self.session(session_id)
 
     def _write_members(self, session_id, members, at):
@@ -978,7 +1020,8 @@ class Arbitration:
         return self.edit(session_id, members=members)
 
     @session_change
-    def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None):
+    def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None,
+             budget=None, warmup=None):
         """Change a running session without starting a new one. Every field, one set of rules.
 
         §14.1 still fixes the roster at two, so a roster edit is a replacement of the whole thing
@@ -1004,6 +1047,11 @@ class Arbitration:
             next decision made against a sentence nobody is reading any more.
           * **triggers** — the relay's own clocks. The arbitrator is never told about them and
             there is nothing here to announce: it cannot act on a clock and never sees one.
+          * **budget** — the same: relay-side accounting, and the arbitrator already reads what is
+            left of it in every prompt. Editable because a session that stopped on a spent budget
+            had no way out at all — `resume` deliberately does not raise a limit it was not asked
+            to, so without this the only answer to `budget_steps` was to start a second session and
+            throw away everything the first one had decided.
           * **arbitrator** — not a field edit at all. A new pane has none of this session's
             context, so it is enrolled and then *briefed*, exactly as `reinit` briefs one: cleared,
             then given the starter prompt with the scope as it now stands. The pane it replaces is
@@ -1023,6 +1071,8 @@ class Arbitration:
                 raise ArbiterError("bad_scope")
         if triggers is not None:
             triggers = check_triggers(triggers)
+        if budget is not None:
+            budget = check_budget(budget)
 
         live = self.panes()
         was, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
@@ -1061,6 +1111,12 @@ class Arbitration:
         if triggers is not None:
             sets.append("triggers_json=?")
             args.append(json.dumps(triggers))
+        if budget is not None:
+            sets.append("budget_json=?")
+            args.append(json.dumps(budget))
+        if warmup is not None:
+            sets.append("warmup=?")
+            args.append(1 if warmup else 0)
         if swapped:
             sets.append("arbitrator_fp=?")
             args.append(json.dumps(fingerprint(chosen)))
@@ -1072,13 +1128,14 @@ class Arbitration:
         moved = ([m["pane_id"] for m in before.values()]
                  != [m["pane_id"] for m in roster.values()])
         reroled = [m["role"] for m in before.values()] != [m["role"] for m in roster.values()]
-        log.info("arbitration %s edited: roster %s%s%s%s", session_id,
+        log.info("arbitration %s edited: roster %s%s%s%s%s", session_id,
                  ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
                            f"{' [' + m['role'] + ']' if m.get('role') else ''}"
                            for mid, m in roster.items()),
                  f", arbitrator {was} -> {arb}" if swapped else "",
                  ", scope changed" if scope is not None else "",
-                 ", triggers changed" if triggers is not None else "")
+                 ", triggers changed" if triggers is not None else "",
+                 ", budget changed" if budget is not None else "")
 
         self._event(session_id, "edited", ", ".join(filter(None, [
             "roster " + ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
@@ -1086,13 +1143,16 @@ class Arbitration:
             "roles changed" if reroled else "",
             f"arbitrator {was} -> {arb}" if swapped else "",
             "scope changed" if scope is not None else "",
-            "clocks changed" if triggers is not None else ""])) or "nothing")
+            "clocks changed" if triggers is not None else "",
+            "budget changed" if budget is not None else "",
+            ("warm-up on" if warmup else "warm-up off") if warmup is not None else ""]))
+            or "nothing")
         if swapped:
             # A brief, not an announcement. The new pane was not here for any of this, so telling
             # it "the roster changed" would be telling it about a change from a state it never saw.
             return self._brief(session_id, arb, "arbitrator")
         if not moved and not reroled and scope is None:
-            return s                      # clocks only: nothing the arbitrator can act on
+            return s              # clocks or budget only: nothing the arbitrator can act on
         body = roster_prompt(roster, s["scope"], moved, reroled, scope is not None)
         self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
@@ -1104,6 +1164,37 @@ class Arbitration:
             # roster it does not know about is the one thing this whole call exists to prevent.
             return self.pause(session_id, "send_unconfirmed")
         return self.session(session_id)
+
+    def warm(self, session_id, why="start"):
+        """Wake the members that need waking, before anything is asked of them.
+
+        A first prompt into an agent that has been idle a long time is often answered with nothing:
+        the harness wakes, redraws, and the turn ends with no reply. The arbitrator then reports —
+        correctly, and uselessly — that the member said nothing, and a person reads a session that
+        stopped over a cold start.
+
+        Sent as its own turn, well before the work: the point is that the agent is warm by the time
+        an instruction arrives, so this goes out while the arbitrator is still reading its brief.
+        The answer to it is **not** a trigger — see `turn_ended` — or every session would open by
+        spending a decision on the word "ready".
+
+        Best effort throughout. A member that is mid-turn is already awake, and one whose send
+        cannot be confirmed is not worth pausing a session that has not started yet.
+        """
+        s = self.session(session_id)
+        warmed = []
+        for member_id, m in self.roster(session_id).items():
+            pane_id = m.get("pane_id")
+            if not pane_id or m["panes"] != 1 or not wants_warmup(s, m):
+                continue
+            if (m.get("status") or "") in BUSY:
+                continue        # already awake, and N7: a keystroke at a working pane goes missing
+            if self._send(pane_id, WARMUP_TEXT, session_id, f"the warm-up for {member_id}"):
+                self._warming.add(pane_id)
+                warmed.append(m.get("label") or member_id)
+        if warmed:
+            self._event(session_id, "warmed", "{} ({})".format(", ".join(warmed), why))
+        return warmed
 
     def _brief(self, session_id, arb, trigger):
         """Clear a pane and give it the session's opening instruction. `reinit`, and a swap.
@@ -1191,6 +1282,64 @@ class Arbitration:
         return s
 
     @session_change
+    def resume_plan(self, session_id):
+        """What pressing Resume would do right now, without doing it.
+
+        The four cases `resume` chooses between are computed here and nowhere else, so the sentence
+        a person is shown before they press is produced by the same code that acts when they do —
+        a preview derived from a second reading of the same rows would be a second place to be
+        wrong, and the one thing worse than not knowing what a button does is being told wrongly.
+
+        `stale` is the case none of the four cover. A resume arms the loop and waits for a trigger,
+        and `ask` covers a turn that ended *while the relay was watching*. A turn that ended while
+        it was not — a restart, a session edited mid-flight, a trigger consumed by a prompt that
+        then failed — leaves a member that has done its work, a session that will wait for ever,
+        and nothing in the path to say so. So: the last thing this session sent, to a member that
+        is not working now and has not ended a turn since. That is a session whose Resume does
+        nothing, said before it is pressed rather than discovered ten minutes later.
+        """
+        return self._plan(self.session(session_id))
+
+    def _plan(self, session, kick=False):
+        session_id = session["id"]
+        if session["state"] == "ended":
+            return {"action": "none", "sequence": session["sequence"], "prompt_id": None,
+                    "stale": None}
+        sequence = session["sequence"]
+        pending = self._unread_decision(session_id, sequence)
+        # The question is still out: a prompt at this sequence that no valid decision answers. Not
+        # a stored flag — the two rows already say it, and a second place recording the same fact
+        # is a second place for it to be wrong.
+        outstanding = not pending and not kick and self._unanswered_prompt(session_id, sequence)
+        dropped = (not pending and not outstanding and session["state"] == "paused"
+                   and self._dropped_trigger(session_id))
+        action = ("collect" if pending else "await" if outstanding
+                  else "ask" if dropped else "wait")
+        return {"action": action, "sequence": sequence, "prompt_id": pending,
+                "stale": self._stale_member(session_id) if action == "wait" else None}
+
+    def _stale_member(self, session_id):
+        """A member that was written to, is not working, and never came back. See `resume_plan`.
+
+        Three rows and a status, in that order because each is cheaper than the next to be wrong
+        about: the last send, any trigger after it, and what that member's pane is doing now. A
+        member still `working` needs no help — its turn end is coming and the loop will catch it.
+        """
+        row = self.conn.execute(
+            "SELECT to_member, at FROM sends WHERE session_id=? ORDER BY id DESC LIMIT 1",
+            (session_id,)).fetchone()
+        if row is None:
+            return None
+        if self.conn.execute(
+                "SELECT 1 FROM events WHERE session_id=? AND kind='trigger' AND at >= ? LIMIT 1",
+                (session_id, row["at"])).fetchone():
+            return None
+        who = self.roster(session_id).get(row["to_member"])
+        if not who or not who["pane_id"] or who["status"] in BUSY:
+            return None
+        return {"member": row["to_member"], "label": who["label"] or row["to_member"],
+                "pane_id": who["pane_id"], "at": row["at"]}
+
     def resume(self, session_id, kick=False):
         """Back to `active`, with a fresh wall-clock window.
 
@@ -1198,17 +1347,35 @@ class Arbitration:
         stopped on `budget_steps` without raising the limit gets one more pause at the next trigger,
         which is honest, and the alternative is a Resume button that silently does nothing.
 
-        **`kick` is the answer to "what happens first".** Without it a resume arms the loop and
-        waits for a trigger — and a trigger is a member ending a turn or a clock, both of which can
-        be a very long time away: two idle members and no clocks is a session that is `active` and
-        will never do anything. Worse, a turn that ended *while it was paused* was dropped as a
-        trigger by `turn_ended`, so the very work the person paused to look at is not what wakes it
-        up again.
+        **A resume picks up where the session stopped, and there are three places that can be.**
+        Pausing is the control a person uses constantly, so what it costs must not depend on which
+        millisecond it landed in:
 
-        With `kick`, resuming asks for a decision immediately. The record kept recording throughout
-        the pause, so that prompt carries what happened while it was stopped — which closes the
-        dropped trigger as content even though the wake-up itself was lost — and a note saying what
-        stopped it, because two of those reasons change what the next decision may safely be.
+          1. **A decision was written and never read.** `collect` only ever runs off the arbitrator
+             ending a turn (§12.1 step 4). If the relay died — or a person paused — in the window
+             between the write and the read, that turn end is gone and nothing will ever ask again:
+             the file sits in the drop box for ever, and the next prompt bumps the sequence and
+             unlinks a different path. So a resume reads the drop box *first*, and when it holds
+             bytes nobody has judged this call is a collection rather than an arming. Nothing is
+             re-decided: `collect` compares the content hash, so a record already judged is left
+             alone.
+          2. **A question is still out.** The session was `awaiting` when it stopped and the
+             arbitrator has not written yet — it is still reading, and the pause interrupted the
+             wait rather than anything else. Coming back `active` throws that question away:
+             `arbitrator_finished` reads the drop box only for an `awaiting` session, so the answer
+             to it, whenever it arrives, would be ignored exactly as in case 1. So the wait is what
+             resumes. `kick` overrides this and asks a fresh question, which is the way out of an
+             arbitrator that is never going to answer the old one.
+          3. **A member finished while it was stopped.** `turn_ended` drops that trigger — the
+             session was not armed — and records it on the path. A resume that only armed the loop
+             would then sit there for ever waiting for a wake-up that has already been and gone, so
+             an unhandled trigger since the last stop is asked now, whether or not `kick` was given.
+          4. **Nothing happened while it was stopped.** Armed, waiting — unless `kick`, which asks
+             for a decision immediately. Two idle members and no clocks is a session that is
+             `active` and will never do anything, and `kick` is the way out of that.
+
+        Cases 3 and 4-with-`kick` carry a note saying what stopped the session, because two of
+        those reasons change what the next decision may safely be.
 
         Both forms refuse an arbitrator that is gone. Resuming a session whose decider has exited
         used to succeed and then die at the next trigger with `send_unconfirmed`, which reads like
@@ -1227,13 +1394,54 @@ class Arbitration:
                            if p.get("pane_id") == arb), "")
             if status in BUSY:
                 raise ArbiterError("arbitrator_busy", arb)
+        # The run of automated sends ends here, whatever it was up to. A person reading a session
+        # and pressing Resume *is* the human in the loop that `max_consecutive` is counting the
+        # absence of — and without this, a session that stopped on `budget_consecutive` resumed
+        # into the same wall at its very next trigger, which is a Resume button that does nothing.
+        # The wall clock already renews on a resume for the same reason. Steps do not: that is the
+        # hard cap on how much a session may do at all, and a person who wants more says so by
+        # starting one.
+        sequence = session["sequence"]
+        # The same four-way choice the Resume button previewed — see `resume_plan`, which is where
+        # it is made. Read once here, so what happens is what was shown.
+        plan = self._plan(session, kick=kick)
+        pending = plan["prompt_id"]
+        outstanding = plan["action"] == "await"
+        dropped = plan["action"] == "ask"
+        # Back to `awaiting` for both of the first two cases. `collect` and `arbitrator_finished`
+        # read the drop box in that state and no other, and it is the state the session was in when
+        # it stopped — which is what "resume where it stopped" has to mean here.
         self.conn.execute(
-            "UPDATE sessions SET state='active', pause_reason=NULL, window_at=?, "
-            "arbitrator_pane=? WHERE id=?", (self.clock(), arb, session_id))
+            "UPDATE sessions SET state=?, pause_reason=NULL, window_at=?, consecutive=0, "
+            "arbitrator_pane=? WHERE id=?",
+            ("awaiting" if pending or outstanding else "active", self.clock(), arb, session_id))
         self.conn.commit()
+        # A pause over lunch is a cold agent by the time it is picked up, which is the same problem
+        # a cold start has. Read off the path rather than a column: `paused` is already written
+        # there, with the time on it.
+        if session["state"] == "paused" and self._stopped_for(session_id) >= WARM_AFTER_MS:
+            self.warm(session_id, "resume")
         self._event(session_id, "resumed",
-                    "asked for a decision now" if kick else "armed, waiting for a trigger")
-        if kick:
+                    f"reading the decision written for #{sequence} before the stop" if pending
+                    else f"still waiting on the decision asked for at #{sequence}" if outstanding
+                    else "a turn ended while it was stopped — asking for a decision now" if dropped
+                    else "asked for a decision now" if kick
+                    else "armed, waiting for a trigger")
+        if pending:
+            try:
+                self.collect(session_id, pending)
+            except (ArbiterError, sqlite3.Error, OSError) as e:
+                # The same swallow `arbitrator_finished` makes, for the same reason: a drop box
+                # that cannot be read must not turn a resume into an exception, and the session is
+                # armed either way. Said out loud, because this is where a decision goes missing.
+                log.warning("arbitration %s: reading the drop box on a resume raised: %r",
+                            session_id, e)
+                self._event(session_id, "error", f"reading the drop box on a resume: {e!r}",
+                            sequence=sequence)
+            return self.session(session_id)
+        if outstanding:
+            return self.session(session_id)     # the arbitrator has the question; nothing to ask
+        if kick or dropped:
             entries = []
             if self.entries:
                 try:
@@ -1244,8 +1452,69 @@ class Arbitration:
                     # a worse prompt and still a live session, unlike refusing to resume at all.
                     log.warning("arbitration %s: reading the record for a resume raised: %r",
                                 session_id, e)
-            self.prompt(session_id, "resume", entries, note=resume_note(session["pause_reason"]))
+            try:
+                self.prompt(session_id, "resume", entries,
+                            note=resume_note(session["pause_reason"]))
+            except ArbiterError:
+                # `prompt` pauses before it raises, so the session already says why — and a resume
+                # the person did not ask to trigger must not fail because the trigger it inherited
+                # could not be spent. A `kick` was asked for by hand and is reported by hand.
+                if kick:
+                    raise
         return self.session(session_id)
+
+    def _unread_decision(self, session_id, sequence):
+        """The prompt id an unjudged decision file answers, or None. See `resume`, case 1."""
+        if not sequence:
+            return None
+        row = self.conn.execute(
+            "SELECT id FROM prompts WHERE session_id=? AND sequence=? ORDER BY id DESC LIMIT 1",
+            (session_id, sequence)).fetchone()
+        if row is None:
+            return None
+        raw, sha = self.read_dropbox(session_id, sequence)
+        if raw is None:
+            return None
+        prior = self.conn.execute(
+            "SELECT raw_sha256 FROM decisions WHERE session_id=? AND sequence=? "
+            "ORDER BY id DESC LIMIT 1", (session_id, sequence)).fetchone()
+        return None if prior and prior["raw_sha256"] == sha else row["id"]
+
+    def _stopped_for(self, session_id):
+        """How long this session has been stopped, in milliseconds. 0 when it was not."""
+        row = self.conn.execute(
+            "SELECT at FROM events WHERE session_id=? AND kind='paused' ORDER BY id DESC LIMIT 1",
+            (session_id,)).fetchone()
+        return max(0, self.clock() - row["at"]) if row else 0
+
+    def _unanswered_prompt(self, session_id, sequence):
+        """Was a question out when this session stopped? See `resume`, case 2."""
+        if not sequence:
+            return False
+        asked = self.conn.execute(
+            "SELECT 1 FROM prompts WHERE session_id=? AND sequence=? LIMIT 1",
+            (session_id, sequence)).fetchone()
+        if asked is None:
+            return False
+        # Valid, not merely present: a rejected record leaves a row and a re-prompt, and that
+        # sequence is still waiting for an answer it can use.
+        answered = self.conn.execute(
+            "SELECT 1 FROM decisions WHERE session_id=? AND sequence=? AND valid=1 LIMIT 1",
+            (session_id, sequence)).fetchone()
+        return answered is None
+
+    def _dropped_trigger(self, session_id):
+        """Did a member finish a turn since this session last stopped? See `resume`, case 2.
+
+        Read off the path rather than a column of its own: `turn_ended` already writes the row, and
+        a second place recording the same fact is a second place for it to be wrong. Anything that
+        would have consumed a trigger — the pause itself, a prompt going out, an earlier resume —
+        is the watermark, so only a trigger nobody has answered counts.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM events WHERE session_id=? AND kind='trigger' AND id > COALESCE("
+            "(SELECT MAX(id) FROM events WHERE session_id=? AND kind IN ('paused','asked',"
+            "'resumed')), 0) LIMIT 1", (session_id, session_id)).fetchone() is not None
 
     def end(self, session_id, reason):
         session = self.session(session_id)
@@ -1268,10 +1537,27 @@ class Arbitration:
         """
         return [self.pause(row["id"], "restart") for row in self.running_all()]
 
-    def human_entered(self, session_id):
-        """A person put text into the conversation, which is what "not consecutive" means."""
+    def decides(self, pane_id):
+        """Is this pane the arbitrator of an open session?
+
+        Asked by the relay's poll loop, which holds a member's turn end back until the pane has
+        actually said something and must not hold the arbitrator's: its answer is a file that is
+        already written, and none of it is on the pane.
+        """
+        return any(s["arbitrator_pane"] == pane_id for s in self.open_sessions())
+
+    def human_entered(self, session_id, pane_id=""):
+        """A person put text into the conversation, which is what "not consecutive" means.
+
+        `max_consecutive` is the budget that asks whether the loop is talking to itself. Every
+        automated send raises the count and only this lowers it, so a session where nobody joins in
+        stops after a run of them — which is the point. A session where somebody does join in should not,
+        and until the relay called this, none of them could tell the difference.
+        """
         self.conn.execute("UPDATE sessions SET consecutive=0 WHERE id=?", (session_id,))
         self.conn.commit()
+        self._event(session_id, "human",
+                    f"a person typed at {pane_id}" if pane_id else "a person typed here")
 
     # --- what a pane ending its turn means ------------------------------------------------
     #
@@ -1305,6 +1591,13 @@ class Arbitration:
                                   if m["pane_id"] == pane_id), None)
                 if member_id is None:
                     continue
+                if pane_id in self._warming:
+                    # The member answering "ready". Not a trigger: a session that spent a decision
+                    # on the word would have opened by asking the arbitrator to arbitrate a
+                    # handshake — and the budget it costs is the one thing a warm-up must not cost.
+                    self._warming.discard(pane_id)
+                    self._event(s["id"], "warmed", f"{member_id} answered — not a trigger")
+                    return None
                 if s["state"] != "active":
                     # A trigger that lands on a session which is not armed. Both cases are ordinary
                     # and both are invisible from outside: `awaiting` folds this turn into the next

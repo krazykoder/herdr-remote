@@ -36,14 +36,14 @@ class SubmitPaste(unittest.TestCase):
     def setUp(self):
         # The real numbers are seconds. Nothing here is about their size — only about the order of
         # what happens — so they are shrunk to keep the suite instant.
-        for name, value in (("SUBMIT_POLL", 0.001), ("SUBMIT_TIMEOUT", 0.5),
+        for name, value in (("SUBMIT_POLL", 0.001), ("SUBMIT_POLL_SLOW", 0.002), ("SUBMIT_TIMEOUT", 0.5),
                             ("SEND_SETTLE", 0.001), ("SEND_SETTLE_MAX", 0.001)):
             p = patch.object(herdr_relay, name, value)
             p.start()
             self.addCleanup(p.stop)
         self.calls = []
 
-    def run_paste(self, statuses, text="hello", shell=False):
+    def run_paste(self, statuses, text="hello", shell=False, agent=None):
         """Drive one submit_paste over a scripted sequence of pane statuses.
 
         The last entry repeats once the script runs out, which is how "and it stays that way" is
@@ -64,8 +64,10 @@ class SubmitPaste(unittest.TestCase):
             return ""
 
         shells = {"w1:p1"} if shell else set()
+        cache = {"w1:p1": {"agent": agent}} if agent else {}
         with patch.object(herdr_relay, "pane_agent_status", status), \
              patch.object(herdr_relay, "shell_panes", shells), \
+             patch.object(herdr_relay, "agent_cache", cache), \
              patch.object(herdr_relay, "run_herdr", herdr):
             took = asyncio.run(herdr_relay.submit_paste("w1:p1", text))
         return took
@@ -110,6 +112,36 @@ class SubmitPaste(unittest.TestCase):
         self.assertTrue(self.run_paste(idle_past_the_presses))
         self.assertEqual(len(self.enters()), herdr_relay.SUBMIT_TRIES)
 
+    def test_a_harness_known_to_be_slow_is_watched_past_the_shared_window(self):
+        # agy reports `idle` for tens of seconds after an Enter it did take, because it repaints
+        # its whole frame before its status moves. Giving up at the shared window paused an
+        # arbitration session with `send_unconfirmed` over a message the member went on to answer,
+        # so the window is per harness — SUBMIT_SLOW, read off the poll's own snapshot.
+        # Idle for 0.8s against a shared window of 0.5s and an agy window of 5s: the same pane
+        # either gives up or waits, and the harness is the only difference.
+        long_idle = ["idle"] * 40 + ["working"]
+        with patch.object(herdr_relay, "SUBMIT_SLOW", {"agy": 5.0}), \
+             patch.object(herdr_relay, "SUBMIT_POLL", 0.02):
+            self.assertFalse(self.run_paste(long_idle))
+            self.assertTrue(self.run_paste(long_idle, agent="agy"))
+
+    def test_the_watching_slows_down_once_the_presses_are_spent(self):
+        # A long window at the fast rate is a `herdr pane list` subprocess every 0.4s for as long
+        # as it runs — a hundred process spawns, over SSH for a remote pane, to learn one bit. The
+        # presses all fall inside the fast phase; after it there is nothing to do but watch.
+        with patch.object(herdr_relay, "SUBMIT_POLL", 0.4), \
+             patch.object(herdr_relay, "SUBMIT_POLL_SLOW", 2.0), \
+             patch.object(herdr_relay, "SUBMIT_FAST", 4.0):
+            self.assertEqual(herdr_relay.submit_delay(0.0), 0.4)
+            self.assertEqual(herdr_relay.submit_delay(3.9), 0.4)
+            self.assertEqual(herdr_relay.submit_delay(4.0), 2.0)
+            self.assertEqual(herdr_relay.submit_delay(44.0), 2.0)
+
+    def test_an_unknown_pane_gets_the_shared_window(self):
+        # A pane this relay has never listed has no harness to look up, and the fallback is the
+        # number that was always there rather than the longest one anybody registered.
+        self.assertEqual(herdr_relay.submit_window("w9:p9"), herdr_relay.SUBMIT_TIMEOUT)
+
     def test_a_pane_that_never_moves_is_given_up_on_rather_than_hammered(self):
         took = self.run_paste(["idle"])
         self.assertFalse(took)
@@ -145,7 +177,7 @@ class SubmitIntoAShell(unittest.TestCase):
     """
 
     def setUp(self):
-        for name, value in (("SUBMIT_POLL", 0.001), ("SUBMIT_TIMEOUT", 0.5),
+        for name, value in (("SUBMIT_POLL", 0.001), ("SUBMIT_POLL_SLOW", 0.002), ("SUBMIT_TIMEOUT", 0.5),
                             ("SEND_SETTLE", 0.001), ("SEND_SETTLE_MAX", 0.001)):
             p = patch.object(herdr_relay, name, value)
             p.start()
