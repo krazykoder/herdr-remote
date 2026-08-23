@@ -627,13 +627,13 @@
         `<span class="arb-say-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
         '</span>' +
         `<span class="arb-say-note">${escapeHtml(note)}</span>` +
-        // Which pane is doing something, last and as a pill: it is a status, and it was a link to
-        // that pane, which is a different promise from the one a line of status makes. The pane is
-        // one tap away in the roster either way.
+        // Which pane is doing something, last and as a pill. It is status, but it also restores
+        // the direct route to the pane the earlier active chip carried.
         (who.pane_id
-          ? `<span class="arb-say-who${who.blocked ? ' warn' : ''}` +
-            `${who.idle ? ' quiet' : ''}">${escapeHtml(who.label)} · ` +
-            `${escapeHtml(who.doing)}</span>`
+          ? `<button type="button" class="arb-say-who${who.blocked ? ' warn' : ''}` +
+            `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${who.pane_id}')"` +
+            ` aria-label="Open ${escapeHtml(who.label)} pane">${escapeHtml(who.label)} · ` +
+            `${escapeHtml(who.doing)}</button>`
           : '') +
         '</div>';
     }

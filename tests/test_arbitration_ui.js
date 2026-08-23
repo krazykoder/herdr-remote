@@ -176,11 +176,9 @@ test('the strip says which of the three is working, not what was last said', () 
   // Icons now, so the name a screen reader and this test read is the aria-label.
   assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
   assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
-  // member-2 is `working` in the fixture, so it is the one being waited on — said in the pill at
-  // the bottom of the tray. A pill and not a link: it is a status, and the pane is one tap away in
-  // the roster anyway.
-  assert.match(html, /arb-say-who[^>]*>Reviewer 1 · working</);
-  assert.equal(/openTerminal/.test(html), false);
+  // member-2 is `working` in the fixture, so it is the one being waited on — and the status pill
+  // remains the one-tap route to that pane.
+  assert.match(html, /arb-say-who[^>]*onclick="openTerminal\('w1:p2'\)"[^>]*>Reviewer 1 · working</);
 
   // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
   assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /Arbitrator · deciding/);

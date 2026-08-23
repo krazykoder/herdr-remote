@@ -3075,6 +3075,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      cursor: pointer;
     }
 
     .arb-say-who.quiet {
@@ -3122,12 +3123,17 @@
     /* The sentence. Sized off the pane's own font, so it moves with the text size the user chose
        for reading agents, and free to wrap: the tray grows to hold it rather than clipping it. */
     .arb-say-note {
-      display: block;
+      align-self: stretch;
+      box-sizing: border-box;
       padding: 1px 3px;
       font-size: calc(var(--term-font, 13px) * 0.72);
       line-height: 1.45;
       color: var(--muted);
       white-space: normal;
+    }
+
+    .arb-strip[data-state="paused"] .arb-say-note {
+      color: var(--orange);
     }
 
     /* Nothing is running: one button, and no panel of chrome pretending to be a status. */
