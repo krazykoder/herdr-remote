@@ -7,9 +7,9 @@ directory are one fingerprint, so a person's own Claude pane in a repo put their
 another conversation's digest, headed with a member's label. The arbitrator was told a member had
 said something nobody in that session ever said, and decided on it.
 
-The rule this pins: a row from a pane that is live now and is not one of this session's panes is
-not this session's. A row from a pane that is no longer live may be a member from before a
-restart, and that is the whole reason the fingerprint exists, so it stays.
+The rule this pins: a digest accepts only the pane chosen when a member enrolled and its current
+successor after a restart. An exited pane with the same fingerprint is not evidence it belonged to
+the session.
 """
 import sys
 import unittest
@@ -23,8 +23,10 @@ import herdr_relay
 
 CWD = "/repo"
 MEMBERS = [
-    {"member_id": "member-1", "host": "local", "agent": "agy", "cwd": CWD, "label": "test 1"},
-    {"member_id": "member-2", "host": "local", "agent": "claude", "cwd": CWD, "label": "test claude"},
+    {"member_id": "member-1", "host": "local", "agent": "agy", "cwd": CWD,
+     "label": "test 1", "pane_id": "w1:p1"},
+    {"member_id": "member-2", "host": "local", "agent": "claude", "cwd": CWD,
+     "label": "test claude", "pane_id": "w1:p2"},
 ]
 ROSTER = {"member-1": {"pane_id": "w1:p1"}, "member-2": {"pane_id": "w1:p2"}}
 
@@ -67,13 +69,35 @@ class Digest(unittest.TestCase):
         got, _ = self.entries(rows, live=["w1:p1", "w1:p2", "w1:p9"])
         self.assertEqual(got, [])
 
+    def test_an_exited_stranger_on_the_same_fingerprint_stays_out(self):
+        # Not being live is not proof that this was a session member. It may simply be another
+        # Claude pane that exited before the next digest was built.
+        rows = [turn("w1:p9", "claude", "not a member"),
+                turn("w1:p2", "claude", "the member's turn")]
+        got, _ = self.entries(rows, live=["w1:p1", "w1:p2"])
+        self.assertEqual([e["text"] for e in got], ["the member's turn"])
+
     def test_a_pane_that_is_gone_is_still_the_member_it_was(self):
         # The case the fingerprint exists for: herdr restarted, the member's pane has a new id,
         # and everything it said before that is under the old one. Nothing live claims it, so it
         # is still this session's.
+        members = [MEMBERS[0], {**MEMBERS[1], "pane_id": "w1:pOLD"}]
         rows = [turn("w1:pOLD", "claude", "said this before the restart"),
                 turn("w1:p2", "claude", "and this after")]
-        got, _ = self.entries(rows, live=["w1:p1", "w1:p2"])
+
+        class FakeArb:
+            members = staticmethod(lambda sid: members)
+            roster = staticmethod(lambda sid: ROSTER)
+
+        class FakeLog:
+            def query(self, **kw):
+                return rows, False
+
+        with patch.object(herdr_relay, "arbitration", FakeArb), \
+             patch.object(herdr_relay, "conv_log", FakeLog()), \
+             patch.object(herdr_relay, "live_panes",
+                          lambda: [{"pane_id": p} for p in ("w1:p1", "w1:p2")]):
+            got = herdr_relay.arbitration_entries_of("s-1")
         self.assertEqual([e["text"] for e in got],
                          ["said this before the restart", "and this after"])
 

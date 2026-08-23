@@ -1768,16 +1768,15 @@ def arbitration_entries_of(session_id):
     # arbitrator digest, headed with a member's label, so the arbitrator was told a member had
     # said something nobody in that session ever said.
     #
-    # A row from a pane that is live *now* and is not one of this session's panes is definitely
-    # not this session's. A row from a pane that is no longer live may well be a member from
-    # before a restart, which is the case the fingerprint exists for, so it stays.
-    ours = {m["pane_id"] for m in arbitration.roster(session_id).values() if m["pane_id"]}
-    others = {p.get("pane_id") for p in live_panes()} - ours
-    # ponytail: over-fetch and drop, rather than teaching the query to exclude panes. The digest is
-    # six rows and the scan is bounded; if a shared fingerprint ever gets busy enough that thirty
-    # rows are all somebody else's, this wants a `not_panes` selector in conv_query.
+    # An exited stranger is still a stranger; allowing every no-longer-live pane would recreate the
+    # leak on the next digest. The member table holds the pane chosen at enrolment and the live
+    # roster holds its current successor, so their union is the safe set across a restart.
+    ours = {m["pane_id"] for m in members if m["pane_id"]}
+    ours.update(m["pane_id"] for m in arbitration.roster(session_id).values() if m["pane_id"])
+    # ponytail: over-fetch and keep, rather than teaching the query a pane selector. The digest is
+    # six rows and the scan is bounded; add one only if this bounded filter becomes measurable.
     rows, _ = conv_log.query(fingerprints=fingerprints, last=ARB_DIGEST * ARB_DIGEST_SCAN)
-    rows = [r for r in rows if r["pane_id"] not in others][-ARB_DIGEST:]
+    rows = [r for r in rows if r["pane_id"] in ours][-ARB_DIGEST:]
     return [{"label": labels.get((r["host"], r["agent"], r["cwd"]), r["origin"]),
              "text": r["text"]} for r in rows]
 
