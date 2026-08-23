@@ -202,15 +202,20 @@ test('a running session shows what it is doing and how to stop it', async ({page
     ambiguity: 'low', at: Date.now()}}));
   const strip = page.locator('#arbStrip .arb-strip');
   await expect(strip).toContainText('Arbitrating');
-  // Which of the three is doing something, not what was last said — the sentence lives in the Log.
-  await expect(strip).toContainText('scratch · working');
+  // Where the session is, not what was last said — the sentence lives in the Log, and what the
+  // state means lives in the sheet a tap on the tray opens.
   await expect(strip).not.toContainText('Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
-  // One line of controls, whatever the labels are: the strip floats over the thread and the row
-  // of buttons must not wrap. The sentence under it is its own panel and may be two lines.
+  // Two rows and no more: a row of controls that must not wrap, and one line saying where it is.
+  // The tray hangs over a thread being read, and every pixel of it is a pixel of that thread.
   expect(await page.locator('#arbStrip .arb-bar')
     .evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
-  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(110);
+  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(80);
+  // Right-aligned with the row of buttons above it, which is what makes the two one stack.
+  const edges = await page.evaluate(() => [
+    document.querySelector('#convView .conv-view-top .hang-float').getBoundingClientRect().right,
+    document.querySelector('#arbStrip .arb-strip').getBoundingClientRect().right]);
+  expect(Math.abs(edges[0] - edges[1])).toBeLessThan(1.5);
 
   await captureSends(page);
   await strip.getByRole('button', {name: 'Pause'}).click();

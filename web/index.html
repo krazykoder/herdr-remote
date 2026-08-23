@@ -2956,31 +2956,35 @@
     .conv-view-top #arbStrip {
       position: absolute;
       top: 100%;
-      /* The tray carries 5px of padding and a 1px border of its own, so its buttons sit 6px lower
-         than the bare ones in the opposite corner. Taking that back here is what puts the two rows
-         on one line — the pair are a stack about the same thread and read as one thing only if
-         they start at the same height. */
-      margin-top: 0;
-      left: var(--hang-right, 22px);
+      /* Under the floating row rather than opposite it: 6px of inset, that row's 28px, and the
+         6px gap the floating pieces keep everywhere else. Same right edge, so the buttons and the
+         tray read as one stack about one thread instead of two things at opposite ends of it. */
+      margin-top: calc(6px + 28px + 6px);
+      right: var(--hang-right, 22px);
       z-index: 5;
-      /* The thread owns everything between the two floating corners. Only the chips take taps. */
+      display: flex;
+      justify-content: flex-end;
+      /* The thread owns everything around it. Only the tray takes taps. */
       pointer-events: none;
-      max-width: calc(100% - 160px);
+      max-width: min(72%, 340px);
     }
 
     .arb-strip {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: flex-end;
       gap: 4px;
       font-size: 0.62rem;
       color: var(--muted);
     }
 
     /* The tray itself takes taps now — it is one object, and a thread scrolling under a hole in
-       the middle of it is worse than one that cannot be scrolled through it at all. */
+       the middle of it is worse than one that cannot be scrolled through it at all. Anywhere that
+       is not one of its buttons opens the sheet: the two rows left here are a summary, and the
+       thing a person wants when they read a summary is the rest of it. */
     .arb-strip {
       pointer-events: auto;
+      cursor: pointer;
     }
 
     .arb-strip > * {
@@ -3029,12 +3033,13 @@
       line-height: 1;
     }
 
-    /* Under the row: what state this is, what Resume would do, and what the state means. Each
-       line its own opaque chip, because the strip has no ground of its own. */
+    /* Under the row: where the session is, and nothing else. What Resume would do and what the
+       state means used to hang here too, and two paragraphs of prose floating over a thread is a
+       second thread. They are in the sheet a tap on the tray opens. */
     .arb-say {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: flex-end;
       gap: 3px;
       max-width: 100%;
       padding: 0 2px 1px;
@@ -3060,35 +3065,13 @@
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
     }
 
-    /* The two rows that are pills — the state with the budget, and who is working. The sentence
-       between them is not one: it is prose, and prose in a pill is a label pretending to be a
-       button. */
-    .arb-say-top > *,
-    .arb-say-who {
+    /* The state and the budget, each its own pill: the tray's ground is blurred rather than
+       solid, and a line without one of its own is prose over a thread of monospace text. */
+    .arb-say-top > * {
       padding: 2px 7px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--arb-chip);
-    }
-
-    .arb-say-who {
-      font-size: 0.6rem;
-      color: var(--text);
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      cursor: pointer;
-    }
-
-    .arb-say-who.quiet {
-      color: var(--muted);
-    }
-
-    /* A pane sitting on a permission prompt: the one state this tray cannot fix from the tray. */
-    .arb-say-who.warn {
-      color: var(--red);
-      border-color: var(--red);
     }
 
     /* The chips that say where the session is, on one row and never wrapping into the sentence
@@ -3107,6 +3090,9 @@
     .arb-say-budget {
       white-space: nowrap;
       flex: none;
+      /* The same weight of text as the state beside it. It is a number a person acts on — it is
+         what the resume sheet's two fields are set from — and grey read as decoration. */
+      color: var(--text);
     }
 
     .arb-say-state {
@@ -3119,34 +3105,10 @@
       color: var(--orange);
     }
 
-    /* Who is working, what Resume would do, and what the state means — one label, because they are
-       one sentence. Sized off the pane's own font so it moves with the text size the user chose for
-       reading agents, and only just lifted off the thread: a solid ground here is a paragraph-sized
-       card floating over a conversation. */
-    /* The sentence. Sized off the pane's own font, so it moves with the text size the user chose
-       for reading agents, and free to wrap: the tray grows to hold it rather than clipping it. */
-    .arb-say-note {
-      align-self: stretch;
-      box-sizing: border-box;
-      padding: 1px 3px;
-      font-size: calc(var(--term-font, 13px) * 0.72);
-      line-height: 1.45;
-      color: var(--muted);
-      white-space: normal;
-    }
-
-    .arb-strip[data-state="paused"] .arb-say-note {
-      color: var(--orange);
-    }
-
-    /* Nothing is running: one button, and no panel of chrome pretending to be a status. */
-    .arb-strip.idle {
-      border: none;
-      background: none;
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-      padding: 4px 12px;
-      align-items: flex-end;
+    /* One of the three is on a permission prompt. Louder than paused because nothing is stopped —
+       the session still reads as running, and it will not move until somebody answers it. */
+    .arb-strip[data-blocked="1"] .arb-say-state {
+      color: var(--red);
     }
 
     .arb-btn {
@@ -3361,6 +3323,14 @@
       flex: none;
     }
 
+    /* The same two drawings as the tray's buttons, at the same 24-box: this sheet is what that
+       row opens, and a ▶ from the font next to an SVG ▶ reads as two different buttons. */
+    .arb-plan-do .arb-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
     /* The resume dialog's own table. A table and not a list of paragraphs: four short columns
        that line up down the page are read at a glance, which is the whole job — find the last
        thing that happened, and the row it stopped at. */
@@ -3411,6 +3381,36 @@
     .arb-row-kind {
       white-space: nowrap;
       color: var(--muted);
+    }
+
+    /* What the session may spend when it starts again, beside the buttons that spend it. Two
+       short fields on one row: the whole banner is read with a thumb over the button under it. */
+    .arb-plan-budget {
+      display: flex;
+      gap: 8px;
+      flex: none;
+    }
+
+    .arb-plan-budget label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .arb-plan-budget input {
+      font: inherit;
+      font-size: 0.72rem;
+      width: 4.5em;
+      padding: 3px 6px;
+      min-height: 28px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
     }
 
     /* The plan, above the table: what the button will do, and the button. */
@@ -4544,6 +4544,13 @@
     .conv-view-top .hang-working {
       top: 100%;
       margin-top: calc(6px + 28px + 6px);
+    }
+
+    /* The tray takes that row when there is a session, so the chips take the one under it. 64px is
+       the tray's whole height and it is a constant: both of the rows it has left are single-line
+       by construction — the buttons are 28px squares and the state row never wraps. */
+    .conv-view-top:has(#arbStrip .arb-strip) .hang-working {
+      margin-top: calc(6px + 28px + 6px + 64px + 6px);
     }
 
     /* Centred between the two floating corners and level with the right-hand one, because it is

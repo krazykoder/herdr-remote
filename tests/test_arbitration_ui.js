@@ -164,10 +164,10 @@ test('a paused session is resumed quietly, or with a decision asked for now', ()
                    [{type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
 });
 
-test('the strip says which of the three is working, not what was last said', () => {
-  // One line, and the line is where the session *is*. The last decision's sentence used to live
-  // here and wrapped to three lines on a phone, pushing the thread down by all of them — and it
-  // answers a different question, which the Log button is for.
+test('the tray says where the session is, and nothing that is a paragraph', () => {
+  // Two rows: the controls, and where it is. The last decision's sentence used to live here and
+  // wrapped to three lines on a phone, pushing the thread down by all of them — and so did what
+  // the state means and what Resume would do. All three answer questions that have a sheet.
   const {g} = ctx();
   const s = {...SESSION, last_decision: {sequence: 1, gate: 'review', to: 'member-2',
                                          why: 'Ready for an independent check.', ambiguity: 'low'}};
@@ -176,27 +176,27 @@ test('the strip says which of the three is working, not what was last said', () 
   // Icons now, so the name a screen reader and this test read is the aria-label.
   assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
   assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
-  // member-2 is `working` in the fixture, so it is the one being waited on — and the status pill
-  // remains the one-tap route to that pane.
-  assert.match(html, /arb-say-who[^>]*onclick="openTerminal\('w1:p2'\)"[^>]*>Reviewer 1 · working</);
-
-  // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
-  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /Arbitrator · deciding/);
-  // And nobody working at all is said as such rather than left blank.
-  const quiet = {...SESSION, members: SESSION.members.map(m => ({...m, status: 'idle'}))};
-  assert.match(g.arbStripHtml(quiet, CONV, true), /Arbitrator · waiting/);
+  assert.match(html, /arb-say-state">Arbitrating<[\s\S]*arb-say-budget">7 steps · 44 min</);
+  // What the state means is the sheet's, not the tray's.
+  assert.equal(html.includes('the next turn that ends is a decision'), false);
+  // And anywhere that is not a button opens that sheet.
+  assert.match(html, /class="arb-strip" onclick="[^"]*arbOpenResume\(\)"/);
+  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /arb-say-state">Deciding…</);
 });
 
 test('a pause says what its reason means, not only what it is called', () => {
   // "budget consecutive" is precise and unactionable on its own: it counts automated sends nobody
   // joined in on, and a person cannot know that from the label.
   const {g} = ctx();
-  const paused = r => g.arbStripHtml({...SESSION, state: 'paused', pause_reason: r}, CONV, true);
-  assert.match(paused('budget_consecutive'), /Paused · needs a human/);
-  assert.match(paused('budget_consecutive'), /nobody joining in[\s\S]*Resuming clears the run/);
-  assert.match(paused('invalid_record'), /↻ Brief/);
+  const at = r => ({...SESSION, state: 'paused', pause_reason: r});
+  // The tray carries the short name of the reason…
+  assert.match(g.arbStripHtml(at('budget_consecutive'), CONV, true), /Paused · needs a human/);
+  // …and the sheet a tap on it opens carries what that means, which is a paragraph.
+  const sheet = r => g.arbResumeHtml(at(r), [], null);
+  assert.match(sheet('budget_consecutive'), /nobody joining in[\s\S]*Resuming clears the run/);
+  assert.match(sheet('invalid_record'), /↻ Brief/);
   // A reason this page has never heard of still says something true.
-  assert.match(paused('something_new'), /waiting for you/);
+  assert.match(sheet('something_new'), /waiting for you/);
 });
 
 test('an ended session leaves no strip behind', () => {
@@ -369,22 +369,23 @@ test('arming one arbitrator never arms a later session’s arbitrator', () => {
   assert.equal(g.arbGuardSend('w1:p4'), false);
 });
 
-test('a blocked arbitrator is said out loud, with the way to its pane', () => {
-  // From the strip a blocked arbitrator is indistinguishable from one that is thinking, and the
-  // session will not move until somebody answers the prompt in that pane.
+test('a blocked arbitrator is said out loud, in place of the state it is hiding behind', () => {
+  // From the tray a blocked arbitrator is indistinguishable from one that is thinking — the state
+  // pill says "Deciding…" either way — and the session will not move until somebody answers the
+  // prompt in that pane. So the pill says that instead, and is marked so it can be coloured.
   const {g} = ctx();
   const stuck = {...SESSION, state: 'awaiting',
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
   const html = g.arbStripHtml(stuck, CONV, true);
-  assert.match(html, /Arbitrator · needs you/);
-  assert.match(html, /class="arb-say-who warn"/);
+  assert.match(html, /arb-say-state">Arbitrator needs you</);
+  assert.match(html, /class="arb-strip"[^>]*data-blocked="1"/);
   assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,
                'and an arbitrator that is merely working is not news');
   // A member stuck on a permission prompt is the same problem seen from the other end, and the
   // strip is the only thing on screen that would say so.
   const held = {...SESSION, members: [SESSION.members[0],
                                       {...SESSION.members[1], status: 'blocked'}]};
-  assert.match(g.arbStripHtml(held, CONV, true), /Reviewer 1 · needs you/);
+  assert.match(g.arbStripHtml(held, CONV, true), /arb-say-state">Reviewer 1 needs you</);
 });
 
 test('an empty scope is refused here rather than on the wire', () => {
@@ -1310,8 +1311,8 @@ test('a member that was written to and went quiet is named, and leads with the t
   assert.match(html, /Written to 40 min ago/);
   assert.match(html, /class="arb-plan warn"/);
   // The quiet button is Resume, because here it is the one that does nothing.
-  assert.match(html, /class="arb-btn quiet" onclick="arbCommand\('arb_resume'\)/);
-  assert.match(html, /class="arb-btn" onclick="arbCommand\('arb_resume', \{kick: true\}\)/);
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+  assert.match(html, /class="arb-btn" onclick="arbResumeNow\(true\)/);
 });
 
 test('a running session is told the plan and offered no resume', () => {
@@ -1325,8 +1326,40 @@ test('a relay too old to send a plan still draws the steps', () => {
   c.g.arbReceiveSession({session: PAUSED});
   c.g.arbReceiveDetail({session: PAUSED.id, decisions: DECISIONS, events: EVENTS});
   const html = c.g.arbResumeHtml(PAUSED, EVENTS, null);
-  assert.match(html, /Reading the session…/);
+  // No plan means no sentence about Resume — so the state's own is what the banner says, rather
+  // than a spinner over a session that is not going anywhere.
+  assert.match(html, /Paused · by you[\s\S]*You stopped it\./);
   assert.match(html, /class="arb-rows"/);
+});
+
+test('resuming spends what the two fields ask for, and asks for it first', () => {
+  // The one place a spent budget can be raised from the button it stopped. Steps are counted from
+  // the start of the session and a resume does not clear them, so "8 more" is a ceiling of
+  // spent + 8 — the field says what the session will have, not what its limit reads.
+  const {g, sent} = ctx();
+  g.arbReceiveSession({session: {...PAUSED,
+                                 budget: {steps_left: 0, minutes_left: 0, max_steps: 8,
+                                          max_consecutive: 8, max_minutes: 45}}});
+  g.document.getElementById('arbResumeSteps').value = '8';
+  g.document.getElementById('arbResumeMins').value = '30';
+  g.arbResumeNow(false);
+  assert.deepEqual(sent.filter(m => m.type !== 'arb_detail'), [
+    {type: 'arb_edit', session: PAUSED.id,
+     budget: {max_steps: 16, max_consecutive: 8, max_wall_clock_ms: 30 * 60000}},
+    {type: 'arb_resume', session: PAUSED.id},
+  ]);
+});
+
+test('a resume that changes nothing sends nothing but the resume', () => {
+  const {g, sent} = ctx();
+  g.arbReceiveSession({session: {...PAUSED,
+                                 budget: {steps_left: 3, minutes_left: 10, max_steps: 11,
+                                          max_consecutive: 8, max_minutes: 45}}});
+  g.document.getElementById('arbResumeSteps').value = '3';
+  g.document.getElementById('arbResumeMins').value = '45';
+  g.arbResumeNow(true);
+  assert.deepEqual(sent.filter(m => m.type !== 'arb_detail'),
+                   [{type: 'arb_resume', session: PAUSED.id, kick: true}]);
 });
 
 test('the steps mark where it is stopped, not simply where they end', () => {
