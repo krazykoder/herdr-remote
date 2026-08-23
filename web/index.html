@@ -3310,12 +3310,13 @@
       color: var(--text);
     }
 
-    /* The right of the two columns: the buttons stacked beside the budget rather than under it,
-       one per line so the longer label sets the width of both and neither wraps. */
+    /* The right of the two columns: both buttons on one line beside the budget. Two words each,
+       which is what makes that fit — the long name is on the second button's tooltip and its
+       accessible name, and its glyph is the same one the table's own action carries. */
     .arb-plan-do {
       display: flex;
-      flex-direction: column;
-      align-items: stretch;
+      align-items: center;
+      justify-content: flex-end;
       gap: 6px;
       flex: 1 1 auto;
     }
@@ -3381,6 +3382,69 @@
     .arb-row-kind {
       white-space: nowrap;
       color: var(--muted);
+    }
+
+    /* What kind of step it was, as a badge rather than a word: this column is scanned down rather
+       than read across, and a shape is faster to find than a string. The three that matter carry a
+       colour — the trigger that would be spent, the stop, and anything that went wrong — and every
+       other kind stays the quiet default, so the coloured ones are the ones that stand out. */
+    .arb-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      font-size: 0.6rem;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+
+    .arb-badge[data-kind="trigger"] {
+      color: var(--blue);
+      border-color: color-mix(in srgb, var(--blue) 55%, var(--border));
+      background: color-mix(in srgb, var(--blue) 14%, transparent);
+    }
+
+    .arb-badge[data-kind="paused"] {
+      color: var(--orange);
+      border-color: color-mix(in srgb, var(--orange) 55%, var(--border));
+      background: color-mix(in srgb, var(--orange) 14%, transparent);
+    }
+
+    .arb-badge[data-kind="error"],
+    .arb-badge[data-kind="rejected"] {
+      color: var(--red);
+      border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+      background: color-mix(in srgb, var(--red) 14%, transparent);
+    }
+
+    /* The actions column, left of the detail it acts on. Narrow by construction — at most one
+       button, on at most two rows, and the button is a glyph. */
+    .arb-row-act-cell {
+      width: 1%;
+      white-space: nowrap;
+      padding-left: 0;
+      padding-right: 4px;
+    }
+
+    .arb-row-act {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font: inherit;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      color: var(--text);
+      background: var(--arb-chip, color-mix(in srgb, var(--text) 10%, var(--surface)));
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .arb-row-act:hover {
+      border-color: var(--blue);
+      color: var(--blue);
     }
 
     /* What the session may spend when it starts again, on its own row above the buttons that

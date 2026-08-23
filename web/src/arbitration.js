@@ -1385,13 +1385,15 @@
         `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbResumeNow(false)">` +
         arbGlyph('play') + ' Resume</button>' +
         `<button class="arb-btn${lead ? '' : ' quiet'}"` +
-        ` onclick="arbResumeNow(true)">${arbGlyph('kick')}` +
-        ' Resume and trigger</button></div>';
+        ` onclick="arbResumeNow(true)" title="Arm the loop and ask for a decision now"` +
+        ` aria-label="Resume and trigger">${arbGlyph('kick')} Trigger</button></div>`;
       // Where it is stopped *now*: the last pause with no resume under it. Not the last row — a
       // trigger that arrived after the stop sits below it and reads like progress.
       const stopped = rows.map(e => e.kind).lastIndexOf('paused');
       const mark = stopped >= 0 && !rows.slice(stopped + 1).some(e => e.kind === 'resumed')
         ? stopped : -1;
+      // The newest trigger — the one a decision would be about if it were asked for now.
+      const live = rows.map(e => e.kind).lastIndexOf('trigger');
       // Newest first. The question this table answers is "what was the last thing that happened",
       // and the answer to that was the row a person had to scroll to the bottom to find. The
       // stop marker is worked out above against the events in the order they happened, so only the
@@ -1401,17 +1403,27 @@
             const when = e.at
               ? new Date(e.at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
             const bad = e.kind === 'error' || e.kind === 'rejected' || e.kind === 'paused';
+            // The one action the row invites, and only on the row it is still true of: the
+            // newest trigger is the one a decision would be asked about, and the stop marker is
+            // where the session actually is. The same buttons on every historical row would be
+            // seven copies of one thing, all doing what the last of them does.
+            const act = !paused ? ''
+              : i === live ? arbRowAct('kick', true, 'Ask the arbitrator to decide about this now')
+              : i === mark ? arbRowAct('play', false, 'Resume from here')
+              : '';
             return `<tr class="${bad ? 'bad' : ''}${i === mark ? ' stop' : ''}">` +
               `<td class="arb-row-at">${escapeHtml(when)}</td>` +
               `<td class="arb-row-seq">${e.sequence ? '#' + escapeHtml(String(e.sequence)) : ''}</td>` +
-              `<td class="arb-row-kind">${escapeHtml(e.kind || '')}</td>` +
+              `<td class="arb-row-kind"><span class="arb-badge" data-kind="${escapeHtml(e.kind || '')}">` +
+              `${escapeHtml(e.kind || '')}</span></td>` +
+              `<td class="arb-row-act-cell">${act}</td>` +
               `<td>${escapeHtml(e.detail || '')}` +
               `${i === mark ? '<span class="arb-step-stop"> ◀ stopped here</span>' : ''}</td></tr>`;
           }).reverse().join('')
-        : '<tr><td colspan="4" class="arb-dec-empty">Nothing has happened yet.</td></tr>';
+        : '<tr><td colspan="5" class="arb-dec-empty">Nothing has happened yet.</td></tr>';
       return `<div class="arb-plan${plan && plan.stale ? ' warn' : ''}">${head}${budget}${acts}</div>` +
         '<table class="arb-rows"><thead><tr><th>Time</th><th>Step</th><th>What</th>' +
-        '<th>Detail</th></tr></thead><tbody>' + body + '</tbody></table>';
+        '<th></th><th>Detail</th></tr></thead><tbody>' + body + '</tbody></table>';
     }
 
     // One budget field: a number, and the two buttons that are how it is actually set. This is
@@ -1433,6 +1445,14 @@
         ` max="${range[1]}" value="${escapeHtml(String(value || range[0]))}"` +
         ` aria-label="${escapeHtml(label)}">` +
         nudge(1, '+', 'More') + '</span></div>';
+    }
+
+    // A row's action, as the drawing alone. The words are in the banner above the table, where the
+    // same two buttons are named — here they are one column of a table read by scanning, and a
+    // labelled button in it is a second Detail column.
+    function arbRowAct(glyph, kick, why) {
+      return `<button class="arb-row-act" onclick="arbResumeNow(${kick})"` +
+        ` title="${escapeHtml(why)}" aria-label="${escapeHtml(why)}">${arbGlyph(glyph)}</button>`;
     }
 
     // Bounded by the same range the relay enforces, so neither button can ask for a refusal.

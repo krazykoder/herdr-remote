@@ -1332,6 +1332,23 @@ test('a relay too old to send a plan still draws the steps', () => {
   assert.match(html, /class="arb-rows"/);
 });
 
+test('the steps offer their one action once, on the row it is still true of', () => {
+  // A Trigger button on all seven historical triggers would be seven copies of one thing, every
+  // one of them doing what the last of them does. The newest trigger is the one a decision would
+  // be asked about, and the stop marker is where the session actually is.
+  const {g} = ctx();
+  const html = g.arbResumeHtml(PAUSED, EVENTS, {action: 'ask', sequence: 2});
+  assert.equal((html.match(/class="arb-row-act"/g) || []).length, 2);
+  // Drawings, not words — the column is scanned. The name is what a screen reader gets.
+  assert.match(html, /arbResumeNow\(true\)[^>]*aria-label="Ask the arbitrator to decide about this now"/);
+  assert.match(html, /arbResumeNow\(false\)[^>]*aria-label="Resume from here"/);
+  // The kind is a badge, so the column can be scanned rather than read.
+  assert.match(html, /<span class="arb-badge" data-kind="trigger">trigger<\/span>/);
+  // Nothing to act on while it is running: both buttons resume, and it has not stopped.
+  const live = g.arbResumeHtml({...PAUSED, state: 'active', pause_reason: null}, EVENTS, null);
+  assert.equal(/class="arb-row-act"/.test(live), false);
+});
+
 test('the budget nudges by its own unit, and never past what the relay allows', () => {
   // Nobody grants a session one more minute, and nobody grants it fifteen more steps.
   const {g} = ctx();
