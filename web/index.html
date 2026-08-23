@@ -3155,6 +3155,13 @@
       flex-basis: 100%;
     }
 
+    /* Drawn on the text's own line rather than the baseline the box sits on: at 11px next to a
+       label, a glyph-sized SVG that sits on the baseline reads as a dropped character. */
+    .arb-sign {
+      vertical-align: -2px;
+      flex: none;
+    }
+
     /* The mark a pane carries while it is arbitrating, wherever that pane is drawn. */
     .badge.arb {
       color: var(--blue);
@@ -6397,7 +6404,7 @@
            pane, or it has none and this opens the form that gives it one. Hidden when neither is
            true, because a button whose answer is "nothing" is one a person taps twice. -->
       <button class="hang-btn hang-arbitrator" id="convArbitrator" onclick="arbOpenFromConv()"
-        aria-label="Arbitrate this conversation">⚖</button>
+        aria-label="Arbitrate this conversation"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg></button>
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">
@@ -6688,7 +6695,7 @@
         <!-- Only when this pane is in a session. A pane view has no conversation and no strip,
              so the one thing this can mean here is "take me to the arbitrator reading this". -->
         <button class="hang-btn hang-arbitrator" id="paneArbitrator" onclick="arbOpenFromPane()"
-          aria-label="Open the arbitrator’s pane">⚖</button>
+          aria-label="Open the arbitrator’s pane"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg></button>
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
           aria-label="Refresh and tidy">
@@ -7117,7 +7124,7 @@
     <div role="dialog" aria-label="Arbitrate this conversation"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">⚖ Arbitrate · <span id="arbSetupConvName"></span></span>
+        <span style="font-size:0.8rem;font-weight:600;flex:1;display:flex;align-items:center;gap:6px"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg> Arbitrate · <span id="arbSetupConvName"></span></span>
         <button onclick="closeArbSetup()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>

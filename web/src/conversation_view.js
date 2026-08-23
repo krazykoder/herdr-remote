@@ -826,7 +826,7 @@
           if (e.event) {
             last = at;
             return `<div class="conv-arb-to">` +
-              `<span class="conv-commits-lede">⚖ ${escapeHtml(e.lede || '')}</span>` +
+              `<span class="conv-commits-lede">${arbSign(11)} ${escapeHtml(e.lede || '')}</span>` +
               (e.text ? `<span class="conv-commit${e.warn ? ' warn' : ''}">` +
                         `${escapeHtml(e.text)}</span>` : '') +
               (when ? `<span class="conv-commit quiet">${escapeHtml(when)}</span>` : '') +
@@ -848,7 +848,7 @@
             (e.delivered ? '' : '<span class="conv-commit warn">not confirmed</span>') +
             '</div>';
           last = at;
-          return `<div class="conv-arb"><span class="conv-arb-who">⚖ ` +
+          return `<div class="conv-arb"><span class="conv-arb-who">${arbSign(11)} ` +
             `${escapeHtml(e.label || 'Arbitrator')}` +
             (when ? `<span class="conv-time">${escapeHtml(when)}</span>` : '') +
             `</span>${escapeHtml(e.text || '')}</div>${rail}`;
@@ -867,7 +867,7 @@
         // An arbitrated send has no `from` pane: it was composed by the arbitrator out of what two
         // members said, so what the badge names is the arbitrator itself.
         const from = user && e.via === 'arbitrator'
-          ? '<span class="via" aria-hidden="true">⚖</span> arbitrator'
+          ? `<span class="via" aria-hidden="true">${arbSign(10)}</span> arbitrator`
           : user && e.via && e.via !== 'typed' && e.from
           ? `<span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
             `${e.via === 'mixed' ? ' · edited' : ''}`

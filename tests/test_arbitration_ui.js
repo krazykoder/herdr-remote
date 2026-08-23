@@ -181,10 +181,11 @@ test('the strip says which of the three is working, not what was last said', () 
   assert.match(html, /openTerminal\('w1:p2'\)/);
 
   // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
-  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /⚖ Arbitrator · deciding/);
+  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true),
+               /arb-sign[\s\S]*?Arbitrator · deciding/);
   // And nobody working at all is said as such rather than left blank.
   const quiet = {...SESSION, members: SESSION.members.map(m => ({...m, status: 'idle'}))};
-  assert.match(g.arbStripHtml(quiet, CONV, true), /⚖ Arbitrator · waiting/);
+  assert.match(g.arbStripHtml(quiet, CONV, true), /arb-sign[\s\S]*?Arbitrator · waiting/);
 });
 
 test('a pause says what its reason means, not only what it is called', () => {
@@ -301,7 +302,7 @@ test('the arbitrator’s pane is marked, and typing at it is asked twice', () =>
   const {g, toasts} = ctx();
   assert.equal(g.arbMark('w1:p3'), '', 'nothing running, nothing marked');
   g.arbReceiveSession({type: 'arb_session', session: SESSION});
-  assert.match(g.arbMark('w1:p3'), /⚖/);
+  assert.match(g.arbMark('w1:p3'), /badge arb[\s\S]*arb-sign/);
   assert.equal(g.arbMark('w1:p1'), '', 'a member is not the arbitrator');
 
   assert.equal(g.arbGuardSend('w1:p1'), true, 'a member is typed at freely');
@@ -376,7 +377,7 @@ test('a blocked arbitrator is said out loud, with the way to its pane', () => {
   const stuck = {...SESSION, state: 'awaiting',
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
   const html = g.arbStripHtml(stuck, CONV, true);
-  assert.match(html, /⚖ Arbitrator · needs you/);
+  assert.match(html, /arb-sign[\s\S]*?Arbitrator · needs you/);
   assert.match(html, /class="arb-btn arb-active warn"/);
   assert.match(html, /openTerminal\('w1:p3'\)/);
   assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,

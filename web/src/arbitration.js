@@ -110,7 +110,8 @@
     // and a chime on every poll would be an alarm with no off switch.
     function arbAlertPause(s) {
       const why = (s.last_decision || {}).why;
-      showToast('⚖ Arbitration paused — ' + (s.pause_reason === 'call_human'
+      // No mark: a toast is textContent, and the one thing it must never carry is markup.
+      showToast('Arbitration paused — ' + (s.pause_reason === 'call_human'
         ? (why || 'the arbitrator is asking for you')
         : String(s.pause_reason || 'stopped').replace(/_/g, ' ')));
       if (window.cue) cue('chime');
@@ -206,7 +207,8 @@
 
     function arbMark(paneId) {
       return arbIsArbitrator(paneId)
-        ? ' <span class="badge arb" title="The arbitrator of a running session">⚖</span>' : '';
+        ? ' <span class="badge arb" title="The arbitrator of a running session">' +
+          arbSign(11) + '</span>' : '';
     }
 
     // Typing at the arbitrator is asked twice — not refused. A person may well need to answer a
@@ -485,11 +487,55 @@
     // The eye, for the one control here that is a view toggle rather than an action. Inline
     // rather than a glyph: nothing in the emoji set reads as "shown/hidden" at 13px, and the two
     // states are the same drawing in two colours, which a font cannot give.
-    const ARB_EYE =
-      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
-      'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" />' +
-      '<circle cx="12" cy="12" r="3" /></svg>';
+    // The tray's controls, drawn rather than typed. A glyph row is at the mercy of the font: ⏭ and
+    // ▶ arrive at different weights and different widths, ⓘ is a full-height circle next to a
+    // half-height ✎, and on a phone at least one of them is a colour emoji nobody asked for. These
+    // are one 24-box and one stroke width, so the row reads as one set of six.
+    const ARB_ICONS = {
+      edit: '<path d="M4.5 19.5h4L19 9a2.1 2.1 0 0 0-3-3L5.5 15.5v4z" />',
+      log: '<path d="M4.5 7h15M4.5 12h15M4.5 17h9" />',
+      steps: '<circle cx="12" cy="12" r="8.5" /><path d="M12 11.2v5" />' +
+             '<path d="M12 7.6h.01" />',
+      play: '<path d="M8.5 5.8 18.5 12 8.5 18.2z" fill="currentColor" stroke-linejoin="round" />',
+      kick: '<path d="M5.5 5.8 14 12 5.5 18.2z" fill="currentColor" stroke-linejoin="round" />' +
+            '<path d="M18 5.8v12.4" />',
+      pause: '<path d="M9.3 5.8v12.4M14.7 5.8v12.4" />',
+    };
+
+    function arbGlyph(name) {
+      return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        ARB_ICONS[name] + '</svg>';
+    }
+
+    // Two drawings, not one in two colours: shown is an open eye, hidden is the same eye struck
+    // through. A toggle whose only difference is a colour is a toggle nobody can read the state of
+    // without pressing it.
+    function arbEye(on) {
+      return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" />' +
+        '<circle cx="12" cy="12" r="3" />' +
+        (on ? '' : '<path d="M4 20 20 4" />') + '</svg>';
+    }
+
+    // The mark for everything arbitration: three lights in a triangle. ⚖ was a courtroom, which is
+    // not what this is — one thing decides which of two goes next, and that is a signal. Drawn
+    // rather than typed so it is the same size in every place it appears, and so the lights are
+    // the theme's own red, amber and green rather than whatever the emoji font has.
+    //
+    // The triangle is `currentColor`, so it greys with the text around it and lights blue with a
+    // button that is on.
+    function arbSign(size) {
+      const px = size || 14;
+      return `<svg class="arb-sign" viewBox="0 0 24 24" width="${px}" height="${px}"` +
+        ' aria-hidden="true">' +
+        '<path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7"' +
+        ' stroke-linejoin="round" />' +
+        '<circle cx="12" cy="9.4" r="1.7" fill="var(--red)" />' +
+        '<circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" />' +
+        '<circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg>';
+    }
 
     function arbStripHtml(session, conv, on) {
       if (!on || !conv || !session || session.conversation !== conv.id) return '';
@@ -514,10 +560,10 @@
         // 28px squares over a thread being read with a thumb.
         //
         // The dialog that appointed it, opened on what it already says.
-        icon('✎', 'Edit', 'Change this session — who, what for, and who decides',
+        icon(arbGlyph('edit'), 'Edit', 'Change this session — who, what for, and who decides',
              'onclick="arbEditHere()"') +
         // The path: what was asked, what was written, what was typed and where it stopped.
-        icon('☰', 'Log', 'What this session has done, step by step',
+        icon(arbGlyph('log'), 'Log', 'What this session has done, step by step',
              'onclick="arbOpenDetail()"') +
         // Here and not in the pane menu with the other reading toggles: this one is only ever a
         // question while a session is running, and the strip is the only thing on screen that
@@ -525,11 +571,11 @@
         `<button class="hang-btn arb-ico${arbBubblesOn() ? ' lit' : ''}"` +
         ` onclick="toggleArbBubbles()" aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
         ' title="Show what the arbitrator decided, in the thread"' +
-        ` aria-label="Arbitrator’s decisions in the thread">${ARB_EYE}</button>` +
+        ` aria-label="Arbitrator’s decisions in the thread">${arbEye(arbBubblesOn())}</button>` +
         // The last few steps and what Resume will do, in a sheet of its own. Only while it is
         // stopped: that is the only time the question is asked.
         (paused
-          ? icon('ⓘ', 'Steps', 'The last steps, and what Resume will do',
+          ? icon(arbGlyph('steps'), 'Steps', 'The last steps, and what Resume will do',
                  'onclick="arbOpenResume()"')
           : '') +
         // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
@@ -539,11 +585,11 @@
         // worked out whether arming alone would do anything. Last, and in that order, because the
         // plain Resume is the one a thumb reaches for without looking.
         (paused
-          ? icon('⏭', 'Resume and trigger', 'Arm the loop and ask for a decision now',
+          ? icon(arbGlyph('kick'), 'Resume and trigger', 'Arm the loop and ask for a decision now',
                  'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? 'lit' : '') +
-            icon('▶', 'Resume', 'Arm the loop and wait for the next turn to end',
+            icon(arbGlyph('play'), 'Resume', 'Arm the loop and wait for the next turn to end',
                  'onclick="arbCommand(\'arb_resume\')"', lead ? '' : 'lit')
-          : icon('⏸', 'Pause', 'Stop the loop — nothing is sent until it is resumed',
+          : icon(arbGlyph('pause'), 'Pause', 'Stop the loop — nothing is sent until it is resumed',
                  'onclick="arbCommand(\'arb_pause\')"')) +
         '</div>' + arbSayHtml(s) + '</div>';
     }
@@ -612,7 +658,8 @@
       return `<button class="arb-btn arb-active${who.blocked ? ' warn' : ''}` +
         `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
         ` aria-label="Open ${escapeHtml(who.label)}’s pane">` +
-        `${who.arbiter ? '⚖ ' : ''}${escapeHtml(who.label)} · ${escapeHtml(who.doing)}</button>`;
+        `${who.arbiter ? arbSign(11) + ' ' : ''}${escapeHtml(who.label)} · ` +
+        `${escapeHtml(who.doing)}</button>`;
     }
 
     // --- appointing one -------------------------------------------------------------------
@@ -631,7 +678,7 @@
         // The one that decides. It is deliberately not in the conversation — it is not a
         // participant in it, it is the thing deciding what happens in it — so its list is the panes
         // outside the conversation and inside its project.
-        arbPart('⚖ Arbitrator',
+        arbPart('Arbitrator',
           arbSlot('arbWho', free, at.arbWho || (free[0] || {}).pane_id) +
           // §10's two clocks, off by default and folded away because of it. A turn ending is
           // always a trigger; these are for the two ways a conversation stops without anyone's
@@ -660,7 +707,7 @@
           `${at.arbWarmup ? ' checked' : ''}> Wake the members before the first instruction` +
           '</label>' +
           '<span class="arb-note">agy is always woken — it is the one that needs it.</span>' +
-          '</details>') +
+          '</details>', arbSign(12) + ' ') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
@@ -765,9 +812,9 @@
     }
 
     // A rule above rather than a box around: the three are a reading order, not three forms.
-    function arbPart(lede, body) {
-      return `<div class="arb-part"><span class="arb-part-lede">${escapeHtml(lede)}</span>` +
-        body + '</div>';
+    function arbPart(lede, body, mark) {
+      return '<div class="arb-part"><span class="arb-part-lede">' +
+        (mark || '') + `${escapeHtml(lede)}</span>` + body + '</div>';
     }
 
     function arbSetupOpen() {

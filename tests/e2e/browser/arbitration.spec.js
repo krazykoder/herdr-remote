@@ -136,7 +136,7 @@ test('⚖ over a conversation with no arbitrator opens the dialog that appoints 
   // Three sections, because there are three decisions: who decides, and the two it decides
   // between.
   await expect(page.locator('#arbSetupBody .arb-part-lede')).toHaveText(
-    ['⚖ Arbitrator', 'Agent 1', 'Agent 2']);
+    ['Arbitrator', 'Agent 1', 'Agent 2']);
   // A dialog, so a tap beside it is the way out — and nothing it was over moved to make room.
   await page.mouse.click(5, 5);
   await expect(page.locator('#arbModal')).toBeHidden();
@@ -271,7 +271,7 @@ test('the path is drawn in the thread, and the whole of it is in the log', async
   }));
 
   const thread = page.locator('#convViewThread');
-  await expect(thread).toContainText('⚖ trigger');
+  await expect(thread).toContainText('trigger');
   await expect(thread).toContainText('review to scratch (w8:p1), 180 chars');
   // The step that went wrong is the one that has to be found rather than read past.
   await expect(thread.locator('.conv-commit.warn', {hasText: 'OSError'})).toBeVisible();
