@@ -3345,6 +3345,20 @@
       color: var(--text);
     }
 
+    /* Pause is not a go button. Same shape, the colour of the state it produces — the tray says
+       Paused in this orange, so the button that gets there says it too. */
+    .arb-plan-do .arb-btn.stop,
+    .arb-row-act.stop {
+      background: color-mix(in srgb, var(--orange) 14%, transparent);
+      border-color: var(--orange);
+    }
+
+    .arb-plan-do .arb-btn.stop:hover,
+    .arb-row-act.stop:hover {
+      background: color-mix(in srgb, var(--orange) 26%, transparent);
+      border-color: var(--orange);
+    }
+
     /* The one the plan says is not the answer here. Still green — it still resumes — but a quieter
        edge, so the pair are one kind of thing with one of them leading. */
     .arb-plan-do .arb-btn.quiet {
@@ -7210,7 +7224,7 @@
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1">Resume from here</span>
+        <span id="arbResumeTitle" style="font-size:0.8rem;font-weight:600;flex:1">Resume from here</span>
         <button onclick="closeArbResume()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>

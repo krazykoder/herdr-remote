@@ -242,7 +242,7 @@ test('a paused session says why, and offers the way back', async ({page}) => {
   // And the other way back, for a session whose members are all sitting idle: arming alone would
   // wait for a turn that is never going to end.
   await page.evaluate(() => { window.__sent = []; });
-  await strip.getByRole('button', {name: 'Resume and trigger'}).click();
+  await strip.getByRole('button', {name: 'Ask the arbitrator now'}).click();
   expect(await sent(page)).toEqual([
     {type: 'arb_resume', session: 's-20260817-1103', kick: true}]);
 });

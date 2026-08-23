@@ -1294,12 +1294,57 @@ function withPlan(plan, session = PAUSED) {
 test('the resume dialog says which of the four resumes this one is', () => {
   assert.match(withPlan({action: 'collect', sequence: 3, stale: null}),
                /A decision is written and ready to send/);
+  // EVENTS is timestamped in 1970, so its outstanding question reads as one that is never going
+  // to be answered — which is the interesting half of `await` and the one below covers warm.
   assert.match(withPlan({action: 'await', sequence: 3, stale: null}),
-               /The arbitrator is still deciding/);
+               /The arbitrator was asked at step #3 and never answered/);
   assert.match(withPlan({action: 'ask', sequence: 3, stale: null}),
                /A turn ended while it was stopped/);
+  // Armed says which of two very different things it is. Both members idle is the one that will
+  // never move; a member mid-turn resumes into a decision the moment that turn ends.
   assert.match(withPlan({action: 'wait', sequence: 3, stale: null}),
-               /Armed — waiting for the next turn to end/);
+               /Nothing is pending and nobody is working/);
+  const busy = {...PAUSED,
+                members: [PAUSED.members[0], {...PAUSED.members[1], status: 'working'}]};
+  assert.match(withPlan({action: 'wait', sequence: 3, stale: null}, busy),
+               /Reviewer 1 is working[\s\S]*asked the moment that turn ends/);
+});
+
+test('an armed session with nobody working says so, and says what to do about it', () => {
+  // The most expensive way this feature fails: a session that reads as running, is running, and
+  // will never do anything — because arming waits for a turn end and no turn is going to end.
+  // Neither the relay's plan nor the state can tell that apart from a healthy armed session; the
+  // roster can.
+  const html = withPlan({action: 'wait', sequence: 3, stale: null});
+  assert.match(html, /Nothing is pending and nobody is working/);
+  assert.match(html, /Give an agent something to do/);
+  // And Ask now leads, because Resume is the button that does nothing here.
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+});
+
+test('a question the arbitrator never answered is called that, and leads with asking again', () => {
+  // A real session sat on this for two days: asked at #8, no answer ever written, and every
+  // Resume went straight back to waiting on the same dead question — which the path recorded,
+  // correctly and uselessly, five times over.
+  const c = ctx();
+  c.g.arbReceiveSession({session: PAUSED});
+  const old = [{kind: 'asked', detail: 'w1:p3 for decision #8', at: Date.now() - 3600000,
+                sequence: 8}];
+  c.g.arbReceiveDetail({session: PAUSED.id, decisions: [], events: old,
+                        plan: {action: 'await', sequence: 8, stale: null}});
+  const html = c.g.arbResumeHtml(PAUSED, old, {action: 'await', sequence: 8, stale: null});
+  assert.match(html, /never answered/);
+  assert.match(html, /only way out of an arbitrator that is not going to answer/);
+  assert.match(html, /class="arb-btn quiet" onclick="arbResumeNow\(false\)/);
+
+  // A question asked a moment ago is a session working normally, and Resume leads.
+  const fresh = [{kind: 'asked', detail: 'w1:p3 for decision #8', at: Date.now() - 5000,
+                  sequence: 8}];
+  c.g.arbReceiveDetail({session: PAUSED.id, decisions: [], events: fresh,
+                        plan: {action: 'await', sequence: 8, stale: null}});
+  const warm = c.g.arbResumeHtml(PAUSED, fresh, {action: 'await', sequence: 8, stale: null});
+  assert.match(warm, /The arbitrator is deciding/);
+  assert.match(warm, /class="arb-btn" onclick="arbResumeNow\(false\)/);
 });
 
 test('a member that was written to and went quiet is named, and leads with the trigger', () => {
@@ -1307,7 +1352,7 @@ test('a member that was written to and went quiet is named, and leads with the t
                          stale: {member: 'member-2', label: 'Reviewer 1', pane_id: 'w1:p2',
                                  at: Date.now() - 40 * 60000}});
   // The line a person acts on says one thing; how long ago and what to do is the line under it.
-  assert.match(html, /Waiting on Reviewer 1 to finish its turn/);
+  assert.match(html, /Reviewer 1 was written to and never came back/);
   assert.match(html, /Written to 40 min ago/);
   assert.match(html, /class="arb-plan warn"/);
   // The quiet button is Resume, because here it is the one that does nothing.
@@ -1315,10 +1360,13 @@ test('a member that was written to and went quiet is named, and leads with the t
   assert.match(html, /class="arb-btn" onclick="arbResumeNow\(true\)/);
 });
 
-test('a running session is told the plan and offered no resume', () => {
+test('a running session is told the plan and offered the way to stop it', () => {
   const html = withPlan({action: 'wait', sequence: 3, stale: null}, CREW_SESSION);
-  assert.match(html, /Armed — waiting for the next turn to end/);
+  assert.match(html, /Nothing is pending and nobody is working/);
   assert.equal(/arb_resume/.test(html), false, 'nothing to resume — it is running');
+  // The sheet is opened by tapping the tray, which is a thing people do to a running session.
+  assert.match(html, /class="arb-btn stop" onclick="arbCommand\('arb_pause'\)/);
+  assert.match(html, /class="arb-row-act stop" onclick="arbCommand\('arb_pause'\)/);
 });
 
 test('a relay too old to send a plan still draws the steps', () => {

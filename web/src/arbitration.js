@@ -595,12 +595,15 @@
         ` aria-label="Arbitrator’s decisions in the thread">${arbEye(arbBubblesOn())}</button>` +
         // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
         // clock — and with two idle members and no clocks that is a session that reads as running
-        // and never acts. `Resume and trigger` asks for a decision now. Two buttons rather than
+        // and never acts. `Ask the arbitrator now` puts the question straight to it — the relay
+        // calls that a `kick`, and it is the way out of a question that was asked and never
+        // answered. Two buttons rather than
         // one that guesses, and which of them is lit comes from the plan: the relay has already
         // worked out whether arming alone would do anything. Last, and in that order, because the
         // plain Resume is the one a thumb reaches for without looking.
         (paused
-          ? icon(arbGlyph('kick'), 'Resume and trigger', 'Arm the loop and ask for a decision now',
+          ? icon(arbGlyph('kick'), 'Ask the arbitrator now',
+                 'Resume and ask the arbitrator for a decision now',
                  'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? 'lit' : '') +
             icon(arbGlyph('play'), 'Resume', 'Arm the loop and wait for the next turn to end',
                  'onclick="arbCommand(\'arb_resume\')"', lead ? '' : 'lit') +
@@ -613,12 +616,10 @@
         '</div>' + arbSayHtml(s) + '</div>';
     }
 
-    // Whether arming alone would do nothing — which is the relay's answer, not a guess from the
-    // pause reason. See `resume_plan`: `ask` has a trigger waiting to be spent, and `stale` is a
-    // member that finished while nobody was listening.
+    // Whether arming alone would do nothing. Defined once, in `arbLeads`, so the strip and the
+    // sheet cannot disagree about which button is the answer.
     function arbLeadsWithTrigger(s) {
-      const plan = s.plan;
-      return !!plan && (!!plan.stale || plan.action === 'ask');
+      return arbLeads(s.plan, s);
     }
 
     // Where the session is, under the row of icons: the state, and what is left of the budget.
@@ -1289,30 +1290,86 @@
     // and the session says paused — and one of them, `wait`, does nothing you can see. That is a
     // session left armed while a member sits finished, which is the most expensive way this
     // feature fails.
+    // How long a question can be out before "it is still deciding" stops being the truth. An
+    // arbitrator answers in seconds; anything on the order of a coffee break is one that is not
+    // going to. The number only chooses which of two sentences is shown and which button leads —
+    // both buttons stay pressable either way.
+    const ARB_COLD_ASK_MS = 10 * 60 * 1000;
+
+    // When the outstanding question was asked, if this browser has the path for this session.
+    // Nothing when it does not, which reads as "not cold" — the quieter of the two claims.
+    function arbAskedAt(session) {
+      if (!session || arbDetailFor !== session.id || !Array.isArray(arbEvents)) return 0;
+      const asked = arbEvents.filter(e => e.kind === 'asked');
+      return asked.length ? (asked[asked.length - 1].at || 0) : 0;
+    }
+
+    function arbColdAsk(session) {
+      const at = arbAskedAt(session);
+      return !!at && Date.now() - at > ARB_COLD_ASK_MS;
+    }
+
     function arbPlanLine(plan, session) {
       const seq = plan.sequence;
+      const s = session || {};
       if (plan.action === 'collect') {
         return {line: 'A decision is written and ready to send.',
                 hint: `Resume sends what the arbitrator decided for step #${seq}.`};
       }
       if (plan.action === 'await') {
-        return {line: 'The arbitrator is still deciding.',
-                hint: `Resume goes back to waiting on step #${seq}. Resume and trigger asks a ` +
-                  'fresh question instead.'};
+        // The one that cost a real session two days. The arbitrator was asked at #8 and never
+        // wrote an answer, and every Resume after that went straight back to waiting on the same
+        // dead question — which the path recorded, correctly and uselessly, five times over. The
+        // way out is Ask now: it throws the old question away and asks a fresh one.
+        const at = arbAskedAt(s);
+        if (arbColdAsk(s)) {
+          return {line: `The arbitrator was asked at step #${seq} and never answered.`,
+                  hint: `Asked ${arbAgo(at)}. Resume goes straight back to waiting on that same ` +
+                    'question — Ask now throws it away and asks again, which is the only way out ' +
+                    'of an arbitrator that is not going to answer.'};
+        }
+        return {line: 'The arbitrator is deciding.',
+                hint: `Asked ${at ? arbAgo(at) : `at step #${seq}`}. Resume goes back to waiting ` +
+                  'for that answer. Ask now throws the question away and asks a fresh one.'};
       }
       if (plan.action === 'ask') {
         return {line: 'A turn ended while it was stopped.',
-                hint: 'Resume asks the arbitrator to decide about it now.'};
+                hint: 'Resume asks the arbitrator to decide about it now. Nothing was lost — the ' +
+                  'trigger was kept.'};
       }
       if (plan.stale) {
         const who = plan.stale.label || plan.stale.member;
-        return {line: `Waiting on ${who} to finish its turn.`,
+        return {line: `${who} was written to and never came back.`,
                 hint: `Written to ${arbAgo(plan.stale.at)}, and it has not ended a turn since. ` +
-                  'Resume alone waits for a wake-up that may never come — Resume and trigger ' +
-                  'asks now.'};
+                  'Resume alone waits for a wake-up that has already been and gone — Ask now ' +
+                  'asks the arbitrator to decide from what is already said.'};
       }
-      return {line: 'Armed — waiting for the next turn to end.',
-              hint: 'Nothing is pending. Resume and trigger asks for a decision now instead.'};
+      // Armed and waiting. Which of two very different things that is depends on whether anybody
+      // is working, and the difference is the whole question a person opens this to ask: a session
+      // with a member mid-turn resumes into a decision, and one with nobody working resumes into
+      // nothing at all until somebody gives an agent something to do.
+      const busy = (s.members || []).filter(m => m.status === 'working' || m.status === 'blocked');
+      if (busy.length) {
+        const who = busy.map(m => m.label || m.id).join(' and ');
+        return {line: `${who} ${busy.length > 1 ? 'are' : 'is'} working.`,
+                hint: 'Resume arms the loop, and the arbitrator is asked the moment that turn ' +
+                  'ends. Nothing to do but wait.'};
+      }
+      return {line: 'Nothing is pending and nobody is working.',
+              hint: 'Resume arms the loop, but with every member idle there is no turn end coming ' +
+                'to wake it — it will sit exactly like this. Give an agent something to do, or ' +
+                'Ask now to have the arbitrator decide from what has already been said.'};
+    }
+
+    // Which of the two buttons is the answer here. The relay works out three of these cases
+    // (`resume_plan`); the fourth — an armed session with nobody working — is a fact about the
+    // panes, which the roster on the session message already carries.
+    function arbLeads(plan, session) {
+      if (!plan) return false;
+      if (plan.stale || plan.action === 'ask') return true;
+      if (plan.action === 'await') return arbColdAsk(session);
+      if (plan.action === 'collect') return false;
+      return !(session.members || []).some(m => m.status === 'working' || m.status === 'blocked');
     }
 
     function arbDetailHtml(decisions, session, events) {
@@ -1363,9 +1420,7 @@
       const rows = arbResumeRows(events);
       const paused = session.state === 'paused';
       const said = plan ? arbPlanLine(plan, session) : null;
-      // The one case where Resume is the wrong button and the second one is the answer, so it is
-      // the one case that leads with it.
-      const lead = !!plan && (!!plan.stale || plan.action === 'ask');
+      const lead = arbLeads(plan, session);
       // What the tray used to carry as a third row: what Resume would do, and what the state
       // means. It is two paragraphs, so it belongs where there is room for two paragraphs.
       const head = `<p class="arb-plan-line">${escapeHtml(said ? said.line : arbStateLabel(session))}</p>` +
@@ -1380,13 +1435,23 @@
         arbBudField('arbResumeSteps', 'Steps', b.steps_left, 1) +
         arbBudField('arbResumeMins', 'Minutes', b.max_minutes, 15) +
         '</div>';
-      const acts = !paused ? '' :
-        '<div class="arb-plan-do">' +
-        `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbResumeNow(false)">` +
-        arbGlyph('play') + ' Resume</button>' +
-        `<button class="arb-btn${lead ? '' : ' quiet'}"` +
-        ` onclick="arbResumeNow(true)" title="Arm the loop and ask for a decision now"` +
-        ` aria-label="Resume and trigger">${arbGlyph('kick')} Trigger</button></div>`;
+      // Running, and the one thing worth doing to a running session from here is stopping it.
+      // The sheet is opened by tapping the tray, which is a thing people do while a session is
+      // going — and until now it answered a question nobody had asked yet.
+      const acts = !paused
+        ? '<div class="arb-plan-do">' +
+          '<button class="arb-btn stop" onclick="arbCommand(\'arb_pause\')"' +
+          ' title="Stop the loop — nothing is sent until it is resumed">' +
+          arbGlyph('pause') + ' Pause</button></div>'
+        : '<div class="arb-plan-do">' +
+          `<button class="arb-btn${lead ? ' quiet' : ''}" onclick="arbResumeNow(false)">` +
+          arbGlyph('play') + ' Resume</button>' +
+          // Named for what it does rather than for the mechanism. A "trigger" is something that
+          // *arrives* — a turn ending, a clock — and nothing here can send one; what this does is
+          // skip waiting for one and put the question to the arbitrator now.
+          `<button class="arb-btn${lead ? '' : ' quiet'}"` +
+          ' onclick="arbResumeNow(true)" title="Resume and ask the arbitrator for a decision now"' +
+          ` aria-label="Ask the arbitrator now">${arbGlyph('kick')} Ask now</button></div>`;
       // Where it is stopped *now*: the last pause with no resume under it. Not the last row — a
       // trigger that arrived after the stop sits below it and reads like progress.
       const stopped = rows.map(e => e.kind).lastIndexOf('paused');
@@ -1407,7 +1472,14 @@
             // newest trigger is the one a decision would be asked about, and the stop marker is
             // where the session actually is. The same buttons on every historical row would be
             // seven copies of one thing, all doing what the last of them does.
-            const act = !paused ? ''
+            const act = !paused
+              // Running: the newest row is where the session is, and the one control that
+              // applies to it is the one that stops it.
+              ? (i === rows.length - 1
+                 ? '<button class="arb-row-act stop" onclick="arbCommand(\'arb_pause\')"' +
+                   ' title="Stop the loop — nothing is sent until it is resumed"' +
+                   ` aria-label="Pause the session">${arbGlyph('pause')}</button>`
+                 : '')
               : i === live ? arbRowAct('kick', true, 'Ask the arbitrator to decide about this now')
               : i === mark ? arbRowAct('play', false, 'Resume from here')
               : '';
@@ -1496,6 +1568,13 @@
       // otherwise — which is what an older relay leaves, and what this shows in the moment before
       // its own answer arrives.
       el.innerHTML = arbResumeHtml(here, arbEvents, arbPlan || (here || {}).plan || null);
+      // The sheet is opened from the tray whatever the session is doing, and "Resume from here"
+      // over a running one is a heading that describes a button that is not there.
+      const title = document.getElementById('arbResumeTitle');
+      if (title) {
+        title.textContent = here && here.state !== 'paused' ? 'Where this session is'
+                                                            : 'Resume from here';
+      }
     }
 
     function arbOpenResume() {
