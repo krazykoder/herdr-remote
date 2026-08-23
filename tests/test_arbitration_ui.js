@@ -176,10 +176,11 @@ test('the strip says which of the three is working, not what was last said', () 
   // Icons now, so the name a screen reader and this test read is the aria-label.
   assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
   assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
-  // member-2 is `working` in the fixture, so it is the one being waited on — said in the label
-  // under the icons, which is also the way to that pane.
-  assert.match(html, /Reviewer 1 · working/);
-  assert.match(html, /openTerminal\('w1:p2'\)/);
+  // member-2 is `working` in the fixture, so it is the one being waited on — said in the pill at
+  // the bottom of the tray. A pill and not a link: it is a status, and the pane is one tap away in
+  // the roster anyway.
+  assert.match(html, /arb-say-who[^>]*>Reviewer 1 · working</);
+  assert.equal(/openTerminal/.test(html), false);
 
   // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
   assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /Arbitrator · deciding/);
@@ -378,8 +379,7 @@ test('a blocked arbitrator is said out loud, with the way to its pane', () => {
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
   const html = g.arbStripHtml(stuck, CONV, true);
   assert.match(html, /Arbitrator · needs you/);
-  assert.match(html, /class="arb-say-note arb-active warn"/);
-  assert.match(html, /openTerminal\('w1:p3'\)/);
+  assert.match(html, /class="arb-say-who warn"/);
   assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,
                'and an arbitrator that is merely working is not news');
   // A member stuck on a permission prompt is the same problem seen from the other end, and the

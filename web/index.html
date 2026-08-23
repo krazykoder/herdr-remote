@@ -2956,11 +2956,11 @@
     .conv-view-top #arbStrip {
       position: absolute;
       top: 100%;
-      /* The tray carries 4px of padding and a 1px border of its own, so its buttons sit 5px lower
+      /* The tray carries 5px of padding and a 1px border of its own, so its buttons sit 6px lower
          than the bare ones in the opposite corner. Taking that back here is what puts the two rows
          on one line — the pair are a stack about the same thread and read as one thing only if
          they start at the same height. */
-      margin-top: 1px;
+      margin-top: 0;
       left: var(--hang-right, 22px);
       z-index: 5;
       /* The thread owns everything between the two floating corners. Only the chips take taps. */
@@ -2977,8 +2977,13 @@
       color: var(--muted);
     }
 
-    .arb-strip > * {
+    /* The tray itself takes taps now — it is one object, and a thread scrolling under a hole in
+       the middle of it is worse than one that cannot be scrolled through it at all. */
+    .arb-strip {
       pointer-events: auto;
+    }
+
+    .arb-strip > * {
       max-width: 100%;
     }
 
@@ -2991,17 +2996,7 @@
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: none;
-      /* A tray, not a row of loose buttons: the controls of one session are one object, and over a
-         scrolling thread a shadow is what says this sits above the text rather than in it. The
-         ground is semi-transparent and blurred, so the thread stays visible through it and the
-         buttons on top stay the only solid thing. */
-      padding: 4px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface) 72%, transparent);
-      backdrop-filter: blur(10px) saturate(140%);
-      -webkit-backdrop-filter: blur(10px) saturate(140%);
-      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+      max-width: 100%;
     }
 
     .arb-bar::-webkit-scrollbar {
@@ -3041,23 +3036,55 @@
       flex-direction: column;
       align-items: flex-start;
       gap: 3px;
-      max-width: min(100%, 320px);
+      max-width: 100%;
+      padding: 0 2px 1px;
     }
 
     .arb-strip {
       /* Brighter than `--surface` by a fixed amount of the text colour, so it lifts in every one
          of the eleven themes rather than in the two a hand-picked grey was chosen against. */
       --arb-chip: color-mix(in srgb, var(--text) 13%, var(--surface));
+      /* One tray holding all four rows — the controls, the state, the sentence and who is working.
+         They are one thing about one session, and four floating pieces over a scrolling thread
+         read as four. The ground is blurred rather than solid, so the thread stays visible under
+         it and the buttons on top stay the only opaque thing. */
+      padding: 5px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(10px) saturate(140%);
+      -webkit-backdrop-filter: blur(10px) saturate(140%);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
     }
 
-    /* Opaque, one at a time: the strip has no ground of its own, so a line without a background
-       is prose over a thread of monospace text. */
-    .arb-say > span,
-    .arb-say-top > * {
+    /* The two rows that are pills — the state with the budget, and who is working. The sentence
+       between them is not one: it is prose, and prose in a pill is a label pretending to be a
+       button. */
+    .arb-say-top > *,
+    .arb-say-who {
       padding: 2px 7px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--arb-chip);
+    }
+
+    .arb-say-who {
+      font-size: 0.6rem;
+      color: var(--text);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .arb-say-who.quiet {
+      color: var(--muted);
+    }
+
+    /* A pane sitting on a permission prompt: the one state this tray cannot fix from the tray. */
+    .arb-say-who.warn {
+      color: var(--red);
+      border-color: var(--red);
     }
 
     /* The chips that say where the session is, on one row and never wrapping into the sentence
@@ -3092,25 +3119,15 @@
        one sentence. Sized off the pane's own font so it moves with the text size the user chose for
        reading agents, and only just lifted off the thread: a solid ground here is a paragraph-sized
        card floating over a conversation. */
+    /* The sentence. Sized off the pane's own font, so it moves with the text size the user chose
+       for reading agents, and free to wrap: the tray grows to hold it rather than clipping it. */
     .arb-say-note {
       display: block;
-      text-align: left;
-      cursor: pointer;
-      padding: 3px 8px;
-      border: 1px solid transparent;
-      border-radius: 8px;
+      padding: 1px 3px;
       font-size: calc(var(--term-font, 13px) * 0.72);
       line-height: 1.45;
       color: var(--muted);
-      background: color-mix(in srgb, var(--surface) 45%, transparent);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-    }
-
-    /* The one state this strip cannot fix from the strip: a pane sitting on a permission prompt,
-       which from here is indistinguishable from one that is thinking. */
-    .arb-say-note.warn {
-      color: var(--red);
+      white-space: normal;
     }
 
     /* Nothing is running: one button, and no panel of chrome pretending to be a status. */
@@ -6406,7 +6423,7 @@
            pane, or it has none and this opens the form that gives it one. Hidden when neither is
            true, because a button whose answer is "nothing" is one a person taps twice. -->
       <button class="hang-btn hang-arbitrator" id="convArbitrator" onclick="arbOpenFromConv()"
-        aria-label="Arbitrate this conversation"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg></button>
+        aria-label="Arbitrate this conversation"><svg class="arb-sign" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 3.4 20.9 20.4H3.1z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" /><circle cx="12" cy="10.3" r="2.1" fill="var(--red)" /><circle cx="8.1" cy="16.8" r="2.1" fill="var(--orange)" /><circle cx="15.9" cy="16.8" r="2.1" fill="var(--green)" /></svg></button>
       <button class="hang-btn hang-tidy" id="convTidy" onclick="hangRefreshConv()"
         title="Reload this conversation, then remove any duplicates its members picked up"
         aria-label="Refresh and tidy">
@@ -6697,7 +6714,7 @@
         <!-- Only when this pane is in a session. A pane view has no conversation and no strip,
              so the one thing this can mean here is "take me to the arbitrator reading this". -->
         <button class="hang-btn hang-arbitrator" id="paneArbitrator" onclick="arbOpenFromPane()"
-          aria-label="Open the arbitrator’s pane"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg></button>
+          aria-label="Open the arbitrator’s pane"><svg class="arb-sign" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 3.4 20.9 20.4H3.1z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" /><circle cx="12" cy="10.3" r="2.1" fill="var(--red)" /><circle cx="8.1" cy="16.8" r="2.1" fill="var(--orange)" /><circle cx="15.9" cy="16.8" r="2.1" fill="var(--green)" /></svg></button>
         <button class="hang-btn hang-tidy" id="paneTidy" onclick="hangRefresh()"
           title="Refresh, then remove any duplicates this transcript picked up"
           aria-label="Refresh and tidy">
@@ -7126,7 +7143,7 @@
     <div role="dialog" aria-label="Arbitrate this conversation"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <span style="font-size:0.8rem;font-weight:600;flex:1;display:flex;align-items:center;gap:6px"><svg class="arb-sign" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /><circle cx="12" cy="9.4" r="1.7" fill="var(--red)" /><circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" /><circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg> Arbitrate · <span id="arbSetupConvName"></span></span>
+        <span style="font-size:0.8rem;font-weight:600;flex:1;display:flex;align-items:center;gap:6px"><svg class="arb-sign" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M12 3.4 20.9 20.4H3.1z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" /><circle cx="12" cy="10.3" r="2.1" fill="var(--red)" /><circle cx="8.1" cy="16.8" r="2.1" fill="var(--orange)" /><circle cx="15.9" cy="16.8" r="2.1" fill="var(--green)" /></svg> Arbitrate · <span id="arbSetupConvName"></span></span>
         <button onclick="closeArbSetup()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>

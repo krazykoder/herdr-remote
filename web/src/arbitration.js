@@ -208,7 +208,7 @@
     function arbMark(paneId) {
       return arbIsArbitrator(paneId)
         ? ' <span class="badge arb" title="The arbitrator of a running session">' +
-          arbSign(11) + '</span>' : '';
+          arbSign(13) + '</span>' : '';
     }
 
     // Typing at the arbitrator is asked twice — not refused. A person may well need to answer a
@@ -527,14 +527,19 @@
     // The triangle is `currentColor`, so it greys with the text around it and lights blue with a
     // button that is on.
     function arbSign(size) {
-      const px = size || 14;
+      const px = size || 16;
       return `<svg class="arb-sign" viewBox="0 0 24 24" width="${px}" height="${px}"` +
         ' aria-hidden="true">' +
-        '<path d="M12 3.2 21 20.2H3z" fill="none" stroke="currentColor" stroke-width="1.7"' +
+        // Rounded at every corner, and drawn a little inside the box so the round join has room:
+        // a hard-cornered triangle at 12px is three dark specks, and the corners are the first
+        // thing to go when it is scaled down.
+        '<path d="M12 3.4 20.9 20.4H3.1z" fill="none" stroke="currentColor" stroke-width="2.1"' +
         ' stroke-linejoin="round" />' +
-        '<circle cx="12" cy="9.4" r="1.7" fill="var(--red)" />' +
-        '<circle cx="8.6" cy="16.6" r="1.7" fill="var(--orange)" />' +
-        '<circle cx="15.4" cy="16.6" r="1.7" fill="var(--green)" /></svg>';
+        // Big enough to read as lights rather than as noise inside the outline — which is the
+        // whole of what this mark says.
+        '<circle cx="12" cy="10.3" r="2.1" fill="var(--red)" />' +
+        '<circle cx="8.1" cy="16.8" r="2.1" fill="var(--orange)" />' +
+        '<circle cx="15.9" cy="16.8" r="2.1" fill="var(--green)" /></svg>';
     }
 
     function arbStripHtml(session, conv, on) {
@@ -610,26 +615,26 @@
       const paused = s.state === 'paused';
       const said = paused && s.plan ? arbPlanLine(s.plan, s) : null;
       const who = arbActive(s);
-      // One label, not three lines of chips. What the row of icons cannot say is a sentence, and a
-      // sentence broken into boxes is read as three separate facts none of which is the answer:
-      // who is doing something, what Resume would do about it, and what the state means.
-      const note = [who.pane_id ? `${who.label} · ${who.doing}` : '',
-                    said ? said.line : '', arbStateTitle(s)].filter(Boolean).join(' · ');
+      // What the icons cannot say, as a sentence rather than as boxes. It wraps — the tray under it
+      // is as tall as it needs to be, which is what stopped this being three chips fighting for one
+      // line.
+      const note = [said ? said.line : '', arbStateTitle(s)].filter(Boolean).join(' ');
       return '<div class="arb-say">' +
-        // The state and what is left of the budget, on one row. Both are facts about where the
-        // session is rather than controls of it, and both are short enough to never wrap.
+        // The state and what is left of the budget. Both are facts about where the session is
+        // rather than controls of it, and both are short enough never to wrap.
         '<span class="arb-say-top">' +
         `<span class="arb-say-state">${escapeHtml(arbStateLabel(s))}</span>` +
         `<span class="arb-say-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
         '</span>' +
-        // The label is the way to whichever pane it is about — a blocked arbitrator is the one
-        // state on this strip that cannot be fixed from the strip, and the sentence saying so is
-        // the obvious thing to press. A span when there is no pane to open.
+        `<span class="arb-say-note">${escapeHtml(note)}</span>` +
+        // Which pane is doing something, last and as a pill: it is a status, and it was a link to
+        // that pane, which is a different promise from the one a line of status makes. The pane is
+        // one tap away in the roster either way.
         (who.pane_id
-          ? `<button class="arb-say-note arb-active${who.blocked ? ' warn' : ''}` +
-            `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
-            ` aria-label="Open ${escapeHtml(who.label)}’s pane">${escapeHtml(note)}</button>`
-          : `<span class="arb-say-note">${escapeHtml(note)}</span>`) +
+          ? `<span class="arb-say-who${who.blocked ? ' warn' : ''}` +
+            `${who.idle ? ' quiet' : ''}">${escapeHtml(who.label)} · ` +
+            `${escapeHtml(who.doing)}</span>`
+          : '') +
         '</div>';
     }
 
@@ -707,7 +712,7 @@
           `${at.arbWarmup ? ' checked' : ''}> Wake the members before the first instruction` +
           '</label>' +
           '<span class="arb-note">agy is always woken — it is the one that needs it.</span>' +
-          '</details>', arbSign(12) + ' ') +
+          '</details>', arbSign(14) + ' ') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
