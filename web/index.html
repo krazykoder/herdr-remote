@@ -3050,7 +3050,10 @@
          it and the buttons on top stay the only opaque thing. */
       padding: 5px;
       border-radius: 14px;
-      border: 1px solid var(--border);
+      /* The blue the tint is mixed from, at an edge rather than only in the ground: over a thread
+         a blurred panel with a grey border is another card, and this is the one thing on the page
+         that is not the conversation. */
+      border: 1px solid color-mix(in srgb, var(--blue) 55%, var(--border));
       background: color-mix(in srgb, var(--arb-tray) 88%, transparent);
       backdrop-filter: blur(4px) saturate(115%);
       -webkit-backdrop-filter: blur(4px) saturate(115%);
