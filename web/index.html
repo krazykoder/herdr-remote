@@ -3039,10 +3039,15 @@
     .arb-say {
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
+      align-items: stretch;
       gap: 3px;
-      max-width: 100%;
-      padding: 0 2px 1px;
+      /* The tray is exactly as wide as its row of buttons, and this is what keeps it that way: a
+         flex item of zero width contributes nothing to the column's intrinsic size, and then
+         stretches to whatever the buttons above settled on. Without it the widest pause reason
+         would set the width of the tray, and the tray would change shape every time the session
+         did. */
+      width: 0;
+      min-width: 100%;
     }
 
     .arb-strip {
@@ -3067,29 +3072,15 @@
 
     /* The state and the budget, each its own pill: the tray's ground is blurred rather than
        solid, and a line without one of its own is prose over a thread of monospace text. */
-    .arb-say-top > * {
+    .arb-say > * {
       padding: 2px 7px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--arb-chip);
     }
 
-    /* The chips that say where the session is, on one row and never wrapping into the sentence
-       under them. */
-    .arb-say-top {
-      display: flex;
-      align-items: center;
-      gap: 3px;
-      padding: 0 !important;
-      border: none !important;
-      background: none !important;
-      max-width: 100%;
-      overflow: hidden;
-    }
-
     .arb-say-budget {
       white-space: nowrap;
-      flex: none;
       /* The same weight of text as the state beside it. It is a number a person acts on — it is
          what the resume sheet's two fields are set from — and grey read as decoration. */
       color: var(--text);
@@ -3098,7 +3089,9 @@
     .arb-say-state {
       font-weight: 600;
       color: var(--text);
-      white-space: nowrap;
+      /* Free to wrap, because the tray's width is the buttons' and a pause reason is not asked
+         how long it is. Two lines of state is a taller tray; a clipped one is a lie. */
+      white-space: normal;
     }
 
     .arb-strip[data-state="paused"] .arb-say-state {
@@ -3317,10 +3310,13 @@
       color: var(--text);
     }
 
+    /* Its own row under the budget it spends, rather than squeezed beside it: two buttons with
+       words in them do not fit on a phone next to two steppers. */
     .arb-plan-do {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
-      flex: none;
+      flex: 1 1 100%;
     }
 
     /* The same two drawings as the tray's buttons, at the same 24-box: this sheet is what that
@@ -3383,34 +3379,83 @@
       color: var(--muted);
     }
 
-    /* What the session may spend when it starts again, beside the buttons that spend it. Two
-       short fields on one row: the whole banner is read with a thumb over the button under it. */
+    /* What the session may spend when it starts again, on its own row above the buttons that
+       spend it. A grid of two columns rather than two fields side by side: the labels line up
+       down the left and the two steppers line up down the right, which is the only arrangement
+       where "one more step" and "fifteen more minutes" read as the same kind of control. */
     .arb-plan-budget {
-      display: flex;
-      gap: 8px;
-      flex: none;
+      display: grid;
+      grid-template-columns: max-content max-content;
+      align-items: center;
+      gap: 6px 12px;
+      flex: 1 1 100%;
     }
 
-    .arb-plan-budget label {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      font-size: 0.6rem;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+    /* The field itself is not a box — it is a label in one column and a stepper in the other. */
+    .arb-bud-field {
+      display: contents;
+    }
+
+    .arb-bud-label {
+      font-size: 0.66rem;
       color: var(--muted);
     }
 
-    .arb-plan-budget input {
-      font: inherit;
-      font-size: 0.72rem;
-      width: 4.5em;
-      padding: 3px 6px;
-      min-height: 28px;
-      color: var(--text);
-      background: var(--bg);
+    /* One control, not three: the minus, the number and the plus share a border and a ground, so
+       the pair of buttons read as belonging to the number between them. */
+    .arb-bud-stepper {
+      display: inline-flex;
+      align-items: stretch;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: 8px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .arb-bud-btn {
+      font: inherit;
+      font-size: 0.9rem;
+      line-height: 1;
+      /* 32px, not the 44px a menu row gets: this sits in a sheet beside two other buttons and the
+         thing being adjusted is one line of it. Wide enough for a thumb, square enough to pair. */
+      width: 32px;
+      min-height: 32px;
+      padding: 0;
+      color: var(--text);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      border: none;
+      cursor: pointer;
+    }
+
+    .arb-bud-btn:hover {
+      background: color-mix(in srgb, var(--text) 16%, transparent);
+    }
+
+    .arb-bud-stepper input {
+      font: inherit;
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      /* Both steppers the same width whatever is in them, so the two rows are one shape. */
+      width: 3.2em;
+      padding: 0 2px;
+      color: var(--text);
+      background: none;
+      border: none;
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+
+    /* The spinners the browser draws are a second pair of steppers, half a millimetre tall. */
+    .arb-bud-stepper input::-webkit-inner-spin-button,
+    .arb-bud-stepper input::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .arb-bud-stepper input {
+      -moz-appearance: textfield;
+      appearance: textfield;
     }
 
     /* The plan, above the table: what the button will do, and the button. */
@@ -4546,11 +4591,13 @@
       margin-top: calc(6px + 28px + 6px);
     }
 
-    /* The tray takes that row when there is a session, so the chips take the one under it. 64px is
-       the tray's whole height and it is a constant: both of the rows it has left are single-line
-       by construction — the buttons are 28px squares and the state row never wraps. */
+    /* The tray takes that row when there is a session, so the chips take the one under it. 84px is
+       the tray at its three single-line rows — 28px of buttons and two pills — which is what every
+       state this draws actually measures: the widest label is shorter than the row of buttons the
+       tray is sized by. A state long enough to wrap grows into the gap under it rather than
+       through the chips. */
     .conv-view-top:has(#arbStrip .arb-strip) .hang-working {
-      margin-top: calc(6px + 28px + 6px + 64px + 6px);
+      margin-top: calc(6px + 28px + 6px + 84px + 6px);
     }
 
     /* Centred between the two floating corners and level with the right-hand one, because it is

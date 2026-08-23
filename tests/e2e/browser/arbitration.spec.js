@@ -206,16 +206,24 @@ test('a running session shows what it is doing and how to stop it', async ({page
   // state means lives in the sheet a tap on the tray opens.
   await expect(strip).not.toContainText('Ready for an independent check.');
   await expect(strip).toContainText('7 steps · 44 min');
-  // Two rows and no more: a row of controls that must not wrap, and one line saying where it is.
-  // The tray hangs over a thread being read, and every pixel of it is a pixel of that thread.
+  // Three rows and no more: a row of controls that must not wrap, the state, and the budget. The
+  // tray hangs over a thread being read, and every pixel of it is a pixel of that thread.
   expect(await page.locator('#arbStrip .arb-bar')
     .evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(48);
-  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(80);
-  // Right-aligned with the row of buttons above it, which is what makes the two one stack.
-  const edges = await page.evaluate(() => [
-    document.querySelector('#convView .conv-view-top .hang-float').getBoundingClientRect().right,
-    document.querySelector('#arbStrip .arb-strip').getBoundingClientRect().right]);
-  expect(Math.abs(edges[0] - edges[1])).toBeLessThan(1.5);
+  expect(await strip.evaluate(el => el.getBoundingClientRect().height)).toBeLessThan(90);
+  // Right-aligned with the row of buttons above it, which is what makes the two one stack — and
+  // exactly as wide as its own row of buttons, so a long pause reason wraps rather than reshaping
+  // the tray every time the session moves.
+  const box = await page.evaluate(() => {
+    const at = sel => document.querySelector(sel).getBoundingClientRect();
+    return {floatRight: at('#convView .conv-view-top .hang-float').right,
+            right: at('#arbStrip .arb-strip').right,
+            width: at('#arbStrip .arb-strip').width,
+            bar: at('#arbStrip .arb-bar').width};
+  });
+  expect(Math.abs(box.floatRight - box.right)).toBeLessThan(1.5);
+  // The tray's own padding and border, and nothing else.
+  expect(box.width - box.bar).toBeLessThan(13);
 
   await captureSends(page);
   await strip.getByRole('button', {name: 'Pause'}).click();

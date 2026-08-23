@@ -1332,6 +1332,24 @@ test('a relay too old to send a plan still draws the steps', () => {
   assert.match(html, /class="arb-rows"/);
 });
 
+test('the budget nudges by its own unit, and never past what the relay allows', () => {
+  // Nobody grants a session one more minute, and nobody grants it fifteen more steps.
+  const {g} = ctx();
+  const steps = g.document.getElementById('arbResumeSteps');
+  const mins = g.document.getElementById('arbResumeMins');
+  steps.value = '8'; mins.value = '45';
+  g.arbStepBy('arbResumeSteps', 1, 1);
+  g.arbStepBy('arbResumeMins', 1, 15);
+  assert.deepEqual([steps.value, mins.value], ['9', '60']);
+  // The relay refuses a budget out of range, so neither button can ask for one.
+  steps.value = '50';
+  g.arbStepBy('arbResumeSteps', 1, 1);
+  assert.equal(steps.value, '50');
+  mins.value = '1';
+  g.arbStepBy('arbResumeMins', -1, 15);
+  assert.equal(mins.value, '1');
+});
+
 test('resuming spends what the two fields ask for, and asks for it first', () => {
   // The one place a spent budget can be raised from the button it stopped. Steps are counted from
   // the start of the session and a resume does not clear them, so "8 more" is a ceiling of

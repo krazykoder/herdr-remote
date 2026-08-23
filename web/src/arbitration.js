@@ -626,10 +626,13 @@
     // sentence — what the state means and what Resume would do are paragraphs, and they live in
     // the sheet a tap on the tray opens rather than floating over the thread.
     function arbSayHtml(s) {
-      return '<div class="arb-say"><span class="arb-say-top">' +
+      // A row each. Side by side they were two chips fighting for a line the tray is only as wide
+      // as its buttons — and the state is the one that has to be readable, so it is the one that
+      // gets a line of its own to wrap into.
+      return '<div class="arb-say">' +
         `<span class="arb-say-state">${escapeHtml(arbStateLabel(s))}</span>` +
         `<span class="arb-say-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
-        '</span></div>';
+        '</div>';
     }
 
     // --- appointing one -------------------------------------------------------------------
@@ -1374,8 +1377,8 @@
       const b = session.budget || {};
       const budget = !paused ? '' :
         '<div class="arb-plan-budget">' +
-        arbLimitField('arbResumeSteps', 'Steps', b.steps_left, ARB_LIMITS.arbResumeSteps) +
-        arbLimitField('arbResumeMins', 'Minutes', b.max_minutes, ARB_LIMITS.arbResumeMins) +
+        arbBudField('arbResumeSteps', 'Steps', b.steps_left, 1) +
+        arbBudField('arbResumeMins', 'Minutes', b.max_minutes, 15) +
         '</div>';
       const acts = !paused ? '' :
         '<div class="arb-plan-do">' +
@@ -1409,6 +1412,35 @@
       return `<div class="arb-plan${plan && plan.stale ? ' warn' : ''}">${head}${budget}${acts}</div>` +
         '<table class="arb-rows"><thead><tr><th>Time</th><th>Step</th><th>What</th>' +
         '<th>Detail</th></tr></thead><tbody>' + body + '</tbody></table>';
+    }
+
+    // One budget field: a number, and the two buttons that are how it is actually set. This is
+    // read standing at a stopped session with a thumb — "a bit more" is the whole question — and a
+    // number field on a phone is a keyboard over the sheet to change 8 into 12. The field stays
+    // typeable for the times that is what somebody wants.
+    //
+    // The step is the field's own unit: steps go one at a time because that is what a step is, and
+    // minutes go a quarter of an hour, because nobody grants a session one more minute.
+    function arbBudField(id, label, value, step) {
+      const range = ARB_LIMITS[id];
+      const nudge = (dir, sign, why) =>
+        `<button type="button" class="arb-bud-btn" onclick="arbStepBy('${id}', ${dir}, ${step})"` +
+        ` aria-label="${escapeHtml(why)} ${escapeHtml(label.toLowerCase())}">${sign}</button>`;
+      return '<div class="arb-bud-field">' +
+        `<span class="arb-bud-label">${escapeHtml(label)}</span>` +
+        '<span class="arb-bud-stepper">' + nudge(-1, '−', 'Fewer') +
+        `<input id="${id}" type="number" inputmode="numeric" class="arb-limit" min="1"` +
+        ` max="${range[1]}" value="${escapeHtml(String(value || range[0]))}"` +
+        ` aria-label="${escapeHtml(label)}">` +
+        nudge(1, '+', 'More') + '</span></div>';
+    }
+
+    // Bounded by the same range the relay enforces, so neither button can ask for a refusal.
+    function arbStepBy(id, dir, step) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = String(Math.max(1, Math.min(ARB_LIMITS[id][1],
+                                             arbLimitValue(id) + dir * (step || 1))));
     }
 
     // Resume, with whatever the two fields say it may spend. The budget goes first and as its own
