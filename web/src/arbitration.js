@@ -519,27 +519,15 @@
         (on ? '' : '<path d="M4 20 20 4" />') + '</svg>';
     }
 
-    // The mark for everything arbitration: three lights in a triangle. ⚖ was a courtroom, which is
-    // not what this is — one thing decides which of two goes next, and that is a signal. Drawn
-    // rather than typed so it is the same size in every place it appears, and so the lights are
-    // the theme's own red, amber and green rather than whatever the emoji font has.
-    //
-    // The triangle is `currentColor`, so it greys with the text around it and lights blue with a
-    // button that is on.
+    // The mark for everything arbitration: three signal lights. Drawn rather than typed so it is
+    // the same size in every place it appears, and so the theme owns the red, amber and green.
     function arbSign(size) {
-      const px = size || 16;
+      const px = size || 18;
       return `<svg class="arb-sign" viewBox="0 0 24 24" width="${px}" height="${px}"` +
         ' aria-hidden="true">' +
-        // Rounded at every corner, and drawn a little inside the box so the round join has room:
-        // a hard-cornered triangle at 12px is three dark specks, and the corners are the first
-        // thing to go when it is scaled down.
-        '<path d="M12 3.4 20.9 20.4H3.1z" fill="none" stroke="currentColor" stroke-width="2.1"' +
-        ' stroke-linejoin="round" />' +
-        // Big enough to read as lights rather than as noise inside the outline — which is the
-        // whole of what this mark says.
-        '<circle cx="12" cy="10.3" r="2.1" fill="var(--red)" />' +
-        '<circle cx="8.1" cy="16.8" r="2.1" fill="var(--orange)" />' +
-        '<circle cx="15.9" cy="16.8" r="2.1" fill="var(--green)" /></svg>';
+        '<circle cx="12" cy="6.5" r="3.1" fill="var(--red)" />' +
+        '<circle cx="8.85" cy="11.95" r="3.1" fill="var(--orange)" />' +
+        '<circle cx="15.15" cy="11.95" r="3.1" fill="var(--green)" /></svg>';
     }
 
     function arbStripHtml(session, conv, on) {
