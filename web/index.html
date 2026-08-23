@@ -1168,8 +1168,255 @@
     .terminals,
     .pairs,
     .recents,
-    .conversations {
+    .conversations,
+    .launcher {
       padding: 0 12px 12px;
+    }
+
+    /* Tiles, not cards, and a grid at every width including a phone's — a launcher is a keypad,
+       and one column of full-width buttons wastes the half of the screen a thumb can still reach.
+       Its own minmax rather than the 300px the card sections share: a tile holds a name and a line
+       of payload, so it is a third of the width a pane card needs. */
+    .launcher {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    /* The header spans the grid at every width. The shared rule that does this only exists inside
+       the desktop media query, because the sections it was written for are single-column until
+       then and this one never is. */
+    .launcher .section-header {
+      grid-column: 1 / -1;
+    }
+
+    .launcher-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      min-height: 64px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .launcher-tile:hover:not([aria-disabled="true"]) {
+      border-color: var(--blue);
+    }
+
+    /* A tile stands in for a thing that will exist, so it carries the kind's colour the way an
+       agent card carries its agent's — the terminal green of a shell, the blue of a session. */
+    .launcher-tile .launcher-kind {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .launcher-tile[data-action="run"] .launcher-kind {
+      color: var(--green);
+    }
+
+    .launcher-tile[data-action="spawn"] .launcher-kind {
+      color: var(--blue);
+    }
+
+    .launcher-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    /* The payload, and the reason it is on the tile at all: a tile's text may have been written by
+       another browser, so the name is not evidence of what it does. Monospace because most of what
+       lands here is a command. Two lines, then an ellipsis — the confirm shows the whole of it. */
+    .launcher-payload {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.35;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+
+    /* Disabled, never hidden. A launcher that silently drops buttons teaches the reader not to
+       trust it; one that says which Project went missing is repairable. */
+    .launcher-tile[aria-disabled="true"] {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .launcher-badge {
+      align-self: flex-start;
+      margin-top: auto;
+      padding: 1px 5px;
+      border: 1px solid var(--orange);
+      border-radius: 4px;
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--orange);
+      white-space: nowrap;
+    }
+
+    /* --- the tile editor --- */
+    /* A repointable tile is one tap from being fixed, so the tile that cannot be pressed is still
+       pointable at: the not-allowed cursor above is for the gates that are about the relay. */
+    .launcher-tile[aria-disabled="true"][data-repoint="true"] {
+      cursor: pointer;
+    }
+
+    /* One row per tile: what it is, then move, move, gone. The name button takes the space and the
+       four controls stay the same width whatever is in them, so the arrows line up down the list
+       rather than stepping in and out with the length of each name. */
+    .ql-row {
+      display: flex;
+      align-items: stretch;
+      gap: 4px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .ql-row-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 4px 6px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: none;
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .ql-row-main:hover { border-color: var(--border); }
+
+    .ql-row-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .ql-row-payload {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* 36px, which is the smallest a control on a phone can be and still be hit reliably. */
+    .ql-move, .ql-del {
+      flex: none;
+      width: 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .ql-del { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+    .ql-move[disabled] { opacity: 0.3; cursor: default; }
+
+    .ql-members {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .ql-member {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ql-member input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ql-member-kind {
+      flex: none;
+      font-size: 0.72rem;
+      font-weight: 600;
+      min-width: 4.5em;
+      overflow-wrap: anywhere;
+    }
+
+    .ql-member .ql-del { min-height: 32px; }
+
+    .ql-none {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin: 6px 0 0;
+    }
+
+    .ql-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .ql-primary, .ql-secondary {
+      flex: 1;
+      padding: 11px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .ql-primary {
+      border: none;
+      background: var(--blue);
+      color: var(--bg);
+    }
+
+    .ql-secondary {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    /* The same shape as a toggle-option's row, so the group reads as one block rather than as a
+       list with a button stuck under it. */
+    .setting-action {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
     }
 
     /* Side by side at every width, phone included: two agents working together is what a pair is,
@@ -6357,6 +6604,7 @@
 
     <div class="setting-group">
       <label>Main page sections</label>
+      <label class="toggle-option"><input type="checkbox" id="sectionLauncher" onchange="toggleSection('launcher', this.checked)"> Launcher</label>
       <label class="toggle-option"><input type="checkbox" id="sectionAgents" onchange="toggleSection('agents', this.checked)"> Agents</label>
       <label class="toggle-option"><input type="checkbox" id="sectionTerminals" onchange="toggleSection('terminals', this.checked)"> Terminals</label>
       <label class="toggle-option"><input type="checkbox" id="sectionPairs" onchange="toggleSection('pairs', this.checked)"> Pairs</label>
@@ -6365,6 +6613,11 @@
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
         to stay on.</div>
+      <!-- The launcher's own tiles are reachable from its section header too. Here as well because
+           an install whose stored order predates the launcher has that section switched off — and
+           the first tile saved is what switches it back on, so there has to be somewhere to save
+           one from that is not the section itself. -->
+      <button class="setting-action" onclick="openLauncherEdit()">Edit launcher tiles…</button>
     </div>
 
     <div class="setting-group">
@@ -6504,6 +6757,9 @@
        each is rewritten wholesale on its own schedule, and each needs to be movable past the
        others without the one above it owning where it lands. -->
   <div class="view" id="agentListView">
+    <!-- Tiles that create things, so it leads: a launcher under four lists of what is already
+         running is a launcher nobody presses. -->
+    <div class="launcher" id="launcher" style="display:none"></div>
     <div class="agents" id="agents"></div>
     <!-- Shell panes. Was appended inside #agents; it is its own node now so it can be ordered. -->
     <div class="terminals" id="terminals" style="display:none"></div>
@@ -7311,6 +7567,26 @@
     </div>
   </div>
 
+  <!-- The launcher's tiles, added and edited. Same shape as the New agent and Arbitrate dialogs
+       beside it — a scrim that closes on a tap outside, and fields that are badges wherever the
+       answer is a choice — because a tile *is* the answers those two dialogs ask, kept.
+
+       One dialog and two views: the list of tiles, where they are reordered and deleted, and the
+       form for one of them. Reordering a handful of tiles is two arrows, not a drag layer, and a
+       second dialog to hold them would be a second thing to close. -->
+  <div id="launcherModal" style="display:none;position:fixed;inset:0;z-index:121;">
+    <div onclick="closeLauncherEdit()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div role="dialog" aria-label="Launcher"
+      style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1" id="launcherEditTitle">Launcher</span>
+        <button onclick="closeLauncherEdit()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div class="new-agent-body" id="launcherEditBody"></div>
+    </div>
+  </div>
+
   <!-- Recent — every live pane, agents and terminals, in the order this device opened them. -->
   <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
     <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
@@ -7378,6 +7654,10 @@
   <script src="src/utils.js"></script>
   <script src="src/state_sync.js"></script>
   <script src="src/pairs_pure.js"></script>
+  <!-- After pairs_pure.js, which owns SEND_TEXT_MAX — launcher_pure.js reads it to bound a
+       command. The store reads the pure block's constants at load, so the pair stays in order. -->
+  <script src="src/launcher_pure.js"></script>
+  <script src="src/launcher_store.js"></script>
   <script src="src/settings.js"></script>
   <script src="src/sound.js"></script>
   <script src="src/sections.js"></script>
@@ -7385,6 +7665,11 @@
   <script src="src/status_bar.js"></script>
   <script src="src/start_dialog.js"></script>
   <script src="src/pairs_ui.js"></script>
+  <!-- After status_bar.js, which owns `projects`, `startOptions` and escapeHtml's callers, and
+       after sections.js, whose applySections it calls to take an empty section off screen. -->
+  <script src="src/launcher_ui.js"></script>
+  <script src="src/launcher_exec.js"></script>
+  <script src="src/launcher_edit.js"></script>
   <script src="src/summary_detect.js"></script>
   <script src="src/conversation_pure.js"></script>
   <script src="src/conversation_store.js"></script>

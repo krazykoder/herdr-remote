@@ -19,6 +19,11 @@
       conversations: { key: 'herdr_conversations', pendingKey: 'herdr_conversations_pending' },
       conv_view:     { key: 'herdr_conv_view' },
       conv_hidden:   { key: 'herdr_conv_hidden' },
+      // A launcher tile says "these are the agents I start together" — an assertion about the
+      // work, not about this screen, so it travels. It carries a pending outbox for the same
+      // reason `conversations` does: a tile built while the relay was unreachable is a row this
+      // browser made and nothing else has, and the adopt on reconnect would otherwise drop it.
+      launcher:      { key: 'herdr_launcher', pendingKey: 'herdr_launcher_pending' },
     };
 
     // One message per document per burst. Renaming a pair is one edit to the user and several
@@ -67,6 +72,7 @@
       conversations: { list: 'items' },
       conv_view:     { map: true },
       conv_hidden:   { map: true },
+      launcher:      { list: 'items' },
     };
 
     // The relay's document with locally-created rows appended — never a general union. `onlyExtras`
@@ -258,6 +264,7 @@
       conversations: ['renderConversations', 'renderConvBar', 'renderConvView'],
       conv_view:     ['renderConvBar', 'renderConvView'],
       conv_hidden:   ['renderConvManage', 'renderConvView'],
+      launcher:      ['renderLauncher'],
     };
 
     function stateSyncRerender(name) {

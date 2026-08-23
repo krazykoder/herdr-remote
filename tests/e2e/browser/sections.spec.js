@@ -81,7 +81,8 @@ test('a stored order is what the page is painted in', async ({page}) => {
   // innerHTML rewrites from fighting the layout.
   const domOrder = await page.evaluate(() =>
     [...document.getElementById('agentListView').children].map(el => el.id));
-  expect(domOrder).toEqual(['agents', 'terminals', 'pairs', 'recents', 'conversations']);
+  expect(domOrder).toEqual(['launcher', 'agents', 'terminals', 'pairs', 'recents',
+                            'conversations']);
 });
 
 // Settings is a panel over the list, not beside it, so the list is display:none while it is open
@@ -261,18 +262,27 @@ test('a filter is still on when the reader comes back from a pane', async ({page
 });
 
 test('the shortcut row fits the header on a phone', async ({page}) => {
-  // Five buttons at their full width overflow a 360px bar once the title and the two nav icons
-  // have taken theirs. They shrink together to a floor instead — no scroller, nothing pushed off.
-  await page.evaluate(() => {
+  // Every button at full width overflows a 360px bar once the title and the two nav icons have
+  // taken theirs. They shrink together to a floor instead — no scroller, nothing pushed off.
+  //
+  // Re-staged before every measurement rather than once at the top: the sections this fills by
+  // hand are rewritten by their own renderers on the next poll, which empties them again and takes
+  // their buttons out of the row. Staging next to the measurement is what makes the count the same
+  // every run.
+  const stage = () => page.evaluate(() => {
     for (const id of ['pairs', 'recents', 'conversations']) {
       document.getElementById(id).innerHTML = '<div class="section-header">x</div>';
       toggleSection(id, true);
     }
     applySections();
   });
-  await expect(page.locator('#sectionTabs button')).toHaveCount(5);
+  await stage();
+  // Six: the five that were always here, and the launcher, whose header draws with no tiles under
+  // it so that the first one can be made.
+  await expect(page.locator('#sectionTabs button')).toHaveCount(6);
   for (const width of [320, 360, 390, 1024]) {
     await page.setViewportSize({width, height: 780});
+    await stage();
     const fit = await page.evaluate(() => {
       const bar = document.querySelector('.header');
       const tab = document.querySelector('.sect-tab').getBoundingClientRect();
