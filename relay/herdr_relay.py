@@ -1545,8 +1545,8 @@ def agent_init_exec(pane_id, kind, remote):
     """
     for line in agent_init_prompts(kind):
         try:
-            run_herdr("pane", "send-text", pane_id, line, remote=remote)
-            run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+            if not on_loop(submit_paste(pane_id, line, remote=remote), wait=True):
+                log.warning("Agent started as %s but %r was not confirmed", pane_id, line)
         except Exception as e:
             # Said out loud rather than raised: this is the difference between an agent that
             # answers and one that sits on a permission prompt nobody can see.

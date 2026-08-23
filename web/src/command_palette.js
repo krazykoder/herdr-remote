@@ -82,6 +82,7 @@
       if (key.startsWith('claude')) return COMMANDS.claude;
       if (key.startsWith('codex')) return COMMANDS.codex;
       if (key.startsWith('agy')) return COMMANDS.agy;
+      if (key.startsWith('kiro')) return COMMANDS.kiro;
       if (key.startsWith('pi')) return COMMANDS.pi;
       if (key.startsWith('opencode')) return COMMANDS.opencode;
       return COMMANDS.claude; // fallback

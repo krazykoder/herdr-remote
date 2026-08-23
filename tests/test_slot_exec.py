@@ -249,5 +249,19 @@ class PaneNotAtItsPromptYetTests(unittest.TestCase):
         self.assertEqual(slept, [])
 
 
+class AgentInitTests(unittest.TestCase):
+    def test_kiro_init_uses_the_confirmed_send_path(self):
+        sent = object()
+        def paste(*args, **kwargs):
+            self.assertEqual(args, ("w1:p1", "/tools trust-all"))
+            self.assertEqual(kwargs, {"remote": None})
+            return sent
+
+        with patch.object(herdr_relay, "submit_paste", new=paste), \
+             patch.object(herdr_relay, "on_loop", return_value=True) as on_loop:
+            herdr_relay.agent_init_exec("w1:p1", "kiro", None)
+        on_loop.assert_called_once_with(sent, wait=True)
+
+
 if __name__ == "__main__":
     unittest.main()
