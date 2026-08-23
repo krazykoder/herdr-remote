@@ -208,7 +208,7 @@
     function arbMark(paneId) {
       return arbIsArbitrator(paneId)
         ? ' <span class="badge arb" title="The arbitrator of a running session">' +
-          arbSign(13) + '</span>' : '';
+          arbSign(15) + '</span>' : '';
     }
 
     // Typing at the arbitrator is asked twice — not refused. A person may well need to answer a
@@ -522,12 +522,24 @@
     // The mark for everything arbitration: three signal lights. Drawn rather than typed so it is
     // the same size in every place it appears, and so the theme owns the red, amber and green.
     function arbSign(size) {
-      const px = size || 18;
+      const px = size || 20;
+      // Three lights in a triangle — red on top, amber and green under it — and nothing else: an
+      // outline around them was three specks inside a box at the sizes this is actually drawn at.
+      //
+      // The cluster is centred on the 24-box rather than on its own centroid, so the mark sits
+      // level with the text beside it and centred in a 28px button. Each light carries a thin ring
+      // of `currentColor` at a third opacity: on a dark ground the amber and green need an edge to
+      // stop them bleeding into it, and a ring that is the text colour is one that every theme
+      // already agrees with.
       return `<svg class="arb-sign" viewBox="0 0 24 24" width="${px}" height="${px}"` +
         ' aria-hidden="true">' +
-        '<circle cx="12" cy="6.5" r="3.1" fill="var(--red)" />' +
-        '<circle cx="8.85" cy="11.95" r="3.1" fill="var(--orange)" />' +
-        '<circle cx="15.15" cy="11.95" r="3.1" fill="var(--green)" /></svg>';
+        arbLight(12, 8.37, 'red') + arbLight(7.8, 15.64, 'orange') +
+        arbLight(16.2, 15.64, 'green') + '</svg>';
+    }
+
+    function arbLight(cx, cy, colour) {
+      return `<circle cx="${cx}" cy="${cy}" r="4" fill="var(--${colour})"` +
+        ' stroke="currentColor" stroke-opacity="0.35" stroke-width="1.1" />';
     }
 
     function arbStripHtml(session, conv, on) {
@@ -619,7 +631,7 @@
         // the direct route to the pane the earlier active chip carried.
         (who.pane_id
           ? `<button type="button" class="arb-say-who${who.blocked ? ' warn' : ''}` +
-            `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${who.pane_id}')"` +
+            `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
             ` aria-label="Open ${escapeHtml(who.label)} pane">${escapeHtml(who.label)} · ` +
             `${escapeHtml(who.doing)}</button>`
           : '') +
@@ -700,7 +712,7 @@
           `${at.arbWarmup ? ' checked' : ''}> Wake the members before the first instruction` +
           '</label>' +
           '<span class="arb-note">agy is always woken — it is the one that needs it.</span>' +
-          '</details>', arbSign(14) + ' ') +
+          '</details>', arbSign(16) + ' ') +
         // The two being arbitrated, named rather than assumed. In a two-member conversation these
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
