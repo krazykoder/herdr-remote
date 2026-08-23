@@ -606,6 +606,23 @@ def push_tag(pane_id: str) -> str:
     return ("herdr-" + re.sub(r"[^A-Za-z0-9_-]", "-", pane_id or "herd"))[:32]
 
 
+def push_topic(tag: str) -> str:
+    """The same tag, as a value Apple will accept in the Topic header.
+
+    RFC 8030 says Topic is up to 32 characters of the URL-safe base64 alphabet. Apple reads that
+    literally and *decodes* it, so a length of 4n+1 — which no base64 string can have — is rejected
+    with `BadWebPushTopic` and a 400, and the push is never delivered. "herdr-w24-p22" is 13
+    characters, and every notification for a two-digit pane on a two-digit window has been failing
+    on that alone. Verified against web.push.apple.com: 13 and 25 are refused, 11, 14, 24, 26 and
+    32 are accepted, 33 is refused.
+
+    One character of padding rather than a hash of the tag: the header stays the pane it is about,
+    which is what makes a failing push readable in a log.
+    """
+    t = (tag or "herdr-herd")[:32]
+    return t + "-" if len(t) % 4 == 1 else t
+
+
 # Lines a pane draws to frame its own output rather than to say anything.
 _BOXY = re.compile(r"^[\s─-╿▀-▟=~_+*#.\-]*$")
 # The choices under a prompt. They are the least informative part of it on a Lock Screen: the
@@ -668,7 +685,7 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
         payload = json.dumps({"type": "clear", "tag": tag})
     else:
         payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
-    headers = {"Topic": tag, "TTL": "21600"}  # 6h TTL, collapse key
+    headers = {"Topic": push_topic(tag), "TTL": "21600"}  # 6h TTL, collapse key
     dead = []
     for i, sub in enumerate(push_subscriptions):
         try:
