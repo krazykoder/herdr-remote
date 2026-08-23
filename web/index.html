@@ -3323,13 +3323,34 @@
 
     /* The same two drawings as the tray's buttons, at the same 24-box: this sheet is what that
        row opens, and a ▶ from the font next to an SVG ▶ reads as two different buttons. */
-    .arb-plan-do .arb-btn {
+    /* The two ways out of a stop, and the row buttons that are the same two actions from inside
+       the table. Green, because they are the only controls in this sheet that make the session go
+       — sober in the ground so a sheet of them is not a traffic light, bright at the edge so each
+       one is unmistakably the button rather than a tinted cell. */
+    .arb-plan-do .arb-btn,
+    .arb-row-act {
       display: inline-flex;
       align-items: center;
-      /* Left, not centred: two stacked buttons whose glyphs line up read as a pair of choices,
-         and two centred ones read as two unrelated things that happen to be near each other. */
-      justify-content: flex-start;
+      justify-content: center;
       gap: 5px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--green) 16%, transparent);
+      border: 1px solid var(--green);
+    }
+
+    .arb-plan-do .arb-btn:hover,
+    .arb-row-act:hover {
+      background: color-mix(in srgb, var(--green) 28%, transparent);
+      border-color: var(--green);
+      color: var(--text);
+    }
+
+    /* The one the plan says is not the answer here. Still green — it still resumes — but a quieter
+       edge, so the pair are one kind of thing with one of them leading. */
+    .arb-plan-do .arb-btn.quiet {
+      background: color-mix(in srgb, var(--green) 8%, transparent);
+      border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+      color: var(--muted);
     }
 
     /* The resume dialog's own table. A table and not a list of paragraphs: four short columns
@@ -3435,16 +3456,8 @@
       width: 28px;
       height: 28px;
       padding: 0;
-      color: var(--text);
-      background: var(--arb-chip, color-mix(in srgb, var(--text) 10%, var(--surface)));
-      border: 1px solid var(--border);
       border-radius: 6px;
       cursor: pointer;
-    }
-
-    .arb-row-act:hover {
-      border-color: var(--blue);
-      color: var(--blue);
     }
 
     /* What the session may spend when it starts again, on its own row above the buttons that
