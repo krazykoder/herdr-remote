@@ -506,43 +506,19 @@
         `<button class="hang-btn arb-ico${cls ? ' ' + cls : ''}" ${onclick}` +
         ` title="${escapeHtml(why)}" aria-label="${escapeHtml(name)}">${glyph}</button>`;
       const lead = arbLeadsWithTrigger(s);
-      const acts = paused
-        // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
-        // clock — and with two idle members and no clocks that is a session that reads as running
-        // and never acts. `Resume and trigger` asks for a decision now. Two buttons rather than
-        // one that guesses, and which of them is lit comes from the plan: the relay has already
-        // worked out whether arming alone would do anything.
-        ? icon('▶', 'Resume', 'Arm the loop and wait for the next turn to end',
-               'onclick="arbCommand(\'arb_resume\')"', lead ? '' : 'lit') +
-          icon('⏭', 'Resume and trigger', 'Arm the loop and ask for a decision now',
-               'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? 'lit' : '')
-        : icon('⏸', 'Pause', 'Stop the loop — nothing is sent until it is resumed',
-               'onclick="arbCommand(\'arb_pause\')"');
       return `<div class="arb-strip" data-state="${escapeHtml(s.state || '')}">` +
-        '<div class="arb-bar">' + acts +
-        // The last few steps and what Resume will do, in a sheet of its own. Only while it is
-        // stopped: that is the only time the question is asked.
-        (paused
-          ? icon('ⓘ', 'Steps', 'The last steps, and what Resume will do',
-                 'onclick="arbOpenResume()"')
-          : '') +
-        // Asked twice: ending a session is not undoable, and the loop it stops is the reason
-        // somebody left two agents running unattended. A glyph and not an SVG, because arming
-        // swaps the label and swapping it back is text.
-        icon('■', 'End session', 'End this session for good',
-             `onclick="armButton(this, '■?', () => arbCommand('arb_cancel'))"`, 'arm-btn') +
-        // The path: what was asked, what was written, what was typed and where it stopped.
-        icon('☰', 'Log', 'What this session has done, step by step',
-             'onclick="arbOpenDetail()"') +
+        '<div class="arb-bar">' +
+        // Left to right, least to most consequential: the two dialogs, then the toggle, then what
+        // acts on the session. Nothing that ends or empties something is here at all — Re-brief
+        // and End live in the Edit dialog, behind a deliberate trip, because the strip is a row of
+        // 28px squares over a thread being read with a thumb.
+        //
         // The dialog that appointed it, opened on what it already says.
         icon('✎', 'Edit', 'Change this session — who, what for, and who decides',
              'onclick="arbEditHere()"') +
-        // The brief again, in an empty pane. A long session pushes the opening instruction out of
-        // an agent's context and what is left is an arbitrator writing prose where the drop box
-        // should be — this is the way back without losing the session. Armed: it clears the
-        // arbitrator's context, and that is not undoable.
-        icon('↻', 'Re-brief', 'Clear the arbitrator and give it its brief again',
-             `onclick="armButton(this, '↻?', () => arbCommand('arb_reinit'))"`, 'arm-btn') +
+        // The path: what was asked, what was written, what was typed and where it stopped.
+        icon('☰', 'Log', 'What this session has done, step by step',
+             'onclick="arbOpenDetail()"') +
         // Here and not in the pane menu with the other reading toggles: this one is only ever a
         // question while a session is running, and the strip is the only thing on screen that
         // exists exactly then.
@@ -550,6 +526,25 @@
         ` onclick="toggleArbBubbles()" aria-pressed="${arbBubblesOn() ? 'true' : 'false'}"` +
         ' title="Show what the arbitrator decided, in the thread"' +
         ` aria-label="Arbitrator’s decisions in the thread">${ARB_EYE}</button>` +
+        // The last few steps and what Resume will do, in a sheet of its own. Only while it is
+        // stopped: that is the only time the question is asked.
+        (paused
+          ? icon('ⓘ', 'Steps', 'The last steps, and what Resume will do',
+                 'onclick="arbOpenResume()"')
+          : '') +
+        // What a resume does first. Armed, it waits for a trigger — a member ending a turn, or a
+        // clock — and with two idle members and no clocks that is a session that reads as running
+        // and never acts. `Resume and trigger` asks for a decision now. Two buttons rather than
+        // one that guesses, and which of them is lit comes from the plan: the relay has already
+        // worked out whether arming alone would do anything. Last, and in that order, because the
+        // plain Resume is the one a thumb reaches for without looking.
+        (paused
+          ? icon('⏭', 'Resume and trigger', 'Arm the loop and ask for a decision now',
+                 'onclick="arbCommand(\'arb_resume\', {kick: true})"', lead ? 'lit' : '') +
+            icon('▶', 'Resume', 'Arm the loop and wait for the next turn to end',
+                 'onclick="arbCommand(\'arb_resume\')"', lead ? '' : 'lit')
+          : icon('⏸', 'Pause', 'Stop the loop — nothing is sent until it is resumed',
+                 'onclick="arbCommand(\'arb_pause\')"')) +
         '</div>' + arbSayHtml(s) + '</div>';
     }
 
@@ -677,12 +672,38 @@
           arbRoleField('arbRoleSecond', at.arbRoleSecond)) +
         // Only when appointing one. A session that is already running has been armed or not
         // armed already, and the strip's Pause and Resume are where that is changed.
-        (editing ? '' : arbArmChoiceHtml()) +
+        (editing ? arbSessionActionsHtml() : arbArmChoiceHtml()) +
         '<div class="arb-form-actions">' +
         '<button class="arb-btn" onclick="closeArbSetup()">Cancel</button>' +
         (editing
           ? '<button class="arb-btn go" onclick="arbSave()">Save</button>'
           : '<button class="arb-btn go" onclick="arbStart()">Start</button>') + '</div>';
+    }
+
+    // The two that empty or end something. They used to sit on the strip, one tap from a thread
+    // being scrolled with a thumb — armed, but armed is one mistap away from done. Here they are
+    // behind opening a dialog, which is the trip that suits what they do, and they are the only
+    // things in it that are not a field.
+    //
+    // Editing only: a session that does not exist yet has nothing to re-brief or end.
+    function arbSessionActionsHtml() {
+      return '<div class="arb-part arb-danger">' +
+        '<button type="button" class="arb-btn arm-btn"' +
+        ` onclick="armButton(this, 'Re-brief?', () => arbSessionAction('arb_reinit'))">` +
+        'Re-brief the arbitrator</button>' +
+        '<button type="button" class="arb-btn arm-btn warn"' +
+        ` onclick="armButton(this, 'End session?', () => arbSessionAction('arb_cancel'))">` +
+        'End session</button>' +
+        '<span class="arb-note">Re-briefing empties the arbitrator’s context and gives it its ' +
+        'brief again — the session and its record are kept. Ending it is final.</span>' +
+        '</div>';
+    }
+
+    // Both close the dialog they were pressed in: the form behind them describes a session that
+    // is about to be re-briefed or gone, and leaving it open invites a Save on top of that.
+    function arbSessionAction(command) {
+      closeArbSetup();
+      arbCommand(command);
     }
 
     // The pane, or a new one. A room is often assembled from nothing — two fresh agents and

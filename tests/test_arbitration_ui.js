@@ -133,8 +133,10 @@ test('a running session shows its state, budget and one way to stop it', () => {
   assert.ok(html.includes('Arbitrating'), html);
   assert.ok(html.includes('7 steps · 44 min'), html);
   assert.ok(html.includes('arb_pause'), html);
-  assert.ok(html.includes('arb_cancel'), html);
   assert.ok(!html.includes('arb_resume'), 'a running session is not offered a Resume');
+  // Ending is not on the strip at all: it is one tap over a thread being scrolled, and armed is
+  // one mistap from done. It lives in the Edit dialog with Re-brief.
+  assert.ok(!html.includes('arb_cancel'), html);
 });
 
 test('a paused session says why, and offers Resume instead of Pause', () => {
@@ -849,10 +851,15 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
 test('the brief can be given again, and is asked twice before it is', () => {
   const {g, sent} = ctx();
   g.arbReceiveSession({session: SESSION});
-  const html = g.arbStripHtml(SESSION, CONV, true, null);
-  assert.match(html, /arbCommand\('arb_reinit'\)/);
+  // In the dialog that edits the session, not on the strip: emptying an arbitrator's context is
+  // not something to have under a thumb that is scrolling a thread.
+  const html = g.arbSetupHtml([], [], {}, true);
+  assert.match(html, /arbSessionAction\('arb_reinit'\)/);
   // Armed like End is: it empties the arbitrator's context, which is not undoable.
-  assert.match(html, /arm-btn[^>]*'↻\?'/);
+  assert.match(html, /arm-btn[^>]*'Re-brief\?'/);
+  // And both close the dialog they were pressed in, so a Save cannot land on top of them.
+  assert.match(html, /arbSessionAction\('arb_cancel'\)/);
+  assert.ok(!g.arbStripHtml(SESSION, CONV, true, null).includes('arb_reinit'));
   g.arbCommand('arb_reinit');
   assert.deepEqual(sent.filter(m => m.type === 'arb_reinit'),
                    [{type: 'arb_reinit', session: 's-20260817-1103'}]);

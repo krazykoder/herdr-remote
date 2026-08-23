@@ -286,11 +286,17 @@ test('ending is asked twice, and the strip goes with the session', async ({page}
   await openConv(page);
   await broadcast(page, session());
   await captureSends(page);
-  const end = page.locator('#arbStrip').getByRole('button', {name: /End/});
+  // Behind the Edit dialog rather than on the strip: over a scrolling thread, armed is one mistap
+  // from a session that is gone for good.
+  await page.locator('#arbStrip').getByRole('button', {name: 'Edit'}).click();
+  const end = page.locator('#arbSetupBody').getByRole('button', {name: /End session/});
   await end.click();
   expect(await sent(page)).toEqual([]);          // the first tap only arms it
   await end.click();
   expect(await sent(page)).toEqual([{type: 'arb_cancel', session: 's-20260817-1103'}]);
+  // And the dialog it was pressed in closes with it — a Save landing on a session that is ending
+  // is the one thing worse than having the button there in the first place.
+  await expect(page.locator('#arbModal')).toBeHidden();
 
   await broadcast(page, session({state: 'ended'}));
   await expect(page.locator('#arbStrip')).toBeEmpty();

@@ -2987,10 +2987,17 @@
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: none;
-      /* With the scrollbar hidden, the only thing saying there is more of this row is the edge
-         fading out. Without it a clipped button reads as a broken one. */
-      mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+      /* A tray, not a row of loose buttons: the controls of one session are one object, and over a
+         scrolling thread a shadow is what says this sits above the text rather than in it. The
+         ground is semi-transparent and blurred, so the thread stays visible through it and the
+         buttons on top stay the only solid thing. */
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(10px) saturate(140%);
+      -webkit-backdrop-filter: blur(10px) saturate(140%);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
     }
 
     .arb-bar::-webkit-scrollbar {
@@ -2998,10 +3005,17 @@
     }
 
     /* The row is drawn from `.hang-btn`, which is hidden until something turns it on. Here they
-       are all on: the strip only exists while there is a session to control. */
+       are all on: the strip only exists while there is a session to control.
+
+       Lifted off the page rather than sharing the surface everything else uses: this floats over a
+       thread of monospace text with no ground of its own, and at 28px a chip the same colour as
+       the card behind it reads as part of the card. --arb-chip is the one value both the buttons
+       and the chips under them are drawn in, so they stay one thing. */
     .arb-bar .hang-btn {
       display: inline-flex;
       flex: none;
+      background: var(--arb-chip);
+      color: var(--text);
     }
 
     /* The one to press, and the toggle that is on. Colour rather than weight — these are 28px
@@ -3026,6 +3040,12 @@
       max-width: min(100%, 320px);
     }
 
+    .arb-strip {
+      /* Brighter than `--surface` by a fixed amount of the text colour, so it lifts in every one
+         of the eleven themes rather than in the two a hand-picked grey was chosen against. */
+      --arb-chip: color-mix(in srgb, var(--text) 13%, var(--surface));
+    }
+
     /* Opaque, one at a time: the strip has no ground of its own, so a line without a background
        is prose over a thread of monospace text. */
     .arb-say > span,
@@ -3033,7 +3053,16 @@
       padding: 2px 7px;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: var(--surface);
+      background: var(--arb-chip);
+    }
+
+    /* Which pane is working is a chip that happens to be a button, so it is drawn as the chips
+       beside it and not as `.arb-btn`, whose background is `none` — over a thread that is a
+       transparent chip with a border, which is the one thing this strip cannot have. */
+    .arb-say-top > .arb-btn {
+      min-height: 0;
+      font-size: inherit;
+      background: var(--arb-chip);
     }
 
     /* The chips that say where the session is, on one row and never wrapping into the sentence
@@ -3109,6 +3138,21 @@
     .arb-btn.warn {
       color: var(--red);
       border-color: var(--red);
+    }
+
+    /* Re-brief and End, which used to be two taps away on the strip. A row of their own at the
+       bottom of the dialog, under everything that is a field — they are not settings, and putting
+       them among the selects is how a Save lands on a session somebody meant to end. */
+    .arb-danger {
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .arb-danger .arb-note {
+      flex-basis: 100%;
     }
 
     /* The mark a pane carries while it is arbitrating, wherever that pane is drawn. */
@@ -3425,8 +3469,6 @@
        that gives way when the row is too narrow, the other two being fixed-width facts. */
     .arb-strip .arb-active {
       min-width: 0;
-      font-size: inherit;
-      min-height: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -6916,7 +6958,7 @@
      part of the thread, one more bubble among the messages it was warning about. A notice about
      the app belongs to the app. -->
   <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
   </div>
 
   <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
