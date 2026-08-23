@@ -1977,6 +1977,40 @@ class ThePlan(Harness):
         self.arb.pause(s["id"], "user")
         self.assertEqual("await", self.arb.resume_plan(s["id"])["action"])
 
+    def test_an_arbitrator_that_finished_saying_nothing_is_an_ask(self):
+        # The two-day session. Asked at #8, paused, and the arbitrator ended its turn without
+        # writing — so the question is unanswered and nobody is holding it. `await` there is a
+        # Resume that goes straight back to waiting on a dead question, for ever.
+        s = self.start()
+        self.step(s["id"])
+        self.arb.pause(s["id"], "user")
+        self.arb.arbitrator_finished("pA")          # turn over, drop box empty
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("ask", plan["action"])
+        self.assertTrue(plan["silent"])
+
+    def test_the_same_when_it_was_never_paused(self):
+        s = self.start()
+        self.step(s["id"])
+        self.arb.arbitrator_finished("pA")
+        self.assertEqual("awaiting", self.arb.session(s["id"])["state"])
+        self.assertEqual("ask", self.arb.resume_plan(s["id"])["action"])
+
+    def test_a_resume_asks_again_and_then_waits_on_the_new_question(self):
+        s = self.start()
+        self.step(s["id"])
+        self.arb.pause(s["id"], "user")
+        self.arb.arbitrator_finished("pA")
+        self.arb.resume(s["id"])
+        self.assertEqual(2, self.arb.session(s["id"])["sequence"], "a fresh question went out")
+        path = [e for e in self.arb.events(s["id"]) if e["kind"] == "resumed"]
+        self.assertIn("finished without answering", path[-1]["detail"])
+        # And the new question is a live one: the `asked` it wrote is the watermark, so the old
+        # silence stops counting. Without that, every resume after the first asks again for ever.
+        plan = self.arb.resume_plan(s["id"])
+        self.assertEqual("await", plan["action"])
+        self.assertFalse(plan["silent"])
+
     def test_a_turn_that_ended_while_stopped_is_an_ask(self):
         s = self.start()
         self.arb.pause(s["id"], "user")

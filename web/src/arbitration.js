@@ -1344,6 +1344,14 @@
                   'for that answer. Ask now throws the question away and asks a fresh one.'};
       }
       if (plan.action === 'ask') {
+        // The other half of the two-day session below: the arbitrator was asked, ended its turn,
+        // and wrote nothing. `await` is the wrong answer there — the question is unanswered but
+        // nobody is holding it — so the relay routes it here, where Resume asks a fresh one.
+        if (plan.silent) {
+          return {line: `The arbitrator finished step #${seq} without writing a decision.`,
+                  hint: 'The question died with that turn — nothing is going to answer it now. ' +
+                    'Resume throws it away and asks again.'};
+        }
         return {line: 'A turn ended while it was stopped.',
                 hint: 'Resume asks the arbitrator to decide about it now. Nothing was lost — the ' +
                   'trigger was kept.'};

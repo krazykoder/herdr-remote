@@ -1315,18 +1315,23 @@ class Arbitration:
         session_id = session["id"]
         if session["state"] == "ended":
             return {"action": "none", "sequence": session["sequence"], "prompt_id": None,
-                    "stale": None}
+                    "silent": False, "stale": None}
         sequence = session["sequence"]
         pending = self._unread_decision(session_id, sequence)
         # The question is still out: a prompt at this sequence that no valid decision answers. Not
         # a stored flag — the two rows already say it, and a second place recording the same fact
         # is a second place for it to be wrong.
         outstanding = not pending and not kick and self._unanswered_prompt(session_id, sequence)
-        dropped = (not pending and not outstanding and session["state"] == "paused"
-                   and self._dropped_trigger(session_id))
+        # ...unless the arbitrator has already finished with it and written nothing. The question
+        # is still unanswered, but nobody is holding it any more, so waiting on it is waiting for
+        # ever. Asked again instead — which is what `kick` was the only way to do.
+        silent = outstanding and self._silent_arbitrator(session_id)
+        outstanding = outstanding and not silent
+        dropped = (not pending and not outstanding and not silent
+                   and session["state"] == "paused" and self._dropped_trigger(session_id))
         action = ("collect" if pending else "await" if outstanding
-                  else "ask" if dropped else "wait")
-        return {"action": action, "sequence": sequence, "prompt_id": pending,
+                  else "ask" if silent or dropped else "wait")
+        return {"action": action, "sequence": sequence, "prompt_id": pending, "silent": silent,
                 "stale": self._stale_member(session_id) if action == "wait" else None}
 
     def _stale_member(self, session_id):
@@ -1376,8 +1381,11 @@ class Arbitration:
              `arbitrator_finished` reads the drop box only for an `awaiting` session, so the answer
              to it, whenever it arrives, would be ignored exactly as in case 1. So the wait is what
              resumes. `kick` overrides this and asks a fresh question, which is the way out of an
-             arbitrator that is never going to answer the old one.
-          3. **A member finished while it was stopped.** `turn_ended` drops that trigger — the
+             arbitrator that is never going to answer the old one — and when the path already shows
+             it finished that turn saying nothing, no override is needed: there is nobody left to
+             wait for, so this is case 3 instead and Resume asks again by itself.
+          3. **A question that nobody is holding.** Either the arbitrator finished its turn and
+             wrote nothing — see case 2 — or a member finished while it was stopped. `turn_ended` drops that trigger — the
              session was not armed — and records it on the path. A resume that only armed the loop
              would then sit there for ever waiting for a wake-up that has already been and gone, so
              an unhandled trigger since the last stop is asked now, whether or not `kick` was given.
@@ -1435,6 +1443,8 @@ class Arbitration:
         self._event(session_id, "resumed",
                     f"reading the decision written for #{sequence} before the stop" if pending
                     else f"still waiting on the decision asked for at #{sequence}" if outstanding
+                    else "the arbitrator finished without answering #{} — asking again".format(
+                        sequence) if plan["silent"]
                     else "a turn ended while it was stopped — asking for a decision now" if dropped
                     else "asked for a decision now" if kick
                     else "armed, waiting for a trigger")
@@ -1513,6 +1523,36 @@ class Arbitration:
             "SELECT 1 FROM decisions WHERE session_id=? AND sequence=? AND valid=1 LIMIT 1",
             (session_id, sequence)).fetchone()
         return answered is None
+
+    def _nothing_written(self, session_id, sequence):
+        """The arbitrator ended a turn and the drop box was empty. Said once per sequence.
+
+        Once per sequence, not once per poll: "nothing has been written yet" is the ordinary state
+        of a session between the ask and the answer, and it is also exactly what a session that has
+        quietly stopped deciding looks like. `_silent_arbitrator` is what tells the two apart.
+        """
+        self._event(session_id, "waiting",
+                    "no decision file yet at {}".format(
+                        os.path.basename(self.drop_path(session_id, sequence))),
+                    sequence=sequence, once=True)
+
+    def _silent_arbitrator(self, session_id):
+        """Did the arbitrator finish a turn without answering? See `resume`, case 2.
+
+        Read off the path rather than a column of its own, the same way `_dropped_trigger` is:
+        `waiting` is written from one place only, when the arbitrator's turn ended and the drop box
+        held nothing. That is the difference between an answer still being written and one that is
+        never coming, and without it a resume waits for ever on a question nobody is holding.
+
+        The watermark is the last `asked` alone — deliberately not `paused` or `resumed` like
+        `_dropped_trigger`'s. A resume that asks again writes its own `asked` and clears this by
+        itself; one that does not has changed nothing about the question being dead, and counting
+        it would put `await` back in front of the same wall on every press after the first.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM events WHERE session_id=? AND kind='waiting' AND id > COALESCE("
+            "(SELECT MAX(id) FROM events WHERE session_id=? AND kind='asked'), 0) LIMIT 1",
+            (session_id, session_id)).fetchone() is not None
 
     def _dropped_trigger(self, session_id):
         """Did a member finish a turn since this session last stopped? See `resume`, case 2.
@@ -1694,14 +1734,26 @@ class Arbitration:
         Reads *the path the relay already knew* — the arbitrator never tells the relay where to
         look, which is what stops a compromised or confused agent from pointing it at a file
         somebody else wrote.
+
+        A session that is not `awaiting` has nothing to collect, but its arbitrator finishing is
+        still the most important thing that can happen to it: that is a question that will never be
+        answered, and this turn end is the only moment anything is in a position to notice. So it
+        is written down rather than skipped, and `_silent_arbitrator` reads it back for `resume`.
         """
         live = self.panes()
-        for s in self.running_all():
-            if s["state"] != "awaiting":
-                continue
+        for s in self.open_sessions():
             try:
                 arb, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
                 if arb is None or arb != pane_id:
+                    continue
+                if s["state"] != "awaiting":
+                    # Nothing to collect — `collect` reads the drop box in `awaiting` and no other
+                    # state. But the turn end is the news: a session paused mid-question whose
+                    # arbitrator then finished and wrote nothing has a dead question, and this is
+                    # the only moment anything can see that. Recorded here or nowhere.
+                    if (self._unanswered_prompt(s["id"], s["sequence"])
+                            and self.read_dropbox(s["id"], s["sequence"])[0] is None):
+                        self._nothing_written(s["id"], s["sequence"])
                     continue
                 row = self.conn.execute(
                     "SELECT id FROM prompts WHERE session_id=? AND sequence=? "
@@ -1862,13 +1914,7 @@ class Arbitration:
         sequence = s["sequence"]
         raw, sha = self.read_dropbox(session_id, sequence)
         if raw is None:
-            # Said once per sequence, not once per poll. "Nothing has been written yet" is the
-            # ordinary state of a session between the ask and the answer, and it is also exactly
-            # what a session that has quietly stopped deciding looks like.
-            self._event(session_id, "waiting",
-                        "no decision file yet at {}".format(
-                            os.path.basename(self.drop_path(session_id, sequence))),
-                        sequence=sequence, once=True)
+            self._nothing_written(session_id, sequence)
             return {"outcome": "waiting"}
         prior = self.conn.execute(
             "SELECT raw_sha256, valid FROM decisions WHERE session_id=? AND sequence=? "

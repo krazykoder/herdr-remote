@@ -1321,6 +1321,10 @@ test('the resume dialog says which of the four resumes this one is', () => {
                /The arbitrator was asked at step #3 and never answered/);
   assert.match(withPlan({action: 'ask', sequence: 3, stale: null}),
                /A turn ended while it was stopped/);
+  // Same action, different stop: the arbitrator finished the turn and wrote nothing. Resume is
+  // the right button for both, and a person needs to be told which one they are looking at.
+  assert.match(withPlan({action: 'ask', sequence: 3, silent: true, stale: null}),
+               /The arbitrator finished step #3 without writing a decision/);
   // Armed says which of two very different things it is. Both members idle is the one that will
   // never move; a member mid-turn resumes into a decision the moment that turn ends.
   assert.match(withPlan({action: 'wait', sequence: 3, stale: null}),
