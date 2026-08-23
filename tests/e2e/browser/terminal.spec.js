@@ -49,6 +49,7 @@ test('a command typed into a shell is pasted and entered', async ({page, herdrLo
 
   // And the composer is emptied, which is the app saying it went.
   await expect(page.locator('#termInput')).toHaveValue('');
+  await expect(page.locator('#toast')).toContainText('✓ Sent to');
 });
 
 // The Clear and Quit buttons send `clear` and `exit` down the same path. Short, generated, and

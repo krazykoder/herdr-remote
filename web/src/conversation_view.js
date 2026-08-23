@@ -714,7 +714,7 @@
       if (!ws || !live || live.status !== 'working') return;
       armButton(btn, 'Esc?', () => {
         ws.send(JSON.stringify({ type: 'send_keys', pane_id: live.pane_id, keys: ['Escape'] }));
-        showToast(`✓ Sent Escape to ${paneLabel(live)}`, 'ok');
+        showToast(`Sent Escape to ${paneLabel(live)}`, 'info');
         burstPoll();
       });
     }

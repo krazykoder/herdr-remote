@@ -3385,7 +3385,9 @@ test('the dock sends a picked message straight into another member', async ({pag
   // Enter rides on the last chunk rather than following it, so nothing can arrive between them.
   expect(text[text.length - 1].submit).toBe(true);
   expect(text.slice(0, -1).every(m => !m.submit)).toBe(true);
-  await expect(page.locator('#toast')).toContainText('Sent 1 message to Architect 1');
+  // What this end knows as it leaves. The tick — `✓ Sent to …` — is the relay's answer, and this
+  // pane is one the fake herdr never reports taking anything.
+  await expect(page.locator('#toast')).toContainText('Sending 1 message to Architect 1');
   // Recorded against the receiving pane, and the pick is spent.
   expect(mine).toBeTruthy();
   await expect(page.locator('#convViewThread .conv-msg.picked')).toHaveCount(0);

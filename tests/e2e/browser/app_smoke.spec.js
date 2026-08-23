@@ -390,9 +390,14 @@ test('the composer sends to the pane that is open', async ({page}) => {
   // The fake herdr reports a fixed board, so this pane never reports taking the text and the
   // relay cannot prove the send landed. That is the case a cleared composer hides, and the only
   // thing that distinguishes it from a send that worked is this.
-  // Given the relay's whole watch to say so: it presses, then keeps watching the pane until
-  // SUBMIT_TIMEOUT (8s), which is longer than the 5s an expect waits by default.
-  await expect(page.locator('#toast')).toContainText('did not confirm the send', {timeout: 20000});
+  //
+  // What comes back is that it is *unconfirmed and still being watched*, not that it failed: the
+  // pane is watched for HERDR_CONFIRM_MS (10 minutes) afterwards, so the verdict is far outside
+  // any test's patience — and a send that lands says `✓ Sent to …` instead, which is what makes
+  // this sentence worth asserting. Given the relay's whole submit watch to appear: it presses,
+  // then keeps watching until SUBMIT_TIMEOUT (8s), longer than the 5s an expect waits by default.
+  await expect(page.locator('#toast')).toContainText('has not confirmed the send yet',
+                                                     {timeout: 20000});
 });
 
 // A working pane, read as a thread, with one bubble in it — which is where the Esc lives now. The

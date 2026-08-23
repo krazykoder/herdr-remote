@@ -2524,7 +2524,17 @@ async def handle_client(ws, listener="lan"):
                     # same empty composer either way. The text is still recorded as sent, because
                     # it very likely was; what the client is told is that nobody confirmed it.
                     out = {}
-                    if not await submit_paste(pane_id, text, remote=remote, out=out):
+                    if await submit_paste(pane_id, text, remote=remote, out=out):
+                        # Said out loud when it *did* land, too. It used to be silence, and a client
+                        # with nothing to show for a send drew its own tick the moment the socket
+                        # took the text — which is a claim about this end of the wire, not about the
+                        # pane. One message per send either way: only the last chunk carries
+                        # `submit`, and this is that chunk's answer.
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": True,
+                            "pending": False, "pane_id": pane_id,
+                            "message": "the pane took it"}))
+                    else:
                         queued = out.get("reason") == "queued"
                         # Not the end of the story any more: the pane is watched until it goes to
                         # work on this, and the client is told when it does. `pending` is what says
