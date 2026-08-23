@@ -112,6 +112,14 @@ def relay_env(**extra):
         "HERDR_ENABLE_WRITE_EXT": "1",
         "HERDR_ENABLE_ARBITER": "1",
         "HERDR_LAN_OPEN": "1",
+        # A turn that ends with nothing new on screen is held open — the harness may paint its
+        # answer after the status flips, and a turn recorded before the paint is a turn the
+        # arbitrator is asked to decide without. Arbitration is told when that hold ends, so the
+        # default 45s is 45s before any trigger here fires. Shortened rather than removed: setting
+        # it to 0 would take the whole late-turn path out of this test, and the path is now how
+        # every trigger arrives. The fake's pane read is a fixed frame, so every turn here takes
+        # the slow branch and waits the full deadline.
+        "HERDR_LATE_TURN_MS": "1500",
     })
     for name in ("HERDR_REMOTES", "HERDR_PROJECTS_FILE", "HERDR_RELAY_TOKEN",
                  "HERDR_EXTERNAL_PORT", "HERDR_LAN_BIND", "HERDR_ENABLE_TERMINAL"):

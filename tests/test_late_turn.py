@@ -51,7 +51,11 @@ class FakeArbitration:
         return None
 
 
-PANE = {"pane_id": "w1:p1", "agent": "agy", "agent_status": "idle", "label": "test 1"}
+# The relay's own normalised agent, which is what the poll loop hands both of the functions
+# below — `status`, not herdr's raw `agent_status`. Fed the raw shape, these tests passed
+# while the code read a key that was never there: every held turn looked like a pane back
+# at work and was dropped, and no send was ever confirmed by one going back to work.
+PANE = {"pane_id": "w1:p1", "agent": "agy", "status": "idle", "label": "test 1"}
 
 
 class LateTurns(unittest.IsolatedAsyncioTestCase):
@@ -103,7 +107,7 @@ class LateTurns(unittest.IsolatedAsyncioTestCase):
     async def test_a_pane_that_went_back_to_work_is_dropped(self):
         herdr_relay.late_turns["w1:p1"] = {"was": "working", "status": "idle", "until": _later()}
         log = FakeLog(pending=5)
-        await self.run_collect(log, [dict(PANE, agent_status="working")])
+        await self.run_collect(log, [dict(PANE, status="working")])
         self.assertEqual([], log.recorded, "whatever it says now belongs to the turn it is in")
         self.assertEqual([], self.reads, "and it is not even read")
         self.assertEqual({}, herdr_relay.late_turns)
@@ -161,7 +165,7 @@ class PendingSends(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_pane_going_to_work_is_the_confirmation(self):
         self.wait(idled=True)
-        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        await herdr_relay.confirm_pending_sends([dict(PANE, status="working")])
         self.assertEqual([True], [m["ok"] for m in self.ws.sent])
         self.assertEqual([False], [m["pending"] for m in self.ws.sent])
         self.assertEqual({}, herdr_relay.pending_sends)
@@ -170,11 +174,11 @@ class PendingSends(unittest.IsolatedAsyncioTestCase):
         self.wait(idled=False)
         # Still working on what it was doing when the text arrived. That is not the confirmation —
         # it is the same `working` the pane was already reporting.
-        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        await herdr_relay.confirm_pending_sends([dict(PANE, status="working")])
         self.assertEqual([], self.ws.sent)
-        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="idle")])
+        await herdr_relay.confirm_pending_sends([dict(PANE, status="idle")])
         self.assertEqual([], self.ws.sent, "the turn ended; nothing has been taken yet")
-        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        await herdr_relay.confirm_pending_sends([dict(PANE, status="working")])
         self.assertEqual([True], [m["ok"] for m in self.ws.sent])
 
     async def test_a_pane_that_never_moves_is_given_up_on_at_the_deadline(self):
@@ -195,7 +199,7 @@ class PendingSends(unittest.IsolatedAsyncioTestCase):
         # This wait is minutes long. A phone that locked in the middle of it is the ordinary end.
         self.ws.open = False
         self.wait()
-        await herdr_relay.confirm_pending_sends([dict(PANE, agent_status="working")])
+        await herdr_relay.confirm_pending_sends([dict(PANE, status="working")])
         self.assertEqual({}, herdr_relay.pending_sends)
 
 

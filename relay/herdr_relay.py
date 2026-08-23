@@ -996,7 +996,10 @@ async def confirm_pending_sends(agents):
     now = int(time.time() * 1000)
     for pid, wait in list(pending_sends.items()):
         a = by_id.get(pid)
-        status = (a or {}).get("agent_status") or ""
+        # `status`, the key the relay's own normalised agents carry — see `collect_late_turns` for
+        # the same correction. Under `agent_status` this read "" for every pane, so no send was
+        # ever confirmed by a pane going back to work: each one waited out its deadline instead.
+        status = (a or {}).get("status") or ""
         if a is None:
             pending_sends.pop(pid, None)
             continue        # the pane is gone; there is nothing left to confirm or to tell anyone
@@ -1043,7 +1046,12 @@ async def collect_late_turns(agents):
     now = int(time.time() * 1000)
     for pid, late in list(late_turns.items()):
         a = by_id.get(pid)
-        if a is None or not ends_turn(a.get("agent_status") or ""):
+        # `status`, not `agent_status`: these are the relay's own normalised agents (see the
+        # snapshot builder), where herdr's `agent_status` has already been folded into `status`.
+        # Read under the wrong key every held turn looked like a pane that had gone back to work,
+        # was dropped here, and was never recorded or offered to arbitration — which is a session
+        # that stops for good at the first member turn that painted nothing.
+        if a is None or not ends_turn(a.get("status") or ""):
             late_turns.pop(pid, None)
             continue
         try:
