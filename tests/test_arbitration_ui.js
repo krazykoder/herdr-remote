@@ -176,16 +176,16 @@ test('the strip says which of the three is working, not what was last said', () 
   // Icons now, so the name a screen reader and this test read is the aria-label.
   assert.match(html, /arbOpenDetail\(\)[^>]*aria-label="Log"/);
   assert.match(html, /arbEditHere\(\)[^>]*aria-label="Edit"/);
-  // member-2 is `working` in the fixture, so it is the one being waited on.
+  // member-2 is `working` in the fixture, so it is the one being waited on — said in the label
+  // under the icons, which is also the way to that pane.
   assert.match(html, /Reviewer 1 · working/);
   assert.match(html, /openTerminal\('w1:p2'\)/);
 
   // Reading, rather than being read: while a prompt is out the arbitrator is the active one.
-  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true),
-               /arb-sign[\s\S]*?Arbitrator · deciding/);
+  assert.match(g.arbStripHtml({...s, state: 'awaiting'}, CONV, true), /Arbitrator · deciding/);
   // And nobody working at all is said as such rather than left blank.
   const quiet = {...SESSION, members: SESSION.members.map(m => ({...m, status: 'idle'}))};
-  assert.match(g.arbStripHtml(quiet, CONV, true), /arb-sign[\s\S]*?Arbitrator · waiting/);
+  assert.match(g.arbStripHtml(quiet, CONV, true), /Arbitrator · waiting/);
 });
 
 test('a pause says what its reason means, not only what it is called', () => {
@@ -377,8 +377,8 @@ test('a blocked arbitrator is said out loud, with the way to its pane', () => {
   const stuck = {...SESSION, state: 'awaiting',
                  arbitrator: {pane_id: 'w1:p3', status: 'blocked'}};
   const html = g.arbStripHtml(stuck, CONV, true);
-  assert.match(html, /arb-sign[\s\S]*?Arbitrator · needs you/);
-  assert.match(html, /class="arb-btn arb-active warn"/);
+  assert.match(html, /Arbitrator · needs you/);
+  assert.match(html, /class="arb-say-note arb-active warn"/);
   assert.match(html, /openTerminal\('w1:p3'\)/);
   assert.equal(/needs you/.test(g.arbStripHtml(SESSION, CONV, true)), false,
                'and an arbitrator that is merely working is not news');

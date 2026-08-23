@@ -503,7 +503,7 @@
     };
 
     function arbGlyph(name) {
-      return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+      return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
         'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
         ARB_ICONS[name] + '</svg>';
     }
@@ -512,7 +512,7 @@
     // through. A toggle whose only difference is a colour is a toggle nobody can read the state of
     // without pressing it.
     function arbEye(on) {
-      return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+      return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
         'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
         '<path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" />' +
         '<circle cx="12" cy="12" r="3" />' +
@@ -609,17 +609,27 @@
     function arbSayHtml(s) {
       const paused = s.state === 'paused';
       const said = paused && s.plan ? arbPlanLine(s.plan, s) : null;
+      const who = arbActive(s);
+      // One label, not three lines of chips. What the row of icons cannot say is a sentence, and a
+      // sentence broken into boxes is read as three separate facts none of which is the answer:
+      // who is doing something, what Resume would do about it, and what the state means.
+      const note = [who.pane_id ? `${who.label} · ${who.doing}` : '',
+                    said ? said.line : '', arbStateTitle(s)].filter(Boolean).join(' · ');
       return '<div class="arb-say">' +
-        // The state, what is left of the budget, and which of the three panes is doing something
-        // — one row of chips, because all three answer "where is this session" and none of them
-        // is a control of it. The last is a way to the pane, which is why it is a button.
+        // The state and what is left of the budget, on one row. Both are facts about where the
+        // session is rather than controls of it, and both are short enough to never wrap.
         '<span class="arb-say-top">' +
         `<span class="arb-say-state">${escapeHtml(arbStateLabel(s))}</span>` +
         `<span class="arb-say-budget">${escapeHtml(arbBudgetLine(s))}</span>` +
-        arbActiveHtml(s) +
         '</span>' +
-        (said ? `<span class="arb-say-line">${escapeHtml(said.line)}</span>` : '') +
-        `<span class="arb-say-why">${escapeHtml(arbStateTitle(s))}</span>` +
+        // The label is the way to whichever pane it is about — a blocked arbitrator is the one
+        // state on this strip that cannot be fixed from the strip, and the sentence saying so is
+        // the obvious thing to press. A span when there is no pane to open.
+        (who.pane_id
+          ? `<button class="arb-say-note arb-active${who.blocked ? ' warn' : ''}` +
+            `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
+            ` aria-label="Open ${escapeHtml(who.label)}’s pane">${escapeHtml(note)}</button>`
+          : `<span class="arb-say-note">${escapeHtml(note)}</span>`) +
         '</div>';
     }
 
@@ -650,16 +660,6 @@
       // armed and there is nothing for it to read yet.
       return Object.assign(at(arb), {arbiter: true, idle: true,
                                      doing: s.state === 'paused' ? 'stopped' : 'waiting'});
-    }
-
-    function arbActiveHtml(s) {
-      const who = arbActive(s);
-      if (!who.pane_id) return '';
-      return `<button class="arb-btn arb-active${who.blocked ? ' warn' : ''}` +
-        `${who.idle ? ' quiet' : ''}" onclick="openTerminal('${escapeHtml(who.pane_id)}')"` +
-        ` aria-label="Open ${escapeHtml(who.label)}’s pane">` +
-        `${who.arbiter ? arbSign(11) + ' ' : ''}${escapeHtml(who.label)} · ` +
-        `${escapeHtml(who.doing)}</button>`;
     }
 
     // --- appointing one -------------------------------------------------------------------
