@@ -26,8 +26,11 @@ function boot() {
     navigator: {}, localStorage: {getItem: () => null, setItem() {}},
     escapeHtml: s => String(s), JSON, Math, Object, Array, Set, Map, String, Number,
     setTimeout, clearTimeout,
+    // agent_configs.js's lookup, stubbed: this file is about the badge, not the store.
+    agentConfigRow: id => (id === 'oclaude1'
+      ? {id: 'oclaude1', label: 'oclaude1', kind: 'claude'} : null),
   });
-  vm.runInContext(src + '\n;__out = {agentColor, agentBadge};', ctx);
+  vm.runInContext(src + '\n;__out = {agentColor, agentBadge, paneBadge, kindBadge};', ctx);
   return ctx.__out;
 }
 
@@ -57,4 +60,28 @@ test('a non-string kind loses a colour and never throws', () => {
     assert.match(agentBadge('claude', bad), /claude/, String(bad));
   }
   assert.deepEqual(['claude', 'codex'].map(k => agentBadge(k)).length, 2);
+});
+
+test('a pane started under a config wears the config\'s name and the harness\'s colour', () => {
+  const {paneBadge} = boot();
+  const badge = paneBadge({pane_id: 'p1', agent: 'claude', config: 'oclaude1'});
+  assert.match(badge, /oclaude1/);
+  assert.match(badge, /var\(--agent-claude\)/);
+});
+
+test('a pane with no config, or one since deleted, keeps its harness name', () => {
+  // The kind underneath never changes — the colour, the start allowlist and the fingerprint a
+  // conversation remembers a member by all key off it — so this is the true thing to fall back to.
+  const {paneBadge} = boot();
+  assert.match(paneBadge({agent: 'claude'}), /claude</);
+  assert.match(paneBadge({agent: 'claude', config: 'gone'}), /claude</);
+  assert.equal(paneBadge({}), '');
+});
+
+test('a recorded kind is upgraded only when its pane is live and custom', () => {
+  const {kindBadge} = boot();
+  const live = {agent: 'claude', config: 'oclaude1'};
+  assert.match(kindBadge('claude', live), /oclaude1/);
+  assert.match(kindBadge('claude', {agent: 'claude'}), /claude</);
+  assert.match(kindBadge('claude', null), /claude</);
 });

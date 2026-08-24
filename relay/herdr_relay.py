@@ -894,6 +894,15 @@ def get_all_panes():
     return annotate_agents(agents, PROJECTS), annotate_agents(shells, PROJECTS)
 
 
+# pane_id -> the agent config it was started under. Memory only, and deliberately: a pane
+# outlives this process, so a relay restart forgets which alias started one that is still
+# running and the badge falls back to the harness. The alternative is a durable record of
+# something herdr does not model, keyed on ids that mean nothing after a herdr restart.
+# ponytail: in-memory, one entry per started pane. If it needs to survive a relay restart it
+# belongs in the state store keyed by [host, cwd, label], not by pane id.
+pane_config = {}
+
+
 def snapshot_message():
     """The full-state broadcast. `shells` is present whenever terminal mode is on, including as an
     empty list — its presence is the client's feature gate, as start_options is for Start."""
@@ -1719,6 +1728,12 @@ async def _poll_once():
             branch = pane_branch.get(branch_key(a))
             if branch:
                 a["branch"] = branch
+            # Which agent config this pane was started under, so the app can call it `oclaude1`
+            # rather than `claude` — herdr knows nothing about aliases, and the kind stays the
+            # kind, because everything else keys off it.
+            config = pane_config.get(a["pane_id"])
+            if config:
+                a["config"] = config
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -2817,6 +2832,8 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": exec_err}))
                     continue
+                if plan.get("config"):
+                    pane_config[pane_id] = plan["config"]
                 log.info("Start agent ok: pane=%s label=%r name=%r",
                          pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",

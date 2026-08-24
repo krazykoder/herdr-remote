@@ -164,6 +164,16 @@ test('the confirm never carries a path, because the relay never sent one', () =>
     ['Run this in a new terminal on herdr?', '', 'npm test']);
 });
 
+test('an insecure tile says so first, above what it is about to run', () => {
+  // The mark is the user's own claim about the endpoints behind the tile — nothing here can
+  // verify it — so the one place it must survive to is the press.
+  const p = press({tiles: [RUN]});
+  assert.deepEqual(p.out.launcherConfirmLines(Object.assign({}, RUN, {insecure: true}),
+    {projects: PROJECTS}),
+    ['Insecure: the providers behind this tile do not protect what is sent to them.', '',
+     'Run this in a new terminal on herdr?', '', 'npm test']);
+});
+
 test('saying no sends nothing at all', () => {
   const p = press({tiles: [RUN], answer: false});
   assert.equal(p.press('ql_a'), false);

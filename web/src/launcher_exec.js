@@ -38,11 +38,17 @@
       // and together they are what tells two otherwise identical tiles apart.
       const where = `${project.label || tile.project_id}`
         + (project.host && project.host !== 'local' ? ` on ${project.host}` : '');
+      // First line, above the payload: a tile the user marked insecure is one whose providers
+      // they told us not to trust with their work, and the press is the last moment that is
+      // still worth knowing.
+      const warn = launcherInsecure(tile)
+        ? ['Insecure: the providers behind this tile do not protect what is sent to them.', '']
+        : [];
       if (launcherIsTerm(tile)) {
         const command = String(tile.command || '').trim();
-        return command
+        return warn.concat(command
           ? [`Run this in a new terminal on ${where}?`, '', command]
-          : [`Open a terminal on ${where}?`];
+          : [`Open a terminal on ${where}?`]);
       }
       // The arbitrator counts. It is a third pane started on the same relay in the same Project,
       // and a confirm that said "2 sessions" before starting three would be the one number on
@@ -50,7 +56,7 @@
       const roster = launcherRoster(tile);
       const many = roster.length > 1;
       const arb = launcherWantsArb(tile);
-      return [`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
+      return warn.concat([`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
               '', roster.map(m => m.name).join(', '),
               '',
               arb ? `${tile.arbitrator.name} will decide between `
@@ -62,7 +68,7 @@
                 // first decision for it.
                 + 'It starts paused — arm it from the conversation.'
                 : many ? 'They are started one at a time and grouped into a conversation.'
-                : 'It gets a conversation of its own, under the name you give it.']
+                : 'It gets a conversation of its own, under the name you give it.'])
         .filter(l => l !== null);
     }
 

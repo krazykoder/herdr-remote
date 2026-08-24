@@ -36,6 +36,14 @@
     // between them is one field and everything else about them is the same.
     // ponytail: `term` is a `run` with an optional command today. If it grows its own fields —
     // a shell to open, a directory under the Project — this is where they part.
+    // A tile whose providers the user has told us not to trust with their work. It is a claim
+    // about the endpoints behind the agents, which nothing here can verify — so it is answered by
+    // the person who set the providers up, kept on the tile, and repeated everywhere the tile is:
+    // its own band, its own badge, and a line in the confirm that presses it.
+    function launcherInsecure(tile) {
+      return !!(tile && tile.insecure);
+    }
+
     function launcherIsTerm(tile) {
       return !!tile && (tile.action === 'run' || tile.action === 'term');
     }

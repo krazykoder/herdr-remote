@@ -92,6 +92,12 @@
       // in step 4 shows the whole of it; two lines here is what fits without the grid going ragged.
       const payload = launcherPreview(tile);
       const badge = gate.badge ? `<span class="launcher-badge">${escapeHtml(gate.badge)}</span>` : '';
+      // On the tile as well as over the band. A tile is dragged between bands by editing it, and
+      // the one thing that must never be true of this mark is that it can be missed.
+      const insecure = launcherInsecure(tile)
+        ? '<span class="launcher-badge insecure" title="The providers behind this tile do not'
+          + ' protect what is sent to them">insecure</span>'
+        : '';
       // aria-disabled and not the `disabled` attribute: a disabled button is skipped by the
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
       // pressed is the one thing its reader most needs. It is still not pressable — nothing is
@@ -109,7 +115,7 @@
         + `<span class="launcher-name">${escapeHtml(tile.label)}`
         + `${launcherProjectBadge(tile)}</span>`
         + (payload ? `<span class="launcher-payload">${launcherPayloadHtml(tile)}</span>` : '')
-        + badge
+        + insecure + badge
         + '</button>';
     }
 
@@ -123,13 +129,18 @@
     function launcherGroups(tiles) {
       const out = [];
       const band = (label, list) => { if (list.length) out.push({label: label, tiles: list}); };
-      band('Templates', tiles.filter(t => !t.project_id));
-      projects.forEach(p => band(p.label || p.id, tiles.filter(t => t.project_id === p.id)));
+      // Insecure first, and out of every other band: the whole point of the mark is that it is
+      // read before the tile is pressed, and a warning mixed in among the Project it happens to
+      // belong to is one more badge in a grid of badges.
+      const safe = tiles.filter(t => !launcherInsecure(t));
+      band('[insecure]', tiles.filter(launcherInsecure));
+      band('Templates', safe.filter(t => !t.project_id));
+      projects.forEach(p => band(p.label || p.id, safe.filter(t => t.project_id === p.id)));
       // Tiles pointing at a Project this relay does not have. Last, and still drawn: they are the
       // broken ones, each already wearing its own badge, and a band that hid them would be the one
       // place the problem is fixable and the last place it is mentioned.
       const known = new Set(projects.map(p => p.id));
-      band('Missing Project', tiles.filter(t => t.project_id && !known.has(t.project_id)));
+      band('Missing Project', safe.filter(t => t.project_id && !known.has(t.project_id)));
       return out;
     }
 

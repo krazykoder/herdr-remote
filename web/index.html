@@ -1317,6 +1317,30 @@
       white-space: nowrap;
     }
 
+    /* The one badge that is not about this relay's configuration but about where the work goes.
+       Red rather than orange, and on the tile itself as well as over its band. */
+    .launcher-badge.insecure {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .ql-insecure {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      margin: 10px 0 0;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .ql-insecure input {
+      margin: 2px 0 0;
+      flex: 0 0 auto;
+    }
+
+    .ql-insecure strong { color: var(--red); }
+
     /* --- agent configs --- */
     /* Under the tiles, in the launcher's own grid, and spanning it: a config is one line of facts
        about a named environment, not a tile you press to start something. Every colour on the row
@@ -1358,6 +1382,20 @@
     .cfg-provider {
       font-size: 0.65rem;
       color: var(--muted);
+    }
+
+    /* A config's name and its model are both strings a shell will be given verbatim, so they are
+       set like one: `oclaude1` and `claude-opus-4-8[1m]` are read character by character when two
+       of them differ by one, and a proportional face is what makes that hard. The badge keeps its
+       harness colour — only the face changes. */
+    .cfg-row .badge, .cfg-model {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* Same reason, in the editor: what is typed into these is what the export line carries. */
+    #launcherEditBody input[list="cfgModels"],
+    #launcherEditBody #cfgLabel {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
 
     /* A key is named, never shown. Red when the relay does not hold the variable — that is the one

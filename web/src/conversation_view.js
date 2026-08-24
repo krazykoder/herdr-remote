@@ -556,7 +556,7 @@
       if (!workingList || !workingList.length) return '';
       return workingList.map(a => {
         const name = escapeHtml(paneLabel(a) || a.pane_id || 'Agent');
-        const badge = a.agent ? agentBadge(a.agent) : '';
+        const badge = a.agent ? paneBadge(a) : '';
         const key = convMemberKey(a);
         const accent = agentColor(a.agent) || 'var(--text)';
         // A button, because it does something: the badge says who is working and pressing it goes
@@ -626,7 +626,7 @@
       const color = agentColor(a.agent) || 'var(--muted)';
       const dot = statusColor(live);
       const who = `<span class="dot pulse" style="background:${dot}"></span>` +
-        `${escapeHtml(paneLabel(a) || '')}${agentBadge(a.agent)}`;
+        `${escapeHtml(paneLabel(a) || '')}${paneBadge(a)}`;
       const text = (draft && draft.text || '').trim();
       // `conv-slot` and not `conv-msg`: it looks like a bubble but it is not a message, and the
       // pick handler, Summary, Last and the badge writer all find messages by that class.
@@ -765,7 +765,7 @@
         const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
           `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
-          agentBadge(spawn.agent || (live.get(m.key) || {}).agent || '') +
+          kindBadge(spawn.agent || (live.get(m.key) || {}).agent || '', live.get(m.key)) +
           `${on ? '' : '<span class="tag">no longer live</span>'}` +
           `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
       }).join('') + '</button>';

@@ -707,7 +707,7 @@
           `title="Talk to ${name}. Double-click to read only ${name}" ` +
           `aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-          `${name}${agentBadge(a.agent)}</button>`;
+          `${name}${paneBadge(a)}</button>`;
       }).join('');
       // Numbered by the order they were chosen, because that order is what will be written and two
       // lit chips otherwise say nothing about which comes first. In fill mode nothing is lit at
@@ -798,7 +798,7 @@
           `onclick="pickDockTarget('${a.pane_id}')" aria-label="Talk to ${name}">` +
           `<span class="tick">${on ? '✓' : ''}</span>` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-          `${name}${agentBadge(a.agent)}</button>`;
+          `${name}${paneBadge(a)}</button>`;
       }).join('') +
         // Last, under the membership: another agent in this conversation is one more of the same
         // list, and the place that answers "who is in this" is the place to add to it.

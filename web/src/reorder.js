@@ -14,7 +14,7 @@
       box.innerHTML = live.length
         ? live.map(a => {
           const cwd = a.cwd ? escapeHtml(a.cwd.split('/').slice(-2).join('/')) : '';
-          const meta = a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd;
+          const meta = a.agent ? `${paneBadge(a)} ${cwd}` : cwd;
           return `<div class="order-row" role="option" tabindex="0" aria-selected="false" data-pane="${escapeHtml(a.pane_id)}">
       <span class="dot" style="background:${a.agent ? statusColor(a) : shellColor(a.pane_id)}" aria-hidden="true"></span>
       <span class="kind" aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span>
@@ -280,7 +280,7 @@
         ? `<span class="pair-target" title="${escapeHtml(title || paneLabel(mineLive))}">` +
           `<span class="dot${mineLive.status === 'working' ? ' pulse' : ''}" ` +
           `style="background:${statusColor(mineLive)}" aria-hidden="true"></span>` +
-          `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${agentBadge(mineLive.agent)}</span>`
+          `<span class="label">${escapeHtml(paneLabel(mineLive))}</span>${paneBadge(mineLive)}</span>`
         : pair ? `<span class="pair-name">${escapeHtml(pair.name)}</span>` : '';
       if (!pair) {
         // Nothing to switch to and nothing to transfer, so the strip is the name alone — and

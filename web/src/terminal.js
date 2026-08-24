@@ -617,6 +617,30 @@
       return ` <span class="badge" style="${tint}">${escapeHtml(agent)}</span>`;
     }
 
+    // A pane's own badge. The same badge as `agentBadge(a.agent)` for every session ever started
+    // before agent configs existed — and for one started under `oclaude1`, that name instead,
+    // still wearing claude's colour, because that is what it is. The kind underneath never
+    // changes: everything else in the app keys off it, from the colour to the start allowlist to
+    // the fingerprint a conversation remembers a member by.
+    //
+    // The relay carries `config` on the pane and this reads the label out of the configs it
+    // advertised. A config deleted since the pane started leaves the harness's own name, which is
+    // the true thing to say when the alias is gone.
+    function paneBadge(a) {
+      const pane = a || {};
+      const row = pane.config && typeof agentConfigRow === 'function'
+        ? agentConfigRow(pane.config) : null;
+      return agentBadge((row && row.label) || pane.agent, pane.agent);
+    }
+
+    // A recorded kind, upgraded to the alias when the pane it names is live and was started under
+    // one. The lists that read a conversation's own record — the roster, the recent sheet — know
+    // only what a member was started as; this is how they say `oclaude1` where the pane views do,
+    // without giving up the recorded name for a member whose pane has gone.
+    function kindBadge(name, pane) {
+      return pane && pane.config ? paneBadge(pane) : agentBadge(name);
+    }
+
     // One nomenclature wherever a pane is named — card, terminal header, both kinds of pane:
     //
     //     [emoji] name @project [agent]
@@ -637,7 +661,7 @@
       // who will type into it from there.
       const arb = typeof arbMark === 'function' ? arbMark(a.pane_id) : '';
       return `<span aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span> ` +
-        escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '') + arb;
+        escapeHtml(name) + proj + (withAgent ? paneBadge(a) : '') + arb;
     }
 
     // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.

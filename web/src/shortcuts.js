@@ -246,7 +246,7 @@
       const paired = pairFor(pairs, a.pane_id);
       return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
-    <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
+    <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${paneBadge(a).trimStart()} ${cwd}</div></div>
     ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + a.pane_id, pane: a.pane_id, stop: true,
                   aria: 'End ' + label, fire: `endPane('${a.pane_id}')`})}
     <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
@@ -742,7 +742,8 @@
               ` onclick="toggleConvHidden(this.dataset.key)"` +
               ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
-          agentBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '') +
+          kindBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '',
+                    live.get(m.key)) +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
           // End first, then Remove, and only then the way in. The two that take something away sit
           // together; Open is not one of them. End is offered only where there is something running

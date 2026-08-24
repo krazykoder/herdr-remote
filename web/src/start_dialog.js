@@ -700,7 +700,7 @@
         `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
         `<span class="kind" aria-hidden="true">${shell ? '⬛' : agentGlyph()}</span>` +
         `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
-        `${shell ? '' : agentBadge(p.agent)}</span>` +
+        `${shell ? '' : paneBadge(p)}</span>` +
         `<span class="meta">${escapeHtml(meta)}</span></span>` +
         `<span class="dot" style="background:${statusColor(p)}" aria-hidden="true"></span>` +
         `</button>`;

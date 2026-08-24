@@ -35,7 +35,7 @@
       // The harness badge and the live dot, exactly as the agent list draws them: this sheet
       // prefills a composer in another pane, and a name alone is not enough to be sure which.
       document.getElementById('transferBadge').innerHTML =
-        agentBadge((live && live.agent) || partner.agent || '');
+        live ? paneBadge(live) : agentBadge(partner.agent || '');
       const dot = document.getElementById('transferDot');
       dot.style.background = live ? statusColor(live) : 'var(--muted)';
       dot.classList.toggle('pulse', !!live && live.status === 'working');

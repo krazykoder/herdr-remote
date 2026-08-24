@@ -125,6 +125,26 @@ const spawnTile = (over = {}) => Object.assign(
 
 // --- add ---
 
+test('the insecure box is kept on the tile, and absent rather than false when unticked', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('run')");
+  e.field('qlName', 'Free model');
+  e.field('qlCommand', 'pytest -q');
+  assert.match(e.body(), /id="qlInsecure"/, 'the form offers it');
+  e.dom.get('qlInsecure').checked = true;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const [tile] = e.tiles();
+  assert.equal(tile.insecure, true);
+  assert.equal(e.run(`launcherInsecure(${JSON.stringify({insecure: true})})`), true);
+  // Unticked writes nothing: a tile that never made the claim should not carry a field saying so.
+  e.run(`launcherEditTile('${tile.id}')`);
+  assert.match(e.body(), /id="qlInsecure" checked/, 'and reopens ticked');
+  e.dom.get('qlInsecure').checked = false;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.equal('insecure' in e.tiles()[0], false);
+});
+
 test('a new tile opens on no Project, because a template is the more useful tile', () => {
   const e = editor();
   e.run('openLauncherEdit()');

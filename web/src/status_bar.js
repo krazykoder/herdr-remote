@@ -262,7 +262,7 @@
             }).join('')}</div></div>`).join('') +
           panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
             `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
-            `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `${escapeHtml(paneLabel(a))}${paneBadge(a)}<small class="pane-bandwidth-ping"></small></span>` +
             `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${escapeHtml(paneLabel(a))}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +

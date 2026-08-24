@@ -36,6 +36,8 @@
       if (command !== undefined) d.command = command;
       const scope = val('qlScope');
       if (scope !== undefined) d.scope = scope;
+      const insecure = document.getElementById('qlInsecure');
+      if (insecure) d.insecure = !!insecure.checked;
       // The arbitration settings, and only ever what is on screen: `val` answers undefined for a
       // field this draw did not make, which is what leaves a tile's clocks alone while its
       // arbitrator is switched off and on again.
@@ -432,6 +434,7 @@
             + '</div></div>'
             + (arbName ? launcherArbSetupHtml(d, members) : '')
           : '')
+        + launcherInsecureHtml(d)
         + '<p id="qlError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>'
         + '<div class="ql-actions">'
         + (launcherEditing
@@ -439,6 +442,20 @@
           : '<button class="ql-secondary" onclick="launcherDrawList()">Cancel</button>')
         + '<button id="qlSave" class="ql-primary" onclick="launcherSaveTile()">Save tile</button>'
         + '</div>';
+    }
+
+    // The one answer on this form that is not about what the tile does. Nothing here can tell a
+    // provider that protects the user's work from one that does not — only the person who set the
+    // endpoints up knows — so it is asked plainly and then repeated wherever the tile appears.
+    // A checkbox and not a badge strip: it is a warning being accepted, not an option being tuned.
+    function launcherInsecureHtml(d) {
+      return '<label class="ql-insecure">'
+        // No redraw on change: nothing else on the form depends on it, and launcherReadForm
+        // picks it up before the save like every other field here.
+        + `<input type="checkbox" id="qlInsecure"${d.insecure ? ' checked' : ''}>`
+        + '<span><strong>Insecure</strong> — the providers behind this tile do not protect what is'
+        + ' sent to them. Prompts, code and file contents may be retained or used for training.'
+        + '</span></label>';
     }
 
     function launcherCustomBadges(configs, open, where, pick, selected) {
@@ -634,6 +651,9 @@
     function launcherTileOf(d) {
       const tile = {id: d.id, label: String(d.label || '').trim(), action: d.action,
                     project_id: d.project_id};
+      // Absent rather than false, like every other optional field here: a tile that has never been
+      // marked and one marked and unmarked are the same tile.
+      if (d.insecure) tile.insecure = true;
       if (launcherIsTerm(d)) { tile.command = String(d.command || '').trim(); return tile; }
       tile.members = (d.members || []).map(m => {
         const out = {name: m.name};
