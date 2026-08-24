@@ -591,7 +591,9 @@
     // "claude" have to colour alike or the colour stops meaning the kind. Anything unrecognised
     // keeps the muted default rather than borrowing a colour that already means something.
     function agentColor(agent) {
-      const k = (agent || '').toLowerCase();
+      // Coerced, not assumed: this is called from a dozen render paths, and one of them handing it
+      // a number instead of a name threw inside the render rather than losing one badge's colour.
+      const k = String(agent || '').toLowerCase();
       if (k.startsWith('claude')) return 'var(--agent-claude)';
       if (k.startsWith('codex')) return 'var(--blue)';
       // kiro before pi: `startsWith('pi')` does not match it, but the two shared --green until

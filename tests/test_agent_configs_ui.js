@@ -118,9 +118,10 @@ test('naming a new config names its id; renaming a saved one does not', () => {
   const s = boot({configs: [CLAUDE], store: {herdr_agent_configs: JSON.stringify(
     {aliases: [{id: 'oclaude1', label: 'oclaude1', provider: 'router'}]})}});
   s.openAgentConfig('');
-  s.agentConfigName('OClaude 2');
+  s.agentConfigName('OClaude [2]');
   s.saveAgentConfig();
   const ids = JSON.parse(s.store.herdr_agent_configs).aliases.map(a => a.id);
+  // Runs of punctuation collapse and the ends are trimmed: `oclaude-2`, not `oclaude--2-`.
   assert.deepEqual(ids, ['oclaude1', 'oclaude-2']);
 
   s.openAgentConfig('oclaude1');

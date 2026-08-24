@@ -242,8 +242,10 @@
       if (!agentConfigDraft) return;
       agentConfigDraft.label = value.slice(0, 32);
       if (!agentConfigDraft.saved) {
-        agentConfigDraft.id = value.toLowerCase().replace(/[^a-z0-9_-]/g, '-')
-          .replace(/^-+/, '').slice(0, 32);
+        // "oclaude [1]" is an id of `oclaude-1`, not `oclaude--1-`: runs of punctuation collapse
+        // to one dash and the ends are trimmed, the same shape every other slug in this app has.
+        agentConfigDraft.id = value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
+          .replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '');
       }
     }
 

@@ -1251,7 +1251,11 @@
         const kind = ((rec && rec.spawn) || {}).agent || live.get(m.key);
         if (kind && !kinds.includes(kind)) kinds.push(kind);
       }
-      document.getElementById('convViewAgents').innerHTML = kinds.map(agentBadge).join('');
+      // Not `kinds.map(agentBadge)`: map hands the callback an index too, and agentBadge's second
+      // argument is the kind to colour by — so every badge after the first was coloured by a
+      // number, and the whole render threw.
+      document.getElementById('convViewAgents').innerHTML =
+        kinds.map(k => agentBadge(k)).join('');
       convViewRecs = composed.recs;
       convViewEntries = entries;
       // The panel is its own element and diffed on its own: a message arriving must not rewrite the
