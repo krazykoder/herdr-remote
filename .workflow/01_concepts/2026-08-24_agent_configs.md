@@ -64,14 +64,14 @@ the repo, hand-edited, never written by the relay and never by a client — the 
   "version": 1,
   "providers": [
     {
-      "id": "agentrouter",
-      "label": "AgentRouter",
+      "id": "freemodel",
+      "label": "FreeModel",
       "kind": "claude",
       "env": {
         "CLAUDE_CONFIG_DIR": "~/.claude-agentrouter",
-        "ANTHROPIC_BASE_URL": "https://agentrouter.org/"
+        "ANTHROPIC_BASE_URL": "https://cc.freemodel.dev"
       },
-      "secrets": {"ANTHROPIC_API_KEY": "AGENTROUTER_API_KEY"},
+      "secrets": {"ANTHROPIC_API_KEY": ["FREEMODEL_API_KEY", "FREEMODEL_API_KEY2"]},
       "unset": ["ANTHROPIC_API_TOKEN"],
       "model_var": "ANTHROPIC_MODEL",
       "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION"
@@ -82,9 +82,15 @@ the repo, hand-edited, never written by the relay and never by a client — the 
 
 - `env` — literal values. A base URL and a config dir are not secrets, but they are the trust
   anchor, so they live here and nowhere else.
-- `secrets` — maps the variable the agent needs to **the name of a variable in the relay's own
+- `secrets` — maps the variable the agent needs to **the names of variables in the relay's own
   environment**, which is where `~/.config/herdr-remote/secrets.env` already keeps keys for the ops
-  bot. The value is never in this file, never on the wire, never in a log.
+  bot. A value is never in this file, never on the wire, never in a log.
+
+  A *list*, because `f1claude` and `f2claude` are one endpoint and two keys. Everything in the list
+  is pre-authorised by the file for this endpoint, so an alias choosing between them cannot send a
+  key anywhere the file did not already allow — which is what makes rotation safe to do from a
+  phone. The first entry is the default; a list of one is the ordinary case and reads the same as
+  the single value it replaces.
 - `unset` — the conflict removal every one of the shell functions does by hand.
 - `model_var` / `model_option_var` — which variables an alias's free-text model is written into.
   Per provider because it is a fact about the CLI, not about the user's choice.
@@ -99,10 +105,14 @@ An alias is a **provider plus a model string plus a name**. That is all it may b
 
 ```json
 {"id": "oclaude", "label": "oclaude", "provider": "agentrouter",
- "model": "claude-opus-5", "model_option": "claude-opus-4-6[1m]"}
+ "model": "claude-opus-5", "model_option": "claude-opus-4-6[1m]", "key": "FREEMODEL_API_KEY2"}
 ```
 
-Nothing in an alias can name a host, a key, or a variable. Adding one cannot make the relay talk to
+`key` is the one rotation control, and it is a **choice from the provider's list**, refused if it
+names anything else. That is the whole of key rotation: two aliases on one provider differing only
+by which pre-authorised secret they use, which is exactly what `f1claude` and `f2claude` are.
+
+Nothing else in an alias can name a host, a key, or a variable. Adding one cannot make the relay talk to
 anywhere the provider file did not already authorise, which is what makes this layer safe to edit
 from a phone. `model` is free text — the model names move faster than any list this app could keep,
 and a wrong one fails at the CLI, visibly, in the pane.
@@ -149,9 +159,15 @@ has today, whose body is in the user's history file — so the `clear` at the en
 
 ### The UI: a new section on the Launcher tab
 
-Same shape as the sections beside it: a `section-header`, one row per alias. A row shows the label,
-the kind's badge, the provider's label, the model, and the one fact worth knowing about the key —
-`AGENTROUTER_API_KEY · set` or `· missing`, never the key.
+Same shape as the sections beside it: a `section-header`, one row per alias. **Banded by harness**, the way `launcherGroups` bands tiles by Project: one band per kind —
+claude, codex, pi, and a band for whatever else the relay offers — and the model varies freely
+inside a band. Grouping by kind and not by provider because the kind is what a spawn is choosing
+first: an alias is only ever offered once its harness is picked, so the band a reader wants is the
+one they are already standing in.
+
+A row shows the label, the provider's label, the model, and the one fact worth knowing about the
+key — `FREEMODEL_API_KEY2 · set` or `· missing`, never the key. The kind is the band heading rather
+than a badge on every row, because inside a band it is the same on all of them.
 
 Providers are shown above the aliases, greyed and unpressable, so the file's contents are visible
 without being editable. That is deliberate: the reason a row cannot be edited should be legible
@@ -181,8 +197,9 @@ the two are separate documents rather than one file with a permissions flag.
   provider is an SSH-and-an-editor job, or an ops-bot job if it ever needs to be remote — the ops
   bot is already the thing that changes what the machine will run, and it is authenticated
   separately from the app.
-- **Aliases: yes.** They are a name, a provider already authorised by the file, and a model string.
-  Nothing in them can widen what the relay will do. This is where the user's actual ask lives —
+- **Aliases: yes.** They are a name, a provider already authorised by the file, a model string, and
+  a key chosen from that provider's own list. Nothing in them can widen what the relay will do —
+  every endpoint and every key was named by the file first. This is where the user's actual ask lives —
   "add an `oclaude` to the picker" — and it costs nothing to allow.
 - **Built-ins: no, and there is nothing to edit.** A stock kind has no config; it is the absence of
   one. Aliases sit beside it, never over it.
@@ -199,8 +216,28 @@ a credential goes?* Yes, provider. No, alias.
 - Aliases as a fifth `user_state` document.
 - The Launcher section, the picker strip, the tile and record fields.
 
+### Setting a key's *value* from the app
+
+Different question from rotation, and a different answer: rotation picks between secrets the file
+already blessed, whereas typing a key in sets one. It does not leak anything — a written key cannot
+reach an endpoint the provider file did not name — but it does mean a credential crossing the
+socket and being persisted, so it needs its own gate and its own rules:
+
+- Behind `HERDR_ENABLE_SECRET_WRITE`, off by default, and refused outright without
+  `HERDR_RELAY_TOKEN`. The same shape as `HERDR_ENABLE_WRITE_EXT`.
+- Write-only. The relay never sends a key back, to anyone, ever — a row says `set` or `missing` and
+  nothing more, and there is no read path to add later.
+- Lands in a relay-owned file (`~/.config/herdr-remote/secrets.env`, `chmod 600`), **never** in
+  `user_state`: that document is broadcast to every connected client.
+- Only for variable names the provider file already lists. Setting a key the file never named is
+  how an unused credential appears on the machine.
+
+Worth having, and not in the first cut — v1 ships rotation, which covers `f1claude` vs `f2claude`
+with no secret ever crossing the wire.
+
 **Not v1**
 - Editing providers from anywhere but the file.
+- Writing a key's value from the app (designed above, gated, deliberately deferred).
 - Switching provider on a running session.
 - Provider reachability checks, key rotation, or spend tracking.
 - Aliases for kinds other than `claude`. The model holds for any env-configured CLI, but only the
