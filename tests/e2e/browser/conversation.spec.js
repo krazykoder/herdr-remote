@@ -4071,8 +4071,10 @@ test('@+ lists every instruction, and picking there is the same pick', async ({p
   await pickBubble(page, 'the other pane spoke first');
   await page.locator('#xferRow .xfer-chip.more').click();
   const menu = page.locator('#chipMenu');
+  // promptChips and not SHORTCUTS: three of the starter chips have no text written under them
+  // yet, and a chip that types nothing is a dead control — the list draws what the row draws.
   await expect(menu.locator('[role=menuitemcheckbox]')).toHaveCount(
-    await page.evaluate(() => SHORTCUTS.length));
+    await page.evaluate(() => promptChips().length));
   await menu.locator('[role=menuitemcheckbox]', {hasText: 'Architect prompt'}).click();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveText(/^@architect/);
   // The list is the same picks drawn twice, so it has to show the tap it just took.

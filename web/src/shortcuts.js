@@ -1285,18 +1285,28 @@
       // is a claude on its own or a claude and a codex, which is the fact a reader wants before
       // opening anything. Read off the recorded spawn first, so a member that has exited still
       // counts; deduped, because two claudes are still "claude".
-      const live = new Map(agents.map(x => [convMemberKey(x), x.agent]));
+      // Deduped by what each member was *started as* and not by its harness: a thread of `claude`
+      // and `oclaude-1` is two different things to talk to, and collapsing them to one claude
+      // badge is the header saying the opposite of what the roster says.
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
       const kinds = [];
+      const seen = new Set();
       for (const m of members) {
         const rec = composed.recs.find(r => r.key === m.key);
-        const kind = ((rec && rec.spawn) || {}).agent || live.get(m.key);
-        if (kind && !kinds.includes(kind)) kinds.push(kind);
+        const spawn = (rec && rec.spawn) || {};
+        const pane = live.get(m.key);
+        const kind = spawn.agent || (pane && pane.agent) || '';
+        const config = (pane && pane.config) || spawn.config || '';
+        if (kind && !seen.has(config || kind)) {
+          seen.add(config || kind);
+          kinds.push([kind, config]);
+        }
       }
-      // Not `kinds.map(agentBadge)`: map hands the callback an index too, and agentBadge's second
-      // argument is the kind to colour by — so every badge after the first was coloured by a
-      // number, and the whole render threw.
+      // Not `kinds.map(configBadge)`: map hands the callback an index too, and the second argument
+      // is the config to name it by — so every badge after the first was named by a number, and
+      // the whole render threw.
       document.getElementById('convViewAgents').innerHTML =
-        kinds.map(k => agentBadge(k)).join('');
+        kinds.map(k => configBadge(k[0], k[1])).join('');
       convViewRecs = composed.recs;
       convViewEntries = entries;
       // The panel is its own element and diffed on its own: a message arriving must not rewrite the

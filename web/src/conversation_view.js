@@ -512,7 +512,8 @@
         (joint ? convMembersHtml(thread, recs) : '') +
         // Above the oldest bubble, which is where the reader is by the time they want it.
         (typeof convOlderHtml === 'function' ? convOlderHtml(want) : '') + (entries.length
-        ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
+        ? convEntriesHtml(entries, { key: key, agent: a.agent, config: a.config,
+                                     label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
@@ -880,12 +881,18 @@
         // The harness the entry was recorded under, not the one running in that pane today: a
         // conversation outlives its panes, and a member that has exited still gets its own badge.
         const agent = e.agent || (live && live.agent) || me.agent || '';
+        // The alias it was started under, where there is one. An entry never carries it — it is a
+        // fact about the session, not about a message — so it is read off the live pane first and
+        // off the spawn record after, which is the only source left once the pane has ended.
+        const spawn = (typeof convViewRecs !== 'undefined'
+          ? (convViewRecs.find(r => r.key === key) || {}).spawn : null) || {};
+        const config = (live && live.config) || spawn.config || me.config || '';
         const color = agentColor(agent) || 'var(--muted)';
         const name = escapeHtml(e.label || me.label || '');
         // The same badge the pane list and the pair sheet use, beside the name: colour says which
         // member, and the badge says what it is — a thread of claude and codex reads as two
         // colleagues rather than as two colours.
-        const badge = agentBadge(agent);
+        const badge = configBadge(agent, config);
         // A user bubble names the pane it was sent *to*, on the same terms as an agent bubble names
         // the one that spoke — in a joint thread "which colleague was this said to" is the question
         // the view exists to answer, and in a single-pane thread it is what keeps a prompt and the
