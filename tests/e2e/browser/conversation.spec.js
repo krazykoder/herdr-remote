@@ -5016,6 +5016,24 @@ test('solo is a switch in the composer settings, and it names the addressed agen
     .toHaveAttribute('aria-checked', 'true');
 });
 
+test('a key nobody here holds solos nobody, rather than hiding everybody', async ({page}) => {
+  // The composer can be addressing a pane this conversation has never heard of, and the solo
+  // switch used to hand that key straight through: every member matched "not this one", so every
+  // member was hidden and the view came up saying so with nothing named to bring back.
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+
+  const hidden = await page.evaluate(() => {
+    convSetSolo(convViewId, '["local","nope:p9","claude","/nowhere"]');
+    return convHiddenAll()[convViewId] || [];
+  });
+  expect(hidden).toEqual([]);
+  await expect(soloBanner(page)).toBeHidden();
+  await expect(page.locator('.conv-empty')).toHaveCount(0);
+});
+
 test('a conversation of one is never offered a solo to be in', async ({page}) => {
   await open(page);
   await join(page);

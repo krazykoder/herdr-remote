@@ -623,11 +623,17 @@
     function convSetSolo(id, key) {
       const conv = loadConvIndex().find(c => c.id === id);
       const members = (conv && conv.members) || [];
-      const rest = members.filter(m => m.key !== key).map(m => m.key);
+      // A key nobody here holds is not a solo, it is every member hidden — `rest` would be the
+      // whole roster, and the view would come up saying "Every member is hidden" with nothing
+      // named to bring back. The composer can be addressing a pane outside this conversation, so
+      // this is reachable by pressing the solo switch at the wrong moment. Guarded here rather
+      // than at the switch because this is what every caller routes through.
+      const solo = members.some(m => m.key === key) ? key : '';
+      const rest = members.filter(m => m.key !== solo).map(m => m.key);
       const all = convHiddenAll();
       // Off is the empty list and not a shorter one: leaving whatever was hidden before solo began
       // would make the X put the reader somewhere they never chose.
-      if (key && rest.length) all[id] = rest; else delete all[id];
+      if (solo && rest.length) all[id] = rest; else delete all[id];
       try { localStorage.setItem(CONV_HIDDEN_KEY, JSON.stringify(all)); }
       catch (e) { /* private mode: this session only */ }
       if (typeof stateSyncMark === 'function') stateSyncMark('conv_hidden');
@@ -641,7 +647,13 @@
       if (convSoloKey(convViewId)) { convSetSolo(convViewId, ''); return; }
       const live = agents.find(a => a.pane_id === dockAddressed());
       const conv = loadConvIndex().find(c => c.id === convViewId);
-      const key = live ? convMemberKey(live) : ((((conv || {}).members || [])[0] || {}).key || '');
+      const members = (conv || {}).members || [];
+      // The addressed pane only when it is one of these members — the composer is free to be
+      // pointed at a pane this conversation has never heard of, and soloing that is soloing
+      // nobody. First member then, which is what an unaddressed composer already gets.
+      const addressed = live ? convMemberKey(live) : '';
+      const key = members.some(m => m.key === addressed)
+        ? addressed : ((members[0] || {}).key || '');
       convSetSolo(convViewId, key);
     }
 
