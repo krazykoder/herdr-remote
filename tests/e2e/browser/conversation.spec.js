@@ -478,11 +478,41 @@ test('End on a conversation card takes two taps and quits every live member', as
   await end.click();
   await expect(end).toHaveText('End all?');
   expect(sent.filter(m => m.type === 'send_text')).toHaveLength(0);
-  await end.click();
+  // Landing cards redraw every snapshot. The replacement button must retain this arm, or the poll
+  // turns a two-tap End into an action nobody can complete.
+  await page.evaluate(() => renderConversations());
+  const redrawn = page.locator('#conversations .conversation-card .end-btn').first();
+  await expect(redrawn).toHaveText('End all?');
+  // Both halves of the arm, not only the word: the drain is drawn from `data-armed`, and a button
+  // saying "End all?" without it reads as one that has changed its mind.
+  await expect(redrawn).toHaveAttribute('data-armed', '1');
+  await redrawn.click();
   await expect.poll(() => sent.filter(m => m.type === 'send_text' && m.text === '/quit'))
     .not.toHaveLength(0);
+  // The send is out, so the button says so and takes no more taps. It goes back to End only by
+  // the send being given up on — see endWatch.
+  const going = page.locator('#conversations .conversation-card .end-btn');
+  await expect(going).toHaveText('Ending…');
+  await expect(going).toBeDisabled();
+  // And it survives the redraws that arrive while the pane is on its way out.
+  await page.evaluate(() => renderConversations());
+  await expect(page.locator('#conversations .conversation-card .end-btn')).toHaveText('Ending…');
   // The record is untouched: End stops the sessions, Delete is what destroys the transcripts.
   expect(await page.evaluate(() => loadConvIndex().length)).toBe(1);
+});
+
+test('an arm that expires puts the word back on the button that is on screen', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .back').click();
+  const end = page.locator('#conversations .conversation-card .end-btn').first();
+  await end.click();
+  await expect(end).toHaveText('End all?');
+  // Redrawn between the tap and the deadline, so the node holding the arm is not the node the
+  // deadline finds. Both are put back, or a live button keeps offering a second tap that is gone.
+  await page.evaluate(() => renderConversations());
+  const redrawn = page.locator('#conversations .conversation-card .end-btn').first();
+  await expect(redrawn).toHaveText('End');
+  await expect(redrawn).not.toHaveAttribute('data-armed', '1');
 });
 
 test('conversation management actions keep their intended order', async ({page}) => {
@@ -5273,4 +5303,3 @@ test('storage counts the transcripts no conversation names, rather than reportin
   expect(await bytes(foot.nth(4))).toBe(stored + await bytes(foot.nth(1)));
   await expect(page.locator('#convAnalyticsTotal')).toContainText('transcripts');
 });
-

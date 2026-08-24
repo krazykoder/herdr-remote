@@ -57,12 +57,15 @@
     // for as long as a pane is open; these are reached by opening a panel and aiming, and a
     // deadline that expires while you are still moving teaches people to double-tap blind.
     const ARM_MS = 2500;
-    let armedEl = null, armedTimer = 0;
+    let armedEl = null, armedKey = '', armedTimer = 0;
 
-    function armButton(btn, label, run) {
-      if (armedEl === btn) { disarmButton(); run(); return; }
+    // `key` is for a control whose enclosing card is redrawn by the poll. Its element changes,
+    // but its action does not; matching that action lets the second tap reach the same arm.
+    function armButton(btn, label, run, key) {
+      if ((key && armedKey === key) || (!key && armedEl === btn)) { disarmButton(); run(); return; }
       disarmButton();
       armedEl = btn;
+      armedKey = key || '';
       btn.dataset.armLabel = btn.textContent;
       btn.dataset.armed = '1';
       btn.textContent = label;
@@ -73,16 +76,30 @@
     function disarmButton() {
       clearTimeout(armedTimer);
       const btn = armedEl;
-      armedEl = null;
-      if (!btn) return;
-      btn.textContent = btn.dataset.armLabel;
-      delete btn.dataset.armed;
-      delete btn.dataset.armLabel;
+      const key = armedKey;
+      armedEl = null; armedKey = '';
+      // The element that was armed, and — for a keyed arm — whatever is standing in its place now.
+      // A poll redraw replaces the node between the two taps, so by the time the arm expires the
+      // one on screen is not the one this holds, and clearing only `armedEl` leaves a detached
+      // node tidied and a live button still saying "End all?" with nothing behind it.
+      const live = key && typeof document !== 'undefined' && document.querySelector
+        ? document.querySelector(`[data-arm-key="${key}"]`) : null;
+      for (const el of new Set([btn, live])) {
+        if (!el || !el.dataset || !el.dataset.armLabel) continue;
+        el.textContent = el.dataset.armLabel;
+        delete el.dataset.armed;
+        delete el.dataset.armLabel;
+      }
     }
+
+    function armButtonArmed(key) { return !!key && armedKey === key; }
 
     // Anywhere else, and the arm is off: a tap that lands somewhere else is a tap that was not
     // the second half of this pair.
-    document.addEventListener('click', (e) => { if (e.target !== armedEl) disarmButton(); }, true);
+    document.addEventListener('click', (e) => {
+      const keyed = e.target.closest && e.target.closest('[data-arm-key]');
+      if (e.target !== armedEl && (!keyed || keyed.dataset.armKey !== armedKey)) disarmButton();
+    }, true);
 
     function disarmClear() { disarmFire('clsBtn'); }
     function disarmQuit() { disarmFire('quitBtn'); }
@@ -130,9 +147,18 @@
     // a transcript that is wrong. The same path, and the same reason, as armQuit above.
     const END_TIMEOUT_MS = 30000;
 
-    // pane_id -> {at, label}: the panes whose agent has been told to quit and whose shell has not
-    // been exited yet. Never persisted — a reload has no send in flight to finish.
+    // pane_id -> {at, label, quiet}: the panes with an end in flight. `quiet` marks the ones whose
+    // last line has already gone out — a shell sent `exit`, or an agent on a relay that lists no
+    // shells — so the tick stops sending at them and only waits for them to disappear. It is also
+    // what keeps the timeout from reporting "did not quit" about a pane that quit immediately and
+    // simply cannot be observed doing it.
+    //
+    // Never persisted: a reload has no send in flight to finish. What reads it is the render — a
+    // button whose pane is in here says Ending… and takes no more taps, and gets its word back by
+    // the entry leaving, whether that is the pane going or the deadline passing.
     const endWatch = new Map();
+
+    function endPending(paneId) { return endWatch.has(paneId); }
 
     function endPane(paneId) {
       const pane = paneOf(paneId);
@@ -153,6 +179,10 @@
       // ponytail: leaves a shell behind on a relay with HERDR_ENABLE_TERMINAL off.
       if (!startOptions || !startOptions.terminal) {
         showToast(`Quit ${paneLabel(pane)} — its pane may remain.`, 'info');
+        // Watched quietly all the same, so the button says Ending… like every other one. Nothing
+        // more is sent at it and nothing is reported if it outlasts the deadline — the pane simply
+        // gets its End back, which is the honest answer where the shell cannot be seen.
+        endWatch.set(paneId, {at: Date.now(), label: paneLabel(pane), quiet: true});
         return true;
       }
       endWatch.set(paneId, {at: Date.now(), label: paneLabel(pane)});
@@ -161,8 +191,14 @@
     }
 
     function endShell(paneId) {
-      if (!submitText(paneId, 'exit')) return false;
-      endWatch.delete(paneId);
+      const at = endWatch.get(paneId);
+      if (!submitText(paneId, 'exit')) { endWatch.delete(paneId); return false; }
+      // Quiet from here: the line is out and there is nothing left to send. Kept rather than
+      // dropped so the button stays Ending… across both halves of an agent's exit — the pane
+      // leaving the list is what ends it, which is also what takes the card away.
+      endWatch.set(paneId, {at: (at || {}).at || Date.now(),
+                            label: (at || {}).label || paneLabel(paneOf(paneId) || {}),
+                            quiet: true});
       burstPoll(paneId);
       return true;
     }
@@ -173,12 +209,14 @@
       if (!endWatch.size) return;
       const now = Date.now();
       for (const [paneId, at] of Array.from(endWatch)) {
-        if (isShell(paneId)) { endShell(paneId); continue; }
         // Gone from both lists: herdr closed the pane itself, which some harnesses do on /quit.
         if (!paneOf(paneId)) { endWatch.delete(paneId); continue; }
+        // `quiet` and not `isShell` alone, or the second line would go out again on every poll
+        // for as long as the shell took to close.
+        if (!at.quiet && isShell(paneId)) { endShell(paneId); continue; }
         if (now - at.at > END_TIMEOUT_MS) {
           endWatch.delete(paneId);
-          showToast(`${at.label} did not quit — it is still running.`);
+          if (!at.quiet) showToast(`${at.label} did not quit — it is still running.`);
         }
       }
     }

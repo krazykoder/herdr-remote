@@ -20,7 +20,8 @@ const vm = require('node:vm');
 
 const src = f => fs.readFileSync(path.join(__dirname, '..', 'web', 'src', f), 'utf8');
 
-const NAMES = ['endPane', 'endShell', 'endTick', 'endConversation', 'END_TIMEOUT_MS'];
+const NAMES = ['endPane', 'endShell', 'endTick', 'endConversation', 'endPending',
+               'END_TIMEOUT_MS'];
 
 // submitText lives in controls.js itself, so it is not stubbed — the socket under it is, and what
 // a test reads is the `send_text` that reached the wire. Closer to the truth than a stub, and it
@@ -169,6 +170,46 @@ test('a send the socket refused is not watched for', () => {
   h.snapshot([], [SHELL]);
   h.endTick();
   assert.deepEqual(h.sent, []);
+});
+
+// --- what the button is drawn from ---
+//
+// A send in flight is the third state of every End button: the word, the question, then Ending…
+// greyed while this is true. There is no fourth — a failure is this going false again, which is
+// what puts the word back rather than a state of its own.
+
+test('a pane with a send in flight is pending, and stops being when it is given up on', () => {
+  const h = harness({agents: [AGENT]});
+  assert.equal(h.endPending('%1'), false);
+  h.endPane('%1');
+  assert.equal(h.endPending('%1'), true, 'Ending… from the moment the line goes out');
+  // Still on its way: the agent is out but its shell has not been sent `exit` yet.
+  h.snapshot([], [SHELL]);
+  h.endTick();
+  assert.equal(h.endPending('%1'), true, 'and across both halves of the exit');
+  h.advance(h.END_TIMEOUT_MS + 1);
+  h.endTick();
+  assert.equal(h.endPending('%1'), false, 'and back to End once it is given up on');
+});
+
+test('a pane that goes is not left pending', () => {
+  const h = harness({agents: [AGENT]});
+  h.endPane('%1');
+  h.snapshot([], []);
+  h.endTick();
+  assert.equal(h.endPending('%1'), false);
+});
+
+test('a pane on a relay that lists no shells is pending, and never reported', () => {
+  // The second line can never be timed there, so the deadline is what ends the wait — quietly.
+  // A toast saying it did not quit would be about a pane that quit immediately.
+  const h = harness({agents: [AGENT], terminal: false});
+  h.endPane('%1');
+  assert.equal(h.endPending('%1'), true);
+  h.advance(h.END_TIMEOUT_MS + 1);
+  h.endTick();
+  assert.equal(h.endPending('%1'), false);
+  assert.equal(h.toasts.filter(t => /did not quit/.test(t)).length, 0);
 });
 
 test('ending a conversation ends its live members and leaves the ended one alone', () => {

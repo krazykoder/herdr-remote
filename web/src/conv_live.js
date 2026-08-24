@@ -403,7 +403,20 @@
       const want = new Set(keys || []);
       const out = new Map();
       if (typeof loadConvIndex !== 'function') return out;
-      for (const c of loadConvIndex()) {
+      const all = loadConvIndex();
+      // A duplicated conversation can deliberately share a current pane while carrying a different
+      // predecessor chain. The thread on screen owns its chain; scanning every conversation would
+      // let its duplicate attach history it never claimed.
+      //
+      // Only when that conversation is one of the ones being asked about, though. This is called
+      // for the pane's own thread as well as the window's, and a pane read outside any conversation
+      // is drawn while `convViewId` still holds whichever window was open last — see convOlderKeys,
+      // which draws the same distinction for the same reason. Scoping to a conversation that does
+      // not contain the key would drop a respawn's `was` and put the walk back at the wrong pane.
+      const current = typeof convViewId !== 'undefined' && convViewId
+        ? all.find(c => c && c.id === convViewId
+            && (c.members || []).some(m => m && want.has(m.key))) : null;
+      for (const c of current ? [current] : all) {
         for (const m of (c && c.members) || []) {
           // Array-checked: this document is written by other browsers and by older builds, and a
           // member carrying a string here would make `.includes` match on a substring.

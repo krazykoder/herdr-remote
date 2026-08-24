@@ -318,6 +318,41 @@ test('a member that recorded no predecessor inherits nothing', () => {
   assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text), ['after it']);
 });
 
+test('a duplicate conversation cannot lend its predecessor to the one on screen', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  // Both rooms contain the same live pane, as a copied conversation does. Only the other one says
+  // it continued %1; reading it while c1 is open must not make %1's words c1's history.
+  recentIndex = [{id: 'c1', name: 'Original', members: [{key: KEY_A2}]},
+                 {id: 'c2', name: 'Copy', members: [{key: KEY_A2, was: ['%1']}]}];
+  ctx.convViewId = 'c1';
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'belongs only to the copied conversation'),
+    paneTurn(2, '%9', 1100, 'belongs to the original conversation'),
+  ]});
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
+                   ['belongs to the original conversation']);
+  delete ctx.convViewId;
+});
+
+test('a window left open elsewhere does not scope a pane read outside it', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  // A pane's own thread is drawn while convViewId still holds whichever conversation window was
+  // opened last. Scoping to it regardless would drop this member's `was` — the pane would stop
+  // inheriting the session it continued, which is the walk-back landing at the wrong pane.
+  recentIndex = [{id: 'c1', name: 'Somewhere else', members: [{key: KEY_B}]},
+                 {id: 'c2', name: 'This pane', members: [{key: KEY_A2, was: ['%1']}]}];
+  ctx.convViewId = 'c1';
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'said before the respawn'),
+    paneTurn(2, '%9', 1100, 'said after it'),
+  ]});
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
+                   ['said before the respawn', 'said after it']);
+  delete ctx.convViewId;
+});
+
 // --- Where the work landed ---
 //
 // The record carries a branch, the commit a turn was read at, and the commits that appeared since

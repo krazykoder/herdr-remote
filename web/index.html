@@ -4395,6 +4395,22 @@
     /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than
        one that lives in the markup. Longer drain — see ARM_MS: these are aimed at off a panel,
        not pressed by a thumb already resting on them. */
+    /* The send is out. Grey and inert, and the same shape as the button it replaces so the row
+       does not move under the thumb that just pressed it. It goes back to End by the entry leaving
+       endWatch — the pane gone, or the deadline passed — so a failure needs no state of its own. */
+    .end-going,
+    .conv-roster .end-going,
+    .conv-roster-actions .end-going {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 0.65rem;
+      padding: 4px 8px;
+      flex-shrink: 0;
+      cursor: default;
+    }
+
     .arm-btn[data-armed="1"],
     .term-menu .menu-item.arm-btn[data-armed="1"] {
       color: var(--bg);

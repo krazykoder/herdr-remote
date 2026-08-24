@@ -247,7 +247,8 @@
       return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
-    <button class="end-btn arm-btn" aria-label="End ${label}" onclick="event.stopPropagation();armButton(this, 'End?', () => endPane('${a.pane_id}'))">End</button>
+    ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + a.pane_id, pane: a.pane_id, stop: true,
+                  aria: 'End ' + label, fire: `endPane('${a.pane_id}')`})}
     <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
     <span class="chev" aria-hidden="true">›</span>
   </div>`;
@@ -299,7 +300,8 @@
       return `<div class="agent" role="button" tabindex="0" aria-label="Terminal ${escapeHtml(paneLabel(s))}" onclick="openTerminal('${s.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${s.pane_id}')}">
     <span class="term-glyph" aria-hidden="true">$</span>
     <div class="info"><div class="project">${paneChrome(s)}${host}</div><div class="meta">${cwd}</div></div>
-    <button class="end-btn arm-btn" aria-label="End ${escapeHtml(paneLabel(s))}" onclick="event.stopPropagation();armButton(this, 'End?', () => endPane('${s.pane_id}'))">End</button>
+    ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + s.pane_id, pane: s.pane_id, stop: true,
+                  aria: 'End ' + paneLabel(s), fire: `endPane('${s.pane_id}')`})}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
     }
@@ -359,6 +361,38 @@
           .concat(convLandingAutoOn() ? autos.slice(0, CONV_LANDING_AUTO_MAX) : []).sort(by) };
     }
 
+    // One End button, wherever it is drawn — four cards and two rows, all of them redrawn by the
+    // poll under whoever is aiming at them. Four states in one place:
+    //
+    //   resting    the word, and a first tap that arms it
+    //   armed      the question, with the drain, and a second tap that fires
+    //   in flight  Ending…, greyed and taking no taps — the send is out and nothing else to say
+    //   back       the word again, because the send was given up on. See endWatch.
+    //
+    // `key` is what carries the arm and the flight across a redraw: the element changes between
+    // the two taps, its action does not.
+    function endBtnHtml(o) {
+      const key = o.key;
+      // Any of them: a conversation is drawn Ending… while one member is still on its way out,
+      // because the conversation is the thing being ended and the rest is not a second question.
+      const pending = typeof endPending === 'function'
+        && (o.panes || [o.pane]).filter(Boolean).some(endPending);
+      const armed = typeof armButtonArmed === 'function' && armButtonArmed(key);
+      const rest = o.rest || 'End';
+      const ask = o.ask || 'End?';
+      if (pending) {
+        return `<button class="${o.cls} end-going" disabled` +
+          ` data-arm-key="${escapeHtml(key)}"` +
+          ` aria-label="${escapeHtml(o.aria)} — ending">Ending…</button>`;
+      }
+      return `<button class="${o.cls} arm-btn" data-arm-key="${escapeHtml(key)}"` +
+        (armed ? ` data-armed="1" data-arm-label="${escapeHtml(rest)}"` : '') +
+        (o.data || '') +
+        ` aria-label="${escapeHtml(o.aria)}"` +
+        ` onclick="${o.stop ? 'event.stopPropagation();' : ''}armButton(this, '${ask}', ` +
+        `() => ${o.fire}, this.dataset.armKey)">${escapeHtml(armed ? ask : rest)}</button>`;
+    }
+
     function renderConversations() {
       const el = document.getElementById('conversations');
       if (!el) return;
@@ -389,6 +423,8 @@
           // grey included, because an idle agent is still an agent. With none, there is no status
           // to paint and the dot is drawn hollow: ended is not a state, it is the absence of one.
           ended: live.length ? '' : ' ended',
+          // Carried out of the row builder: the card's End is drawn below, where `live` is not.
+          livePanes: live.map(a => a.pane_id),
         };
       });
       const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
@@ -426,10 +462,13 @@
         // into a conversation to close it is a trip taken only to press one button. Drawn only
         // where there is something running — an ended conversation is already where this leads.
         (r.liveNames.length
-          ? `<button class="end-btn arm-btn" data-conv-id="${escapeHtml(r.c.id)}"` +
-            ` aria-label="End every session in ${escapeHtml(r.c.name)}, keeping the transcripts"` +
-            ` onclick="event.stopPropagation();armButton(this, 'End all?', ` +
-            `() => endConversation(this.dataset.convId))">End</button>`
+          // Ending… as soon as any member of it has a send in flight: the conversation is the
+          // thing being ended, and one pane still on its way out is not a second question.
+          ? endBtnHtml({cls: 'end-btn', key: 'end-conversation:' + r.c.id, ask: 'End all?',
+              panes: r.livePanes,
+              stop: true, data: ` data-conv-id="${escapeHtml(r.c.id)}"`,
+              aria: `End every session in ${r.c.name}, keeping the transcripts`,
+              fire: 'endConversation(this.dataset.convId)'})
           : '') +
         `</div>` +
         (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
@@ -693,9 +732,10 @@
           // together; Open is not one of them. End is offered only where there is something running
           // to end — an ended row carries Start again in the same place, which is the other half of
           // the same control: this row is where a member is sent away and brought back.
-          (on ? `<button class="conv-end arm-btn" data-key="${escapeHtml(m.key)}"` +
-            ` onclick="armButton(this, 'End?', () => endConvMember(this.dataset.key))"` +
-            ` aria-label="End this member's session">End</button>` : '') +
+          (on ? endBtnHtml({cls: 'conv-end', key: 'end-member:' + m.key,
+            pane: (live.get(m.key) || {}).pane_id, data: ` data-key="${escapeHtml(m.key)}"`,
+            aria: "End this member's session",
+            fire: 'endConvMember(this.dataset.key)'}) : '') +
           `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
           ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
           ` aria-label="Remove this member from the conversation">Remove</button>` +
@@ -720,10 +760,11 @@
         ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
         // Beside Delete because both end something, and apart from it in colour because they end
         // very different things: Delete destroys the record, End stops the sessions and leaves it.
-        `<button class="conv-end arm-btn"` +
-        ` onclick="armButton(this, 'End all?', () => endConversation(convViewId))"` +
-        ` aria-label="End every session in this conversation, keeping the transcripts">End all` +
-        `</button>` +
+        endBtnHtml({cls: 'conv-end', key: 'end-conversation:' + conv.id, ask: 'End all?',
+          rest: 'End all',
+          panes: Array.from(live.values()).map(a => a.pane_id),
+          aria: 'End every session in this conversation, keeping the transcripts',
+          fire: 'endConversation(convViewId)'}) +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button class="arm-btn" onclick="armButton(this, 'Duplicate?', duplicateConversation)"` +
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
