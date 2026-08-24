@@ -69,6 +69,9 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     openTerminal: id => log.push(['openTerminal', id]),
     openConversation: id => log.push(['openConversation', id]),
     sendTextTo: (id, text) => { log.push(['sendTextTo', id, text]); return true; },
+    // start_dialog's record of what a pane was started as. Stubbed rather than ignored: it is what
+    // a restart reads, and it is the half of a starter that has to outlive the text.
+    notePaneStarter: (id, at) => log.push(['notePaneStarter', id, at]),
     noteTermCommand: t => log.push(['noteTermCommand', t]),
     isShell: () => true,
     renderConversations: () => log.push(['renderConversations']),
@@ -217,6 +220,25 @@ test('a run opens a terminal, then types the command into the pane it got back',
     assert.ok(p.log.some(l => l[0] === 'noteTermCommand'),
       'recorded in the terminal history, because it is a command the user ran');
   });
+});
+
+test('a member is recorded as what it was started as, not left to its name', async () => {
+  // A tile names its members after the tile, so nothing about the pane says which chip opened it.
+  // Guessing it back off the label is what left a restarted session silent — the starter has to be
+  // written down at the start, which is the only moment anything knows it.
+  const p = press({tiles: [Object.assign({}, ONE, {members: [{name: 'claude', at: 'implement'}]})],
+                   answer: 'Nightly'});
+  p.press('ql_b');
+  await p.land(pane('w2:p1'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'notePaneStarter'),
+    [['notePaneStarter', 'w2:p1', 'implement']]);
+});
+
+test('a member with no chip records no starter, rather than an empty one', async () => {
+  const p = press({tiles: [ONE], answer: 'Nightly'});
+  p.press('ql_b');
+  await p.land(pane('w2:p1'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'notePaneStarter'), []);
 });
 
 test('the command is sent through sendTextTo, not straight down the socket', () => {

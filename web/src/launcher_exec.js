@@ -156,6 +156,11 @@
       const at = member && member.at;
       if (!at || typeof SHORTCUTS === 'undefined') return false;
       const text = ((SHORTCUTS.find(s => s.at === at) || {}).text || '').trim();
+      // Recorded whether or not there is text for it today. The chip is edited in one place, so a
+      // starter with nothing written under it now is one a restart should still open with once
+      // somebody writes it — and a tile's members are named after the tile, so the pane's own name
+      // will never say what it was started as.
+      if (typeof notePaneStarter === 'function') notePaneStarter(paneId, at);
       return text ? sendTextTo(paneId, text) : false;
     }
 

@@ -25,7 +25,7 @@ const PANE = {
 
 // A fresh context per test: pendingStart and startIntent are module state and an abandoned
 // dialog's intent must not leak into the next one.
-function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'agent'], agents: ['claude', 'codex']}, pairs = []} = {}) {
+function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'agent'], agents: ['claude', 'codex']}, pairs = [], starter = '', store = {}} = {}) {
   const els = {};
   const el = id => els[id] || (els[id] =
     {id, value: '', textContent: '', hidden: false, style: {}, options: [], disabled: false});
@@ -37,7 +37,13 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
   // tests/test_pairs.js and in the browser.
   const g = {
     document: {getElementById: el},
-    localStorage: {getItem: () => null, setItem() {}},
+    // A real one, not a null: what the dialog opens on turns on the difference between a key
+    // that was never written and one written empty, so a stub that answers null to both cannot
+    // see the behaviour under test.
+    localStorage: {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+    },
     window: {}, console,
     clearTimeout() {}, setTimeout: () => 1,
     ws: {send: s => sent.push(JSON.parse(s))},
@@ -59,6 +65,12 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     fillSelect: () => 1,
     renderStartTarget() {},
     agentColor: () => 'var(--blue)',
+    badgeHtml: () => '',
+    renderStartProjects() {},
+    setStartError() {},
+    // conversation_store's, which this slice does not load. It answers what a pane was started
+    // as; duplicating is meant to carry that, not drop it.
+    convStarterOf: () => starter,
   };
   const ctx = vm.createContext(g);
   vm.runInContext(PAIRS_PURE, ctx);
@@ -166,4 +178,43 @@ test('a start the poll has not seen yet stays pending', () => {
   run("pendingStart = 'w9:p9'; openPendingStart()");
   assert.deepEqual(calls, []);
   assert.equal(run('pendingStart'), 'w9:p9', 'dropping it would strand the session for good');
+});
+
+test('a duplicate opens the way the pane it came from opened', () => {
+  const {run} = startCtx({starter: 'architect'});
+  run('duplicatePane()');
+  // Both: the text is what gets typed at the new pane, and the name is what the conversation
+  // records, so ending and starting it again still opens the same way.
+  assert.equal(run('startStarter'), 'architect');
+  assert.ok(run('startPrompt').includes('System_Prompt_2_Architect'),
+    'the duplicate went out with no opening prompt');
+});
+
+test('a pane that was started as nothing duplicates as nothing', () => {
+  const {run} = startCtx();
+  run('duplicatePane()');
+  assert.equal(run('startStarter'), '');
+  assert.equal(run('startPrompt'), '');
+});
+
+test('the dialog opens on a starter until one is deliberately taken off', () => {
+  // Never opened before: the first badge offered, rather than a start with no opening words.
+  const first = startCtx();
+  first.run("openStartDialog('proj')");
+  assert.equal(first.run('startRolePick'), 'architect');
+
+  // Tapping the lit badge off is how "no starter" is asked for, and it is remembered as such.
+  first.run("pickStartRole('architect')");
+  assert.equal(first.run('startRolePick'), '');
+  const store = {};
+  const off = startCtx({store: Object.assign(store, {herdr_start_role: ''})});
+  off.run("openStartDialog('proj')");
+  assert.equal(off.run('startRolePick'), '', 'a start deliberately left bare came back with a role');
+
+  // And a badge this relay has since stopped offering falls to none rather than to a different
+  // way of working — the same answer it always gave.
+  const gone = startCtx({store: {herdr_start_role: 'orchestrator'},
+    options: {roles: ['architect'], agents: ['claude']}});
+  gone.run("openStartDialog('proj')");
+  assert.equal(gone.run('startRolePick'), '');
 });

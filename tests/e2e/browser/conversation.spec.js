@@ -847,6 +847,50 @@ test('an ended session restarts under its name and continues its member thread',
   await expect(page.locator('#convThread')).toBeVisible();
 });
 
+test('a session started as something opens as it again, whatever the pane was called',
+  async ({page}) => {
+    await openCard(page);
+    // The record a launcher tile leaves: named after the tile member, not after a role. Reading
+    // the starter back off that name is what used to give nothing, so Start again brought the
+    // session up silent — the whole point of a starter being written down rather than guessed.
+    await page.evaluate(async () => {
+      projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+      startOptions = {type: 'start_options', agents: ['claude', 'codex'],
+                      roles: ['architect', 'coder']};
+      const items = loadConvIndex();
+      const rec = (await convGet([items[0].members[0].key]))[0];
+      rec.key = 'dead:pane';
+      rec.spawn = {agent: 'claude', role: 'agent', label: 'agent bwfbr', starter: 'architect',
+        project_id: 'p1', project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local'};
+      await convPut(rec);
+      items[0].members = [{key: 'dead:pane', added: Date.now(), label: 'agent bwfbr'}];
+      saveConvIndex(items);
+      await renderConvStandalone(false);
+    });
+    await tapWire(page);
+
+    const again = page.locator('#convView .conv-again');
+    await again.click();
+    await again.click();
+    await expect.poll(() => page.evaluate(() =>
+      window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
+
+    await page.evaluate(async () => {
+      handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+      await openPendingStart();
+    });
+    // The chip's own text, typed at the new pane the way the user would have typed it.
+    const want = await page.evaluate(() =>
+      (SHORTCUTS.find(x => x.at === 'architect') || {}).text.trim());
+    expect(want).toBeTruthy();
+    await expect.poll(() => page.evaluate(() =>
+      window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join('\n')))
+      .toContain(want.slice(0, 40));
+    // And the new pane records the same starter, so this survives being ended and started again.
+    expect(await page.evaluate(async () =>
+      (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('architect');
+  });
+
 // herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
 // can come up on a key another ended session already recorded under. Continuing by copying over it
 // would delete a transcript some other conversation still names, which is the one thing a restart

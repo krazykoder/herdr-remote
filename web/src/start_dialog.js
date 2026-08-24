@@ -66,6 +66,34 @@
     // without one. Kept apart from startIntent because it is a different question — where the new
     // pane lands versus what it is told first — and every route in can ask both.
     let startPrompt = '';
+    // *Which* starter that was, as a SHORTCUTS `at`. The prompt is text and cannot be asked again
+    // what it was; this is the name, and it is what makes a restart open the same way.
+    let startStarter = '';
+
+    // pane_id -> the `at` it was started under. Written by whoever starts a session, read by
+    // convSpawn so a conversation records what the session *was* rather than guessing it back off
+    // the pane's name.
+    //
+    // Guessing was the bug: a pane named for its role ("Architect 1") gave the right answer and a
+    // pane named anything else — every session a launcher tile starts, which names its members
+    // after the tile — gave none at all, so Start again brought it up silent. In memory only; the
+    // durable copy is the one convSpawn writes into the conversation, and convSpawn keeps what is
+    // already recorded rather than overwriting it with nothing after a reload.
+    const paneStarter = new Map();
+
+    // Bounded, because pane ids are recycled by herdr and this is never read for a pane that is not
+    // on screen. Oldest first — a browser open for a week starting sessions all day is what this is
+    // for, and the sessions that matter are the recent ones.
+    const PANE_STARTER_MAX = 200;
+
+    function notePaneStarter(paneId, at) {
+      if (!paneId || !at) return;
+      paneStarter.delete(paneId);
+      paneStarter.set(paneId, at);
+      while (paneStarter.size > PANE_STARTER_MAX) {
+        paneStarter.delete(paneStarter.keys().next().value);
+      }
+    }
 
     async function openPendingStart() {
       if (!pendingStart) return;
@@ -81,7 +109,12 @@
       // Read once here for the same reason: a start that never came up must not leave its opening
       // words to be said to whatever is started next.
       const prompt = startPrompt;
+      const starterAt = startStarter;
       startPrompt = '';
+      startStarter = '';
+      // Before anything below opens, joins or sends: the first thing that happens to this pane may
+      // be a record of it, and a record taken before this is one that learned nothing.
+      notePaneStarter(a.pane_id, starterAt);
       // The pair dialog reopens on the pane it was left from, with the session that was started
       // for it already chosen, and saves itself. "Start a session and pair with it" already said
       // what the pair is; stopping at a filled-in form asks the user to confirm a decision they
@@ -205,6 +238,12 @@
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
       };
       if (tab) msg.workspace_id = a.workspace_id;
+      // A duplicate opens the way the pane it came from opened. The wire role alone cannot say
+      // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
+      // same way a conversation resolves it: what this browser watched, then the pane's name.
+      const dupAt = typeof convStarterOf === 'function' ? convStarterOf(a) : '';
+      startPrompt = roleStarter({at: dupAt});
+      startStarter = dupAt;
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
       // "Architect 2" rather than as a second pane with the same name.
       startIntent = 'open';
@@ -368,8 +407,15 @@
       document.getElementById('startName').placeholder = terminal ? 'Auto — Terminal N' : 'Auto — Role N';
       // Reopens on the role it last started as, which is usually the one being started again —
       // and on none when that badge is gone, rather than silently on a different way of working.
-      startRolePick = startRoles().some(r => r.at === localStorage.getItem(START_ROLE_KEY))
-        ? localStorage.getItem(START_ROLE_KEY) : '';
+      //
+      // Never having chosen is a different answer from having chosen and taken it off again, and
+      // getItem is the one place the two are still told apart: null for the first, '' for the
+      // second. A session is better started as something, so the first opens on the first badge
+      // offered — Architect, the way conv_dock's own picker already opens — and the second stays
+      // empty, because tapping a lit badge off is how a start with no opening prompt is asked for.
+      const seenRole = localStorage.getItem(START_ROLE_KEY);
+      startRolePick = seenRole === null ? ((startRoles()[0] || {}).at || '')
+        : startRoles().some(r => r.at === seenRole) ? seenRole : '';
       renderStartRoles();
       // The harness is not optional, so unlike the role it falls back to the first offered rather
       // than to none — a remembered kind the relay has since dropped picks nothing otherwise.
@@ -490,6 +536,7 @@
       // refused must leave nothing behind for the next start to open with. Nothing to say for a
       // terminal, or for a role whose prompt is still to be written.
       startPrompt = terminal ? '' : roleStarter(role);
+      startStarter = terminal ? '' : (role || {}).at || '';
       ws.send(JSON.stringify(msg));
     }
 

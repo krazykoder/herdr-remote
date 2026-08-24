@@ -453,7 +453,7 @@
         held.entries = capEntries(fitted.concat(held.entries, tagged.entries));
         held.label = label;
         held.touched = now;
-        held.spawn = convSpawn(a, now);
+        held.spawn = convSpawn(a, now, held.spawn);
         await convCommit(key);
       } else if (noteGap || initialized) {
         await convCommit(key);
@@ -508,7 +508,7 @@
         held.entries = capEntries(held.entries.concat(convStamped([entry], label, a.agent || '')));
         held.label = label;
         held.touched = now;
-        held.spawn = convSpawn(a, now);
+        held.spawn = convSpawn(a, now, held.spawn);
         await convCommit(key);
         if (convThreadShows(key)) renderConvView();
       });
@@ -894,17 +894,31 @@
     // record already carries, except `role`, which roleOf() recovers from the label. Placement and
     // slot are deliberately absent: a snapshot says where a pane *is*, never how it was created,
     // and a replacement is placed by today's layout rather than by a dead pane's.
-    function convSpawn(a, now) {
+    function convSpawn(a, now, prev) {
       return {
         agent: a.agent || '', role: roleOf(a) || '', label: paneLabel(a) || '',
-        // Which of the standard starter roles it was begun as, so starting it again begins it the
-        // same way — including the opening prompt, which `role` alone cannot say: Arbitrator and
-        // Orchestrator both go on the wire as `agent`.
-        starter: (startRoleFromLabel(paneLabel(a)) || {}).at || '',
+        // What it was started as, so starting it again starts it the same way — including the
+        // opening prompt, which `role` alone cannot say: Arbitrator and Orchestrator both go on
+        // the wire as `agent`.
+        //
+        // Three sources, in the order of how much they know. What this browser watched happen;
+        // then what was recorded the last time it was asked, which is how the answer survives a
+        // reload that emptied the first; and only then the pane's name, which is a guess and is
+        // right only for the panes the relay named after their role. The guess alone was the bug:
+        // a launcher names its members after the tile, so every session started from one came back
+        // with no starter and Start again brought it up silent.
+        starter: convStarterOf(a, prev),
         project_id: a.project_id || '', project: a.project || '', cwd: a.cwd || '',
         host: a.host || '', workspace_id: a.workspace_id || '', tab_id: a.tab_id || '',
         captured: now,
       };
+    }
+
+    function convStarterOf(a, prev) {
+      const watched = typeof paneStarter !== 'undefined' && a.pane_id
+        ? paneStarter.get(a.pane_id) : '';
+      return watched || ((prev || {}).starter || '')
+        || (startRoleFromLabel(paneLabel(a)) || {}).at || '';
     }
 
     // At the ceiling it is the auto tier that gives way, oldest first (D4). New conversations are

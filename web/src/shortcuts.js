@@ -844,7 +844,12 @@
       // the name it was given, which is derived from the same badge. A session started as an
       // Architect is started again as one, opening prompt and all; one that matches no badge keeps
       // the old behaviour of its bare wire role.
-      const starter = startRoleOf(spawn.starter) || startRoleFromLabel(spawn.label);
+      // A recorded `at` that is not one of the four badges is still a starter: a launcher tile's
+      // members carry any chip the composer offers. Wrapped as a role with nothing but its name,
+      // which is all roleStarter reads — and on the wire it is `agent`, which is what it was.
+      const starter = startRoleOf(spawn.starter)
+        || (spawn.starter && roleStarter({at: spawn.starter}) ? {at: spawn.starter} : null)
+        || startRoleFromLabel(spawn.label);
       const msg = Object.assign({
         type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
@@ -857,6 +862,9 @@
       if (tab) msg.workspace_id = spawn.workspace_id;
       startIntent = { conv: conv.id, replace: key };
       startPrompt = roleStarter(starter);
+      // And the new pane records the same starter, so the session can be ended and started again
+      // any number of times without the answer wearing away.
+      startStarter = (starter || {}).at || '';
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
       ws.send(JSON.stringify(msg));
     }
