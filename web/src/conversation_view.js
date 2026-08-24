@@ -765,7 +765,8 @@
         const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
           `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
-          kindBadge(spawn.agent || (live.get(m.key) || {}).agent || '', live.get(m.key)) +
+          kindBadge(spawn.agent || (live.get(m.key) || {}).agent || '', live.get(m.key),
+                    spawn.config) +
           `${on ? '' : '<span class="tag">no longer live</span>'}` +
           `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
       }).join('') + '</button>';

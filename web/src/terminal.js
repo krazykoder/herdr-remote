@@ -637,8 +637,11 @@
     // one. The lists that read a conversation's own record — the roster, the recent sheet — know
     // only what a member was started as; this is how they say `oclaude1` where the pane views do,
     // without giving up the recorded name for a member whose pane has gone.
-    function kindBadge(name, pane) {
-      return pane && pane.config ? paneBadge(pane) : agentBadge(name);
+    // `config` is the recorded one, for a member whose pane has ended — and for one running past
+    // a relay restart, which drops the alias off the snapshot while the pane lives on. The live
+    // pane wins where there is one: it is the only source that cannot be out of date.
+    function kindBadge(name, pane, config) {
+      return configBadge(name, (pane && pane.config) || config || '');
     }
 
     // The same badge for something that has not started yet: a launcher tile's roster, and the

@@ -96,3 +96,15 @@ test('a tile\'s roster is badged by the config it pinned, before any pane exists
   assert.match(configBadge('claude', ''), /claude</);
   assert.match(configBadge('claude', 'gone'), /claude</, 'a deleted config falls back to the harness');
 });
+
+test('a member whose pane has ended is still badged by the config it ran under', () => {
+  // The pane is gone, so the alias can only come from the record. Same after a relay restart,
+  // which drops `config` off the snapshot while the pane lives on — the live pane still wins
+  // where it has one, because it is the only source that cannot be out of date.
+  const {kindBadge} = boot();
+  assert.match(kindBadge('claude', null, 'oclaude1'), /oclaude1/);
+  assert.match(kindBadge('claude', {agent: 'claude'}, 'oclaude1'), /oclaude1/);
+  assert.match(kindBadge('claude', {agent: 'claude', config: 'oclaude1'}, ''), /oclaude1/);
+  assert.match(kindBadge('claude', null, ''), /claude</);
+  assert.match(kindBadge('claude', null, 'gone'), /claude</);
+});

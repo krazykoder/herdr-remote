@@ -908,6 +908,15 @@
         // a launcher names its members after the tile, so every session started from one came back
         // with no starter and Start again brought it up silent.
         starter: convStarterOf(a, prev),
+        // The agent config it was started under, by id and by nothing else. What that id points
+        // at — provider, model, which variable the key is read from — is the relay's answer and
+        // may have moved since, so a restart resolves it again and comes up on the alias as it is
+        // now rather than on a snapshot of how it was born.
+        //
+        // `prev` is what makes it durable past the relay: pane_config is in memory there, so a
+        // relay restart drops `config` off the snapshot while the pane it describes runs on. The
+        // record already knew, and keeps knowing.
+        config: a.config || (prev || {}).config || '',
         project_id: a.project_id || '', project: a.project || '', cwd: a.cwd || '',
         host: a.host || '', workspace_id: a.workspace_id || '', tab_id: a.tab_id || '',
         captured: now,

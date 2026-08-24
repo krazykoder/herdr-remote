@@ -42,6 +42,15 @@
       return ((typeof startOptions !== 'undefined' && startOptions) || {}).configs || [];
     }
 
+    // Is this alias still one the relay offers, for that harness? The question every path that
+    // starts something already recorded has to ask first: an id outlives what it names, and the
+    // relay refuses a start carrying a dead one rather than quietly running it on the stock
+    // endpoint — so the client asks before it sends, and puts the choice back to the reader.
+    function agentConfigLive(id, kind) {
+      const row = agentConfigRow(id);
+      return !!(row && (!kind || row.kind === kind));
+    }
+
     function agentConfigProviders() {
       return ((typeof startOptions !== 'undefined' && startOptions) || {}).providers || [];
     }

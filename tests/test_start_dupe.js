@@ -71,6 +71,12 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     // conversation_store's, which this slice does not load. It answers what a pane was started
     // as; duplicating is meant to carry that, not drop it.
     convStarterOf: () => starter,
+    // agent_configs.js's one question, stubbed to the aliases this relay still offers.
+    agentConfigLive: (id, kind) => (options && (options.configs || [])
+      .some(c => c.id === id && c.kind === kind)),
+    showToast: t => calls.push(['toast', t]),
+    syncStartProjectBadge() {}, renderStartRoles() {}, renderStartAgents() {},
+    restoreStartChoice() {}, startRoles: () => [],
   };
   const ctx = vm.createContext(g);
   vm.runInContext(PAIRS_PURE, ctx);
@@ -218,4 +224,27 @@ test('the dialog opens on a starter until one is deliberately taken off', () => 
     options: {roles: ['architect'], agents: ['claude']}});
   gone.run("openStartDialog('proj')");
   assert.equal(gone.run('startRolePick'), '');
+});
+
+// --- an alias carried, and an alias gone ---
+
+const OCLAUDE = {agents: ['claude', 'codex'], roles: ['architect', 'reviewer', 'agent'],
+                 configs: [{id: 'oclaude1', label: 'oclaude1', kind: 'claude'}]};
+
+test('a duplicate carries the agent config the pane was started under', () => {
+  // Otherwise the copy is a second pane wearing the first one's name on a different endpoint,
+  // which is the one way this item could lie about what it did.
+  const {sent, run} = startCtx({pane: {...PANE, config: 'oclaude1'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.equal(sent[0].config, 'oclaude1');
+  assert.equal(sent[0].name, 'claude', 'and the harness is still what goes on the wire');
+});
+
+test('a duplicate of a config the relay has dropped asks rather than falls back', () => {
+  // Coming up on the stock endpoint under the same name is the one outcome worth refusing: the
+  // reader would have no way to tell the copy apart from the pane it came from.
+  const {sent, calls, run} = startCtx({pane: {...PANE, config: 'gone'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.deepEqual(sent, [], 'nothing is started');
+  assert.ok(calls.some(c => c[0] === 'toast' && /gone/.test(c[1])), 'and it says why');
 });

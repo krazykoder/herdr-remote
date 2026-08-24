@@ -743,7 +743,7 @@
               ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
           kindBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '',
-                    live.get(m.key)) +
+                    live.get(m.key), (rec.spawn || {}).config) +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
           // End first, then Remove, and only then the way in. The two that take something away sit
           // together; Open is not one of them. End is offered only where there is something running
@@ -832,7 +832,15 @@
       const where = agents.find(x => x.project_id === spawn.project_id && x.cwd);
       const moved = where && spawn.cwd && where.cwd !== spawn.cwd
         ? ` It ran in ${spawn.cwd}; that Project now points at ${where.cwd}.` : '';
-      return `Tap again to start a new ${spawn.agent} session in ${project.label || 'this Project'}.${moved}`;
+      // Named by what it will actually come up as. A session started under `oclaude1` restarted as
+      // "a new claude session" would be true about the harness and wrong about the endpoint.
+      const row = spawn.config && typeof agentConfigRow === 'function'
+        ? agentConfigRow(spawn.config) : null;
+      const what = (row && row.label) || spawn.agent;
+      if (spawn.config && !row) {
+        return `Agent config "${spawn.config}" is gone. Tap again to pick what to start instead.`;
+      }
+      return `Tap again to start a new ${what} session in ${project.label || 'this Project'}.${moved}`;
     }
 
     function convArmRespawn(btn, key) {
@@ -878,6 +886,26 @@
         type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
       }, starter ? startRoleFields(starter, '') : {role: respawnRole(spawn)});
+      // The alias is carried by id and resolved here, not at the time it was recorded: a config
+      // whose provider or model has been edited since restarts on what it says now.
+      //
+      // Gone is a question, never a fallback. Coming back on the stock endpoint under the name the
+      // reader recognises is the one outcome worth refusing outright — so the Start dialog opens
+      // on that Project with the custom row unfolded, and this restart continues from whatever is
+      // picked there. startIntent is set after the open, which clears it.
+      if (spawn.config && !agentConfigLive(spawn.config, spawn.agent)) {
+        openStartDialog(spawn.project_id);
+        startIntent = { conv: conv.id, replace: key };
+        startAgentPick = spawn.agent;
+        startCustomOpen = true;
+        renderStartAgents();
+        const name = String(rec.label || spawn.label || '').trim();
+        const field = document.getElementById('startName');
+        if (field && name && name.length <= 32) field.value = name;
+        showToast(`Agent config "${spawn.config}" is gone. Pick what to start instead.`);
+        return;
+      }
+      if (spawn.config) msg.config = spawn.config;
       // This is continuation, not duplicate: keep the exact name the user recognises in the thread.
       // Only where the relay will take it — a label over 32 characters is refused outright, and a
       // restart that fails over the name is worse than one that comes up as "Architect 2".
@@ -1025,7 +1053,7 @@
             name: r.label || 'Former pane',
             agent: (r.spawn || {}).agent || '',
             project: r.project || (r.spawn || {}).project || (r.spawn || {}).project_id || '',
-            meta: agentBadge((r.spawn || {}).agent || ''),
+            meta: configBadge((r.spawn || {}).agent || '', (r.spawn || {}).config),
             note: convSpan(now - (r.touched || now)),
             color: 'var(--muted)',
             glyph: agentGlyph(),

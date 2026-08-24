@@ -235,6 +235,17 @@
     function duplicatePane() {
       const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
       if (!ws || !canDuplicate(a)) return;
+      // Same agent means the same agent config — and an alias the relay no longer offers is not a
+      // reason to quietly bring the copy up on the stock endpoint under the same name. The dialog
+      // is opened on that Project instead and the reader picks, which is the same answer Start
+      // again gives to the same question.
+      if (a.config && !(typeof agentConfigLive === 'function' && agentConfigLive(a.config, a.agent))) {
+        openStartDialog(a.project_id);
+        if (typeof showToast === 'function') {
+          showToast(`Agent config "${a.config}" is gone. Pick what to start instead.`);
+        }
+        return;
+      }
       const tab = !!a.workspace_id;
       const msg = {
         type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
@@ -243,6 +254,7 @@
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
       };
       if (tab) msg.workspace_id = a.workspace_id;
+      if (a.config) msg.config = a.config;
       // A duplicate opens the way the pane it came from opened. The wire role alone cannot say
       // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
       // same way a conversation resolves it: what this browser watched, then the pane's name.
