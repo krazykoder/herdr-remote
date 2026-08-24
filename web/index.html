@@ -4459,6 +4459,7 @@
     }
 
     .conv-roster .conv-drop,
+    .conv-roster .conv-swap,
     .conv-roster .conv-again,
     .conv-roster .conv-open,
     .conv-roster .conv-end,
@@ -4511,6 +4512,14 @@
     .conv-roster .conv-again {
       color: var(--blue);
       border-color: var(--blue);
+    }
+
+    /* Neither blue nor orange. Swap is not a way back into what is already there, and on a live
+       member it ends a session — so it wears the colour of the thing it is closest to being
+       without claiming to be either. */
+    .conv-roster .conv-swap {
+      color: var(--muted);
+      border-color: var(--border);
     }
 
     /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than

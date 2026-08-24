@@ -761,6 +761,21 @@
           (on ? `<button class="conv-open" data-key="${escapeHtml(m.key)}"` +
             ` onclick="openConvMemberPane(this.dataset.key)"` +
             ` aria-label="Open this member's pane">Open</button>` : '') +
+          // Swapping the agent is a start whose destination happens to be a member that already
+          // exists, so it asks the Start dialog like every other start does — one place harnesses,
+          // roles and agent configs are listed, rather than a second smaller picker that would
+          // drift out of step with it. Offered on both halves of a row's life: an ended member is
+          // picked up by whatever is started next, and a live one is ended first, because a pane
+          // runs one CLI and there is no changing it underneath.
+          (canStartFromConv()
+            ? (on
+              ? `<button class="conv-swap arm-btn" data-key="${escapeHtml(m.key)}"` +
+                ` onclick="armButton(this, 'End and swap?', () => convSwapLive(this.dataset.key))"` +
+                ` aria-label="End this member and start a different agent in its place">Swap</button>`
+              : `<button class="conv-swap" data-key="${escapeHtml(m.key)}"` +
+                ` onclick="convSwapMember(this.dataset.key)"` +
+                ` aria-label="Start a different agent as this member">Start as\u2026</button>`)
+            : '') +
           (!on && canRespawn(rec.spawn) ? `<button class="conv-again arm-btn" data-key="${escapeHtml(m.key)}"` +
             ` onclick="convArmRespawn(this, this.dataset.key)"` +
             ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
@@ -856,6 +871,50 @@
       if (live) endPane(live.pane_id);
     }
 
+    // Start something else into an existing member's slot. The dialog is opened on that member's
+    // Project and handed the replace intent, so whatever lands continues this member rather than
+    // joining beside it: same row, same name, the transcript carried across the seam and the pair
+    // repointed — the machinery a restart already uses, with the harness left open to be chosen.
+    //
+    // Nothing is sent here. This ends at a dialog on purpose: the one thing a swap must not do is
+    // decide for the reader what the replacement is.
+    function convSwapMember(key, opts) {
+      const o = opts || {};
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      if (!conv || !startOptions) return false;
+      const rec = (convViewRecs || []).find(r => r.key === key) || {};
+      const spawn = rec.spawn || {};
+      const live = agents.find(x => convMemberKey(x) === key);
+      // The live pane's Project first: a record's is what it was started under, and a member that
+      // has been swapped once already may have moved since.
+      openStartDialog((live && live.project_id) || spawn.project_id || '');
+      // After the open, which clears it — the same order reorder.js starts a pair with.
+      startIntent = { conv: conv.id, replace: key };
+      if (o.kind) {
+        startAgentPick = o.kind;
+        startCustomOpen = true;
+        renderStartAgents();
+      }
+      // The name it is known by in the thread, so the replacement comes up as the colleague it
+      // continues rather than as "Architect 2". Only where the relay will take it.
+      const name = String(rec.label || spawn.label || '').trim();
+      const field = document.getElementById('startName');
+      if (field && name && name.length <= 32) field.value = name;
+      if (o.note) showToast(o.note);
+      return true;
+    }
+
+    // The same thing for a member still running. A pane runs one CLI, so there is no changing the
+    // agent in it — the session is ended and the dialog opened over the space it leaves. Asked
+    // twice by the button that calls this, because ending a live agent loses whatever it had not
+    // said yet.
+    function convSwapLive(key) {
+      const live = agents.find(x => convMemberKey(x) === key);
+      if (live) endPane(live.pane_id);
+      return convSwapMember(key, live
+        ? { note: 'Session ended. Pick what to start in its place.' } : null);
+    }
+
     function convRespawn(key) {
       const conv = loadConvIndex().find(c => c.id === convViewId);
       const rec = convViewRecs.find(r => r.key === key);
@@ -894,15 +953,10 @@
       // on that Project with the custom row unfolded, and this restart continues from whatever is
       // picked there. startIntent is set after the open, which clears it.
       if (spawn.config && !agentConfigLive(spawn.config, spawn.agent)) {
-        openStartDialog(spawn.project_id);
-        startIntent = { conv: conv.id, replace: key };
-        startAgentPick = spawn.agent;
-        startCustomOpen = true;
-        renderStartAgents();
-        const name = String(rec.label || spawn.label || '').trim();
-        const field = document.getElementById('startName');
-        if (field && name && name.length <= 32) field.value = name;
-        showToast(`Agent config "${spawn.config}" is gone. Pick what to start instead.`);
+        convSwapMember(key, {
+          kind: spawn.agent,
+          note: `Agent config "${spawn.config}" is gone. Pick what to start instead.`,
+        });
         return;
       }
       if (spawn.config) msg.config = spawn.config;
