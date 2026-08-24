@@ -98,7 +98,7 @@
     // insertShortcut / runShortcut / deleteShortcut unchanged.
     function paletteItems() {
       if (paletteMode === 'prompts')
-        return SHORTCUTS.map((s, i) => ({ cmd: s.label, desc: 'Insert into composer', idx: i }));
+        return SHORTCUTS.map((s, i) => ({ cmd: `@${s.at}`, desc: s.label, idx: i }));
       if (paletteMode === 'terminal')
         return termShortcuts.map((s, i) => ({ cmd: s.label, desc: s.text, idx: i, danger: s.danger }));
       return getAgentCommands();

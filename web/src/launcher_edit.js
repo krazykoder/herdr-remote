@@ -141,7 +141,9 @@
       const roster = tile.action === 'run' ? [] : launcherRoster(tile);
       if (!roster.length) return '';
       return '<div class="ql-roster">' + roster.map(m => {
-        const starter = (SHORTCUTS.find(s => s.at === m.at) || {}).label || '';
+        // The @name and not the label: this is the same prompt the composer offers, and a strip
+        // that renamed it would be the one place in the app it is not addressed by name.
+        const starter = (SHORTCUTS.find(s => s.at === m.at) || {}).at || '';
         return `<span class="ql-part${m.arb ? ' arb' : ''}">`
           // Scales for the arbitrator, the robot for a member. It is not a third participant, it is
           // the one deciding between the other two, and a strip drawing all three alike would tell
@@ -150,7 +152,7 @@
                    : `<span class="ql-part-mark">${launcherIcon('spawn')}</span>`)
           + `<span class="ql-part-name">${escapeHtml(m.label || m.name)}</span>`
           + agentBadge(m.name)
-          + (starter ? `<span class="ql-part-role">${escapeHtml(starter)}</span>` : '')
+          + (starter ? `<span class="ql-part-role">@${escapeHtml(starter)}</span>` : '')
           + '</span>';
       }).join('') + '</div>';
     }

@@ -55,6 +55,11 @@
       return out;
     }
 
+    // Two sigils, and the app draws no third: `@` is a prompt — text that gets typed at an agent —
+    // and `#` is a role, which is what a session *is*. A reader who has learned one of them has
+    // learned both, and every list that draws either wears it: the composer chips, the palette,
+    // the transfer sheet, a launcher member's starter, and the role badges in both start dialogs.
+    //
     // `at` is the chip's name in the thread — `@review`, `@test` — and the label is its name
     // everywhere else. Two fields rather than one derived from the other: a label is prose and can
     // be renamed without silently renaming the control the user has learned to tap.

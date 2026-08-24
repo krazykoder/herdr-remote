@@ -872,7 +872,7 @@
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
         .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
       document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
-        badgeHtml(`# ${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
+        badgeHtml(`#${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
           {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
         .join('');
       document.getElementById('newAgentProjects').innerHTML = projects.map(p =>

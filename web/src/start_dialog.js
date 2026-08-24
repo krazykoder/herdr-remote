@@ -267,7 +267,7 @@
 
     function renderStartRoles() {
       document.getElementById('startRoles').innerHTML = startRoles().map(r =>
-        badgeHtml(`# ${r.name}`, r.at === startRolePick, `pickStartRole('${r.at}')`,
+        badgeHtml(`#${r.name}`, r.at === startRolePick, `pickStartRole('${r.at}')`,
           {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
         .join('');
     }

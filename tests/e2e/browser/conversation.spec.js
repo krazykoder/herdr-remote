@@ -4474,9 +4474,9 @@ test('the role badge is what the session is started as, and what opens it', asyn
   await openNewAgentModal(page);
   // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
   await expect(page.locator('#newAgentRoles .badge.pick'))
-    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
+    .toHaveText(['#Architect', '#Reviewer', '#Arbitrator', '#Orchestrator']);
   await page.locator('#newAgentRoles .badge.pick', {hasText: 'Arbitrator'}).click();
-  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('# Arbitrator');
+  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('#Arbitrator');
   // A second Project, chosen from the list behind @+ rather than from the line.
   await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
   await page.locator('.chip-line .badge.more').click();
@@ -4511,10 +4511,11 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   await page.evaluate(() => openStartDialog('p1'));
   await expect(page.locator('#startSheet')).toBeVisible();
   await expect(page.locator('#startRoles .badge.pick'))
-    .toHaveText(['# Architect', '# Reviewer', '# Arbitrator', '# Orchestrator']);
-  // Nothing lit until something is picked: the field recommends, it does not answer for the user.
-  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
-  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
+    .toHaveText(['#Architect', '#Reviewer', '#Arbitrator', '#Orchestrator']);
+  // The first badge is lit before anything is picked: a session is better started as something,
+  // and this dialog has never been opened here. Taking it off again is a tap, and is remembered
+  // as an answer — see the end of this test.
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('#Architect');
   // The harness is picked in the same badges, and painted the way the pane header paints it: the
   // kind's own colour, so a badge in a dialog and a badge on a header mean the same thing.
   await expect(page.locator('#startAgents .badge.pick.on')).toHaveText('claude');
@@ -4542,7 +4543,7 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   // Reopens on what it last started as — spawning is repetitive, like the harness and the
   // placement beside it — and the same tap takes it off again.
   await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
-  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('# Architect');
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('#Architect');
   await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
   await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
   await page.evaluate(() => { window.__sent.length = 0; });
