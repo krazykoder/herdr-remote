@@ -140,6 +140,49 @@
       drawAgentConfig();
     }
 
+    // A typed field records and does *not* redraw. The dialog is one innerHTML write, so redrawing
+    // on every keystroke replaces the input under the cursor — which is a field that drops focus
+    // after one character. Only the choices redraw, because only they change what is on the form.
+    function agentConfigType(field, value) {
+      if (agentConfigDraft) agentConfigDraft[field] = value;
+    }
+
+    // Suggestions when the provider file names none. A shortcut and never a limit — the field
+    // stays free text, because model names move faster than any list in this app. Keyed by
+    // harness, so a provider that carries a model variable at all gets the names for its CLI.
+    const MODEL_SUGGESTIONS = {
+      claude: ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-opus-4-8[1m]',
+               'claude-opus-4-6[1m]', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    };
+
+    // The two model fields, drawn only where they do something. A provider with no `model_var`
+    // takes its model from its own config file — codex does — and a box that silently went
+    // nowhere is worse than no box, so it says where the model actually lives instead.
+    function agentConfigModelHtml(provider, d) {
+      if (!provider.has_model && !provider.has_model_option) {
+        return '<div class="cfg-note">This provider takes its model from the CLI\'s own config,'
+          + ' not the environment — so there is nothing to set here.</div>';
+      }
+      const list = (provider.models || []).length
+        ? provider.models : (MODEL_SUGGESTIONS[provider.kind] || []);
+      // A native datalist: the field is still free text, the suggestions are one tap on a phone,
+      // and it is markup rather than a dropdown this app would have to own.
+      const datalist = list.length
+        ? `<datalist id="cfgModels">${list.map(m =>
+            `<option value="${escapeHtml(m)}"></option>`).join('')}</datalist>`
+        : '';
+      const field = (label, key, placeholder) =>
+        `<label class="start-field">${label}`
+        + '<input type="text" maxlength="120" autocapitalize="none" autocomplete="off"'
+        + (datalist ? ' list="cfgModels"' : '')
+        + ` value="${escapeHtml(d[key] || '')}" placeholder="${escapeHtml(placeholder)}"`
+        + ` oninput="agentConfigType('${key}', this.value)"></label>`;
+      return datalist
+        + (provider.has_model ? field('Model', 'model', list[0] || 'claude-opus-5') : '')
+        + (provider.has_model_option
+          ? field('Model option', 'model_option', list[1] || '') : '');
+    }
+
     function drawAgentConfig() {
       const body = document.getElementById('launcherEditBody');
       const title = document.getElementById('launcherEditTitle');
@@ -167,15 +210,7 @@
           ? `<div class="cfg-note">Endpoint <code>${escapeHtml(provider.base_url)}</code>`
             + ' — set in the relay\'s config file, not here.</div>'
           : '')
-        + '<label class="start-field">Model'
-        + `<input type="text" maxlength="120" autocapitalize="none" autocomplete="off"`
-        + ` value="${escapeHtml(d.model || '')}"`
-        + ' placeholder="claude-opus-5" oninput="agentConfigSet(\'model\', this.value)"></label>'
-        + '<label class="start-field">Model option'
-        + `<input type="text" maxlength="120" autocapitalize="none" autocomplete="off"`
-        + ` value="${escapeHtml(d.model_option || '')}"`
-        + ' placeholder="claude-opus-4-6[1m]"'
-        + ' oninput="agentConfigSet(\'model_option\', this.value)"></label>'
+        + agentConfigModelHtml(provider, d)
         + (keys.length
           ? '<div class="start-field">Key<div class="badge-strip">'
             + keys.map(k => badgeHtml('$' + k.name + (k.set ? '' : ' ✕'),

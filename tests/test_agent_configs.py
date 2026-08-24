@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "relay"))
 
 from agent_configs import (  # noqa: E402
     Alias, ConfigError, export_line, parse_aliases, parse_providers, preview_command,
-    public_configs, resolve,
+    public_configs, public_providers, resolve,
 )
 
 PROVIDERS = """
@@ -30,7 +30,8 @@ PROVIDERS = """
    "secrets": {"ANTHROPIC_API_KEY": ["ROUTER_KEY", "ROUTER_KEY2"]},
    "unset": ["ANTHROPIC_API_TOKEN"],
    "model_var": "ANTHROPIC_MODEL",
-   "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION"},
+   "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION",
+   "models": ["claude-opus-5", "claude-opus-4-6[1m]"]},
   {"id": "stockcodex", "label": "Codex", "kind": "codex",
    "secrets": {"OPENAI_API_KEY": "OPENAI_KEY"}}
 ]}
@@ -61,6 +62,12 @@ class ProviderFile(unittest.TestCase):
     def test_a_single_secret_name_needs_no_list(self):
         self.assertEqual(providers()[1].keys(), ["OPENAI_KEY"])
 
+    def test_model_suggestions_are_a_shortcut_not_an_allowlist(self):
+        # Offered in the editor; an alias naming something else is still accepted, because model
+        # names move faster than any file here.
+        self.assertEqual(providers()[0].models, ("claude-opus-5", "claude-opus-4-6[1m]"))
+        self.assertEqual(aliases(oclaude(model="something-new-2027"))[0].model, "something-new-2027")
+
     def test_a_bad_file_is_fatal_and_says_where(self):
         for raw, where in [
             ('{"providers": [{"id": "A!", "kind": "claude"}]}', "providers[0].id"),
@@ -70,6 +77,8 @@ class ProviderFile(unittest.TestCase):
              "providers.a.env key"),
             ('{"providers": [{"id": "a"}]}', "providers.a.kind"),
             ('{"providers": "x"}', "providers"),
+            ('{"providers": [{"id": "a", "kind": "claude", "models": ["$(id)"]}]}',
+             "providers.a.models[0]"),
         ]:
             with self.assertRaises(ConfigError) as caught:
                 parse_providers(raw)
@@ -206,6 +215,14 @@ class Wire(unittest.TestCase):
         self.assertEqual(rows[0]["kind"], "claude")
         self.assertNotIn("sk-two", repr(rows))
         self.assertIn("; claude", rows[0]["command"])
+
+    def test_it_says_which_model_fields_a_provider_can_carry(self):
+        # codex takes its model from CODEX_HOME/config.toml, so the editor must not draw a box
+        # that silently goes nowhere.
+        rows = public_providers(providers(), ENV)
+        self.assertEqual([(r["id"], r["has_model"], r["has_model_option"]) for r in rows],
+                         [("agentrouter", True, True), ("stockcodex", False, False)])
+        self.assertEqual(rows[0]["models"], ["claude-opus-5", "claude-opus-4-6[1m]"])
 
     def test_a_key_the_relay_does_not_hold_says_so(self):
         rows = public_configs(aliases(oclaude()), providers(), {})

@@ -20,7 +20,8 @@ const SRC = fs.readFileSync(
 const NAMES = ['AGENT_CONFIG_KEY', 'AGENT_CONFIG_MAX', 'parseAgentConfigs', 'loadAgentConfigs',
                'saveAgentConfigs', 'agentConfigRows', 'agentConfigProviders', 'agentConfigRow',
                'agentConfigKind', 'agentConfigBands', 'agentConfigRowHtml', 'agentConfigsHtml',
-               'openAgentConfig', 'agentConfigSet', 'agentConfigName', 'saveAgentConfig',
+               'openAgentConfig', 'agentConfigSet', 'agentConfigType', 'agentConfigName', 'saveAgentConfig',
+               'agentConfigModelHtml', 'MODEL_SUGGESTIONS',
                'deleteAgentConfig'];
 
 const CLAUDE = {id: 'oclaude1', label: 'oclaude1', kind: 'claude', provider: 'router',
@@ -43,9 +44,12 @@ function boot(opts = {}) {
       removeItem: k => { delete store[k]; },
     },
     startOptions: opts.startOptions === undefined
-      ? {agents: ['claude'], providers: [{id: 'router', label: 'AgentRouter', kind: 'claude',
-                                          base_url: 'https://cc.example.dev',
-                                          keys: [{name: 'ROUTER_KEY', set: true}]}],
+      ? {agents: ['claude'],
+         providers: opts.providers || [{id: 'router', label: 'AgentRouter', kind: 'claude',
+                                        base_url: 'https://cc.example.dev',
+                                        keys: [{name: 'ROUTER_KEY', set: true}],
+                                        has_model: true, has_model_option: true,
+                                        models: ['claude-opus-5', 'claude-opus-4-6[1m]']}],
          configs: opts.configs || []}
       : opts.startOptions,
     stateSyncMark: name => marked.push(name),
@@ -144,4 +148,37 @@ test('deleting one leaves the others and tells the relay', () => {
   s.deleteAgentConfig();
   assert.deepEqual(JSON.parse(s.store.herdr_agent_configs).aliases.map(a => a.id), ['ocodex']);
   assert.deepEqual(s.marked, ['agent_configs']);
+});
+
+test('typing in a model field does not redraw the form under the cursor', () => {
+  // The dialog is one innerHTML write, so a redraw per keystroke replaces the input the caret is
+  // in — which is a field that drops focus after one character. Only choices redraw.
+  const s = boot({configs: [CLAUDE]});
+  s.openAgentConfig('oclaude1');
+  const before = s.drawn.launcherEditBody.innerHTML;
+  s.agentConfigType('model', 'claude-sonnet-5');
+  assert.equal(s.drawn.launcherEditBody.innerHTML, before, 'the form was redrawn mid-edit');
+  s.saveAgentConfig();
+  assert.equal(JSON.parse(s.store.herdr_agent_configs).aliases[0].model, 'claude-sonnet-5');
+});
+
+test('the model field offers the provider\'s own names, and stays free text', () => {
+  const s = boot({configs: [CLAUDE]});
+  s.openAgentConfig('oclaude1');
+  const html = s.drawn.launcherEditBody.innerHTML;
+  assert.match(html, /<datalist id="cfgModels">/);
+  assert.match(html, /value="claude-opus-5"/);
+  assert.match(html, /list="cfgModels"/);
+  assert.doesNotMatch(html, /<select[^>]*cfgModels/, 'the model must not become a closed list');
+});
+
+test('a provider with no model variable says where the model lives instead', () => {
+  // codex reads CODEX_HOME/config.toml. A box that silently goes nowhere is worse than no box.
+  const s = boot({providers: [{id: 'oai', label: 'Codex', kind: 'codex',
+                               keys: [{name: 'OPENAI_KEY', set: true}],
+                               has_model: false, has_model_option: false, models: []}]});
+  s.openAgentConfig('');
+  const html = s.drawn.launcherEditBody.innerHTML;
+  assert.doesNotMatch(html, /Model option/);
+  assert.match(html, /takes its model from the CLI/);
 });

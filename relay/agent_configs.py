@@ -70,6 +70,9 @@ class Provider:
     unset: tuple[str, ...] = ()
     model_var: str = ""
     model_option_var: str = ""
+    # Suggestions for the alias editor's model field, nothing more. The field stays free text —
+    # model names move faster than any file — so this is a shortcut, not an allowlist.
+    models: tuple[str, ...] = ()
 
     def keys(self) -> list[str]:
         """Every relay variable this provider may read, in the order it offers them."""
@@ -152,6 +155,9 @@ def parse_providers(raw: str) -> list[Provider]:
         unset = item.get("unset") or []
         if not isinstance(unset, list):
             raise ConfigError(f"{at}.unset", "must be a list")
+        models = item.get("models") or []
+        if not isinstance(models, list):
+            raise ConfigError(f"{at}.models", "must be a list")
         out.append(Provider(
             id=pid,
             label=_str(item.get("label") or pid, f"{at}.label", max_len=MAX_LABEL),
@@ -164,6 +170,8 @@ def parse_providers(raw: str) -> list[Provider]:
                            required=False, pattern=ENV_NAME, max_len=64),
             model_option_var=_str(item.get("model_option_var"), f"{at}.model_option_var",
                                   required=False, pattern=ENV_NAME, max_len=64),
+            models=tuple(_str(m, f"{at}.models[{j}]", pattern=MODEL, max_len=120)
+                         for j, m in enumerate(models)),
         ))
     return out
 
@@ -263,7 +271,12 @@ def public_providers(providers: list[Provider], environ=None) -> list[dict]:
         "id": p.id, "label": p.label, "kind": p.kind,
         "base_url": p.env.get("ANTHROPIC_BASE_URL", ""),
         "keys": [{"name": n, "set": bool(env.get(n))} for n in p.keys()],
-        "models": bool(p.model_var),
+        # Which of the two model fields this provider can actually carry, so the editor draws the
+        # ones that do something and says so about the ones it does not. codex takes its model
+        # from CODEX_HOME/config.toml rather than the environment, and a field that silently goes
+        # nowhere is worse than no field.
+        "has_model": bool(p.model_var), "has_model_option": bool(p.model_option_var),
+        "models": list(p.models),
     } for p in providers]
 
 

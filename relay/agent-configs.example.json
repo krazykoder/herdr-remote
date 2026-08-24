@@ -22,7 +22,8 @@
       "secrets": {"ANTHROPIC_API_KEY": ["AGENTROUTER_API_KEY"]},
       "unset": ["ANTHROPIC_API_TOKEN"],
       "model_var": "ANTHROPIC_MODEL",
-      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION"
+      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION",
+      "models": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8[1m]", "claude-opus-4-6[1m]"]
     },
     {
       "id": "freemodel",
@@ -35,7 +36,8 @@
       "secrets": {"ANTHROPIC_API_KEY": ["FREEMODEL_API_KEY", "FREEMODEL_API_KEY2"]},
       "unset": ["ANTHROPIC_API_TOKEN"],
       "model_var": "ANTHROPIC_MODEL",
-      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION"
+      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION",
+      "models": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8[1m]", "claude-opus-4-6[1m]"]
     },
     {
       "id": "agentrouter-codex",
