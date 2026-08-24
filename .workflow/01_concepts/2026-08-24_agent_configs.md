@@ -159,23 +159,53 @@ has today, whose body is in the user's history file — so the `clear` at the en
 
 ### The UI: a new section on the Launcher tab
 
-Same shape as the sections beside it: a `section-header`, one row per alias. **Banded by harness**, the way `launcherGroups` bands tiles by Project: one band per kind —
-claude, codex, pi, and a band for whatever else the relay offers — and the model varies freely
-inside a band. Grouping by kind and not by provider because the kind is what a spawn is choosing
-first: an alias is only ever offered once its harness is picked, so the band a reader wants is the
-one they are already standing in.
+Same shape as the sections beside it: a `section-header` with `+ New`, then the rows.
 
-A row shows the label, the provider's label, the model, and the one fact worth knowing about the
-key — `FREEMODEL_API_KEY2 · set` or `· missing`, never the key. The kind is the band heading rather
-than a badge on every row, because inside a band it is the same on all of them.
+**Banded by harness**, the way `launcherGroups` bands tiles by Project: one band per kind — claude,
+codex, pi, and a band for whatever else the relay offers — with the model varying freely inside a
+band. Grouping by kind and not by provider because the kind is what a spawn chooses first: an alias
+is only offered once its harness is picked, so the band a reader wants is the one they are already
+standing in.
 
-Providers are shown above the aliases, greyed and unpressable, so the file's contents are visible
-without being editable. That is deliberate: the reason a row cannot be edited should be legible
-from the same screen as the row.
+**A row carries everything needed to tell one model from another**, because that is the question
+the section exists to answer:
+
+```
+oclaude                                    @agentrouter
+claude-opus-5  ·  claude-opus-4-6[1m]  ·  AGENTROUTER_API_KEY ✓
+```
+
+- the alias label — the name it will wear in the picker
+- the provider, as `@name`, the app's one notation for "which tree this runs in"
+- the model, and the model option beside it when there is one — the identifying fact, and the
+  reason a row exists rather than a badge
+- the key *variable*, with a tick when the relay holds it and `missing` when it does not
+
+The key's value is never on the row, never in the dialog, and never on the wire.
+
+**Pressing a row opens a dialog to view and edit it** — the same relationship a launcher tile has
+with `openLauncherEdit`, and the same dialog for both jobs, because a config you cannot read is one
+you edit blind. Fields:
+
+| Field | Control | Notes |
+|---|---|---|
+| Name | text | what the picker shows |
+| Provider | badge strip | only the providers whose `kind` matches this band |
+| Model | text | free — `claude-opus-5`. Model names move faster than any list here could |
+| Model option | text | free, optional |
+| Key | badge strip | the chosen provider's list, and nothing else. One entry = one badge, already on |
+
+Switching provider re-draws the key strip and drops a key the new provider does not list, because
+a key belongs to an endpoint. Save validates the same way the relay will, so a dialog cannot write
+an alias the spawn would then refuse — `launcherValid` is the precedent.
+
+**Provider rows are drawn above the aliases in the same band**, greyed, and pressing one opens the
+same dialog with every field disabled and a line saying where the file is. Deliberate: the reason a
+thing cannot be edited should be legible from the screen it cannot be edited on, and the provider's
+base URL is the one fact a user needs when an alias behaves strangely.
 
 Picking one happens where the kind is picked — the harness strip in the Start sheet, the new-agent
 sheet, and a launcher tile member — as a second strip under it whose first badge is the stock kind.
-An alias belongs to a kind, so it cannot be offered before one is chosen.
 
 ### What remembers the pick
 
