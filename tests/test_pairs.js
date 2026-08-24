@@ -576,6 +576,18 @@ test('a badge whose prompt is still to be written opens with nothing', () => {
   assert.equal(roleStarter(null), '');
 });
 
+test('an opening prompt is written the way the harness under it reads', () => {
+  // Every chip in the composer already goes through agentSlash on its way to a pane. A starter is
+  // the same text typed by the same hand, and for a while it was the one path that skipped it —
+  // so every codex session started as an Architect opened with `/ponytail`, which codex reads as
+  // an unknown command rather than as the prompt it is.
+  assert.match(roleStarter(startRoleOf('architect'), 'codex'), /^\$ponytail/m);
+  assert.match(roleStarter(startRoleOf('architect'), 'codex'), /^\$caveman/m);
+  assert.match(roleStarter(startRoleOf('architect'), 'claude'), /^\/ponytail/m);
+  // No harness named is the two callers that ask only whether a starter has text at all.
+  assert.match(roleStarter(startRoleOf('architect')), /^\/ponytail/m);
+});
+
 // --- terminal shortcuts (T2) ---
 // The grid sends into a shell, so a blob that survives parsing is a blob whose entries will be
 // run. Everything below is about what must not survive it.

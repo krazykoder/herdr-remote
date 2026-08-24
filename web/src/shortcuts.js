@@ -967,7 +967,7 @@
       if (same && same.length <= 32) msg.label = same;
       if (tab) msg.workspace_id = spawn.workspace_id;
       startIntent = { conv: conv.id, replace: key };
-      startPrompt = roleStarter(starter);
+      startPrompt = roleStarter(starter, spawn.agent);
       // And the new pane records the same starter, so the session can be ended and started again
       // any number of times without the answer wearing away.
       startStarter = (starter || {}).at || NO_STARTER;

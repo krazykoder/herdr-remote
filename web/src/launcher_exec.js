@@ -170,8 +170,11 @@
         if (typeof notePaneStarter === 'function') notePaneStarter(paneId, NO_STARTER);
         return false;
       }
-      if (typeof SHORTCUTS === 'undefined') return false;
-      const text = ((SHORTCUTS.find(s => s.at === canonAt(at)) || {}).text || '').trim();
+      if (typeof roleStarter !== 'function') return false;
+      // Through roleStarter and not off SHORTCUTS directly: it is the one place a starter's text is
+      // resolved, and the one place it is written in the form the harness under it understands —
+      // codex takes `$ponytail` where claude takes `/ponytail`.
+      const text = roleStarter({at: at}, member.name);
       // Recorded whether or not there is text for it today. The chip is edited in one place, so a
       // starter with nothing written under it now is one a restart should still open with once
       // somebody writes it — and a tile's members are named after the tile, so the pane's own name

@@ -27,6 +27,13 @@ const EXEC = src('launcher_exec.js');
 const NAMES = ['launcherPress', 'launcherConfirmLines', 'launcherFailed', 'launcherLanded',
                'saveLauncher', 'launcherGate'];
 
+// pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
+// enough to tell "the named one" from "some other one"; the third carries a slash, which is what
+// a codex member has to be handed as `$`.
+const CHIPS = [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
+               {at: 'implement', label: 'Implement', text: 'Proceed to implement.'},
+               {at: 'ponytail', label: 'Ponytail', text: '/ponytail\n/caveman'}];
+
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
 const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
@@ -63,8 +70,13 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     // pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
     // enough to tell "the named one" from "some other one".
     canonAt: at => at || '',
-    SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
-                {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
+    // pairs_pure's, which resolves a chip's text *and* writes it the way the harness under it
+    // reads: codex takes `$ponytail` where claude takes `/ponytail`. Covered in tests/test_pairs.js.
+    roleStarter: (r, agent) => {
+      const text = ((CHIPS.find(x => x.at === (r || {}).at) || {}).text || '').trim();
+      return agent === 'codex' ? text.replace(/^\//gm, '$') : text;
+    },
+    SHORTCUTS: CHIPS,
     showToast: t => log.push(['toast', t]),
     showSpawnStatus: (t, s) => log.push(['status', t, s]),
     openTerminal: id => log.push(['openTerminal', id]),
@@ -172,6 +184,18 @@ test('an insecure tile says so first, above what it is about to run', () => {
     {projects: PROJECTS}),
     ['Insecure: the providers behind this tile do not protect what is sent to them.', '',
      'Run this in a new terminal on herdr?', '', 'npm test']);
+});
+
+test('a codex member is opened with the prompt in codex\'s own form', async () => {
+  // A tile names harnesses and chips separately, so this is the one place the two meet before
+  // anything is typed. `/ponytail` into codex is an unknown command, not a prompt.
+  const tile = {id: 'ql_c', label: 'Pair', action: 'spawn', project_id: 'p1',
+                members: [{name: 'codex', at: 'ponytail'}]};
+  const p = press({tiles: [tile]});
+  p.press('ql_c');
+  await p.land({pane_id: 'w1:p9', agent: 'codex', label: 'Pair', project_id: 'p1'});
+  const typed = p.log.filter(l => l[0] === 'sendTextTo').map(l => l[2]);
+  assert.deepEqual(typed, ['$ponytail\n$caveman']);
 });
 
 test('saying no sends nothing at all', () => {

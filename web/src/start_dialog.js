@@ -259,7 +259,7 @@
       // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
       // same way a conversation resolves it: what this browser watched, then the pane's name.
       const dupAt = canonAt(typeof convStarterOf === 'function' ? convStarterOf(a) : '');
-      startPrompt = roleStarter({at: dupAt});
+      startPrompt = roleStarter({at: dupAt}, a.agent);
       startStarter = dupAt;
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
       // "Architect 2" rather than as a second pane with the same name.
@@ -601,7 +601,7 @@
       // rather than waiting to be told. Set here and not above the target check: a submit that
       // refused must leave nothing behind for the next start to open with. Nothing to say for a
       // terminal, or for a role whose prompt is still to be written.
-      startPrompt = terminal ? '' : roleStarter(role);
+      startPrompt = terminal ? '' : roleStarter(role, startAgentPick);
       startStarter = terminal ? '' : ((role || {}).at || NO_STARTER);
       ws.send(JSON.stringify(msg));
     }

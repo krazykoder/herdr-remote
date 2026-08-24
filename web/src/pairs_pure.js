@@ -145,8 +145,14 @@
     const NO_STARTER = 'none';
 
     // The opening text a role badge carries, or '' while its prompt is still to be written.
-    function roleStarter(r) {
-      return ((SHORTCUTS.find(s => s.at === canonAt((r || {}).at)) || {}).text || '').trim();
+    // `agent` is the harness it is about to be typed into. Every chip in the composer already goes
+    // through agentSlash on its way to a pane; an opening prompt is the same text typed by the same
+    // hand, and skipping it meant every codex session started as an Architect opened with
+    // `/ponytail` — which codex reads as an unknown command rather than as the prompt it is.
+    // Optional, because two callers ask only whether a starter has any text at all.
+    function roleStarter(r, agent) {
+      const text = ((SHORTCUTS.find(s => s.at === canonAt((r || {}).at)) || {}).text || '').trim();
+      return agent ? agentSlash(text, agent) : text;
     }
 
     // `at` is the badge's name on disk as well as in SHORTCUTS: a conversation records which role a
