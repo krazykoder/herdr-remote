@@ -204,8 +204,39 @@ same dialog with every field disabled and a line saying where the file is. Delib
 thing cannot be edited should be legible from the screen it cannot be edited on, and the provider's
 base URL is the one fact a user needs when an alias behaves strangely.
 
-Picking one happens where the kind is picked — the harness strip in the Start sheet, the new-agent
-sheet, and a launcher tile member — as a second strip under it whose first badge is the stock kind.
+### Every badge wears its harness's colour
+
+An alias is a `claude`, so it is orange. Not "similar to claude" — the same `--agent-claude` the
+pane header, the card and the roster already paint, because a reader who has learned that orange
+means claude has learned it everywhere or nowhere.
+
+One trap, and it is why this is written down: `agentColor` matches on the *name*
+(`terminal.js:593`), and `oclaude1` does not start with `claude`. Feeding an alias label to it
+returns no colour at all. So `agentBadge` grows an optional second argument — the kind to colour
+by, defaulting to the text itself, which leaves every existing caller alone:
+
+```js
+function agentBadge(agent, kind) { const c = agentColor(kind || agent); … }
+```
+
+Aliases are the only thing that passes it. Nothing else in the app has a name that is not its kind.
+
+### Picking one: `+custom`, never a strip of them
+
+Two providers with three models each is six aliases, and that is one user on one machine. A harness
+strip that listed them all would stop being a strip of harnesses.
+
+So the strip does not change. It stays the stock kinds — `claude`, `codex`, `pi` — with one extra
+badge at the end, **`+custom`**, which opens a sheet of aliases banded by kind. Pick one and the
+badge takes its place, wearing its harness's colour, with the stock kinds beside it as they were.
+
+Everywhere a kind is chosen gets the same badge and the same sheet: the Start sheet, the new-agent
+sheet, and a launcher tile member. That is what keeps this feature from growing into every picker
+in the app as the list grows — the strips stay the length they are today no matter how many aliases
+exist.
+
+`+custom` is drawn only when the relay offers at least one alias, the way Edit appears on the
+launcher only once there is a tile.
 
 ### What remembers the pick
 
