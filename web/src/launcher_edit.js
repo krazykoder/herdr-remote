@@ -12,8 +12,13 @@
     // What the form was opened on, so Delete knows whether there is anything to delete and the
     // list can be returned to. '' for a tile being added.
     let launcherEditing = '';
+    let launcherMembersCustom = false, launcherArbCustom = false;
 
     function launcherKinds() { return (startOptions && startOptions.agents) || []; }
+
+    function launcherConfigs() {
+      return typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+    }
 
     // Everything typed since the last repaint, back into the draft. Called before every redraw
     // and before saving, which is what lets the form rebuild itself around a badge tap without
@@ -273,6 +278,8 @@
       // A relay that starts nothing still has terminals, and one with terminals off still starts
       // agents. Opening on the one that cannot work is a form whose first act is to refuse.
       if (!kinds.length && (startOptions || {}).terminal) launcherDraft.action = 'term';
+      launcherMembersCustom = false;
+      launcherArbCustom = false;
       launcherDrawForm();
     }
 
@@ -286,6 +293,8 @@
         members: (tile.members || []).map(m => Object.assign({}, m)),
         arbitrator: tile.arbitrator ? Object.assign({}, tile.arbitrator) : null,
       });
+      launcherMembersCustom = launcherDraft.members.some(m => m.config);
+      launcherArbCustom = !!((launcherDraft.arbitrator || {}).config);
       launcherDrawForm();
     }
 
@@ -309,15 +318,16 @@
       launcherDrawForm();
     }
 
-    function launcherAddMember(name) {
+    function launcherAddMember(name, config) {
       launcherReadForm();
       const d = launcherDraft;
       if ((d.members || []).length >= LAUNCHER_MEMBERS_MAX) {
         showToast(`At most ${LAUNCHER_MEMBERS_MAX} agents`);
         return;
       }
+      if (config) launcherMembersCustom = true;
       d.members = (d.members || []).concat(
-        [{name: name, role: '', label: '', at: LAUNCHER_DEFAULT_AT}]);
+        [{name: name, config: config || '', role: '', label: '', at: LAUNCHER_DEFAULT_AT}]);
       launcherDrawForm();
     }
 
@@ -329,10 +339,18 @@
 
     // '' switches it off. Off and not absent, because launcherWantsArb reads the field's presence
     // and a tile that lost its arbitrator by being widened to three keeps it — see step 6.
-    function launcherPickArb(name) {
+    function launcherPickArb(name, config) {
       launcherReadForm();
-      launcherDraft.arbitrator = name ? {name: name} : null;
+      if (config) launcherArbCustom = true;
+      launcherDraft.arbitrator = name ? {name: name, config: config || ''} : null;
       if (name) launcherArbSeed();
+      launcherDrawForm();
+    }
+
+    function launcherToggleCustom(where) {
+      launcherReadForm();
+      if (where === 'members') launcherMembersCustom = !launcherMembersCustom;
+      else launcherArbCustom = !launcherArbCustom;
       launcherDrawForm();
     }
 
@@ -359,6 +377,7 @@
     function launcherFormHtml() {
       const d = launcherDraft;
       const kinds = launcherKinds();
+      const configs = launcherConfigs();
       const terminal = !!(startOptions || {}).terminal;
       const members = d.members || [];
       // Two or more. The arbitrator itself still takes exactly two — that is the relay's
@@ -367,6 +386,7 @@
       // selects over the roster, defaulted to the pair launcherArbOrder picked.
       const canArb = d.action === 'spawn' && members.length >= 2;
       const arbName = (d.arbitrator || {}).name || '';
+      const arbConfig = (d.arbitrator || {}).config || '';
       return '<label class="start-field">Name<input id="qlName" type="text"'
         + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
         + ` placeholder="what pressing this does" value="${escapeHtml(d.label || '')}" /></label>`
@@ -398,13 +418,17 @@
             + '<textarea id="qlCommand" rows="2"'
             + ' autocapitalize="none" autocomplete="off" spellcheck="false"'
             + ` placeholder="pytest -q">${escapeHtml(d.command || '')}</textarea></label>`
-          : launcherMembersHtml(members, kinds))
+          : launcherMembersHtml(members, kinds, configs))
         + (canArb
           ? '<div class="start-field">Arbitrator<div class="badge-strip">'
             + badgeHtml('None', !arbName, "launcherPickArb('')",
                         {title: 'The two talk without one deciding between them'})
-            + kinds.map(k => badgeHtml(k, k === arbName, `launcherPickArb('${escapeHtml(k)}')`,
+            + kinds.map(k => badgeHtml(k, !arbConfig && k === arbName,
+              `launcherPickArb('${escapeHtml(k)}')`,
                                        {agent: k})).join('')
+            + launcherCustomBadges(configs, launcherArbCustom, 'arbitrator', c =>
+              `launcherPickArb('${escapeHtml(c.kind)}', '${escapeHtml(c.id)}')`,
+              c => c.id === arbConfig)
             + '</div></div>'
             + (arbName ? launcherArbSetupHtml(d, members) : '')
           : '')
@@ -417,12 +441,22 @@
         + '</div>';
     }
 
-    function launcherMembersHtml(members, kinds) {
+    function launcherCustomBadges(configs, open, where, pick, selected) {
+      if (!configs.length) return '';
+      return badgeHtml('+custom', open, `launcherToggleCustom('${where === 'members' ? 'members' : 'arbitrator'}')`,
+        {proj: true, title: 'Start under one of your agent configs'})
+        + (open ? configs.map(c => badgeHtml(c.label, !!(selected && selected(c)), pick(c),
+          {agent: c.kind, title: c.command || c.provider_label || ''})).join('') : '');
+    }
+
+    function launcherMembersHtml(members, kinds, configs) {
       return '<div class="start-field">Agents<div class="badge-strip">'
         + (kinds.length
           ? kinds.map(k => badgeHtml('+ ' + k, false, `launcherAddMember('${escapeHtml(k)}')`,
                                      {agent: k, title: 'Add one of these to the roster'})).join('')
           : '<span class="ql-none">This relay starts nothing.</span>')
+        + launcherCustomBadges(configs, launcherMembersCustom, 'members', c =>
+          `launcherAddMember('${escapeHtml(c.kind)}', '${escapeHtml(c.id)}')`)
         + '</div>'
         // Three answers per member: what to call it, what it is for, and what to say to it first.
         // The name is a template rather than the pane's name — launcherNamed puts the launch's tag
@@ -535,8 +569,10 @@
     // on placeholders nobody can read.
     function launcherMemberHtml(m, i) {
       const at = m.at === undefined ? LAUNCHER_DEFAULT_AT : m.at;
+      const config = m.config && launcherConfigs().find(c => c.id === m.config);
+      const shown = config ? config.label : m.name;
       return '<div class="ql-member">'
-        + `<span class="ql-member-kind">${escapeHtml(m.name)}</span>`
+        + `<span class="ql-member-kind">${escapeHtml(shown)}</span>`
         + `<button class="ql-del" onclick="launcherDropMember(${i})"`
         + ` aria-label="Remove ${escapeHtml(m.name)}">✕</button>`
         + `<input id="qlMemberName${i}" type="text" maxlength="${LAUNCHER_LABEL_MAX}"`
@@ -601,6 +637,7 @@
       if (launcherIsTerm(d)) { tile.command = String(d.command || '').trim(); return tile; }
       tile.members = (d.members || []).map(m => {
         const out = {name: m.name};
+        if (m.config) out.config = m.config;
         if (m.role) out.role = m.role;
         if (m.label) out.label = m.label;
         // '' is a real answer — this member opens with nothing — so it is stored as absent and
@@ -612,6 +649,7 @@
       // three and edited back down to two must still have the arbitrator it was given.
       if (d.arbitrator && d.arbitrator.name) {
         tile.arbitrator = {name: d.arbitrator.name};
+        if (d.arbitrator.config) tile.arbitrator.config = d.arbitrator.config;
         // Only what was answered. An absent clock is off and an absent limit is the relay's own
         // DEFAULT_BUDGET — restating either here would be a second copy of a number the relay
         // owns, kept in step by hand for no gain.

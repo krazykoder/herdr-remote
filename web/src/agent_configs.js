@@ -136,7 +136,14 @@
       agentConfigDraft[field] = value;
       // The provider decides which keys exist, so changing it drops a key the new one never
       // offered rather than carrying a name the relay would refuse.
-      if (field === 'provider') agentConfigDraft.key = '';
+      if (field === 'provider') {
+        agentConfigDraft.key = '';
+        const provider = agentConfigProviders().find(p => p.id === value) || {};
+        // These fields are absent because the selected provider cannot carry them. Leaving an
+        // old value in the draft would save a setting the new provider silently ignores.
+        if (provider.has_model === false) agentConfigDraft.model = '';
+        if (provider.has_model_option === false) agentConfigDraft.model_option = '';
+      }
       drawAgentConfig();
     }
 

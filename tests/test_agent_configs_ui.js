@@ -183,3 +183,18 @@ test('a provider with no model variable says where the model lives instead', () 
   assert.doesNotMatch(html, /Model option/);
   assert.match(html, /takes its model from the CLI/);
 });
+
+test('switching to a provider without model variables drops hidden model values', () => {
+  const s = boot({configs: [CLAUDE], providers: [
+    {id: 'router', label: 'AgentRouter', kind: 'claude', keys: [],
+     has_model: true, has_model_option: true, models: []},
+    {id: 'oai', label: 'Codex', kind: 'codex', keys: [],
+     has_model: false, has_model_option: false, models: []},
+  ]});
+  s.openAgentConfig('oclaude1');
+  s.agentConfigSet('provider', 'oai');
+  s.saveAgentConfig();
+  const saved = JSON.parse(s.store.herdr_agent_configs).aliases[0];
+  assert.equal(saved.model, '');
+  assert.equal(saved.model_option, '');
+});

@@ -45,7 +45,8 @@
     // it is the whole message rejected. launcherStrict is what makes that a test failure here
     // instead of a spawn that mysteriously does nothing.
     const OPEN_TERMINAL_FIELDS = ['type', 'project_id', 'placement', 'label', 'slot'];
-    const START_AGENT_FIELDS = ['type', 'name', 'role', 'project_id', 'placement', 'label', 'slot'];
+    const START_AGENT_FIELDS = ['type', 'name', 'role', 'project_id', 'placement', 'label', 'slot',
+                                'config'];
 
     // Always. The other two placements name a live pane — `workspace_id` for a tab, `split_from`
     // for a split — and a tile saved last week cannot: the pane it would have named is gone, and
@@ -292,6 +293,15 @@
         return { ok: false, reason: `This relay does not start ${missing.join(', ')}`,
                  badge: 'Unknown agent' };
       }
+      // A config is the provider-backed half of a custom agent. The harness alone is not enough:
+      // starting an alias after its provider was removed would silently fall back to the stock CLI.
+      const configs = opts.configs || [];
+      const stale = launcherRoster(tile).find(m => m.config
+        && !configs.some(c => c.id === m.config && c.kind === m.name));
+      if (stale) {
+        return { ok: false, reason: `Agent config ${stale.config} is not available on this relay`,
+                 badge: 'Missing config' };
+      }
       // `arb` is arbOn — whether this relay sent arb_sessions on this connection, which is the
       // app's gate for arbitration everywhere else. A tile is refused rather than quietly
       // downgraded to a plain conversation: what was asked for was the third agent.
@@ -368,6 +378,7 @@
         // behind it.
         label: member.label,
         slot: tile.slot,
+        config: member.config,
       }, START_AGENT_FIELDS);
     }
 

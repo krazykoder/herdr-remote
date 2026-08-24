@@ -23,7 +23,8 @@ const EDIT = src('launcher_edit.js');
 
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
-const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
+const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true,
+                 configs: [{id: 'oclaude', label: 'oClaude', kind: 'claude'}]};
 
 // Every element the editor writes into or reads back, invented on demand. `innerHTML` is recorded
 // rather than parsed: what is drawn is checked by looking for the call it wired up, which is what
@@ -87,6 +88,7 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
                     {tag: 'test-min', text: 'minimal focused test'},
                     {tag: 'next', text: 'proposes the next steps'}],
     agentBadge: kind => ` <span class="badge">${kind}</span>`,
+    agentConfigRows: () => startOptions.configs || [],
     // The launch sheet's two-tap Start. Recorded rather than armed: what this suite checks is
     // that the second tap is what reaches launcherPressIn.
     armButton: (btn, label, run) => { log.push(['arm', label]); run(); },
@@ -275,6 +277,24 @@ test('agents are added one tap at a time and each keeps its own role', () => {
   assert.deepEqual(e.tiles()[0].members,
     [{name: 'claude', role: 'proposer', at: 'architect-prompt'},
      {name: 'codex', role: 'critic', at: 'architect-prompt'}]);
+});
+
+test('custom aliases are offered in both tile pickers and retain their config id', () => {
+  const e = editor();
+  e.run('openLauncherEdit()');
+  e.run('launcherNewTile()');
+  assert.match(e.body(), /\+custom/);
+  e.run("launcherToggleCustom('members')");
+  assert.match(e.body(), /oClaude/);
+  e.run("launcherAddMember('claude', 'oclaude')");
+  e.run("launcherAddMember('codex')");
+  e.run("launcherPickArb('claude', 'oclaude')");
+  e.field('qlName', 'Custom pair');
+  e.field('qlScope', 'Review it');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const tile = e.tiles()[0];
+  assert.equal(tile.members[0].config, 'oclaude');
+  assert.equal(tile.arbitrator.config, 'oclaude');
 });
 
 test('a member can be named and given a first prompt, and both are stored', () => {

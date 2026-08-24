@@ -99,7 +99,7 @@ test('the section leads the page and carries its own way in', async ({page}) => 
   // already have a tile cannot be how the first one is made. Two of them once there is a tile,
   // and + is always the right-hand one: an add button that moves as soon as it has been used is
   // the shape of a button people stop finding.
-  await expect(page.locator('#launcher .section-header button')).toHaveText(['Edit', '+ New']);
+  await expect(page.locator('#launcher > .section-header:first-child button')).toHaveText(['Edit', '+ New']);
 });
 
 test('an empty launcher still offers the one thing there is to do', async ({page}) => {
@@ -109,11 +109,11 @@ test('an empty launcher still offers the one thing there is to do', async ({page
   // reach it, and the launcher another test here wrote is still on the relay when this page
   // connects. Every test below that starts from nothing says so.
   await seed(page, []);
-  await expect(page.locator('#launcher .section-header button')).toHaveText(['+ New']);
+  await expect(page.locator('#launcher > .section-header:first-child button')).toHaveText(['+ New']);
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
   // And it opens the form rather than the list: that button says Add, and a list is not what
   // adding looks like.
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await expect(page.locator('#launcherEditTitle')).toHaveText('New tile');
   await page.click('#launcherModal button[aria-label="Close"]');
 });
@@ -123,7 +123,7 @@ test('an empty launcher still offers the one thing there is to do', async ({page
 test('a tile written through the form is on the page, and survives a reload', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await expect(page.locator('#launcherModal')).toBeVisible();
   // The form opens on Start agents now, so a command tile says so first.
   await dlg(page).getByRole('button', {name: 'Run a command'}).click();
@@ -148,7 +148,7 @@ test('a tile written through the form is on the page, and survives a reload', as
 test('the form refuses a tile the presser could not run, and says which field', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await dlg(page).getByRole('button', {name: 'Run a command'}).click();
   await page.fill('#qlCommand', 'pytest');
   await page.click('#qlSave');
@@ -156,10 +156,27 @@ test('the form refuses a tile the presser could not run, and says which field', 
   await expect(page.locator('#launcherEditTitle')).toHaveText('New tile', 'still on the form');
 });
 
+test('custom configs are available for both tile roster and arbitrator', async ({page}) => {
+  await open(page);
+  await seed(page, []);
+  await page.evaluate(() => {
+    startOptions.configs = [{id: 'oclaude', label: 'oClaude', kind: 'claude'}];
+    openLauncherEdit();
+    launcherNewTile();
+  });
+  await dlg(page).getByRole('button', {name: '+custom', exact: true}).first().click();
+  await dlg(page).getByRole('button', {name: 'oClaude', exact: true}).first().click();
+  await dlg(page).getByRole('button', {name: '+ codex', exact: true}).click();
+  const arb = dlg(page).locator('.start-field').filter({hasText: /^Arbitrator/});
+  await arb.getByRole('button', {name: '+custom', exact: true}).click();
+  await arb.getByRole('button', {name: 'oClaude', exact: true}).click();
+  await expect(page.locator('#qlRole0')).toBeVisible();
+});
+
 test('an arbitrated tile is built from the form and reads as one', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await page.fill('#qlName', 'Review pair');
   await dlg(page).getByRole('button', {name: 'Start agents'}).click();
   await dlg(page).getByRole('button', {name: '+ claude'}).click();
@@ -196,7 +213,7 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
 test('tiles are reordered from the list, and the order is what was written down', async ({page}) => {
   await open(page);
   await seed(page, [RUN, Object.assign({}, RUN, {id: 'ql_two', label: 'Second'})]);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await dlg(page).getByRole('button', {name: 'Move Second up'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await page.reload();
@@ -212,7 +229,7 @@ test('deleting asks first, and takes the tile off the page', async ({page}) => {
   await open(page);
   await seed(page, [RUN]);
   page.on('dialog', d => d.accept());
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await dlg(page).getByRole('button', {name: 'Delete Run the tests'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await expect(page.locator('.launcher-tile')).toHaveCount(0);

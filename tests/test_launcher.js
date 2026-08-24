@@ -137,6 +137,12 @@ test('a member with its own label carries it, and nothing empty is ever sent', (
   assert.ok(!('slot' in bare));
 });
 
+test('a custom member carries its provider-backed config id', () => {
+  const {launcherSpawnMsg} = pure();
+  const tile = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.equal(launcherSpawnMsg(tile, tile.members[0]).config, 'oclaude');
+});
+
 test('a role never becomes a pane label, however short it is', () => {
   const {launcherSpawnMsg} = pure();
   // The role field is the arbitration setup's own — 240 characters of prose, and a
@@ -262,6 +268,15 @@ test('a spawn naming an agent this relay does not start is disabled and names it
   const gate = launcherGate(spawnTile(), env({startOptions: {agents: ['claude'], terminal: true}}));
   assert.equal(gate.ok, false);
   assert.match(gate.reason, /codex/);
+});
+
+test('a custom tile is disabled when its provider-backed config is gone', () => {
+  const {launcherGate} = pure();
+  const tile = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.match(launcherGate(tile, env()).reason, /oclaude.*not available/);
+  const live = env({startOptions: {agents: ['claude', 'codex'], terminal: true,
+                                   configs: [{id: 'oclaude', kind: 'claude'}]}});
+  assert.equal(launcherGate(tile, live).ok, true);
 });
 
 test('a relay that advertises no start options disables every tile', () => {
