@@ -158,6 +158,9 @@
         + (groups.length > 1
           ? groups.map(g => `<div class="launcher-band">${escapeHtml(g.label)}</div>`
             + g.tiles.map(launcherTileHtml).join('')).join('')
-          : tiles.map(launcherTileHtml).join(''));
+          : tiles.map(launcherTileHtml).join(''))
+        // Under the tiles and inside the same section, because it is the launcher's own answer to
+        // "what can this press start" — not a seventh section with a tab of its own.
+        + (typeof agentConfigsHtml === 'function' ? agentConfigsHtml() : '');
       applySections();
     }

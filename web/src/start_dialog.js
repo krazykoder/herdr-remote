@@ -284,14 +284,57 @@
     // three questions about what a session *is*, and one of them reading as a form control while
     // the other two read as badges was the whole inconsistency.
     let startAgentPick = '';
+    // An agent config, when one was picked instead of the stock harness. Held apart from the kind
+    // rather than folded into it: a config *is* a kind plus an environment, and the relay is told
+    // both — `name` is what it starts, `config` is what it starts it under.
+    let startConfigPick = '';
+    let startCustomOpen = false;
 
+    function startConfigs() {
+      return typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+    }
+
+    // Stock kinds, then one `+custom`. One badge and not a badge per alias: there will be more
+    // aliases than harnesses before long, and a strip that grows with them is a strip nobody can
+    // read. Open, the aliases appear after it wearing their own harness's colour.
     function renderStartAgents() {
-      document.getElementById('startAgents').innerHTML = ((startOptions || {}).agents || []).map(k =>
-        badgeHtml(k, k === startAgentPick, `pickStartAgent('${k}')`, {agent: k})).join('');
+      const configs = startConfigs();
+      document.getElementById('startAgents').innerHTML =
+        ((startOptions || {}).agents || []).map(k =>
+          badgeHtml(k, !startConfigPick && k === startAgentPick, `pickStartAgent('${k}')`,
+                    {agent: k})).join('')
+        + (configs.length
+          ? badgeHtml('+custom', startCustomOpen || !!startConfigPick, 'toggleStartCustom()',
+              {proj: true, title: 'Start under one of your agent configs'})
+            + (startCustomOpen || startConfigPick
+              ? configs.map(c => badgeHtml(c.label, c.id === startConfigPick,
+                  `pickStartConfig('${escapeHtml(c.id)}')`,
+                  {agent: c.kind, title: c.command || c.provider_label || ''})).join('')
+              : '')
+          : '');
+    }
+
+    function toggleStartCustom() {
+      startCustomOpen = !startCustomOpen;
+      // Closing it also drops the choice: the row would otherwise say a stock kind is picked while
+      // the start still carried a config nobody can see.
+      if (!startCustomOpen) startConfigPick = '';
+      renderStartAgents();
+      if (window.cue) cue('tick');
+    }
+
+    function pickStartConfig(id) {
+      const row = startConfigs().find(c => c.id === id);
+      if (!row) return;
+      startConfigPick = id;
+      startAgentPick = row.kind;
+      renderStartAgents();
+      if (window.cue) cue('tick');
     }
 
     function pickStartAgent(kind) {
       startAgentPick = kind;
+      startConfigPick = '';
       renderStartAgents();
       if (window.cue) cue('tick');
     }
@@ -430,6 +473,8 @@
       const kinds = startOptions.agents || [];
       const remembered = localStorage.getItem(START_AGENT_KEY);
       startAgentPick = kinds.includes(remembered) ? remembered : (kinds[0] || '');
+      startConfigPick = '';
+      startCustomOpen = false;
       renderStartAgents();
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
       restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
@@ -519,6 +564,7 @@
       // readable on it without a second round trip. Not for a split: "beside that pane" is already
       // a statement about width, and a desktop asking for "wide" would move the new session
       // straight back out of the split the user picked.
+      if (!terminal && startConfigPick) msg.config = startConfigPick;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields
       // answered that for an agent, this answers it for the other message. Omitted, not empty — the

@@ -819,6 +819,10 @@
     // is already answered — beside what this conversation is running — and what is left is four
     // choices, three of them made by tapping a badge: harness, role, name, Project.
     let newAgentKind = '';
+    // The agent config this start runs under, when one was picked. See startConfigPick — the kind
+    // and the environment are two answers, and the relay is told both.
+    let newAgentConfig = '';
+    let newAgentCustom = false;
     let newAgentRole = 0;
     let newAgentProject = '';
     // Which arbitration slot asked for this one, or '' for the ordinary route in. A slot's start
@@ -842,6 +846,8 @@
       // work is what this is usually for. Falls back to the first the relay will start.
       const kinds = startOptions.agents || [];
       newAgentKind = from && kinds.includes(from.agent) ? from.agent : kinds[0];
+      newAgentConfig = '';
+      newAgentCustom = false;
       newAgentRole = 0;
       // Spawned where the conversation lives. Not a rule — the row is right there — but a Project
       // chosen for you is one fewer question in a dialog that exists to be quick.
@@ -869,8 +875,21 @@
     // Three rows of badges, in the order the decision is made. The Project row is one line that
     // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
     function renderNewAgent() {
+      // The same strip the Start sheet draws, for the same reason: stock kinds, then one
+      // `+custom` that opens the agent configs rather than a badge per alias.
+      const configs = typeof agentConfigRows === 'function' ? agentConfigRows() : [];
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
-        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
+        .map(k => badgeHtml(k, !newAgentConfig && k === newAgentKind, `pickNewAgentKind('${k}')`,
+                            {agent: k})).join('')
+        + (configs.length
+          ? badgeHtml('+custom', newAgentCustom || !!newAgentConfig, 'toggleNewAgentCustom()',
+              {proj: true, title: 'Start under one of your agent configs'})
+            + (newAgentCustom || newAgentConfig
+              ? configs.map(c => badgeHtml(c.label, c.id === newAgentConfig,
+                  `pickNewAgentConfig('${escapeHtml(c.id)}')`,
+                  {agent: c.kind, title: c.command || c.provider_label || ''})).join('')
+              : '')
+          : '');
       document.getElementById('newAgentRoles').innerHTML =
         badgeHtml('@none', newAgentRole < 0, 'pickNewAgentRole(-1)',
           {proj: true, title: 'Starts with nothing typed at it'})
@@ -889,6 +908,24 @@
 
     function pickNewAgentKind(kind) {
       newAgentKind = kind;
+      newAgentConfig = '';
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function toggleNewAgentCustom() {
+      newAgentCustom = !newAgentCustom;
+      if (!newAgentCustom) newAgentConfig = '';
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function pickNewAgentConfig(id) {
+      const rows = typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+      const row = rows.find(c => c.id === id);
+      if (!row) return;
+      newAgentConfig = id;
+      newAgentKind = row.kind;
       renderNewAgent();
       if (window.cue) cue('tick');
     }
@@ -931,6 +968,7 @@
         type: 'start_agent', name: newAgentKind,
         project_id: newAgentProject, slot: slotFor(),
       }, startRoleFields(role, typed));
+      if (newAgentConfig) msg.config = newAgentConfig;
       // Where is not asked: beside what this Project is already running, which is what a new member
       // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
       // gets a workspace of its own.

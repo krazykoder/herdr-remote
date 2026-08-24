@@ -69,7 +69,10 @@ NARROW_SLOT_COLS = (69, 70)
 # herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
 # only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
 SIDEBAR_BOUNDS = (18, 36)
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config"}
+# An agent config's id. Checked for shape here and for existence in the relay, which is the only
+# place that knows what the provider file authorised — this module stays free of files.
+CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 # open_terminal carries neither: there is no agent to name and no role for it to play.
 OPEN_TERMINAL_FIELDS = {"type", "project_id", "placement", "label", "slot"}
 
@@ -180,6 +183,13 @@ def validate_start_request(msg, projects, agents, allowed):
         return None, err
     plan["name"] = name
     plan["role"] = role
+    # Optional, and absent means the stock CLI on this machine — which is every start made before
+    # agent configs existed. Only the shape is settled here; whether this id names a config the
+    # provider file backs is the relay's question, and refusing it is its answer.
+    config = msg.get("config") or ""
+    if config and not CONFIG_ID_RE.match(config):
+        return None, "bad config id"
+    plan["config"] = config
     return plan, None
 
 

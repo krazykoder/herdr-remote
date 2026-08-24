@@ -1317,6 +1317,79 @@
       white-space: nowrap;
     }
 
+    /* --- agent configs --- */
+    /* Under the tiles, in the launcher's own grid, and spanning it: a config is one line of facts
+       about a named environment, not a tile you press to start something. Every colour on the row
+       comes from its harness — `oclaude1` is a claude and wears claude's badge — so the reader
+       learns no twelfth colour meaning "custom". */
+    .cfg-row {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .cfg-row:hover { border-color: var(--blue); }
+
+    .cfg-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    /* The second line is evidence, not identity: what it will run and what it will run it with. */
+    .cfg-sub {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .cfg-provider {
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    /* A key is named, never shown. Red when the relay does not hold the variable — that is the one
+       failure this list can see coming, and it is invisible until the session starts without it. */
+    .cfg-key { color: var(--muted); }
+    .cfg-unset { color: var(--red); }
+
+    .cfg-empty, .cfg-note {
+      grid-column: 1 / -1;
+      font-size: 0.7rem;
+      line-height: 1.4;
+      color: var(--muted);
+      margin: 2px 0;
+    }
+
+    /* The line the relay will run, with the key as a $VAR reference. Selectable and scrollable
+       rather than wrapped: it is meant to be pasted into a terminal, and a broken line is not. */
+    .cfg-command {
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      cursor: copy;
+    }
+
     /* --- the tile editor --- */
     /* A repointable tile is one tap from being fixed, so the tile that cannot be pressed is still
        pointable at: the not-allowed cursor above is for the gates that are about the relay. */
@@ -7945,6 +8018,7 @@
   <script src="src/pairs_ui.js"></script>
   <!-- After status_bar.js, which owns `projects`, `startOptions` and escapeHtml's callers, and
        after sections.js, whose applySections it calls to take an empty section off screen. -->
+  <script src="src/agent_configs.js"></script>
   <script src="src/launcher_ui.js"></script>
   <script src="src/launcher_exec.js"></script>
   <script src="src/launcher_edit.js"></script>

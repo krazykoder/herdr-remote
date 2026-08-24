@@ -602,9 +602,12 @@
       return '';
     }
 
-    function agentBadge(agent) {
+    // `kind` is for the names that are not their own harness: an agent config called `oclaude1`
+    // runs claude and has to read as one, and agentColor matches on the text. Optional, so every
+    // existing caller — where the text *is* the kind — is unchanged.
+    function agentBadge(agent, kind) {
       if (!agent) return '';
-      const c = agentColor(agent);
+      const c = agentColor(kind || agent);
       // Text and border carry the colour; the fill stays the neutral one every badge shares.
       // A 16% wash of the accent under its own text cost ~0.8 of contrast ratio and was what
       // made the light theme's badges unreadable at this size.

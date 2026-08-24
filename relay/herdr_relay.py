@@ -47,6 +47,16 @@ from start_agent import (
     workspace_create_args,
 )
 
+from agent_configs import (
+    ConfigError as AgentConfigError,
+    export_line,
+    load_providers,
+    parse_aliases,
+    public_configs,
+    public_providers,
+    resolve as resolve_config,
+)
+
 try:
     from websockets.asyncio.server import serve
 except ImportError:
@@ -411,6 +421,37 @@ except (sqlite3.Error, OSError) as e:
     # a worse failure than one that says so and leaves every browser on its own state.
     print(f"herdr-remote: shared state disabled: {e}", file=sys.stderr)
 
+
+def start_options_message():
+    """The client's Start gate, and now its agent configs too. Blocking — it reads the store.
+
+    Sent once on connect, and again to everyone whenever the configs document changes: half of a
+    config is this relay's answer about it — the harness, whether this machine holds the key
+    variable it names, the command line the spawn will run — and no browser can compute that.
+
+    Names, never values. `key` is a variable's name and `key_set` says whether the relay holds it,
+    which is the most that can be said about a credential in a message a client receives.
+    """
+    return {
+        "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+        "terminal": TERMINAL,
+        "configs": public_configs(agent_aliases(), AGENT_PROVIDERS),
+        "providers": public_providers(AGENT_PROVIDERS),
+    }
+
+
+def agent_aliases():
+    """The user's agent configs, as the shared store currently holds them.
+
+    Read per request rather than cached: the document is edited from the app, and a spawn that
+    used a provider binding the user changed a minute ago is the one failure this feature must
+    not have. It is a single-row SQLite read.
+    """
+    if user_state is None:
+        return []
+    body = user_state.get(["agent_configs"])["agent_configs"]["body"]
+    return parse_aliases(body, AGENT_PROVIDERS)
+
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 # Name -> (Content-Type, extra headers). The manifest and the icons are not decoration: iOS only
@@ -515,6 +556,16 @@ try:
     START_AGENTS = load_start_agents(os.environ.get("HERDR_START_AGENTS", ""))
 except StartAgentConfigError as e:
     print(f"herdr-remote: bad start agent allowlist: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Providers are file-only, and a malformed file is fatal for the same reason a malformed ops
+# registry is: this names the endpoints credentials may be sent to, and a relay that started
+# having half-understood it would be a relay nobody can reason about. Absent is not malformed —
+# it means no custom providers exist, which is the default state.
+try:
+    AGENT_PROVIDERS = load_providers(os.environ.get("HERDR_AGENT_CONFIGS", ""))
+except AgentConfigError as e:
+    print(f"herdr-remote: bad agent config file: {e}", file=sys.stderr)
     sys.exit(1)
 
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
@@ -1495,6 +1546,16 @@ def start_agent_exec(plan):
     if err:
         return None, err
 
+    # Before `agent start`, because this is the only moment there is a shell to type it at: after
+    # it, the pane belongs to the agent's TUI. Fatal, unlike the init prompts below — a session
+    # that failed to take its provider would come up on the stock endpoint wearing the alias's
+    # name, which is worse than no session.
+    if plan.get("env_line"):
+        env_err = shell_line_exec(target_pane, plan["env_line"], remote)
+        if env_err:
+            _rollback_layout(rollback, remote)
+            return None, env_err
+
     args = agent_start_args(plan["name"], plan["agent_name"], target_pane)
     deadline = time.monotonic() + PANE_READY_WAIT
     while True:
@@ -1560,24 +1621,37 @@ def terminal_init_exec(pane_id, remote):
     Only ever called from open_terminal_exec, so the pane is one the app created a moment ago and
     the shell in it has run nothing. An agent pane never comes through here: `agent start` gets a
     TUI that owns its own screen, and typing a shell command at it would be typing into a prompt.
+    """
+    if TERMINAL_INIT:
+        shell_line_exec(pane_id, TERMINAL_INIT, remote)
+
+
+def shell_line_exec(pane_id, line, remote):
+    """Type one line at a pane that still holds a shell. Returns an error string, or None.
 
     A login shell that sources a real profile takes a second or several to reach its prompt, and
     characters sent before then are dropped. That is the same precondition `agent start` waits out
-    at PANE_NOT_READY above, asked the only way a shell answers it: `pane list` reports `unknown`
-    for a pane carrying no agent, so there is no status to watch — the prompt appearing in the pane
-    is the signal. A pane that never draws one is sent to anyway at the deadline, which is no worse
+    at PANE_NOT_READY, asked the only way a shell answers it: `pane list` reports `unknown` for a
+    pane carrying no agent, so there is no status to watch — the prompt appearing in the pane is
+    the signal. A pane that never draws one is sent to anyway at the deadline, which is no worse
     than not having tried.
+
+    ponytail: send-then-Enter with no confirmation, the same as it has always been here. The
+    callers are a fresh shell the relay created a moment ago; if that ever stops being true, this
+    wants submit_paste's watch instead.
     """
-    if not TERMINAL_INIT:
-        return
     deadline = time.monotonic() + TERMINAL_INIT_WAIT
     while time.monotonic() < deadline:
         if run_herdr("pane", "read", pane_id, "--lines", "5",
                      "--source", "visible", remote=remote).strip():
             break
         time.sleep(TERMINAL_INIT_POLL)
-    run_herdr("pane", "send-text", pane_id, TERMINAL_INIT, remote=remote)
-    run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+    try:
+        run_herdr("pane", "send-text", pane_id, line, remote=remote)
+        run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+    except Exception as e:
+        return f"could not prepare the pane's shell: {e}"
+    return None
 
 
 def open_terminal_exec(plan):
@@ -2280,10 +2354,8 @@ async def handle_client(ws, listener="lan"):
                 # `terminal` gates + New terminal the same way this message gates Start. It is
                 # only ever sent under WRITE_EXT, so a true here means both of open_terminal's
                 # gates are open — the client never has to reason about them separately.
-                await ws.send(json.dumps({
-                    "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
-                    "terminal": TERMINAL,
-                }))
+                await ws.send(json.dumps(
+                    await asyncio.to_thread(start_options_message)))
         # The cached snapshot is what carries `shells`, and its presence is the client's terminal
         # feature gate — so a terminal-mode relay sends it even without Projects, or a client
         # connecting between polls would see no terminals and no gate. With both off this is the
@@ -2718,8 +2790,24 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": start_err}))
                     continue
+                # The config's id has a shape by now; this is where it gets a meaning. Refused
+                # rather than dropped: a start that quietly ignored the config the user picked
+                # would come up on the stock provider under the alias's name.
+                if plan.get("config"):
+                    pair, config_err = resolve_config(
+                        plan["config"], plan["name"],
+                        await asyncio.to_thread(agent_aliases), AGENT_PROVIDERS)
+                    if config_err:
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "start_agent",
+                            "ok": False, "error": config_err}))
+                        continue
+                    # The only place a secret value is ever read, and it goes straight into the
+                    # plan the worker thread types. Never logged, never sent, never stored.
+                    plan["env_line"] = export_line(*pair)
                 detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
-                          f"placement={plan['placement']} host={plan['remote'] or 'local'}")
+                          f"placement={plan['placement']} host={plan['remote'] or 'local'} "
+                          f"config={plan.get('config') or '-'}")
                 log.info("Start agent from %s (%s): %s", ip, device, detail)
                 audit("start_agent", ip, device, "", detail)
                 # Several herdr calls, one of them waiting out the agent's startup — off the loop.
@@ -2813,6 +2901,13 @@ async def handle_client(ws, listener="lan"):
                 await broadcast({"type": "state",
                                  "docs": {name: {"rev": new_rev, "body": body}}},
                                 except_ws=ws)
+                # Half of an agent config is the relay's answer about it — its harness, whether
+                # this machine holds the key variable it named, and the command line the spawn
+                # will run. None of that can be computed by a browser, so the document landing is
+                # what makes it stale, and every client gets the new one. The writer included:
+                # it is the client most likely to be looking at the row it just changed.
+                if name == "agent_configs" and PROJECTS and WRITE_EXT:
+                    await broadcast(await asyncio.to_thread(start_options_message))
             else:
                 # Say so instead of dropping it. A client newer than the relay used to get
                 # silence here, which reads as a bug in the feature rather than a stale relay.
