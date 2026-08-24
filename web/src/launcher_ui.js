@@ -69,15 +69,17 @@
       if (!tile || launcherIsTerm(tile)) {
         return escapeHtml(launcherPreview(tile));
       }
-      const members = (tile.members || []).map(m => (m && m.name) || '?');
-      const badges = members.map(k => typeof agentBadge === 'function'
-        ? agentBadge(k) : ` <span class="badge">${escapeHtml(k)}</span>`);
+      const members = (tile.members || []).map(m => m || {});
+      const badges = members.map(m => typeof configBadge === 'function'
+        ? configBadge(m.name || '?', m.config)
+        : ` <span class="badge">${escapeHtml(m.name || '?')}</span>`);
       // The arbitrator is named apart from the two rather than joined into them: it is not a third
       // participant, it is the one deciding between the other two.
       return badges.join(' <span class="launcher-plus">+</span>')
         + (launcherWantsArb(tile)
           ? ` <span class="launcher-plus">\u2696</span>`
-            + (typeof agentBadge === 'function' ? agentBadge(tile.arbitrator.name)
+            + (typeof configBadge === 'function'
+               ? configBadge(tile.arbitrator.name, tile.arbitrator.config)
                : ` <span class="badge">${escapeHtml(tile.arbitrator.name)}</span>`)
           : '');
     }

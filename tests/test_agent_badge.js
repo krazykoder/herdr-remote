@@ -30,7 +30,7 @@ function boot() {
     agentConfigRow: id => (id === 'oclaude1'
       ? {id: 'oclaude1', label: 'oclaude1', kind: 'claude'} : null),
   });
-  vm.runInContext(src + '\n;__out = {agentColor, agentBadge, paneBadge, kindBadge};', ctx);
+  vm.runInContext(src + '\n;__out = {agentColor, agentBadge, paneBadge, kindBadge, configBadge};', ctx);
   return ctx.__out;
 }
 
@@ -84,4 +84,15 @@ test('a recorded kind is upgraded only when its pane is live and custom', () => 
   assert.match(kindBadge('claude', live), /oclaude1/);
   assert.match(kindBadge('claude', {agent: 'claude'}), /claude</);
   assert.match(kindBadge('claude', null), /claude</);
+});
+
+test('a tile\'s roster is badged by the config it pinned, before any pane exists', () => {
+  // The launcher names members it has not started. There is no snapshot to read the alias off, so
+  // the tile carries it — otherwise a tile built out of `oclaude1` reads as stock claude until it
+  // is pressed, which is the one moment it is too late to notice.
+  const {configBadge} = boot();
+  assert.match(configBadge('claude', 'oclaude1'), /oclaude1/);
+  assert.match(configBadge('claude', 'oclaude1'), /var\(--agent-claude\)/);
+  assert.match(configBadge('claude', ''), /claude</);
+  assert.match(configBadge('claude', 'gone'), /claude</, 'a deleted config falls back to the harness');
 });

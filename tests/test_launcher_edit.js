@@ -88,6 +88,9 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
                     {tag: 'test-min', text: 'minimal focused test'},
                     {tag: 'next', text: 'proposes the next steps'}],
     agentBadge: kind => ` <span class="badge">${kind}</span>`,
+    // terminal.js's alias-aware badge: the tile carries the config, so a member started
+    // under one is named by it rather than by its harness.
+    configBadge: (kind, config) => ` <span class="badge">${config || kind}</span>`,
     agentConfigRows: () => startOptions.configs || [],
     // The launch sheet's two-tap Start. Recorded rather than armed: what this suite checks is
     // that the second tap is what reaches launcherPressIn.
@@ -639,4 +642,14 @@ test('the name survives picking a Project, and both reach the press', () => {
   assert.ok(e.log.some(l => l[0] === 'arm' && l[1] === 'Start?'));
   // The tile is what it was — the Project chosen for one press is never written back.
   assert.equal(e.tiles()[0].project_id, '');
+});
+
+test('the launch sheet badges a member by the config it pinned, not by its harness', () => {
+  // The sheet is the last thing read before the press, and a roster that says `claude` for a
+  // member that will come up on someone else's endpoint is the one line that must not be wrong.
+  const e = editor({tiles: [spawnTile({members: [{name: 'claude', config: 'oclaude'},
+                                                 {name: 'codex'}]})]});
+  e.run('launcherLaunchSheet(loadLauncher()[0])');
+  assert.match(e.body(), /badge">oclaude</, 'the alias, where the tile pinned one');
+  assert.match(e.body(), /badge">codex</, 'and the harness where it did not');
 });

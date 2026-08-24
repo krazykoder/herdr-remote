@@ -641,6 +641,13 @@
       return pane && pane.config ? paneBadge(pane) : agentBadge(name);
     }
 
+    // The same badge for something that has not started yet: a launcher tile's roster, and the
+    // form building it. There is no pane to read the alias off, so the tile carries it — which is
+    // the whole point of pinning a config to a tile.
+    function configBadge(name, config) {
+      return config ? paneBadge({agent: name, config: config}) : agentBadge(name);
+    }
+
     // One nomenclature wherever a pane is named — card, terminal header, both kinds of pane:
     //
     //     [emoji] name @project [agent]

@@ -158,7 +158,7 @@
           + (m.arb ? '<span class="ql-part-mark" aria-hidden="true">⚖</span>'
                    : `<span class="ql-part-mark">${launcherIcon('spawn')}</span>`)
           + `<span class="ql-part-name">${escapeHtml(m.label || m.name)}</span>`
-          + agentBadge(m.name)
+          + configBadge(m.name, m.config)
           + (starter ? `<span class="ql-part-role">@${escapeHtml(starter)}</span>` : '')
           + '</span>';
       }).join('') + '</div>';
@@ -518,7 +518,7 @@
           // that looks live and is not.
           + `<span class="ql-member-kind"><span class="ql-arb-slot">Agent ${i + 1}</span>`
           + launcherPairSelect(members, i)
-          + (typeof agentBadge === 'function' ? agentBadge(m.name)
+          + (typeof configBadge === 'function' ? configBadge(m.name, m.config)
              : ` <span class="badge">${escapeHtml(m.name)}</span>`) + '</span>'
           + (typeof arbRoleField === 'function'
             ? arbRoleField(`qlRole${i}`, m.role || '')
