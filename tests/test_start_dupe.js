@@ -181,11 +181,12 @@ test('a start the poll has not seen yet stays pending', () => {
 });
 
 test('a duplicate opens the way the pane it came from opened', () => {
+  // The bare name a record written before the suffix carries — it still has to resolve.
   const {run} = startCtx({starter: 'architect'});
   run('duplicatePane()');
   // Both: the text is what gets typed at the new pane, and the name is what the conversation
   // records, so ending and starting it again still opens the same way.
-  assert.equal(run('startStarter'), 'architect');
+  assert.equal(run('startStarter'), 'architect-prompt');
   assert.ok(run('startPrompt').includes('System_Prompt_2_Architect'),
     'the duplicate went out with no opening prompt');
 });
@@ -201,10 +202,10 @@ test('the dialog opens on a starter until one is deliberately taken off', () => 
   // Never opened before: the first badge offered, rather than a start with no opening words.
   const first = startCtx();
   first.run("openStartDialog('proj')");
-  assert.equal(first.run('startRolePick'), 'architect');
+  assert.equal(first.run('startRolePick'), 'architect-prompt');
 
   // Tapping the lit badge off is how "no starter" is asked for, and it is remembered as such.
-  first.run("pickStartRole('architect')");
+  first.run("pickStartRole('architect-prompt')");
   assert.equal(first.run('startRolePick'), '');
   const store = {};
   const off = startCtx({store: Object.assign(store, {herdr_start_role: ''})});
@@ -213,7 +214,7 @@ test('the dialog opens on a starter until one is deliberately taken off', () => 
 
   // And a badge this relay has since stopped offering falls to none rather than to a different
   // way of working — the same answer it always gave.
-  const gone = startCtx({store: {herdr_start_role: 'orchestrator'},
+  const gone = startCtx({store: {herdr_start_role: 'gone-prompt'},
     options: {roles: ['architect'], agents: ['claude']}});
   gone.run("openStartDialog('proj')");
   assert.equal(gone.run('startRolePick'), '');

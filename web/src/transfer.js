@@ -47,7 +47,7 @@
         document.getElementById('transferSheet').style.display = 'block';
         return;
       }
-      box.innerHTML = SHORTCUTS.map((s, i) =>
+      box.innerHTML = promptChips().map(({s, i}) =>
         `<button class="nav-key" style="width:100%;justify-content:flex-start" onclick="doTransfer(${i})">@${escapeHtml(s.at)} — ${escapeHtml(s.label)}</button>`).join('') +
         `<button class="nav-key" style="width:100%;justify-content:flex-start;color:var(--muted)" onclick="doTransfer(-1)">No instruction</button>`;
       preview.textContent = transferSelection.length > 600

@@ -325,7 +325,10 @@ test('every shortcut has a chip name, and no two chips are the same', () => {
 test('shortcuts reference prompts by path and never inline their copy', () => {
   assert.ok(SHORTCUTS.length >= 3);
   for (const s of SHORTCUTS) {
-    assert.ok(s.label && s.text, 'every shortcut needs a label and text');
+    assert.ok(s.label, 'every shortcut needs a label');
+    // Empty is allowed, and only for the four a session can be started as: the badge exists before
+    // the words under it do, and promptChips is what keeps a chip that types nothing off a composer.
+    assert.ok(s.text || /-prompt$/.test(s.at), `shortcut "${s.label}" needs text`);
     assert.ok(s.text.length < 200, `shortcut "${s.label}" looks like inlined prompt copy`);
   }
   assert.ok(SHORTCUTS.some(s => s.text.includes('@.agent/prompts/')));
@@ -555,12 +558,12 @@ test('only badges this relay will accept are offered', () => {
   // An older relay knows architect and agent but not reviewer; the badge for it is absent rather
   // than a refusal after the tap.
   const {offered} = runStartRoleFields(['architect', 'agent'], null, '');
-  assert.deepEqual(offered, ['architect', 'arbitrator', 'orchestrator']);
+  assert.deepEqual(offered, ['architect-prompt', 'implementer-prompt', 'arbitrator-prompt']);
 });
 
 test('the badge is read back off the name the pane was given', () => {
-  assert.equal((startRoleFromLabel('Architect 1') || {}).at, 'architect');
-  assert.equal((startRoleFromLabel('Arbitrator') || {}).at, 'arbitrator');
+  assert.equal((startRoleFromLabel('Architect 1') || {}).at, 'architect-prompt');
+  assert.equal((startRoleFromLabel('Arbitrator') || {}).at, 'arbitrator-prompt');
   // Renamed since, so there is nothing left to read: a respawn falls back to the bare wire role
   // rather than inventing a way of working the session never had.
   assert.equal(startRoleFromLabel('nightly build'), null);
@@ -569,7 +572,7 @@ test('the badge is read back off the name the pane was given', () => {
 
 test('a badge whose prompt is still to be written opens with nothing', () => {
   assert.match(roleStarter(startRoleOf('architect')), /System_Prompt_2_Architect/);
-  assert.equal(roleStarter(startRoleOf('orchestrator')), '');
+  assert.equal(roleStarter(startRoleOf('reviewer')), '');
   assert.equal(roleStarter(null), '');
 });
 

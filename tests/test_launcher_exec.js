@@ -62,6 +62,7 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     },
     // pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
     // enough to tell "the named one" from "some other one".
+    canonAt: at => at || '',
     SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
                 {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
     showToast: t => log.push(['toast', t]),

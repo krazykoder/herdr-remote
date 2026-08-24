@@ -70,36 +70,73 @@
       { at: 'test', label: 'Test',
         text: 'Write /update tests this needs, run them, and report what actually failed.' },
       { at: 'test-min', label: 'Test, minimally',
-        text: 'Dont rerun passing tests. Only tests relevant to code changes you make or ' +
-          'essential for you.' },
+        text: 'Dont rerun passing tests. Dont run full test suite. Only tests relevant to code ' +
+          'changes you make or essential for you.' },
       { at: 'no-test', label: 'No tests, just finish',
         text: 'Dont test, just finish implementation.' },
       { at: 'status-now', label: 'Status of what was asked',
         text: 'At the end also list out the features requested with brief status of each.' },
-      { at: 'architect', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+      // The four a session can be *started* as. `-prompt` and not a bare name because they are the
+      // only chips that are also an opening instruction, and a reader tapping `@architect-prompt`
+      // into a running conversation should be able to see that it is the same thing the Start
+      // sheet offers as `@architect`.
+      //
+      // Three of them have nothing written under them yet. They are listed anyway: the badge exists
+      // so a session can be started as a Reviewer today, and the day someone writes the text every
+      // tile and every record naming it opens with it, with no migration. `promptChips` is what
+      // keeps them out of the composer until then — a chip that types nothing is a dead control.
+      { at: 'architect-prompt', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+      { at: 'reviewer-prompt', label: 'Reviewer prompt', text: '' },
+      { at: 'implementer-prompt', label: 'Implementer prompt', text: '' },
+      { at: 'arbitrator-prompt', label: 'Arbitrator prompt', text: '' },
     ];
 
-    // What a session is started as. Functionally an @ prompt like the ones above — it is text sent
-    // into a fresh pane — but chosen as a badge rather than tapped in as a chip, because it is the
-    // one instruction that is given before there is anything to talk about.
+    // The chips worth showing in a composer, a palette or a transfer sheet: the ones with something
+    // to type. Carries each one's index, because every one of those lists acts on the index and a
+    // filtered copy would renumber them.
+    function promptChips() {
+      return SHORTCUTS.map((s, i) => ({s: s, i: i})).filter(x => x.s.text);
+    }
+
+    // A starter recorded before the four carried their suffix — `architect` for `architect-prompt`.
+    // One line rather than a migration: those names are on disk in conversations, in launcher tiles,
+    // in localStorage and in whatever another browser on older code writes next, and a rename that
+    // has to reach all four is a rename that will miss one.
+    function canonAt(at) {
+      if (!at || SHORTCUTS.some(s => s.at === at)) return at || '';
+      return SHORTCUTS.some(s => s.at === at + '-prompt') ? at + '-prompt' : at;
+    }
+
+    // What a session is started as, and the start dialogs ask it as a *prompt* — the badges are
+    // `@architect`, not `# Architect`. That is the whole of it as far as the user is concerned: the
+    // opening instruction is the choice, and everything else here is bookkeeping under it.
     //
-    // `role` is what goes on the wire, and the relay knows only its own three; the rest are ways of
-    // working, not roles it can name a pane for, so they ride on `agent` and carry their name as the
-    // pane's label instead. `at` names the SHORTCUTS entry that opens the session — absent from the
-    // list means no opening text, which is where the three undefined ones sit until they are written.
-    // ponytail: prompts for reviewer/arbitrator/orchestrator are TBD; add them to SHORTCUTS under
-    // these `at` names and the badges pick them up with no change here.
+    // `role` is that bookkeeping. It goes on the wire, the relay knows only its own three, and the
+    // rest ride on `agent` and carry their name as the pane's label instead — which is why a pane
+    // started as an Arbitrator is still called "Arbitrator" and not "Agent 1". A role is a thing the
+    // user names in only one place, the arbitrator's own setup, where `#` marks it.
+    //
+    // Orchestrator is gone and Implementer is here: the four are the ways of working this project
+    // actually has. A record still naming the old one resolves to no prompt, which is what it always
+    // had.
     const START_ROLES = [
-      { name: 'Architect', role: 'architect', at: 'architect' },
-      { name: 'Reviewer', role: 'reviewer', at: 'reviewer' },
-      { name: 'Arbitrator', role: 'agent', at: 'arbitrator' },
-      { name: 'Orchestrator', role: 'agent', at: 'orchestrator' },
+      { name: 'Architect', role: 'architect', at: 'architect-prompt' },
+      { name: 'Reviewer', role: 'reviewer', at: 'reviewer-prompt' },
+      { name: 'Implementer', role: 'agent', at: 'implementer-prompt' },
+      { name: 'Arbitrator', role: 'agent', at: 'arbitrator-prompt' },
     ];
+
+    // The badge's own text: the prompt without its suffix, which is what the picker is asking. The
+    // suffix is for the composer, where these sit beside `@test` and `@review-fix` and need to say
+    // they are the opening kind.
+    function startRoleTag(r) {
+      return '@' + String((r || {}).at || '').replace(/-prompt$/, '');
+    }
 
     // What a session is started as when nobody has said otherwise. The first badge is Architect
     // and this is that name written down, because "the first one" is an accident of order and this
     // is a decision: a session is better started as something.
-    const START_DEFAULT_AT = 'architect';
+    const START_DEFAULT_AT = 'architect-prompt';
 
     // And what a session *deliberately* started bare records instead of nothing. Empty is also what
     // a record written before any of this existed says, and the two have to be told apart: one is a
@@ -109,14 +146,14 @@
 
     // The opening text a role badge carries, or '' while its prompt is still to be written.
     function roleStarter(r) {
-      return ((SHORTCUTS.find(s => s.at === (r || {}).at) || {}).text || '').trim();
+      return ((SHORTCUTS.find(s => s.at === canonAt((r || {}).at)) || {}).text || '').trim();
     }
 
     // `at` is the badge's name on disk as well as in SHORTCUTS: a conversation records which role a
     // session was started as so a respawn can start as the same one, and a name is the one part of
     // this list that will still mean something after the list has been reordered.
     function startRoleOf(at) {
-      return START_ROLES.find(r => r.at === at) || null;
+      return START_ROLES.find(r => r.at === canonAt(at)) || null;
     }
 
     // The badge a live pane was started as, read back off its label — every started pane is named

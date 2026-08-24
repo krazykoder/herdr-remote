@@ -441,6 +441,25 @@ test('an automatic conversation says so in the window it is read in, and goes ba
   await expect(head).not.toHaveClass(/auto/);
 });
 
+test('a conversation with nothing running says inactive, on the card and in the window', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .back').click();
+  const card = page.locator('#conversations .conversation-card').first();
+  await expect(card.locator('.conversation-tier.idle')).toHaveCount(0);
+  // The members move to pane ids nothing is open on: the record survives, the panes are gone.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].members = items[0].members.map(m => Object.assign({}, m, {
+      key: JSON.stringify(Object.assign(JSON.parse(m.key), {1: '%gone'})),
+    }));
+    saveConvIndex(items);
+    renderConversations();
+  });
+  await expect(card.locator('.conversation-tier.idle')).toHaveText('inactive');
+  await card.click();
+  await expect(page.locator('.conv-view-head #convViewIdle')).toHaveText('inactive');
+});
+
 test('a conversation with nothing running is drawn hollow, and offers no End', async ({page}) => {
   await openCard(page);
   await page.locator('#convView .back').click();
@@ -860,7 +879,7 @@ test('a session started as something opens as it again, whatever the pane was ca
       const items = loadConvIndex();
       const rec = (await convGet([items[0].members[0].key]))[0];
       rec.key = 'dead:pane';
-      rec.spawn = {agent: 'claude', role: 'agent', label: 'agent bwfbr', starter: 'architect',
+      rec.spawn = {agent: 'claude', role: 'agent', label: 'agent bwfbr', starter: 'architect-prompt',
         project_id: 'p1', project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local'};
       await convPut(rec);
       items[0].members = [{key: 'dead:pane', added: Date.now(), label: 'agent bwfbr'}];
@@ -881,14 +900,14 @@ test('a session started as something opens as it again, whatever the pane was ca
     });
     // The chip's own text, typed at the new pane the way the user would have typed it.
     const want = await page.evaluate(() =>
-      (SHORTCUTS.find(x => x.at === 'architect') || {}).text.trim());
+      (SHORTCUTS.find(x => x.at === 'architect-prompt') || {}).text.trim());
     expect(want).toBeTruthy();
     await expect.poll(() => page.evaluate(() =>
       window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join('\n')))
       .toContain(want.slice(0, 40));
     // And the new pane records the same starter, so this survives being ended and started again.
     expect(await page.evaluate(async () =>
-      (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('architect');
+      (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('architect-prompt');
   });
 
 // The two answers an empty starter used to collapse into one. A record written before starters
@@ -4474,7 +4493,7 @@ test('the role badge is what the session is started as, and what opens it', asyn
   await openNewAgentModal(page);
   // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
   await expect(page.locator('#newAgentRoles .badge.pick'))
-    .toHaveText(['#Architect', '#Reviewer', '#Arbitrator', '#Orchestrator']);
+    .toHaveText(['@architect', '@reviewer', '@implementer', '@arbitrator']);
   await page.locator('#newAgentRoles .badge.pick', {hasText: 'Arbitrator'}).click();
   await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('#Arbitrator');
   // A second Project, chosen from the list behind @+ rather than from the line.
@@ -4511,11 +4530,11 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   await page.evaluate(() => openStartDialog('p1'));
   await expect(page.locator('#startSheet')).toBeVisible();
   await expect(page.locator('#startRoles .badge.pick'))
-    .toHaveText(['#Architect', '#Reviewer', '#Arbitrator', '#Orchestrator']);
+    .toHaveText(['@architect', '@reviewer', '@implementer', '@arbitrator']);
   // The first badge is lit before anything is picked: a session is better started as something,
   // and this dialog has never been opened here. Taking it off again is a tap, and is remembered
   // as an answer — see the end of this test.
-  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('#Architect');
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('@architect');
   // The harness is picked in the same badges, and painted the way the pane header paints it: the
   // kind's own colour, so a badge in a dialog and a badge on a header mean the same thing.
   await expect(page.locator('#startAgents .badge.pick.on')).toHaveText('claude');
@@ -4543,7 +4562,7 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   // Reopens on what it last started as — spawning is repetitive, like the harness and the
   // placement beside it — and the same tap takes it off again.
   await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
-  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('#Architect');
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('@architect');
   await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
   await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
   await page.evaluate(() => { window.__sent.length = 0; });

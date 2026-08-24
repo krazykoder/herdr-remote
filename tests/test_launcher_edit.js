@@ -76,6 +76,7 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
     ARB_IDLE_CHOICES: [0, 5, 15, 30],
     ARB_RUNTIME_CHOICES: [0, 15, 30, 60],
     ARB_LIMITS: {arbSteps: [8, 50], arbRuns: [8, 20], arbMinutes: [45, 480]},
+    canonAt: at => at || '',
     SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief'},
                 {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
     // The phrases the role pills write, which is what the launcher's defaults are resolved
@@ -245,8 +246,8 @@ test('agents are added one tap at a time and each keeps its own role', () => {
   // `at` comes with every member added: a session started with no opening instruction is the
   // rarer answer, so the default is the one that says something.
   assert.deepEqual(e.tiles()[0].members,
-    [{name: 'claude', role: 'proposer', at: 'architect'},
-     {name: 'codex', role: 'critic', at: 'architect'}]);
+    [{name: 'claude', role: 'proposer', at: 'architect-prompt'},
+     {name: 'codex', role: 'critic', at: 'architect-prompt'}]);
 });
 
 test('a member can be named and given a first prompt, and both are stored', () => {

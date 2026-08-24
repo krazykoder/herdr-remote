@@ -714,7 +714,7 @@
       // all: the instruction is in the box where it can be read, so a second place saying it is on
       // would be saying it twice.
       const fill = dockFill();
-      const chips = byDockMru('chip', SHORTCUTS.map((s, i) => ({s, i})), x => x.s.at).map(({s, i}) => {
+      const chips = byDockMru('chip', promptChips(), x => x.s.at).map(({s, i}) => {
         const at = fill ? -1 : dockPicks.indexOf(i);
         return `<button class="xfer-chip${at >= 0 ? ' on' : ''}" onclick="toggleDockChip(${i})" ` +
           `aria-pressed="${at >= 0}" title="${escapeHtml(s.label)}" ` +
@@ -773,7 +773,7 @@
     function openDockMenu() {
       const box = document.getElementById('chipMenu');
       const fill = dockFill();
-      box.innerHTML = SHORTCUTS.map((s, i) =>
+      box.innerHTML = promptChips().map(({s, i}) =>
         `<button class="menu-item" role="${fill ? 'menuitem' : 'menuitemcheckbox'}" ` +
         (fill ? '' : `aria-checked="${dockPicks.includes(i)}" `) +
         `onclick="toggleDockChip(${i})">` +
@@ -872,7 +872,7 @@
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
         .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
       document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
-        badgeHtml(`#${r.name}`, i === newAgentRole, `pickNewAgentRole(${i})`,
+        badgeHtml(startRoleTag(r), i === newAgentRole, `pickNewAgentRole(${i})`,
           {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
         .join('');
       document.getElementById('newAgentProjects').innerHTML = projects.map(p =>

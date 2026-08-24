@@ -52,7 +52,7 @@
     // The starter every new member is given until it is changed. A SHORTCUTS `at` name and not the
     // text itself: the text is edited in one place and a tile saved last month follows it, which is
     // the whole reason the chips are addressed by name everywhere else.
-    const LAUNCHER_DEFAULT_AT = 'architect';
+    const LAUNCHER_DEFAULT_AT = 'architect-prompt';
 
     function launcherId() {
       return 'ql_' + Math.random().toString(36).slice(2, 10);

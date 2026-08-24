@@ -451,6 +451,10 @@
         `<div class="conversation-title"><span class="dot${r.pulse}${r.ended}" style="background:${r.dot}"` +
         ` aria-hidden="true"></span><span class="conv-kind">${convGlyph()}</span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
+        // Nothing running, said in words beside the hollow dot. The dot is the glance; this is
+        // for the reader who has not learned yet that a hollow one means the panes are gone.
+        `${r.liveNames.length ? '' : '<span class="conversation-tier idle" title="Nothing in '
+          + 'this conversation is running. Open it to start a member again.">inactive</span>'}` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
         // not a marker the app writes into what they typed (D4).
         `${r.c.auto ? '<span class="conversation-tier" title="Filed automatically, and dropped ' +
@@ -851,9 +855,10 @@
       // And a record that says nothing at all is a record written before any of this was kept, not
       // a session that asked for silence — those say NO_STARTER. So it falls to the default rather
       // than coming up bare, which is what every other way of starting a session already does.
+      const was = canonAt(spawn.starter);
       const starter = spawn.starter === NO_STARTER ? null
-        : startRoleOf(spawn.starter)
-          || (spawn.starter && roleStarter({at: spawn.starter}) ? {at: spawn.starter} : null)
+        : startRoleOf(was)
+          || (was && roleStarter({at: was}) ? {at: was} : null)
           || startRoleFromLabel(spawn.label)
           || startRoleOf(START_DEFAULT_AT);
       const msg = Object.assign({
@@ -1182,6 +1187,13 @@
       // this is a fact about the conversation that changes while the window is open.
       const tier = document.getElementById('convViewTier');
       if (tier) tier.hidden = !conv.auto;
+      // And whether anything in it is still running, which changes under the reader while the
+      // window is open — a member ending is exactly when this has to appear.
+      const idle = document.getElementById('convViewIdle');
+      if (idle) {
+        const live = new Set(agents.concat(shells).map(x => convMemberKey(x)));
+        idle.hidden = (conv.members || []).some(m => live.has(m.key));
+      }
       const head = view.querySelector('.conv-view-head');
       if (head) head.classList.toggle('auto', !!conv.auto);
       // Written once per open rather than on every redraw: it never changes, and this runs on every

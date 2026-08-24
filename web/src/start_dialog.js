@@ -49,7 +49,12 @@
       const known = (startOptions && startOptions.roles) || [];
       const wire = role && known.includes(role.role) ? role.role
         : (known.includes('agent') ? 'agent' : known[0]);
-      const label = typed || (role && role.at !== role.role ? role.name : '');
+      // The badge's own name against the role it rides on: `@architect` goes out as `architect` and
+      // the relay names the pane, `@arbitrator` goes out as `agent` and would come up called
+      // "Agent 1", so it carries its name instead. Compared without the suffix — that is for the
+      // composer, and the wire has never heard of it.
+      const bare = String((role || {}).at || '').replace(/-prompt$/, '');
+      const label = typed || (role && bare !== role.role ? role.name : '');
       const out = wire ? {role: wire} : {};
       if (label) out.label = label;
       return out;
@@ -241,7 +246,7 @@
       // A duplicate opens the way the pane it came from opened. The wire role alone cannot say
       // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
       // same way a conversation resolves it: what this browser watched, then the pane's name.
-      const dupAt = typeof convStarterOf === 'function' ? convStarterOf(a) : '';
+      const dupAt = canonAt(typeof convStarterOf === 'function' ? convStarterOf(a) : '');
       startPrompt = roleStarter({at: dupAt});
       startStarter = dupAt;
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
@@ -267,7 +272,7 @@
 
     function renderStartRoles() {
       document.getElementById('startRoles').innerHTML = startRoles().map(r =>
-        badgeHtml(`#${r.name}`, r.at === startRolePick, `pickStartRole('${r.at}')`,
+        badgeHtml(startRoleTag(r), r.at === startRolePick, `pickStartRole('${r.at}')`,
           {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
         .join('');
     }

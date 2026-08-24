@@ -143,7 +143,7 @@
       return '<div class="ql-roster">' + roster.map(m => {
         // The @name and not the label: this is the same prompt the composer offers, and a strip
         // that renamed it would be the one place in the app it is not addressed by name.
-        const starter = (SHORTCUTS.find(s => s.at === m.at) || {}).at || '';
+        const starter = (SHORTCUTS.find(s => s.at === canonAt(m.at)) || {}).at || '';
         return `<span class="ql-part${m.arb ? ' arb' : ''}">`
           // Scales for the arbitrator, the robot for a member. It is not a third participant, it is
           // the one deciding between the other two, and a strip drawing all three alike would tell
@@ -546,7 +546,7 @@
         + `<select id="qlAt${i}" aria-label="First prompt for ${escapeHtml(m.name)}">`
         + `<option value=""${at ? '' : ' selected'}>No first prompt</option>`
         + (typeof SHORTCUTS === 'undefined' ? '' : SHORTCUTS.map(sc =>
-            `<option value="${escapeHtml(sc.at)}"${sc.at === at ? ' selected' : ''}>`
+            `<option value="${escapeHtml(sc.at)}"${sc.at === canonAt(at) ? ' selected' : ''}>`
             + `@${escapeHtml(sc.at)} — ${escapeHtml(sc.label)}</option>`).join(''))
         + '</select>'
         + '</div>';

@@ -1819,6 +1819,15 @@
       font-weight: 500;
     }
 
+    /* Nothing in it is running. The same badge as `auto` and a different colour, because it is a
+       different kind of fact: `auto` is about how the conversation was filed and never changes on
+       its own, this is about right now. Orange is the app's amber — there is no --yellow, and this
+       is not a red: an ended conversation is finished, not broken. */
+    .conversation-tier.idle {
+      color: var(--orange);
+      border-color: var(--orange);
+    }
+
     .conversation-count,
     .conversation-meta {
       color: var(--muted);
@@ -3248,10 +3257,10 @@
        conversation; row two is what the record is, which nobody taps. */
     .conv-view-head {
       display: grid;
-      grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+      grid-template-columns: auto auto minmax(0, 1fr) auto auto auto auto;
       grid-template-areas:
-        'back mark title tier who  open'
-        'back sub  sub   sub  sub  sub';
+        'back mark title idle tier who  open'
+        'back sub  sub   sub  sub  sub  sub';
       align-items: center;
       column-gap: 8px;
       row-gap: 0;
@@ -3281,6 +3290,7 @@
     .conv-view-head > .back { grid-area: back; }
     .conv-view-head .conv-kind { grid-area: mark; }
     .conv-view-head .title { grid-area: title; }
+    .conv-view-head #convViewIdle { grid-area: idle; }
     .conv-view-head #convViewTier { grid-area: tier; }
     .conv-view-head #convViewWho { grid-area: who; }
 
@@ -7053,6 +7063,9 @@
       <!-- The same badge the card carries, for the same reason: an automatic conversation is one
            nobody chose to keep, and the window it is read in has to say so before anything typed
            into it is trusted to survive. -->
+      <!-- Left of the tier, and the same badge: what is true now, then what this thread is. -->
+      <span class="conversation-tier idle" id="convViewIdle" hidden
+        title="Nothing in this conversation is running. Start a member again from the roster.">inactive</span>
       <span class="conversation-tier" id="convViewTier" hidden
         title="Filed automatically, and dropped first when space runs out. Rename it to keep it for good.">auto</span>
       <button class="who-btn" id="convViewWho" onclick="toggleConvRoster()" aria-expanded="false"
@@ -7622,7 +7635,7 @@
           <!-- Badges rather than a select, and the same four the conversation's New agent dialog
                offers: a role is how a session is started here, so it is picked the same way in
                both places. Leaving the row empty is a start with no role — allowed, not advised. -->
-          <div class="start-field">Role <span class="field-note">optional · recommended</span>
+          <div class="start-field">Prompt <span class="field-note">optional · recommended</span>
             <div id="startRoles" class="badge-strip"></div>
           </div>
           <div class="start-field">Agent
@@ -7780,7 +7793,7 @@
         </div>
         <!-- What it is started as. The badge carries both halves: the role the relay names the pane
              for, and the @ prompt that opens the session — see START_ROLES. -->
-        <div class="start-field">Role
+        <div class="start-field">Prompt
           <div id="newAgentRoles" class="badge-strip"></div>
         </div>
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
