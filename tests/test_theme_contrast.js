@@ -40,7 +40,10 @@ function contrast(a, b) {
 
 // Everything drawn as text at UI sizes. Status dots are excluded on purpose — they are pure fills
 // with no text riding on them, which is why the light theme keeps them at the dark hue.
-const INK = ['text', 'muted', 'green', 'red', 'blue', 'orange', 'agent-claude', 'shell'];
+// Every agent kind that has a colour of its own is in here. The badge colour is the whole of what
+// says which kind a pane is, so one that is unreadable on a ground is the badge saying nothing.
+const INK = ['text', 'muted', 'green', 'red', 'blue', 'orange',
+             'agent-claude', 'agent-agy', 'agent-kiro', 'shell'];
 const GROUNDS = ['bg', 'surface', 'term-bg'];
 // Accents used as a button fill with a var(--bg) label on top.
 const FILLS = ['green', 'red', 'blue', 'orange'];

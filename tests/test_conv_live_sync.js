@@ -97,6 +97,9 @@ function reset(roster) {
   convLiveAskDone(true);
   noted.length = 0;
   convLiveCache.clear();
+  // Ownership is read out of the index now, so an index left behind by the test before this one
+  // would decide which rows this one's members may draw.
+  recentIndex = [];
   ctx.agents.length = 0;
   for (const a of (roster || [])) ctx.agents.push(a);
 }
@@ -277,14 +280,42 @@ test('a joint thread gives each member its own rows out of the one bucket', () =
   assert.deepEqual(entries.map(e => e.member), [0, 1]);
 });
 
-test('a pane that has exited leaves its history to whoever holds the fingerprint', () => {
-  // The restart case the fingerprint exists for: %1 is gone and %9 is the same work respawned.
+test('a respawned member inherits the pane it recorded itself as continuing', () => {
+  // The restart case the fingerprint exists for: %1 is gone and %9 is the same work respawned —
+  // and says so, because convContinueTranscript wrote %1 onto the member when it moved its key.
   reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A2, was: ['%1']}]}];
   convLiveFetch([KEY_A2]);
   convLiveReceive({fingerprints: [FP_A], turns: [
     paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
   assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
                    ['before the restart', 'after it']);
+});
+
+test('a quit pane does not leak into a conversation that never held it', () => {
+  // The bug this rule replaced a heuristic to fix. Three agy panes in one checkout share one
+  // fingerprint; one of them is quit by hand. It was never in this conversation, and "no longer
+  // live" is not a reason to hand its words to a member that happens to run the same harness.
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arbitrator', members: [{key: KEY_A2}]},
+                 {id: 'c2', name: 'the quit one', members: [{key: KEY_A}]}];
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'said by the pane that was quit'),
+    paneTurn(2, '%9', 1100, 'said in this conversation')]});
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text), ['said in this conversation']);
+});
+
+test('a member that recorded no predecessor inherits nothing', () => {
+  // A member respawned before the link was recorded, and a pane belonging to no conversation at
+  // all — the case widening the old claimed set could never have reached. Its own rows still draw.
+  // The local transcript is untouched either way: convContinueTranscript copied those entries.
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A2}]}];
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
+  assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text), ['after it']);
 });
 
 // --- Where the work landed ---
@@ -809,8 +840,11 @@ test('a respawn walks the old physical pane while keeping the new member as owne
   await convLiveHydrate();
   const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
   reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  // The member says %9 continues %1 — the link convContinueTranscript writes when it moves a
+  // member's key. Without it %1's rows are somebody else's, which is the whole point of the rule.
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: fresh, was: ['%1']}]}];
   convLiveFetch([fresh], true);
-  // The roster query attaches unclaimed %1 history to its %9 respawn.
+  // The roster query attaches %1's history to the %9 respawn that recorded it.
   convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
   sent.length = 0;
   assert.equal(convLiveOlder([fresh]), 1);
@@ -834,6 +868,7 @@ test('a relay too old to echo the owner still ends the walk in the right place',
   await convLiveHydrate();
   const fresh = JSON.stringify(['local', '%9', 'claude', '/work/a']);
   reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: fresh, was: ['%1']}]}];
   convLiveFetch([fresh], true);
   convLiveReceive({fingerprints: [FP_A], turns: deepTurns(CONV_LIVE_ROWS, 801)});
   convLiveOlder([fresh]);

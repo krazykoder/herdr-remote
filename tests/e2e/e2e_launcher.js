@@ -107,9 +107,16 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   page.on('console', m => { if (m.type() === 'error') console.log('  console:', m.text()); });
-  // Every confirm answered yes. The confirm itself is what launcher.spec.js pins; here it is in
-  // the way of the thing being tested.
-  page.on('dialog', d => d.accept());
+  // The launch sheet, answered with nothing typed — a real answer: the launch is then named
+  // `${noun} ${tag}`, which is the shape the checks below match on. The sheet itself is what
+  // launcher.spec.js pins; here it is in the way of the thing being tested.
+  const launch = async () => {
+    await page.waitForSelector('#qlLaunchName', {timeout: 10000});
+    const modal = page.locator('#launcherModal');
+    // Two taps: the first arms Start, the second presses it.
+    await modal.getByRole('button', {name: 'Start', exact: true}).click();
+    await modal.getByRole('button', {name: 'Start?', exact: true}).click();
+  };
 
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`);
@@ -120,7 +127,6 @@ async function main() {
     // Through the form rather than into storage, because "a tile a person made works" is the
     // whole claim and a seeded one skips the half where the form has to produce a legal tile.
     await page.click('#launcher .section-header button');
-    await page.click('#qlAdd');
     await page.fill('#qlName', 'Charts tests');
     await page.fill('#qlCommand', 'pytest -q tests/charts');
     // Scoped to the dialog: the Project strip in the form and the filter chips in the Agents
@@ -133,6 +139,7 @@ async function main() {
 
     const before = board().length;
     await page.locator('.launcher-tile', {hasText: 'Charts tests'}).click();
+    await launch();
     check('pressing it opens a terminal', await waitForPanes(before + 1),
           JSON.stringify(board()));
     const shell = board()[board().length - 1];
@@ -166,22 +173,27 @@ async function main() {
     });
     const agentsBefore = board().filter(p => p.agent).length;
     await page.locator('.launcher-tile', {hasText: 'Solo'}).click();
+    await launch();
     check('a one-agent tile starts one session', await waitForAgents(agentsBefore + 1),
           JSON.stringify(board()));
     const solo = board()[board().length - 1];
     check('with the agent the tile named', solo.agent === 'claude', JSON.stringify(solo));
     check('in the Project the tile named', solo.cwd === '/work/relay', solo.cwd);
-    // Auto conversations are not the launcher's: the app opens one per pane it sees, and the seed
-    // pane on this board has one. What a roster of one must not produce is a made conversation.
-    check('and no conversation for a roster of one',
-          (await page.evaluate(() => loadConvIndex().filter(c => !c.auto).length)) === 0,
-          JSON.stringify(await page.evaluate(() => loadConvIndex())));
-    // The press navigates to the pane it made, and it does so when the pane turns up in a poll —
-    // after the checks above. Waiting for that before closing is what keeps the next tile clickable.
-    await page.waitForFunction(id => activePane === id, solo.pane_id, {timeout: 20000});
-    // Back to the list the way the app gets there. A press that lands on a pane leaves the list
+    // A roster of one gets a conversation too — it is what carries the name the launch was given,
+    // and it outlives the pane id. Auto conversations are not the launcher's: the app opens one per
+    // pane it sees, and the seed pane on this board has one, so only made ones are counted.
+    await page.waitForFunction(() => loadConvIndex().filter(c => !c.auto).length === 1,
+                               null, {timeout: 20000});
+    const soloConv = await page.evaluate(() => loadConvIndex().filter(c => !c.auto)[0]);
+    check('a roster of one lands in a conversation named for the launch',
+          /^agent [a-z0-9]{5}$/.test(soloConv.name) && (soloConv.members || []).length === 1,
+          JSON.stringify(soloConv));
+    // The press ends on that conversation rather than on the pane — they were started together,
+    // even when "they" is one.
+    await page.waitForFunction(id => convViewId === id, soloConv.id, {timeout: 20000});
+    // Back to the list the way the app gets there. A press that lands somewhere leaves the list
     // hidden, and the next tile is then not clickable — not flaky, invisible.
-    await page.evaluate(() => closeTerminal());
+    await page.evaluate(() => closePanel());
     await page.waitForSelector('.launcher-tile', {state: 'visible'});
 
     // --- two agents and an arbitrator ------------------------------------------------------
@@ -206,6 +218,7 @@ async function main() {
 
     const beforeArb = board().length;
     await page.locator('.launcher-tile', {hasText: 'Review pair'}).click();
+    await launch();
     // Three, and one at a time: next_role_label reads the live agent list to pick a name, so two
     // starts in flight can choose the same one and the relay renames around the collision.
     // A refusal is a toast, so a press that went nowhere says why here rather than only as a
@@ -223,11 +236,12 @@ async function main() {
 
     // The conversation holds the two, and not the third: an arbitrator is not a participant in
     // the conversation it decides about, it is the one reading it.
-    await page.waitForFunction(() => loadConvIndex().filter(c => !c.auto).length === 1,
+    await page.waitForFunction(() => loadConvIndex().filter(c => !c.auto).length === 2,
                                null, {timeout: 20000});
-    const conv = await page.evaluate(() => loadConvIndex().filter(c => !c.auto)[0]);
-    check('the two members land in one conversation named for the tile',
-          conv.name === 'Review pair' && (conv.members || []).length === 2,
+    const conv = await page.evaluate(() =>
+      loadConvIndex().filter(c => !c.auto).find(c => (c.members || []).length === 2));
+    check('the two members land in one conversation named for the launch',
+          !!conv && /^conversation [a-z0-9]{5}$/.test(conv.name),
           JSON.stringify(conv));
 
     // And the session itself, which is the relay's to confirm. arbSessions is what it broadcast.
@@ -281,6 +295,7 @@ async function main() {
 
     const beforeStale = board().length;
     await stale.click();
+    await launch();
     check('and it runs where it was repointed to', await waitForPanes(beforeStale + 1),
           JSON.stringify(board()));
     const moved = board()[board().length - 1];

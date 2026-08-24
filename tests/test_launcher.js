@@ -29,7 +29,10 @@ const NAMES = ['LAUNCHER_KEY', 'LAUNCHER_PENDING_KEY', 'LAUNCHER_MAX', 'LAUNCHER
                'launcherPreview', 'launcherStrict', 'launcherRunMsg', 'launcherSpawnMsg',
                'launcherBatch', 'launcherBatchNext', 'launcherBatchDone', 'launcherRoster',
                'launcherArbMsg',
-               'launcherWantsConv', 'launcherWantsArb'];
+               'launcherWantsConv', 'launcherWantsArb',
+               'LAUNCHER_DEFAULT_AT', 'launcherTag', 'launcherNoun', 'launcherAutoName',
+               'launcherClean', 'launcherMemberName', 'launcherNamed',
+               'LAUNCHER_ARB_SLOTS', 'launcherArbOrder'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
 
@@ -111,9 +114,10 @@ test('a spawn member becomes a start_agent carrying no key the relay would refus
   const tile = spawnTile();
   const msg = launcherSpawnMsg(tile, tile.members[0]);
   // The wire role is the relay's, not the tile's. start_agent knows architect, reviewer and agent
-  // and refuses the whole message for anything else — so a role the user typed to tell the
-  // arbitrator what this member is for rides as the pane's label instead.
-  assert.deepEqual(msg, {type: 'start_agent', name: 'claude', role: 'agent', label: 'implementer',
+  // and refuses the whole message for anything else — and the role the user typed is not one of
+  // those. It rides on arb_start and nowhere else: it is what the *arbitrator* is told this member
+  // is for, and it means nothing to the agent, which is never shown it.
+  assert.deepEqual(msg, {type: 'start_agent', name: 'claude', role: 'agent',
                          project_id: 'p1', placement: 'new_workspace'});
   for (const k of Object.keys(msg)) assert.ok(START_AGENT_FIELDS.includes(k), `leaked ${k}`);
   assert.ok(!('members' in msg));
@@ -131,6 +135,67 @@ test('a member with its own label carries it, and nothing empty is ever sent', (
   // one from an absent it.
   const bare = launcherSpawnMsg(spawnTile({slot: ''}), {name: 'codex', role: 'reviewer'});
   assert.ok(!('slot' in bare));
+});
+
+test('a role never becomes a pane label, however short it is', () => {
+  const {launcherSpawnMsg} = pure();
+  // The role field is the arbitration setup's own — 240 characters of prose, and a
+  // comma-separated line as soon as two pills are tapped — and validate_pane_label refuses a label
+  // over 32 outright. A role riding here as the label is not a bad name: it is the whole
+  // start_agent rejected, and the batch behind it. It is also simply not a name.
+  const long = spawnTile({members: [{name: 'claude',
+    role: 'writes the code, review only, minimal focused test'}]});
+  assert.ok(!('label' in launcherSpawnMsg(long, long.members[0])),
+            'absent, so the relay names the pane');
+  const short = spawnTile({members: [{name: 'claude', role: 'review only'}]});
+  assert.ok(!('label' in launcherSpawnMsg(short, short.members[0])));
+  // The member's own name is what names the pane, and the only thing that does.
+  const named = spawnTile({members: [{name: 'claude', role: 'review only', label: 'Lead'}]});
+  assert.equal(launcherSpawnMsg(named, named.members[0]).label, 'Lead');
+});
+
+test('an arbitrated tile with no clocks and no limits leaves both to the relay', () => {
+  const {launcherArbMsg} = pure();
+  const msg = launcherArbMsg(arbTile(), 'c_1', [{pane_id: 'w1:p1'}, {pane_id: 'w2:p1'},
+                                                {pane_id: 'w3:p1'}]);
+  assert.deepEqual(msg.triggers, {on_turn_end: true, idle_ms: 0, runtime_ms: 0});
+  // Absent, not restated: an absent budget is the relay's own DEFAULT_BUDGET, and a second copy of
+  // those numbers here is one to keep in step by hand for no gain.
+  assert.ok(!('budget' in msg));
+  assert.ok(!('warmup' in msg));
+  assert.equal(msg.paused, true, 'a tile lays out a room, it does not make its first decision');
+});
+
+test('the clocks and limits a tile was given ride with it', () => {
+  const {launcherArbMsg} = pure();
+  const tile = arbTile({idle: 5, runtime: 30, steps: 12, runs: 4, minutes: 90, warmup: true});
+  const msg = launcherArbMsg(tile, 'c_1', [{pane_id: 'w1:p1'}, {pane_id: 'w2:p1'},
+                                           {pane_id: 'w3:p1'}]);
+  // Minutes on a tile, milliseconds on the wire — the unit a person thinks about a stuck agent in
+  // is not the one the relay counts in.
+  assert.deepEqual(msg.triggers, {on_turn_end: true, idle_ms: 300000, runtime_ms: 1800000});
+  assert.deepEqual(msg.budget,
+    {max_steps: 12, max_consecutive: 4, max_wall_clock_ms: 5400000});
+  assert.equal(msg.warmup, true);
+});
+
+test('a tile that changed one limit sends that one and leaves the rest alone', () => {
+  const {launcherArbMsg} = pure();
+  const msg = launcherArbMsg(arbTile({steps: 20}), 'c_1',
+                             [{pane_id: 'w1:p1'}, {pane_id: 'w2:p1'}, {pane_id: 'w3:p1'}]);
+  assert.deepEqual(msg.budget, {max_steps: 20});
+});
+
+test('a tile that names no Project is pressable — the press is where that is asked', () => {
+  const {launcherGate} = pure();
+  const env = {projects: [{id: 'p1'}], startOptions: {terminal: true, agents: ['claude', 'codex']}};
+  assert.deepEqual(launcherGate(runTile({project_id: ''}), env), {ok: true, reason: '', badge: ''});
+  // Not repointable, because nothing is pointing anywhere. A relay with no Projects at all is the
+  // one thing that makes a template unpressable, and it says so rather than opening an empty sheet.
+  const none = launcherGate(runTile({project_id: ''}), {projects: [], startOptions: env.startOptions});
+  assert.equal(none.badge, 'No Projects');
+  // A tile that *does* name one this relay has never heard of is still the stale pointer it was.
+  assert.equal(launcherGate(runTile({project_id: 'gone'}), env).badge, 'Missing Project');
 });
 
 test('launcherStrict is what makes a leak a test failure instead of a silent no-op', () => {
@@ -156,7 +221,9 @@ test('launcherValid names the one thing wrong, and accepts a good tile', () => {
   assert.equal(launcherValid(spawnTile()), '');
   assert.match(launcherValid(runTile({label: ' '})), /name/);
   assert.match(launcherValid(runTile({label: 'x'.repeat(LAUNCHER_LABEL_MAX + 1)})), /characters/);
-  assert.match(launcherValid(runTile({project_id: ''})), /Project/);
+  // No Project is legal and is the more useful tile: a template, pressed into whichever tree wants
+  // it. The Project is mandatory at the press instead — see launcherAskProject.
+  assert.equal(launcherValid(runTile({project_id: ''})), '');
   assert.match(launcherValid(runTile({command: '  '})), /command/);
   assert.match(launcherValid(runTile({command: 'x'.repeat(4001)})), /too long/);
   assert.match(launcherValid(spawnTile({members: []})), /at least one/);
@@ -247,22 +314,120 @@ test('serialize and parse round-trip, and the cap holds on both sides', () => {
 
 // --- rosters ----------------------------------------------------------------
 
-test('a conversation is for several members; one pane has nothing to compare', () => {
+test('every spawn lands on a conversation, including a spawn of one', () => {
   const {launcherWantsConv} = pure();
   assert.equal(launcherWantsConv(spawnTile()), true);
-  assert.equal(launcherWantsConv(spawnTile({members: [{name: 'claude'}]})), false);
+  // One member gets one too: it is what carries the name the launch was given, and it outlives
+  // the pane id. Only a tile with no roster at all — which launcherValid refuses — has none.
+  assert.equal(launcherWantsConv(spawnTile({members: [{name: 'claude'}]})), true);
+  assert.equal(launcherWantsConv(runTile()), false);
 });
 
-test('an arbitrator is only meaningful at exactly two, and is kept when it is not', () => {
+// --- the name a launch runs under -------------------------------------------
+
+test('an unnamed launch is named for what it makes, plus a tag', () => {
+  const {launcherNamed, launcherNoun} = pure();
+  assert.equal(launcherNoun(runTile()), 'terminal');
+  assert.equal(launcherNoun(spawnTile({members: [{name: 'claude'}]})), 'agent');
+  assert.equal(launcherNoun(spawnTile()), 'conversation');
+  assert.match(launcherNamed(runTile(), '').label, /^terminal [a-z0-9]{5}$/);
+  assert.match(launcherNamed(spawnTile(), '   ').label, /^conversation [a-z0-9]{5}$/);
+});
+
+test('a typed name is used as typed, and scrubbed of what a pane label cannot carry', () => {
+  const {launcherNamed, LAUNCHER_LABEL_MAX} = pure();
+  // The tag is on the launch name too: one press is one tag, worn by the conversation and by
+  // every pane in it.
+  assert.match(launcherNamed(runTile(), '  Nightly run  ').label, /^Nightly run [a-z0-9]{5}$/);
+  // validate_pane_label refuses these outright, so an unscrubbed name is a launch the relay
+  // rejects with nothing on screen saying why.
+  assert.match(launcherNamed(runTile(), 'a\u0007b\u007f').label, /^ab [a-z0-9]{5}$/);
+  assert.equal(launcherNamed(runTile(), 'x'.repeat(80)).label.length, LAUNCHER_LABEL_MAX);
+});
+
+test('the stored tile is never renamed by a press', () => {
+  const {launcherNamed} = pure();
+  const tile = spawnTile();
+  const named = launcherNamed(tile, 'Tonight');
+  assert.equal(tile.label, 'Review pair');
+  assert.match(named.label, /^Tonight [a-z0-9]{5}$/);
+  assert.notEqual(named.members, tile.members);
+});
+
+test('a named member carries the launch tag, so two presses are two panes apart', () => {
+  const {launcherNamed} = pure();
+  const tile = spawnTile({members: [{name: 'claude', label: 'Reviewer'},
+                                    {name: 'codex', label: 'Builder'}]});
+  const named = launcherNamed(tile, 'Tonight');
+  const tag = named.label.split(' ').pop();
+  assert.match(tag, /^[a-z0-9]{5}$/);
+  assert.deepEqual(named.members.map(m => m.label),
+                   [`Reviewer ${tag}`, `Builder ${tag}`]);
+  // Every member of one launch shares the tag: that is what says they belong together.
+  assert.equal(named.members[0].label.split(' ').pop(),
+               named.members[1].label.split(' ').pop());
+});
+
+test('a member the template never named is named for its kind, and still tagged', () => {
+  const {launcherNamed} = pure();
+  const named = launcherNamed(spawnTile(), 'Tonight');
+  const tag = named.label.split(' ').pop();
+  assert.deepEqual(named.members.map(m => m.label), [`claude ${tag}`, `codex ${tag}`]);
+  // Except when it is the only one — pane and conversation both wear the launch name, with no
+  // second copy of the tag.
+  const solo = launcherNamed(spawnTile({members: [{name: 'claude'}]}), 'Tonight');
+  assert.equal(solo.members[0].label, solo.label);
+  assert.match(solo.label, /^Tonight [a-z0-9]{5}$/);
+  const unnamed = launcherNamed(spawnTile({members: [{name: 'claude'}]}), '');
+  assert.match(unnamed.members[0].label, /^agent [a-z0-9]{5}$/);
+});
+
+test('a long member name is trimmed to fit its tag, never the other way round', () => {
+  const {launcherNamed, LAUNCHER_LABEL_MAX} = pure();
+  const named = launcherNamed(
+    spawnTile({members: [{name: 'claude', label: 'x'.repeat(60)}]}), '');
+  assert.ok(named.members[0].label.length <= LAUNCHER_LABEL_MAX);
+  assert.match(named.members[0].label, /^x+ [a-z0-9]{5}$/);
+});
+
+// --- who is Agent 1 --------------------------------------------------------
+
+test('the implementer is picked first, and is then off the table for the reviewer', () => {
+  const {launcherArbOrder} = pure();
+  const kinds = ms => launcherArbOrder(ms).map(m => m.name);
+  // The plain case: the preferred pair, whichever order they were added in.
+  assert.deepEqual(kinds([{name: 'codex'}, {name: 'claude'}]), ['claude', 'codex']);
+  // One preferred kind and one that is on neither list: the preferred one takes the slot that
+  // wants it and the stranger fills what is left, whichever order they were added in.
+  assert.deepEqual(kinds([{name: 'zed'}, {name: 'codex'}]), ['zed', 'codex']);
+  assert.deepEqual(kinds([{name: 'codex'}, {name: 'zed'}]), ['zed', 'codex']);
+  // Two of the same kind. The first is Agent 1 and is then gone, so Agent 2 is the second copy
+  // and not the same pane named twice.
+  const two = launcherArbOrder([{name: 'claude', label: 'A'}, {name: 'claude', label: 'B'}]);
+  assert.deepEqual(two.map(m => m.label), ['A', 'B']);
+  // Down the lists: kiro is on both, and claude's slot claims it before codex's can.
+  assert.deepEqual(kinds([{name: 'agy'}, {name: 'kiro'}]), ['kiro', 'agy']);
+  // Nothing to order is not a crash, and anything past the two slots keeps its place.
+  assert.deepEqual(kinds([]), []);
+  assert.deepEqual(kinds([{name: 'agy'}, {name: 'claude'}, {name: 'pi'}]),
+                   ['claude', 'pi', 'agy']);
+});
+
+test('an arbitrator decides between two of the roster, whatever size the roster is', () => {
+  // The relay's MEMBERS_REQUIRED is two and stays two. That fixes the size of the *pair*, not the
+  // size of the room — a conversation of three can have two of them arbitrated, which is what the
+  // setup dialog has always allowed by asking Agent 1 and Agent 2 as selects.
   const {launcherWantsArb} = pure();
   const arb = {name: 'claude', role: 'arbitrator'};
   assert.equal(launcherWantsArb(spawnTile({arbitrator: arb})), true);
   const three = spawnTile({arbitrator: arb,
     members: [{name: 'claude'}, {name: 'codex'}, {name: 'claude'}]});
-  assert.equal(launcherWantsArb(three), false);
-  // Ignored, not erased: edited back down to two it works again, which it could not do if
-  // widening the roster had dropped the field.
-  assert.equal(three.arbitrator, arb);
+  assert.equal(launcherWantsArb(three), true);
+  // One member is still nothing to decide between, and the field is kept rather than erased: a
+  // roster narrowed to one and widened again must still have the arbitrator it was given.
+  const one = spawnTile({arbitrator: arb, members: [{name: 'claude'}]});
+  assert.equal(launcherWantsArb(one), false);
+  assert.equal(one.arbitrator, arb);
 });
 
 test('the roster a spawn starts is the members, plus the arbitrator last when there is one', () => {
@@ -274,9 +439,14 @@ test('the roster a spawn starts is the members, plus the arbitrator last when th
   // decides between — so it is the pane that most wants the other two to already be there.
   assert.equal(three[2].arb, true);
   assert.equal(three[2].label, 'Arb');
+  // Four panes: the whole roster starts, and the arbitrator is still last. It decides between the
+  // first two of them — see launcherArbMsg — and the third is simply in the room.
+  assert.deepEqual(launcherRoster(spawnTile({arbitrator: {name: 'claude'},
+    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})).map(m => m.name),
+    ['claude', 'codex', 'pi', 'claude']);
+  // One member is nothing to decide between, so the arbitrator is carried and not started.
   assert.equal(launcherRoster(spawnTile({arbitrator: {name: 'claude'},
-    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})).length, 3,
-    'an arbitrator at any size but two is carried and not started');
+    members: [{name: 'claude'}]})).length, 1);
 });
 
 test('an arbitrated tile needs a kind to decide and something to decide about', () => {
@@ -286,10 +456,14 @@ test('an arbitrated tile needs a kind to decide and something to decide about', 
   // The relay refuses an empty scope outright, so an editor that saved one would be saving a
   // tile that can only fail.
   assert.match(launcherValid(arbTile({scope: '  '})), /deciding about/);
-  // But only when it is actually going to be used. A tile widened to three keeps its arbitrator
-  // and must stay savable, or widening a roster becomes a trap.
+  // Three members with an arbitrator is an arbitrated tile too, so it is held to the same two
+  // answers — a scope nobody wrote is a session the relay refuses.
+  assert.match(launcherValid(spawnTile({arbitrator: {}, scope: '',
+    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})), /needs a kind/);
+  // But only when it is actually going to be used. A tile narrowed to one member keeps its
+  // arbitrator and must stay savable, or narrowing a roster becomes a trap.
   assert.equal(launcherValid(spawnTile({arbitrator: {}, scope: '',
-    members: [{name: 'claude'}, {name: 'codex'}, {name: 'pi'}]})), '');
+    members: [{name: 'claude'}]})), '');
 });
 
 test('arbitration being off on the relay closes the gate rather than dropping the arbitrator', () => {
@@ -318,7 +492,7 @@ test('the arb_start a finished roster turns into is the one the setup dialog sen
     type: 'arb_start', conversation: 'c_x', scope: 'Which approach ships',
     members: [{pane_id: 'w1:p1', role: 'implementer'}, {pane_id: 'w2:p1', role: 'reviewer'}],
     arbitrator: {pane_id: 'w3:p1'},
-    triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0}, paused: false,
+    triggers: {on_turn_end: true, idle_ms: 0, runtime_ms: 0}, paused: true,
   });
   // Pane ids and nothing else about who they are: the relay reads a participant's identity off
   // its own pane list, because a fingerprint this browser supplies is one it can have stale.

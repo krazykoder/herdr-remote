@@ -524,10 +524,14 @@ test('the thread offers the window before it, and says when there is not one', a
     return !!btn && !!msg && btn.getBoundingClientRect().top < msg.getBoundingClientRect().top;
   })).toBe(true);
 
-  // Pressed until the record runs out. The fake herdr's log starts where this run did, so that
-  // takes a couple of windows at most — and reaching it is a different answer from a button that
-  // did nothing, which is the whole point of the control saying so.
-  for (let i = 0; i < 6 && await older.count(); i++) {
+  // Pressed until the button goes away, not a fixed number of times: this file shares one relay
+  // across its tests and the fake herdr writes a turn per poll, so how many windows back the
+  // record holds by the time this runs depends on what ran before it. Bounded by the app's own
+  // ceiling — CONV_LIVE_DEEP_MAX / CONV_LIVE_ROWS presses reach it, and one more collects the
+  // empty answer that says the record is out — so a walk that never ends still fails the assert
+  // below rather than hanging. Reaching the bottom is a different answer from a button that did
+  // nothing, which is the whole point of the control saying so.
+  for (let i = 0; i < 12 && await older.count(); i++) {
     await older.click();
     await page.waitForTimeout(200);
   }
@@ -554,7 +558,8 @@ test('the conversation window offers the same way back', async ({page}) => {
 
   const older = page.locator('#convViewThread .conv-older-btn');
   await expect(older).toBeVisible();
-  for (let i = 0; i < 6 && await older.count(); i++) {
+  // Bounded the same way, and for the same reason, as the pane thread above.
+  for (let i = 0; i < 12 && await older.count(); i++) {
     await older.click();
     await page.waitForTimeout(200);
   }

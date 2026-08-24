@@ -534,6 +534,11 @@
     const CONV_ENTRY_MAX = 5000, CONV_MEMBER_MAX = 8, CONV_CONV_MAX = 200, CONV_TRANSCRIPT_MAX = 500;
     const CONV_ROSTER_MAX = 200, CONV_AUTO_ROSTER_MAX = 20;
 
+    // How many prior panes one member keeps on its `was` list. A session respawned daily for a
+    // month is what this bounds, and the links it drops are the oldest — whose rows the relay's
+    // record has long since pruned anyway.
+    const CONV_WAS_MAX = 20;
+
     // A corrupt blob is no conversations, never a half-index — the contract parsePairs already
     // holds to, and for the same reason: a store that outlives the panes it describes will one day
     // be read by a version that did not write it.

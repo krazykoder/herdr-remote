@@ -49,8 +49,121 @@
     // role stays the neutral one.
     const LAUNCHER_ROLE = 'agent';
 
+    // The starter every new member is given until it is changed. A SHORTCUTS `at` name and not the
+    // text itself: the text is edited in one place and a tile saved last month follows it, which is
+    // the whole reason the chips are addressed by name everywhere else.
+    const LAUNCHER_DEFAULT_AT = 'architect';
+
     function launcherId() {
       return 'ql_' + Math.random().toString(36).slice(2, 10);
+    }
+
+    // The suffix an unnamed launch runs under. Five characters is short enough to still read as a
+    // tag rather than an id, and wide enough that two presses of one tile in the same minute do
+    // not land on the same name — which is the whole reason a launch is named apart from its tile.
+    const LAUNCHER_TAG_LEN = 5;
+    const LAUNCHER_TAG_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+    function launcherTag() {
+      let out = '';
+      for (let i = 0; i < LAUNCHER_TAG_LEN; i++) {
+        out += LAUNCHER_TAG_ALPHABET[Math.floor(Math.random() * LAUNCHER_TAG_ALPHABET.length)];
+      }
+      return out;
+    }
+
+    // What this tile makes, in one word. Read off the roster and not off launcherWantsConv: every
+    // spawn lands on a conversation now, but one agent in one is still an agent to the person who
+    // pressed it, and calling it a conversation would name the container instead of the thing.
+    function launcherNoun(tile) {
+      if (!tile || tile.action === 'run') return 'terminal';
+      return (Array.isArray(tile.members) ? tile.members.length : 0) > 1 ? 'conversation' : 'agent';
+    }
+
+    function launcherAutoName(tile) {
+      return `${launcherNoun(tile)} ${launcherTag()}`;
+    }
+
+    // A name that is about to become a pane label, made safe to be one. validate_pane_label refuses
+    // a control character outright and caps the length, so an unscrubbed name is a launch the relay
+    // rejects with nothing on screen saying why.
+    function launcherClean(name) {
+      return String(name || '').replace(/[\u0000-\u001f\u007f]/g, '').trim()
+        .slice(0, LAUNCHER_LABEL_MAX);
+    }
+
+    // A member's pane name for one launch. The template's name plus the launch's tag, always —
+    // a tile pressed twice is two panes, and two panes called "Reviewer" are two the roster, the
+    // conversation and herdr's own status line all fail to tell apart. The name is trimmed to fit
+    // the tag rather than the tag trimmed off the end: the tag is the half that makes it unique.
+    //
+    // '' for a member the template never named, which is what leaves launcherSpawnMsg's own
+    // fallbacks — the role, then the relay — in charge, exactly as before.
+    function launcherMemberName(member, tag, fallback) {
+      const own = launcherClean((member && member.label) || '') || launcherClean(fallback || '');
+      if (!own) return '';
+      return `${own.slice(0, LAUNCHER_LABEL_MAX - tag.length - 1).trim()} ${tag}`;
+    }
+
+    // Who is Agent 1 and who is Agent 2 when an arbitrator is appointed, and what each is there
+    // for. Agent 1 writes, Agent 2 reviews what it wrote, and both propose what comes next — the
+    // shape nearly every arbitrated pair is set up as, offered rather than typed out again.
+    //
+    // The preference is by harness, in order, because the two jobs are not interchangeable: the
+    // implementer is picked first and is then off the table for the reviewer, so a roster with only
+    // one of the preferred kinds still fills both slots instead of naming the same pane twice.
+    const LAUNCHER_ARB_SLOTS = [
+      {prefer: ['claude', 'kiro', 'pi', 'agy'], tags: ['implement', 'test-min', 'fix-code', 'next']},
+      {prefer: ['codex', 'kiro', 'pi', 'agy'], tags: ['fix-code', 'review', 'next']},
+    ];
+
+    // The roster in slot order. A copy, and everything past the slots kept in the order it was in:
+    // the tile is the user's list and this only decides which two of it are the pair.
+    // Every preferred kind is claimed before anything falls back, and not slot by slot: a roster of
+    // codex and something neither slot names would otherwise hand codex to the implementer, because
+    // that slot ran out of preferences first and took whatever was on top.
+    function launcherArbOrder(members) {
+      const left = (members || []).slice();
+      const picked = LAUNCHER_ARB_SLOTS.map(slot => {
+        let at = -1;
+        slot.prefer.some(kind => { at = left.findIndex(m => m && m.name === kind); return at >= 0; });
+        return at < 0 ? null : left.splice(at, 1)[0];
+      });
+      return picked.map(m => m || left.shift()).filter(Boolean).concat(left);
+    }
+
+    // The tile as *this* press will run it. A copy and never a write back into the document: the
+    // name was typed for one launch, and a tile that renamed itself on every press would be a
+    // button labelled with whatever it last did.
+    function launcherNamed(tile, name) {
+      const tag = launcherTag();
+      // The tag goes on the launch's own name too, not only on the panes under it. One press is
+      // one tag: the conversation, every member and the arbitrator all wear it, which is what makes
+      // "which of these three sessions is the one I started at 11" a question the names answer.
+      const label = launcherMemberName({label: name}, tag, launcherNoun(tile));
+      const out = Object.assign({}, tile, {label: label});
+      const members = Array.isArray(out.members) ? out.members : [];
+      if (members.length) {
+        // One member and no name of its own falls back to the launch's: there is nothing to tell
+        // it apart from, so the pane, its conversation and the tag all say the same thing. Several
+        // members do not — the launch name is the room's, and every pane wearing it is the one
+        // roster nobody can read.
+        out.members = members.map(m => {
+          // A one-agent launch is named once: its pane and conversation are the same thing until
+          // the member is deliberately given a name of its own.
+          const own = launcherClean(m.label || '');
+          // A member the template never named falls back to its kind, so it is `claude a1b2c` and
+          // not whatever herdr would have called it: an untagged pane in a tagged roster is the one
+          // nobody can place.
+          return Object.assign({}, m, {label: members.length === 1 && !own
+            ? label : launcherMemberName(m, tag, m.name)});
+        });
+      }
+      if (out.arbitrator) {
+        out.arbitrator = Object.assign({}, out.arbitrator,
+          {label: launcherMemberName(out.arbitrator, tag, 'arbiter')});
+      }
+      return out;
     }
 
     // Anything unreadable falls back to empty. This is a document a user can edit and a second
@@ -89,7 +202,9 @@
       // Exactly the characters validate_pane_label refuses (ord < 0x20, or 0x7F). This label is
       // sent as a pane label, and a control character there corrupts herdr's status line.
       if (/[\u0000-\u001f\u007f]/.test(label)) return 'No control characters';
-      if (!tile.project_id) return 'Pick a Project';
+      // No Project is a legal tile and the more useful one: it is a template rather than a button,
+      // the same roster pressed into whichever tree wants it. The Project is then asked for at the
+      // press, where it is mandatory — see launcherAskProject.
       if (LAUNCHER_ACTIONS.indexOf(tile.action) < 0) return 'Unknown action';
       if (tile.action === 'run') {
         const command = typeof tile.command === 'string' ? tile.command.trim() : '';
@@ -104,6 +219,9 @@
       if (!members.length) return 'Add at least one agent';
       if (members.length > LAUNCHER_MEMBERS_MAX) return `At most ${LAUNCHER_MEMBERS_MAX} agents`;
       if (members.some(m => !m || typeof m.name !== 'string' || !m.name)) return 'Every agent needs a kind';
+      if (members.some(m => /[\u0000-\u001f\u007f]/.test(String(m.label || '')))) {
+        return 'No control characters in an agent name';
+      }
       // Only when the arbitrator is one this tile can actually use. A tile edited from three
       // members back to two keeps whatever arbitrator it had — see launcherWantsArb — and the
       // same rule has to hold going the other way: three members with a leftover arbitrator is a
@@ -135,7 +253,14 @@
         return { ok: false, reason: 'Needs a newer app', badge: 'Unsupported' };
       }
       if (bad) return { ok: false, reason: bad, badge: 'Broken' };
-      if (!projects.some(p => p.id === tile.project_id)) {
+      if (!tile.project_id) {
+        // A template is pressed *into* a Project, so all this can check is that there is one to
+        // choose. Not a stale pointer, so not repointable — the press asks.
+        if (!projects.length) {
+          return { ok: false, reason: 'This relay has no Projects configured',
+                   badge: 'No Projects' };
+        }
+      } else if (!projects.some(p => p.id === tile.project_id)) {
         return { ok: false, reason: 'That Project is not configured on this relay',
                  badge: 'Missing Project' };
       }
@@ -221,11 +346,15 @@
         role: LAUNCHER_ROLE,
         project_id: tile.project_id,
         placement: LAUNCHER_PLACEMENT,
-        // The member's own label when it has one, then the role it was given — which is the name
-        // anybody reading the roster wanted — and otherwise absent, leaving the relay to name it.
+        // The member's own name, and otherwise absent — leaving the relay to name the pane.
         // Never the tile's label: that names the group, and three panes sharing it would be three
-        // collisions the relay has to rename its way out of.
-        label: member.label || (member.role !== LAUNCHER_ROLE ? member.role : ''),
+        // collisions the relay has to rename its way out of. And never the *role*: a role is what
+        // the arbitrator is told this member is for, it means nothing to the agent itself, and it
+        // is prose — the arbitration setup's own 240-character field, a comma-separated line as
+        // soon as two pills are tapped. validate_pane_label refuses a label over 32 outright, so a
+        // role sent here is not a bad name, it is the whole start_agent rejected and the batch
+        // behind it.
+        label: member.label,
         slot: tile.slot,
       }, START_AGENT_FIELDS);
     }
@@ -258,18 +387,26 @@
       return !!batch && batch.panes.length === batch.members.length;
     }
 
-    // A conversation is what several panes land on, and one pane does not need one: a conversation
-    // of one is a record with nothing to compare, and the pane's own thread already shows it.
+    // Every spawn lands on a conversation, including a spawn of one. A conversation of one has
+    // nothing to compare — but it is what carries the name the launch was given, it is where the
+    // record of that name lives once the pane id has been reused, and a single agent started from
+    // a tile is the same kind of thing as three started from one.
     function launcherWantsConv(tile) {
-      return (Array.isArray(tile.members) ? tile.members.length : 0) > 1;
+      return (Array.isArray(tile.members) ? tile.members.length : 0) > 0;
     }
 
-    // An arbitrator reads two members and decides who is written to next, so a roster of any other
-    // size has nothing for it to do. Ignored rather than refused: a tile edited from three members
-    // back to two should not have silently lost its arbitrator on the way.
+    // An arbitrator reads *two* members and decides who is written to next — MEMBERS_REQUIRED in
+    // the relay, and not something this changes. What it does not fix is the size of the room: a
+    // conversation of five can have two of them arbitrated, which is exactly what the setup dialog
+    // has always allowed by asking Agent 1 and Agent 2 as selects. So a tile is the same: two or
+    // more members, and the pair is the first two of them.
+    //
+    // First two rather than a stored pair of indices, because launcherArbOrder already puts the
+    // roster in slot order and the selects in the editor reorder it. An index would be a second
+    // way to say the same thing, and one that goes stale the moment a member above it is dropped.
     function launcherWantsArb(tile) {
       return !!(tile && tile.arbitrator)
-        && (Array.isArray(tile.members) ? tile.members.length : 0) === 2;
+        && (Array.isArray(tile.members) ? tile.members.length : 0) >= 2;
     }
 
     // The arb_start a finished roster turns into. `panes` is what the batch collected, in the order
@@ -281,22 +418,55 @@
     // stale. Same rule arbStart follows, and the reason this builds the same message rather than a
     // launcher-shaped one.
     function launcherArbMsg(tile, convId, panes) {
-      const members = (tile.members || []).map((m, i) => {
+      // The first two, and never the whole roster: the relay takes exactly two and the rest of the
+      // conversation is simply not what this session is deciding between. They are panes[0] and
+      // panes[1] because the batch starts the roster in order — see launcherRoster.
+      const members = (tile.members || []).slice(0, 2).map((m, i) => {
         const out = { pane_id: panes[i].pane_id };
         if (m.role) out.role = m.role;
         return out;
       });
-      return {
+      const msg = {
         type: 'arb_start', conversation: convId, scope: String(tile.scope || '').trim(),
         members: members,
         arbitrator: { pane_id: panes[panes.length - 1].pane_id },
-        // What the setup dialog opens on, so a tile and a hand-appointed session behave the same
-        // until somebody edits one. Both clocks off: a turn ending is the trigger that needs no
-        // guessing, and an idle timer picked here would be a number nobody chose.
-        triggers: { on_turn_end: true, idle_ms: 0, runtime_ms: 0 },
-        // Armed. "Brief only" is the answer for a room being assembled by hand; a tile has already
-        // said what it wants, and a session that arrives paused is one more tap to do nothing.
-        paused: false,
+        // A turn ending is the trigger that needs no guessing and is always on. The two clocks are
+        // whatever the tile was given and off when it was given none, exactly as the setup dialog
+        // opens: a clock nobody asked for is an unattended loop spending budget.
+        triggers: { on_turn_end: true,
+                    idle_ms: launcherMinutes(tile.idle), runtime_ms: launcherMinutes(tile.runtime) },
+        // A tile lays out a room but does not make its first decision for it.  The person can
+        // review the members and scope, then arm it from the conversation.
+        paused: true,
       };
+      // Only when the tile carries them. An absent budget is the relay's DEFAULT_BUDGET, which is
+      // the one place those numbers are authoritative — restating them here would be a second copy
+      // to keep in step for no gain, and the editor already clamps what it writes against
+      // ARB_LIMITS.
+      const budget = launcherBudget(tile);
+      if (budget) msg.budget = budget;
+      // Off unless asked for, same as the dialog. `warmup: false` and an absent one mean the same
+      // thing to the relay, so the field only rides when it says something.
+      if (tile.warmup) msg.warmup = true;
+      return msg;
+    }
+
+    // Minutes on a tile, milliseconds on the wire. Anything that is not a positive number is off.
+    function launcherMinutes(v) {
+      const n = Number(v);
+      return n > 0 ? Math.round(n) * 60000 : 0;
+    }
+
+    // The three hard stops, or null when the tile names none of them. Partial is allowed — a tile
+    // that only ever changed the step count still sends the other two, because `budget` is one
+    // object to the relay and half of it would read as the other half being zero.
+    function launcherBudget(tile) {
+      const steps = Number(tile.steps), runs = Number(tile.runs), minutes = Number(tile.minutes);
+      if (!(steps > 0) && !(runs > 0) && !(minutes > 0)) return null;
+      const out = {};
+      if (steps > 0) out.max_steps = Math.round(steps);
+      if (runs > 0) out.max_consecutive = Math.round(runs);
+      if (minutes > 0) out.max_wall_clock_ms = Math.round(minutes) * 60000;
+      return out;
     }
     // --- Launcher tiles (pure) --- end

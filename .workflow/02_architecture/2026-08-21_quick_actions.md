@@ -190,7 +190,7 @@ The relay never parses it — same contract as the other four. The schema lives 
 | `command` | `run` only. The literal text typed into the terminal. Capped at `SEND_TEXT_MAX`, which the relay enforces anyway |
 | `members` | `spawn` only, 1–N. Each is a `name` (an agent kind from `start_options`) and a `role`, plus an optional opening `prompt` |
 | `conv_label` | `spawn` only, and only meaningful with more than one member. The conversation's name; defaults to the action's label |
-| `arbitrator` | `spawn` only, and only with **exactly two** members — §14.1 fixes an arbitration roster at two. Ignored otherwise, never an error: a roster edited from three back to two should not silently lose its arbitrator |
+| `arbitrator` | `spawn` only, and only with **two or more** members. §14.1 fixes an arbitration *pair* at two — `MEMBERS_REQUIRED` in the relay, unchanged — but not the size of the room it sits in, exactly as the setup dialog has always allowed by asking Agent 1 and Agent 2 as selects. The pair is the first two of `members`, which is what the editor's two selects reorder; the rest start into the same conversation and are not arbitrated. Ignored at one member, never an error: a roster narrowed and widened again should not silently lose its arbitrator |
 
 Note what is absent: no `cwd`, no `host`, no `argv`, no `shell`. A `run` action names a Project and
 carries a line of text. Everything about *where* that text lands is the relay's to decide from

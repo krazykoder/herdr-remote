@@ -393,44 +393,59 @@
     // unchanged: nothing walks back on its own, because the rows are the reader's disk and the
     // relay's time, and neither should be spent on history nobody asked to see.
 
-    // Which pane ids a roster accounts for — one that is live right now, or one the roster names.
-    // A row carrying any of them belongs to that member and to nobody else; a row from a pane that
-    // has exited has no claimant and goes to whoever holds the fingerprint now, which is what keeps
-    // a respawned pane's history attached to it.
-    function convLiveClaimed(keys) {
-      const claimed = new Set();
-      for (const x of (typeof agents !== 'undefined' ? agents : [])) {
-        if (x.pane_id) claimed.add(x.pane_id);
+    // The predecessors of each member being drawn, by member key. Read out of the index rather than
+    // passed down: these functions are handed member keys, and succession is a fact about a member.
+    //
+    // `was` is written by exactly one call — the respawn in openPendingStart that moves a member's
+    // key from a dead pane to the new one. Nothing else may add to it, because nothing else knows
+    // that two panes were the same session.
+    function convWasMap(keys) {
+      const want = new Set(keys || []);
+      const out = new Map();
+      if (typeof loadConvIndex !== 'function') return out;
+      for (const c of loadConvIndex()) {
+        for (const m of (c && c.members) || []) {
+          // Array-checked: this document is written by other browsers and by older builds, and a
+          // member carrying a string here would make `.includes` match on a substring.
+          if (m && want.has(m.key) && Array.isArray(m.was)) out.set(m.key, m.was);
+        }
       }
-      for (const k of (keys || [])) claimed.add(convPaneOfKey(k));
-      return claimed;
+      return out;
     }
 
     function convPaneOfKey(k) {
       try { return (JSON.parse(k) || [])[1] || ''; } catch (e) { return ''; }
     }
 
-    function convLiveRowIsMine(t, mine, claimed) {
+    // A row belongs to the pane that produced it. The one exception is a respawn, and a respawn is
+    // recorded rather than guessed.
+    //
+    // This used to adopt any dead pane that shared the fingerprint, on the reasoning that a pane
+    // with no live claimant must be a predecessor. It is not: a fingerprint is `[host, agent, cwd]`
+    // and several panes share one by design, so quitting an agent handed its words to every other
+    // conversation running that harness in that directory — attributed to a member that had never
+    // been in the same room as it. "No longer live" says nothing about which pane succeeded which.
+    function convLiveRowIsMine(t, mine, was) {
       const pid = t.pane_id || '';
-      return !(mine && pid && pid !== mine && claimed.has(pid));
+      return !pid || pid === mine || (was || []).includes(pid);
     }
 
     // The oldest row this browser holds for one member, which is the id the next window back is
     // asked for. 0 when it holds nothing — there is no window before nothing, and the ordinary
     // forward fetch is what that member needs.
-    function convLiveOldestSeq(key, claimed) {
-      const oldest = convLiveOldest(key, claimed);
+    function convLiveOldestSeq(key, was) {
+      const oldest = convLiveOldest(key, was);
       return oldest ? oldest.seq : 0;
     }
 
-    function convLiveOldest(key, claimed) {
+    function convLiveOldest(key, was) {
       const fp = convKeyFingerprint(key);
       const bucket = fp && convLiveCache.get(convFpKey(fp));
       if (!bucket) return null;
       const mine = convPaneOfKey(key);
       let oldest = null;
       for (const t of bucket.turns) {
-        if (!t.seq || !convLiveRowIsMine(t, mine, claimed)) continue;
+        if (!t.seq || !convLiveRowIsMine(t, mine, was)) continue;
         if (!oldest || t.seq < oldest.seq) oldest = t;
       }
       return oldest;
@@ -441,7 +456,7 @@
     // nothing older, the pane is at the ceiling, or this browser holds nothing to walk back from.
     function convLiveCanLoadOlder(keys) {
       if (!convLiveOn()) return false;
-      const claimed = convLiveClaimed(keys);
+      const was = convWasMap(keys);
       return (keys || []).some(key => {
         const fp = convKeyFingerprint(key);
         const bucket = fp && convLiveCache.get(convFpKey(fp));
@@ -449,7 +464,7 @@
         const pane = convPaneOfKey(key);
         if (bucket.ended[pane]) return false;
         if ((bucket.depth[pane] || CONV_LIVE_ROWS) >= CONV_LIVE_DEEP_MAX) return false;
-        return convLiveOldestSeq(key, claimed) > 0;
+        return convLiveOldestSeq(key, was.get(key)) > 0;
       });
     }
 
@@ -461,7 +476,7 @@
     // they already hold.
     function convLiveOlder(keys) {
       if (!ws || ws.readyState !== 1) return 0;
-      const claimed = convLiveClaimed(keys);
+      const was = convWasMap(keys);
       let asked = 0;
       for (const key of (keys || [])) {
         const fp = convKeyFingerprint(key);
@@ -473,7 +488,7 @@
         if (bucket.ended[pane]) continue;
         const have = Math.min(bucket.depth[pane] || CONV_LIVE_ROWS, CONV_LIVE_DEEP_MAX);
         if (have >= CONV_LIVE_DEEP_MAX) continue;
-        const oldest = convLiveOldest(key, claimed);
+        const oldest = convLiveOldest(key, was.get(key));
         if (!oldest) continue;
         // A respawn inherits rows from its prior pane id. The relay must filter that old physical
         // pane, while depth and the end marker still belong to the current logical member.
@@ -553,7 +568,7 @@
           'title="Ask the relay for the window before the oldest message here">' +
           '↑ Load older</button></div>';
       }
-      const claimed = convLiveClaimed(keys);
+      const was = convWasMap(keys);
       const deep = (keys || []).some(key => {
         const fp = convKeyFingerprint(key);
         const bucket = fp && convLiveCache.get(convFpKey(fp));
@@ -564,7 +579,7 @@
         const fp = convKeyFingerprint(key);
         const bucket = fp && convLiveCache.get(convFpKey(fp));
         return bucket && (bucket.depth[convPaneOfKey(key)] || 0) >= CONV_LIVE_DEEP_MAX
-          && !bucket.ended[convPaneOfKey(key)] && convLiveOldestSeq(key, claimed) > 0;
+          && !bucket.ended[convPaneOfKey(key)] && convLiveOldestSeq(key, was.get(key)) > 0;
       });
       return '<div class="conv-older"><span class="conv-older-end">' + (ceiling
         ? `As far back as this device keeps — ${CONV_LIVE_DEEP_MAX} messages a pane`
@@ -760,20 +775,20 @@
       // agent in the same directory share a bucket, and "show this pane only" would draw both: the
       // thread would be filtered by agent, which is not what the reader asked for.
       //
-      // So a row belongs to the member whose pane id it carries. A row from a pane that is no
-      // longer live has no such claimant and goes to whoever holds the fingerprint now, which is
-      // what keeps a respawned pane's history attached to it.
-      // Every pane id with an owner: one that is live right now, or one this roster names. A row
-      // carrying any of them belongs to that member and to nobody else.
-      const claimed = convLiveClaimed(keys);
+      // So a row belongs to the member whose pane id it carries, and to nobody else — unless that
+      // member has recorded itself as the successor of the pane the row came from, which is what
+      // keeps a respawned pane's history attached to it. Recorded, not inferred: a dead pane
+      // sharing the fingerprint is not evidence of anything.
+      const was = convWasMap(keys);
       for (const k of (keys || [])) {
         const fp = convKeyFingerprint(k);
         if (!fp) continue;
         const bucket = convLiveCache.get(convFpKey(fp));
         if (!bucket) continue;
         const mine = convPaneOfKey(k);
+        const mineWas = was.get(k);
         for (const t of bucket.turns) {
-          if (!convLiveRowIsMine(t, mine, claimed)) continue;
+          if (!convLiveRowIsMine(t, mine, mineWas)) continue;
           // Two roster members can fold to one fingerprint — a pane respawned under a new id is the
           // same pane to the record — and the bucket must not be drawn twice for them.
           if (t.seq && seen.has(t.seq)) continue;

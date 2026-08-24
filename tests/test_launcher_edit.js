@@ -61,6 +61,37 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
     // stubbed here so this suite is not also a sections test.
     toggleSection: (k, on) => log.push(['toggleSection', k, on]),
     launcherEnv: () => ({projects, startOptions, arb: true}),
+    // launcher_ui draws the glyphs; pairs_pure holds the chips a member's first prompt is picked
+    // from. Both are stubbed rather than pulled in — this suite is about the shape the form
+    // produces, and dragging either module behind it would make a failure here point at it.
+    launcherIcon: name => `<svg data-icon="${name}"></svg>`,
+    // arbitration.js's own controls, borrowed by the launcher's arbitrator block. Stubbed to the
+    // shape the form depends on — an element carrying the id it will be read back by — rather
+    // than pulled in, so a failure here points at the launcher.
+    arbRoleField: (id, v) => `<div class="arb-role"><input id="${id}" value="${v || ''}"></div>`,
+    arbClockOptions: (choices, sel) => choices.map(m =>
+      `<option value="${m}"${String(m) === String(sel) ? ' selected' : ''}>${m || 'Never'}</option>`).join(''),
+    arbLimitField: (id, label, v, range) =>
+      `<label>${label}<input id="${id}" type="number" value="${v || range[0]}"></label>`,
+    ARB_IDLE_CHOICES: [0, 5, 15, 30],
+    ARB_RUNTIME_CHOICES: [0, 15, 30, 60],
+    ARB_LIMITS: {arbSteps: [8, 50], arbRuns: [8, 20], arbMinutes: [45, 480]},
+    SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief'},
+                {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
+    // The phrases the role pills write, which is what the launcher's defaults are resolved
+    // through — the tags are the launcher's, the words are arbitration's.
+    ARB_ROLE_TAGS: [{tag: 'implement', text: 'writes the code'},
+                    {tag: 'fix-code', text: 'fixes what review finds'},
+                    {tag: 'review', text: 'reviews the other one\u2019s work'},
+                    {tag: 'test-min', text: 'minimal focused test'},
+                    {tag: 'next', text: 'proposes the next steps'}],
+    agentBadge: kind => ` <span class="badge">${kind}</span>`,
+    // The launch sheet's two-tap Start. Recorded rather than armed: what this suite checks is
+    // that the second tap is what reaches launcherPressIn.
+    armButton: (btn, label, run) => { log.push(['arm', label]); run(); },
+    launcherPressIn: (id, project, name) => { log.push(['pressIn', id, project, name]); return true; },
+    launcherConfirmLines: t => [`Start ${t.label} on ${t.project_id}?`],
+    launcherNoun: () => 'conversation',
   });
   vm.runInContext(PURE + '\n' + STORE + '\n' + EDIT, ctx);
   const run = s => vm.runInContext(s, ctx);
@@ -91,14 +122,26 @@ const spawnTile = (over = {}) => Object.assign(
 
 // --- add ---
 
-test('a new tile opens on a Project already chosen rather than on an unmade choice', () => {
+test('a new tile opens on no Project, because a template is the more useful tile', () => {
   const e = editor();
   e.run('openLauncherEdit()');
   assert.equal(e.dom.nodes.launcherModal.style.display, 'block');
   e.run('launcherNewTile()');
   assert.equal(e.title(), 'New tile');
-  assert.equal(e.draft().project_id, 'p1');
+  // Opening on one Project would make the narrower tile the one people build by accident. None is
+  // a template: the same roster pressed into whichever tree wants it, asked for at the press.
+  assert.equal(e.draft().project_id, '');
   assert.equal(e.draft().action, 'run');
+  assert.match(e.body(), /launcherPickProject\(''\)/, 'and the strip offers it by name');
+});
+
+test('a template saves without a Project, and says so on the tile', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.field('qlName', 'Tests');
+  e.field('qlCommand', 'pytest -q');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.equal(e.tiles()[0].project_id, '');
 });
 
 test('a relay with terminals off opens the form on the half that works', () => {
@@ -199,8 +242,47 @@ test('agents are added one tap at a time and each keeps its own role', () => {
   e.field('qlRole0', 'proposer');
   e.field('qlRole1', 'critic');
   assert.equal(e.run('launcherSaveTile()'), true);
+  // `at` comes with every member added: a session started with no opening instruction is the
+  // rarer answer, so the default is the one that says something.
   assert.deepEqual(e.tiles()[0].members,
-    [{name: 'claude', role: 'proposer'}, {name: 'codex', role: 'critic'}]);
+    [{name: 'claude', role: 'proposer', at: 'architect'},
+     {name: 'codex', role: 'critic', at: 'architect'}]);
+});
+
+test('a member can be named and given a first prompt, and both are stored', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Review pair');
+  e.run("launcherAddMember('claude')");
+  e.field('qlMemberName0', 'Reviewer');
+  e.field('qlAt0', 'implement');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.deepEqual(e.tiles()[0].members,
+    [{name: 'claude', label: 'Reviewer', at: 'implement'}]);
+});
+
+test('no first prompt is a real answer, and is stored as none', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Quiet');
+  e.run("launcherAddMember('claude')");
+  e.field('qlAt0', '');
+  e.run('launcherSaveTile()');
+  assert.deepEqual(e.tiles()[0].members, [{name: 'claude'}]);
+});
+
+test('a roster of more than one says it is a conversation, with the mark it will wear', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.run("launcherAddMember('claude')");
+  assert.ok(!/ql-conv/.test(e.body()), 'one agent is not a room');
+  e.run("launcherAddMember('codex')");
+  assert.match(e.body(), /class="ql-conv"/);
+  assert.match(e.body(), /data-icon="conv"/);
+  assert.match(e.body(), /These 2 start together in one conversation/);
 });
 
 test('a role left blank is left off rather than sent empty', () => {
@@ -209,6 +291,7 @@ test('a role left blank is left off rather than sent empty', () => {
   e.run("launcherPickAction('spawn')");
   e.field('qlName', 'Solo');
   e.run("launcherAddMember('claude')");
+  e.field('qlAt0', '');
   e.run('launcherSaveTile()');
   assert.deepEqual(e.tiles()[0].members, [{name: 'claude'}]);
 });
@@ -243,6 +326,7 @@ test('the arbitrator is offered at exactly two, and needs something to decide ab
   e.run("launcherAddMember('codex')");
   assert.ok(/launcherPickArb/.test(e.body()), 'offered at two');
   e.run("launcherPickArb('claude')");
+  assert.match(e.body(), /@arbitrator starter prompt — not defined yet/);
   assert.equal(e.run('launcherSaveTile()'), false, 'a scope is not optional for an arbitrator');
   assert.match(e.dom.nodes.qlError.textContent, /deciding about/);
   e.field('qlScope', 'Which approach ships');
@@ -252,19 +336,35 @@ test('the arbitrator is offered at exactly two, and needs something to decide ab
   assert.equal(t.scope, 'Which approach ships');
 });
 
-test('an arbitrator survives a roster widened past the size it works at', () => {
-  // Step 6's rule, from the other side: launcherWantsArb ignores it at three, and a tile edited
-  // back down to two must still have the one it was given.
+test('an arbitrator stays offered as the roster grows past the pair it decides between', () => {
+  // The pair is two and stays two; the room is not. Widening a roster used to hide the arbitrator
+  // field, which read as the tile having lost it.
   const e = editor({tiles: [spawnTile({arbitrator: {name: 'claude'}, scope: 'ships'})]});
   e.run("launcherEditTile('t2')");
   e.run("launcherAddMember('codex')");
-  assert.ok(!/launcherPickArb/.test(e.body()), 'and the field is hidden, not the value cleared');
-  assert.equal(e.run('launcherSaveTile()'), true, 'three with a spare arbitrator is savable');
+  assert.ok(/launcherPickArb/.test(e.body()), 'still offered at three');
+  // Two role fields and no third: the third member is in the conversation, not in the pair.
+  assert.ok(/id="qlRole1"/.test(e.body()));
+  assert.ok(!/id="qlRole2"/.test(e.body()), 'and nothing is asked about the one outside the pair');
+  assert.match(e.body(), /the arbitrator is not deciding between them/);
+  assert.equal(e.run('launcherSaveTile()'), true);
   assert.deepEqual(e.tiles()[0].arbitrator, {name: 'claude'});
+});
+
+test('which two are arbitrated is a pair of selects, and picking moves the member up', () => {
+  const e = editor({tiles: [spawnTile({arbitrator: {name: 'claude'}, scope: 'ships',
+    members: [{name: 'claude', label: 'A'}, {name: 'codex', label: 'B'},
+              {name: 'pi', label: 'C'}]})]});
   e.run("launcherEditTile('t2')");
-  e.run('launcherDropMember(2)');
-  assert.ok(/launcherPickArb/.test(e.body()), 'back at two, it is offered again');
-  assert.equal(e.draft().arbitrator.name, 'claude');
+  const body = e.body();
+  assert.match(body, /id="qlPair0"/);
+  assert.match(body, /id="qlPair1"/);
+  // Slot 2 may not name what slot 1 already holds — a pair of the same pane is not a pair.
+  const slot1 = body.slice(body.indexOf('id="qlPair1"'));
+  assert.ok(!/value="0"/.test(slot1.slice(0, slot1.indexOf('</select>'))));
+  // Picking C for slot 1 swaps it with A, because the pair is the first two of the roster.
+  e.run('launcherPickPair(0, 2)');
+  assert.deepEqual(e.draft().members.map(m => m.label), ['C', 'B', 'A']);
 });
 
 test('None switches the arbitrator off', () => {
@@ -276,6 +376,50 @@ test('None switches the arbitrator off', () => {
 });
 
 // --- the list: reorder and delete ---
+
+test('a role is asked for only once there is an arbitrator to read it', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Review pair');
+  e.run("launcherAddMember('claude')");
+  e.run("launcherAddMember('codex')");
+  // A role means nothing to the agent — it is never shown it and is not started differently
+  // because of it. So the member cards do not ask.
+  assert.ok(!/id="qlRole0"/.test(e.body()), 'no role on the member card');
+  e.run("launcherPickArb('claude')");
+  assert.match(e.body(), /id="qlRole0"/);
+  assert.match(e.body(), /id="qlRole1"/);
+  // Listed by agent, so it is clear which role is being assigned to which.
+  assert.match(e.body(), /class="ql-arb-member"/);
+  assert.match(e.body(), /id="qlScope"/);
+  e.run("launcherPickArb('')");
+  assert.ok(!/id="qlRole0"/.test(e.body()), 'and it goes away with the arbitrator');
+});
+
+test('the clocks and limits are offered under the arbitrator, and stored when set', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Review pair');
+  e.run("launcherAddMember('claude')");
+  e.run("launcherAddMember('codex')");
+  e.run("launcherPickArb('claude')");
+  assert.match(e.body(), /Clocks and limits/);
+  e.field('qlScope', 'Which approach ships');
+  e.field('qlRole0', 'writes the code');
+  e.field('qlIdle', '15');
+  e.field('qlSteps', '20');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const t = e.tiles()[0];
+  assert.equal(t.idle, 15);
+  assert.equal(t.steps, 20);
+  assert.equal(t.members[0].role, 'writes the code');
+  // Never and the relay's own default are both "not answered", and are stored as absent rather
+  // than as a copy of a number the relay owns.
+  assert.ok(!('runtime' in t));
+  assert.ok(!('warmup' in t));
+});
 
 test('reordering moves one place and persists past a reload', () => {
   const e = editor({tiles: [runTile({id: 'a', label: 'A'}), runTile({id: 'b', label: 'B'}),
@@ -354,4 +498,77 @@ test('repointing re-enables the tile, and changes nothing else about it', () => 
   assert.deepEqual(after.members, before.members);
   assert.deepEqual(after.arbitrator, before.arbitrator);
   assert.equal(after.scope, before.scope);
+});
+
+// --- the arbitrator's two slots ---
+
+test('appointing an arbitrator puts the pair in slot order and fills in what each is for', () => {
+  const e = editor({tiles: [spawnTile({members: [{name: 'codex'}, {name: 'claude'}]})]});
+  e.run("launcherEditTile('t2')");
+  e.run("launcherPickArb('claude')");
+  const d = e.draft();
+  // claude implements, codex reviews — and the roster is reordered so Agent 1 is the implementer
+  // rather than whichever was added first.
+  assert.deepEqual(d.members.map(m => m.name), ['claude', 'codex']);
+  assert.equal(d.members[0].role, 'writes the code, minimal focused test, '
+    + 'fixes what review finds, proposes the next steps');
+  assert.match(d.members[1].role, /^fixes what review finds, reviews the other one/);
+  assert.match(d.members[1].role, /proposes the next steps$/);
+});
+
+test('a role somebody typed is never overwritten by the suggestion', () => {
+  const e = editor({tiles: [spawnTile({members: [{name: 'claude', role: 'mine'},
+                                                 {name: 'codex'}]})]});
+  e.run("launcherEditTile('t2')");
+  e.run("launcherPickArb('claude')");
+  assert.equal(e.draft().members[0].role, 'mine');
+});
+
+test('each role field is headed by the name that member will launch under, and its badge', () => {
+  const e = editor({tiles: [spawnTile({members: [{name: 'claude', label: 'Lead'},
+                                                 {name: 'codex'}]})]});
+  e.run("launcherEditTile('t2')");
+  e.run("launcherPickArb('claude')");
+  const body = e.body();
+  // The heading is the slot, then the select saying who is in it, then that member's badge.
+  assert.match(body, /Agent 1<\/span><select id="qlPair0"[\s\S]*?<\/select> <span class="badge">claude<\/span>/);
+  assert.match(body, /Agent 2<\/span><select id="qlPair1"[\s\S]*?<\/select> <span class="badge">codex<\/span>/);
+  // A member with a name of its own is offered under it; one without falls back to the kind, so
+  // an option is never blank.
+  assert.match(body, /<option value="0"[^>]*>Lead — claude<\/option>/);
+  assert.match(body, /<option value="1"[^>]*>codex<\/option>/);
+});
+
+// --- the launch sheet ---
+
+test('pressing a tile asks for the Project and the name in one sheet, and starts nothing', () => {
+  const e = editor({tiles: [spawnTile({project_id: ''})]});
+  assert.equal(e.run("launcherLaunchSheet(loadLauncher()[0])"), false);
+  const body = e.body();
+  assert.match(body, /launcherLaunchProject\('p1'\)/, 'every Project is offered');
+  assert.match(body, /id="qlLaunchName"/, 'and the name is asked for in the same place');
+  assert.match(body, /launcherLaunchFire\(this\)/);
+  assert.deepEqual(e.log.filter(l => l[0] === 'pressIn'), []);
+});
+
+test('a template with no Project chosen refuses the Start rather than guessing one', () => {
+  const e = editor({tiles: [spawnTile({project_id: ''})]});
+  e.run("launcherLaunchSheet(loadLauncher()[0])");
+  e.run('launcherLaunchFire({})');
+  assert.deepEqual(e.log.filter(l => l[0] === 'pressIn'), []);
+  assert.ok(e.log.some(l => l[0] === 'toast' && /Pick a Project/.test(l[1])));
+});
+
+test('the name survives picking a Project, and both reach the press', () => {
+  const e = editor({tiles: [spawnTile({project_id: ''})]});
+  e.run("launcherLaunchSheet(loadLauncher()[0])");
+  e.field('qlLaunchName', 'Tonight');
+  e.run("launcherLaunchProject('p2')");
+  assert.match(e.body(), /value="Tonight"/, 'the redraw keeps what was typed');
+  e.run('launcherLaunchFire({})');
+  assert.deepEqual(e.log.filter(l => l[0] === 'pressIn'), [['pressIn', 't2', 'p2', 'Tonight']]);
+  // Two taps, because this starts sessions in someone else's checkout.
+  assert.ok(e.log.some(l => l[0] === 'arm' && l[1] === 'Start?'));
+  // The tile is what it was — the Project chosen for one press is never written back.
+  assert.equal(e.tiles()[0].project_id, '');
 });

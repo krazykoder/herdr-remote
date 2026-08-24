@@ -49,17 +49,18 @@
       const arb = launcherWantsArb(tile);
       return [`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
               '', roster.map(m => m.name).join(', '),
-              many ? '' : null,
-              arb ? `${tile.arbitrator.name} decides between the other two, on: ${String(tile.scope || '').trim()}`
-                : many ? 'They are started one at a time and grouped into a conversation.' : null]
+              '',
+              arb ? `${tile.arbitrator.name} will decide between `
+                + `${(tile.members || []).slice(0, 2).map(m => m.label || m.name).join(' and ')}`
+                + `, on: `
+                + `${String(tile.scope || '').trim()}\n`
+                // Said before the press, because it is the difference between a room that starts
+                // talking and one that waits: a tile lays out the roster, it does not make the
+                // first decision for it.
+                + 'It starts paused — arm it from the conversation.'
+                : many ? 'They are started one at a time and grouped into a conversation.'
+                : 'It gets a conversation of its own, under the name you give it.']
         .filter(l => l !== null);
-    }
-
-    // The confirm itself. `confirm` and not a bespoke sheet: the app already asks this way for the
-    // shortcut that runs text at a prompt (shortcuts.js), it cannot be styled past the point of
-    // being ignored, and the one thing that matters here is that the text is read.
-    function launcherAsk(tile, env) {
-      return confirm(launcherConfirmLines(tile, env).join('\n'));
     }
 
     // The whole of a press. Everything that can refuse does so before anything is sent.
@@ -83,8 +84,36 @@
       // A batch already running owns pendingStart and the cursor. Refusing is the honest answer:
       // queueing the second one would start six panes from two taps that looked like one.
       if (launcherLive) { showToast('Still starting the last one — give it a moment.'); return false; }
-      if (!launcherAsk(tile, env)) return false;
-      return tile.action === 'run' ? launcherRunTile(tile) : launcherSpawnTile(tile);
+      // Every press goes through the sheet: it is where the Project a template does not name is
+      // chosen, where the launch is named, and where the confirm is read. A press that ends there
+      // has started nothing — launcherPressIn is what its Start button calls.
+      if (typeof launcherLaunchSheet === 'function') return launcherLaunchSheet(tile);
+      // A build without the tile editor still starts a tile that already names its Project. The
+      // launch is then unnamed, which launcherNamed answers with the noun and the tag.
+      return tile.project_id ? launcherGo(tile, env, '') : false;
+    }
+
+    // The press, once the sheet has answered both of its questions.
+    function launcherGo(tile, env, typed) {
+      // Gated again: the sheet is a round trip through the DOM, and the answer it came back with is
+      // a Project id this side never checked.
+      const gate = launcherGate(tile, env || launcherEnv());
+      if (!gate.ok) { showToast(gate.reason); return false; }
+      // From here down it is the *named* tile, never the stored one. Everything downstream reads
+      // `label` — the pane's name, the conversation's, the status line's — so naming it once here
+      // is what keeps the launch's name and the tile's name from having to be the same thing.
+      const named = launcherNamed(tile, typed);
+      return named.action === 'run' ? launcherRunTile(named) : launcherSpawnTile(named);
+    }
+
+    // What the sheet calls back into: the tile as stored, run in the Project just chosen. The
+    // choice is never written back — a template that quietly became a button after one press is
+    // the feature undoing itself.
+    function launcherPressIn(id, projectId, name) {
+      if (typeof closeLauncherEdit === 'function') closeLauncherEdit();
+      const tile = loadLauncher().find(t => t.id === id);
+      if (!tile || !projectId) return false;
+      return launcherGo(Object.assign({}, tile, {project_id: projectId}), launcherEnv(), name || '');
     }
 
     // A `run` is an open_terminal and then the command typed at the prompt it comes up on. The
@@ -116,6 +145,18 @@
         : `Starting ${member.name}…`, 'busy');
       ws.send(JSON.stringify(launcherSpawnMsg(batch.tile, member)));
       return true;
+    }
+
+    // What a member opens with, resolved now rather than stored on the tile: a starter's text is
+    // edited in one place, and a tile saved last month should open with what that chip says today.
+    // Typed through sendTextTo for the same reason a `run` tile's command is — the arbitration
+    // guard, the chunk cap and the record of what was sent all apply, because this is the user
+    // opening the session, by proxy.
+    function launcherStarter(paneId, member) {
+      const at = member && member.at;
+      if (!at || typeof SHORTCUTS === 'undefined') return false;
+      const text = ((SHORTCUTS.find(s => s.at === at) || {}).text || '').trim();
+      return text ? sendTextTo(paneId, text) : false;
     }
 
     // A refusal anywhere in a batch ends the batch. Carrying on would leave a conversation holding
@@ -151,10 +192,14 @@
       // it is simply not adopted into a grouping that no longer exists.
       if (!batch || batch !== launcherLive) { openTerminal(a.pane_id); return; }
       batch.panes.push(a);
+      // Its first prompt, as soon as it is up. `agent start` has already blocked until herdr saw
+      // the pane interactively ready, so there is nothing here to wait for — and waiting until the
+      // whole roster has landed would open every session on a prompt none of them was given yet.
+      launcherStarter(a.pane_id, batch.members[batch.panes.length - 1]);
       if (!launcherBatchDone(batch)) { launcherSpawnNext(); return; }
       launcherLive = null;
-      // One member is not a conversation: there is nothing to compare, and the pane's own thread
-      // already shows everything the record would.
+      // Only a tile with no roster at all, which launcherValid already refuses. Kept as the guard
+      // it is: everything below assumes there is something to put in the conversation.
       if (!launcherWantsConv(batch.tile)) {
         openTerminal(a.pane_id);
         showSpawnStatus(`${batch.tile.label} started.`, 'success');
@@ -165,8 +210,9 @@
       renderConversations();
       openConversation(conv.id);
       if (launcherWantsArb(batch.tile)) return launcherAppoint(batch, conv);
-      showSpawnStatus(`${batch.tile.label} started — ${batch.panes.length} in "${conv.name}".`,
-                      'success');
+      showSpawnStatus(batch.panes.length > 1
+        ? `${batch.tile.label} started — ${batch.panes.length} in "${conv.name}".`
+        : `${batch.tile.label} started, in a conversation of its own.`, 'success');
     }
 
     // The third pane, told what it is for. Exactly the message the setup dialog sends — same
@@ -183,8 +229,11 @@
       // retry: the pane the relay is most likely to have refused is an arbitrator whose TUI is
       // still coming up, and a retry loop here would be guessing at how long.
       arbSend(launcherArbMsg(batch.tile, conv.id, batch.panes));
-      showSpawnStatus(`${batch.tile.label} started — ${batch.tile.arbitrator.name} is deciding.`,
-                      'success');
+      // Paused, so the arbitrator is briefed and nothing else — the brief goes out on every start
+      // and `paused` decides only whether the loop behind it is armed. Saying "is deciding" here
+      // would be the one line on screen that is wrong.
+      showSpawnStatus(`${batch.tile.label} started — ${batch.tile.arbitrator.name} is briefed and `
+                      + 'the session is paused.', 'success');
     }
 
     // The conversation a multi-member tile lands on, named for the tile. Built with the same

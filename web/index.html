@@ -643,6 +643,14 @@
       flex-shrink: 0;
     }
 
+    /* Nothing in it is running. Hollow rather than a grey disc: a filled dot is a state an agent
+       is in, and a conversation whose panes have all ended is not in a state at all. The ring is
+       drawn in the same 8px so the column of dots down the list keeps one diameter. */
+    .dot.ended {
+      background: transparent !important;
+      box-shadow: inset 0 0 0 1.5px var(--muted);
+    }
+
     /* An 8px disc fading to 40% is easy to miss at arm's length, so the beat is carried by size
        as well. It breathes down and back rather than out: full size is the top of the range, so a
        pulsing dot never reads larger than a still one beside it and the column of dots down the
@@ -1195,6 +1203,20 @@
       grid-column: 1 / -1;
     }
 
+    /* A band heading. Spans the grid like the section header above it, and is quieter than it —
+       the section is named once, and these only say which tree the tiles under them run in. */
+    .launcher-band {
+      grid-column: 1 / -1;
+      margin: 6px 0 0;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .launcher-band:first-of-type { margin-top: 0; }
+
     .launcher-tile {
       display: flex;
       flex-direction: column;
@@ -1246,6 +1268,23 @@
     /* The payload, and the reason it is on the tile at all: a tile's text may have been written by
        another browser, so the name is not evidence of what it does. Monospace because most of what
        lands here is a command. Two lines, then an ellipsis — the confirm shows the whole of it. */
+    /* A roster is badges, not a line of monospace words — the same badge the pane lists, the
+       conversation cards and the picker all wear for an agent's kind, so a tile says what it will
+       start in the app's one nomenclature for it. Wraps rather than clamps: three badges are
+       shorter than the two lines of command this box was sized for. */
+    .launcher-tile[data-action="spawn"] .launcher-payload {
+      font-family: inherit;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .launcher-plus {
+      color: var(--muted);
+      font-size: 0.62rem;
+    }
+
     .launcher-payload {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 0.62rem;
@@ -1355,26 +1394,151 @@
       margin-top: 6px;
     }
 
+    /* A card rather than a row: a member is three answers now — what to call it, what it is for,
+       and what to say to it first — and three inputs side by side is a phone's whole width spent
+       on placeholders too short to read. The kind and its ✕ share the first line; every field
+       below takes a line of its own, which `flex-basis: 100%` does with no media query. */
     .ql-member {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 6px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
     }
 
-    .ql-member input {
-      flex: 1;
+    .ql-member input, .ql-member select {
+      flex: 1 1 100%;
       min-width: 0;
     }
 
+    /* The arbitration block, borrowed whole: `arb-form` is what lays out the role picker, the
+       folded clocks and the checkbox, so the launcher wears it rather than restating it. Only the
+       frame is changed — inside the tile editor it is a panel, not the top of a panel. */
+    .ql-arb {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 6px;
+    }
+
+    .ql-arb-roles {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Which agent each role is being assigned to, above the field that assigns it. */
+    .ql-arb-member {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
     .ql-member-kind {
-      flex: none;
+      flex: 1 1 auto;
       font-size: 0.72rem;
       font-weight: 600;
       min-width: 4.5em;
       overflow-wrap: anywhere;
     }
 
-    .ql-member .ql-del { min-height: 32px; }
+    /* What pressing a tile is about to do, on the sheet that asks for the rest. Quoted evidence,
+       so it is set apart from the fields under it rather than reading as another label. */
+    .ql-launch-say {
+      margin: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.75rem;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    /* The roster as chips rather than a sentence. Wraps like .badge-strip: a tile carries up to
+       LAUNCHER_MEMBERS_MAX of them, and a chip pushed off the edge is a chip that does not exist. */
+    .ql-roster {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+    }
+
+    /* Deliberately not styled as a .badge: agentBadge draws a real one inside each chip, and a
+       badge drawn around a badge reads as two badges rather than one component. */
+    .ql-part {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.7rem;
+      color: var(--text);
+    }
+
+    .ql-part-mark {
+      display: inline-flex;
+      align-items: center;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    /* The arbitrator set apart, the way launcherPreview sets it apart in text: not a third member,
+       the one reading the other two. */
+    .ql-part.arb {
+      border-color: color-mix(in srgb, var(--orange) 55%, transparent);
+    }
+
+    .ql-part.arb .ql-part-mark {
+      color: var(--orange);
+    }
+
+    .ql-part-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* The opening prompt this member gets, at the weight of a footnote: the last thing the reader
+       checks, so the first thing that gives up room when the chip is squeezed. */
+    .ql-part-role {
+      font-size: 0.62rem;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Which of the two slots this is. Quieter than the name beside it — the name is what the
+       reader is looking for, the slot is only what tells the two role fields apart. */
+    .ql-arb-slot {
+      margin-right: 6px;
+      font-size: 0.62rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .ql-member .ql-del { flex: none; min-height: 32px; }
+
+    /* What the roster adds up to, said where it is decided. The same mark the conversation card
+       wears, because it is the same thing — a second agent added by accident is otherwise a room
+       nobody meant to open, and the tile only says so once it has been saved. */
+    .ql-conv {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 8px 0 0;
+      font-size: 0.7rem;
+      color: var(--blue);
+    }
+
+    .ql-conv svg { flex: none; }
 
     .ql-none {
       font-size: 0.7rem;
@@ -1489,6 +1653,13 @@
       display: flex;
       align-items: center;
       gap: 5px;
+    }
+
+    /* The first action takes the whole gap and lands at the right edge; any after it sit beside
+       it. Without this every action carries the auto margin, so two of them split the free space
+       between them and the left-hand one floats in the middle of the header. */
+    .section-header .section-action ~ .section-action {
+      margin-left: 0;
     }
 
     .section-header .section-action {
@@ -1626,6 +1797,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* Pushed to the far end of the row, so the name keeps every pixel it can and the control sits
+       where the same control sits on an agent card. */
+    .conversation-title .end-btn {
+      margin-left: auto;
     }
 
     /* The tier, not the name. Naming an auto conversation promotes it, so this is what goes away
@@ -2271,6 +2448,14 @@
 
     .pick-search[hidden] {
       display: none;
+    }
+
+    /* The recent sheet is one scrolling node, so its box has to hold itself in place. */
+    #recentSheet .pick-search {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface);
     }
 
     .pick-search input {
@@ -3063,10 +3248,10 @@
        conversation; row two is what the record is, which nobody taps. */
     .conv-view-head {
       display: grid;
-      grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+      grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
       grid-template-areas:
-        'back mark title who  open'
-        'back sub  sub   sub  sub';
+        'back mark title tier who  open'
+        'back sub  sub   sub  sub  sub';
       align-items: center;
       column-gap: 8px;
       row-gap: 0;
@@ -3096,7 +3281,20 @@
     .conv-view-head > .back { grid-area: back; }
     .conv-view-head .conv-kind { grid-area: mark; }
     .conv-view-head .title { grid-area: title; }
+    .conv-view-head #convViewTier { grid-area: tier; }
     .conv-view-head #convViewWho { grid-area: who; }
+
+    /* Grey, not just badged. The badge says what this is to whoever reads it; the colour says it
+       at a glance from across the room, which is what stops a long thread being typed into under
+       the impression it is being kept. Lifted off --bg rather than tinted, because this is not a
+       warning — an automatic conversation is a normal thing that is simply not saved. */
+    .conv-view-head.auto {
+      background: var(--surface);
+    }
+
+    .conv-view-head.auto .title {
+      color: var(--muted);
+    }
     .conv-view-head .open-pane { grid-area: open; }
 
     /* The size of the record and the harnesses in it, on one line under the name. Badges and not
@@ -3966,6 +4164,9 @@
     .arb-note {
       color: var(--muted);
       font-size: 0.62rem;
+      /* Ignored where it is a span, which is everywhere in the arbitration setup. It is here for
+         the one place the same sentence is a paragraph — the launcher's arbitrator field. */
+      margin: 3px 0 0;
     }
 
     /* Nine role badges wrap to three rows twice over, which is most of a phone's height spent on
@@ -4139,6 +4340,7 @@
     .conv-roster .conv-drop,
     .conv-roster .conv-again,
     .conv-roster .conv-open,
+    .conv-roster .conv-end,
     .conv-roster-actions button {
       font-size: 0.65rem;
       /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
@@ -4168,6 +4370,15 @@
     .conv-roster-actions .conv-del {
       color: var(--red);
       border-color: var(--red);
+    }
+
+    /* Orange, not the red Delete wears. Delete destroys a record and cannot be undone; End stops a
+       session that Start again brings back on the very same row. Two different promises, so not
+       the same colour — and orange is already what this app paints a pane that has stopped. */
+    .conv-roster .conv-end,
+    .conv-roster-actions .conv-end {
+      color: var(--orange);
+      border-color: var(--orange);
     }
 
     .conv-roster-actions button[aria-pressed="true"] {
@@ -6256,6 +6467,21 @@
       color: var(--blue);
     }
 
+    /* Pair's sibling, because that is what it is: the other thing a card offers without opening.
+       Orange for the same reason it is orange on the roster, and armed like everything else that
+       ends something — a card is one big tap target, and a one-tap kill sitting on it is a mis-tap
+       waiting to happen. */
+    .end-btn {
+      background: none;
+      border: 1px solid var(--orange);
+      border-radius: 6px;
+      color: var(--orange);
+      font-size: 0.65rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
     .term-input button:last-child {
       padding: 10px 14px;
       border-radius: 6px;
@@ -6808,6 +7034,11 @@
            same thing about what is being read. -->
       <span class="conv-kind" id="convViewMark"></span>
       <span class="title" id="convViewTitle"></span>
+      <!-- The same badge the card carries, for the same reason: an automatic conversation is one
+           nobody chose to keep, and the window it is read in has to say so before anything typed
+           into it is trusted to survive. -->
+      <span class="conversation-tier" id="convViewTier" hidden
+        title="Filed automatically, and dropped first when space runs out. Rename it to keep it for good.">auto</span>
       <button class="who-btn" id="convViewWho" onclick="toggleConvRoster()" aria-expanded="false"
         aria-controls="convViewRoster" aria-label="Who is in this conversation, and what to do with it"></button>
       <button class="open-pane" id="convViewOpen" onclick="openConvPane()" hidden
@@ -7364,6 +7595,11 @@
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
       </div>
       <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <!-- Only drawn when the dialog was opened without a Project — from the landing page's two
+             + New buttons, which are not standing in any Project when they are pressed. Every other
+             route already knows where it is starting, and a picker there would be a second way to
+             change something the user already chose by where they tapped. -->
+        <div id="startProjectRow" hidden style="display:none"></div>
         <!-- Hidden whole for a terminal: there is no agent to choose and no role for it to play.
              Everything below this — where it goes, what it is called — is the same question. -->
         <div id="startAgentRows" style="display:flex;flex-direction:column;gap:12px">
@@ -7600,6 +7836,15 @@
         <span style="font-size:0.8rem;font-weight:600;flex:1">Recent</span>
         <button onclick="closeRecentSheet()" aria-label="Close"
           style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <!-- Same box, same class and the same matcher as the pane picker's: this sheet lists every
+           live pane *and* every conversation visited, which is the longest list in the app, and a
+           reader who knows the name should not have to scroll for it. Hidden until there is enough
+           to search, the rule renderRecentSheet applies. Sticky because this sheet scrolls as one
+           node, unlike the picker's three bands. -->
+      <div class="pick-search" hidden>
+        <input id="recentSearch" type="search" placeholder="Search…" aria-label="Search recents"
+          autocomplete="off" oninput="renderRecentSheet()">
       </div>
       <div id="recentList"></div>
     </div>

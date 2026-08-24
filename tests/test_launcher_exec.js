@@ -34,6 +34,8 @@ const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
 // Everything launcher_exec reaches for that lives in another module. Stubbed rather than pulled
 // in: this suite is about the order of the sends, and dragging conversation_store and shortcuts
 // in behind it would make a failure here point at either of them.
+// `answer` is what the person at the prompt does: false cancels, true accepts without typing a
+// name — which is a real answer, not a refusal — and a string is a name typed in.
 function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTIONS,
                 open = true, convs = [], arb = true} = {}) {
   const sent = [];
@@ -54,7 +56,14 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
       getItem: k => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
     },
-    confirm: text => { log.push(['confirm', text]); return answer; },
+    prompt: text => {
+      log.push(['prompt', text]);
+      return answer === false ? null : answer === true ? '' : answer;
+    },
+    // pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
+    // enough to tell "the named one" from "some other one".
+    SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
+                {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
     showToast: t => log.push(['toast', t]),
     showSpawnStatus: (t, s) => log.push(['status', t, s]),
     openTerminal: id => log.push(['openTerminal', id]),
@@ -68,6 +77,10 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     loadConvIndex: () => convs.slice(),
     saveConvIndex: items => { convs.length = 0; convs.push(...items); },
     stateSyncMark: () => {},
+    // launcher_edit draws the sheet. Recorded rather than drawn: what this suite is about is that
+    // the press stops here and sends nothing until its Start button is tapped twice.
+    launcherLaunchSheet: t => { log.push(['launchSheet', t.id]); return false; },
+    closeLauncherEdit: () => log.push(['closeLauncherEdit']),
     // start_dialog owns these two. Declared here so the exec block can assign them, and readable
     // afterwards so a test can see which intent a start was made under.
     startIntent: null,
@@ -77,13 +90,34 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
   out.saveLauncher(tiles);
   return {
     sent, log, convs, out,
-    press: id => vm.runInContext(`launcherPress(${JSON.stringify(id)})`, ctx),
+    // A whole press: open the sheet, then answer it the way `answer` says. Two steps in the app
+    // and two here — the tests below are about what goes on the wire afterwards, and the sheet
+    // itself is covered by the pair of tests under "the sheet".
+    press: id => {
+      const opened = vm.runInContext(`launcherPress(${JSON.stringify(id)})`, ctx);
+      const drew = log.filter(l => l[0] === 'launchSheet').pop();
+      if (!drew || drew[1] !== id) return opened;
+      if (answer === false) return false;
+      const tile = tiles.find(t => t.id === id) || {};
+      return vm.runInContext(`launcherPressIn(${JSON.stringify(id)}, `
+        + `${JSON.stringify(tile.project_id || '')}, `
+        + `${JSON.stringify(answer === true ? '' : answer)})`, ctx);
+    },
+    // What the sheet quotes back. Read out of the module rather than off a stub, because it is
+    // the one part of the press that is pure.
+    confirm: id => vm.runInContext('launcherConfirmLines(loadLauncher().find(t => t.id === '
+      + `${JSON.stringify(id)}), launcherEnv()).join('\\n')`, ctx),
+    open: id => vm.runInContext(`launcherPress(${JSON.stringify(id)})`, ctx),
     intent: () => vm.runInContext('startIntent', ctx),
     // A pane arriving for whatever intent is currently set — which is what openPendingStart does
     // after the poll has seen it.
     land: pane => vm.runInContext('(async () => { const i = startIntent; startIntent = null;'
       + ' await launcherLanded(' + JSON.stringify(pane) + ', i.ql); })()', ctx),
     fail: () => vm.runInContext('launcherFailed()', ctx),
+    pressIn: (id, projectId, name) => vm.runInContext(
+      `launcherPressIn(${JSON.stringify(id)}, ${JSON.stringify(projectId)}, `
+      + `${JSON.stringify(name || '')})`, ctx),
+    tiles: () => vm.runInContext('loadLauncher()', ctx),
   };
 }
 
@@ -103,16 +137,14 @@ const kinds = sent => sent.map(m => m.type);
 
 test('the confirm quotes the command rather than describing it', () => {
   const p = press({tiles: [RUN]});
-  p.press('ql_a');
-  const text = p.log.find(l => l[0] === 'confirm')[1];
+  const text = p.confirm('ql_a');
   assert.match(text, /new terminal on herdr/);
   assert.ok(text.includes('npm test'), 'the command itself, verbatim');
 });
 
 test('the confirm names the host when the Project is not local', () => {
   const p = press({tiles: [THREE]});
-  p.press('ql_c');
-  const text = p.log.find(l => l[0] === 'confirm')[1];
+  const text = p.confirm('ql_c');
   assert.match(text, /on mini on box/);
   assert.match(text, /claude, codex, claude/, 'and the whole roster');
   assert.match(text, /one at a time/);
@@ -168,10 +200,14 @@ test('a tile that is not there is not a crash', () => {
 // --- run ---
 
 test('a run opens a terminal, then types the command into the pane it got back', () => {
-  const p = press({tiles: [RUN]});
+  const p = press({tiles: [RUN], answer: 'Tonight'});
   assert.equal(p.press('ql_a'), true);
-  assert.deepEqual(p.sent, [{type: 'open_terminal', project_id: 'p1',
-                             placement: 'new_workspace', label: 'Tests'}]);
+  // The name typed at the prompt, not the tile's. A tile is a button pressed again and again;
+  // what it makes each time is a different thing and wears a different name.
+  assert.equal(p.sent.length, 1);
+  assert.equal(p.sent[0].type, 'open_terminal');
+  assert.equal(p.sent[0].project_id, 'p1');
+  assert.match(p.sent[0].label, /^Tonight [a-z0-9]{5}$/, 'the name plus this launch\u2019s tag');
   assert.deepEqual(p.intent().ql.command, 'npm test', 'the command waits for a pane to type it at');
   return p.land(pane('w1:p1')).then(() => {
     assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'),
@@ -193,16 +229,57 @@ test('the command is sent through sendTextTo, not straight down the socket', () 
   });
 });
 
+// --- a tile with no Project of its own ---
+
+// --- the sheet ---
+
+test('every press opens the sheet and sends nothing until it is answered', () => {
+  // Including a tile that already names a Project: the sheet is where the launch is named and
+  // where the confirm is read, not only where a template is pointed at a tree.
+  const p = press({tiles: [RUN, Object.assign({}, RUN, {id: 'ql_t', project_id: ''})]});
+  assert.equal(p.open('ql_a'), false, 'the press has not happened');
+  assert.equal(p.open('ql_t'), false);
+  assert.deepEqual(p.log.filter(l => l[0] === 'launchSheet'),
+                   [['launchSheet', 'ql_a'], ['launchSheet', 'ql_t']]);
+  assert.deepEqual(p.sent, []);
+});
+
+test('picking a Project runs the tile in it, and never writes it back', () => {
+  const tiles = [Object.assign({}, RUN, {project_id: ''})];
+  const p = press({tiles, answer: 'Tonight'});
+  p.open('ql_a');
+  assert.equal(p.pressIn('ql_a', 'p2', 'Tonight'), true);
+  assert.equal(p.sent[0].project_id, 'p2');
+  assert.ok(p.log.some(l => l[0] === 'closeLauncherEdit'), 'the sheet closes behind it');
+  // The tile is what it was. A template that quietly became a button after one press is the
+  // feature undoing itself.
+  assert.equal(p.tiles()[0].project_id, '');
+});
+
+test('a Project that went away between the sheet and the tap is refused, not sent', () => {
+  const p = press({tiles: [Object.assign({}, RUN, {project_id: ''})]});
+  p.open('ql_a');
+  assert.equal(p.pressIn('ql_a', 'nope'), false);
+  assert.deepEqual(p.sent, []);
+  assert.ok(p.log.some(l => l[0] === 'toast' && /not configured/.test(l[1])));
+});
+
 // --- spawn, one member ---
 
-test('one member is one start_agent and no conversation', () => {
-  const p = press({tiles: [ONE]});
+test('one member is one start_agent, and the name it was given is on both', () => {
+  const p = press({tiles: [ONE], answer: 'Nightly'});
   assert.equal(p.press('ql_b'), true);
-  assert.deepEqual(p.sent, [{type: 'start_agent', name: 'claude', role: 'agent',
-                             project_id: 'p1', placement: 'new_workspace'}]);
-  return p.land(pane('w2:p1', 'Agent 1')).then(() => {
-    assert.ok(p.log.some(l => l[0] === 'openTerminal' && l[1] === 'w2:p1'));
-    assert.deepEqual(p.convs, [], 'a conversation of one has nothing to compare');
+  assert.equal(p.sent.length, 1);
+  assert.equal(p.sent[0].type, 'start_agent');
+  // There is nothing to tell this pane apart from, so it wears the same name as its conversation
+  // — name and launch tag both.
+  assert.match(p.sent[0].label, /^Nightly [a-z0-9]{5}$/);
+  const launched = p.sent[0].label;
+  return p.land(pane('w2:p1', launched)).then(() => {
+    assert.equal(p.convs.length, 1, 'one member gets a conversation too — it carries the name');
+    assert.equal(p.convs[0].name, launched);
+    assert.equal(p.convs[0].members.length, 1);
+    assert.ok(p.log.some(l => l[0] === 'openConversation' && l[1] === p.convs[0].id));
     assert.equal(p.press('ql_b'), true, 'and the launcher is free again straight away');
   });
 });
@@ -210,9 +287,27 @@ test('one member is one start_agent and no conversation', () => {
 test('a member carries its own label, never the tile’s', () => {
   // Three panes sharing the tile's name would be three collisions the relay has to rename its
   // way out of, and a roster the user did not pick.
-  const p = press({tiles: [THREE]});
+  const p = press({tiles: [THREE], answer: 'Trio'});
   p.press('ql_c');
-  assert.equal(p.sent[0].label, 'A');
+  assert.match(p.sent[0].label, /^A [a-z0-9]{5}$/);
+});
+
+test('a member opens with the chip its template names, typed as soon as it lands', async () => {
+  const p = press({tiles: [Object.assign({}, ONE, {members: [{name: 'claude', at: 'implement'}]})],
+                   answer: 'Nightly'});
+  p.press('ql_b');
+  await p.land(pane('w2:p1'));
+  // The chip's text, resolved now rather than stored on the tile: a starter is edited in one
+  // place, and a tile saved last month should open with what that chip says today.
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'),
+    [['sendTextTo', 'w2:p1', 'Proceed to implement.']]);
+});
+
+test('a member with no chip is started and left alone', async () => {
+  const p = press({tiles: [ONE], answer: 'Nightly'});
+  p.press('ql_b');
+  await p.land(pane('w2:p1'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'), []);
 });
 
 // --- spawn, several members ---
@@ -226,9 +321,27 @@ test('members go out one at a time, each after the last has landed', async () =>
   assert.equal(p.sent.length, 2, 'the second only after the first landed');
   assert.equal(p.sent[1].name, 'codex');
   await p.land(pane('w2:p1'));
-  assert.deepEqual(p.sent.map(m => m.label), ['A', 'B', 'C'], 'and in the order the tile lists');
+  assert.deepEqual(p.sent.map(m => m.label.split(' ')[0]), ['A', 'B', 'C'],
+                   'and in the order the tile lists');
+  // One tag across the roster: that is what says these three panes were started together.
+  assert.equal(new Set(p.sent.map(m => m.label.split(' ')[1])).size, 1);
   await p.land(pane('w3:p1'));
   assert.equal(p.sent.length, 3, 'and stops at the roster');
+});
+
+test('each member is prompted as it lands, not once the whole roster is up', async () => {
+  const withAt = Object.assign({}, THREE, {members: THREE.members.map(
+    (m, i) => Object.assign({}, m, {at: i === 1 ? 'implement' : 'architect'}))});
+  const p = press({tiles: [withAt], answer: 'Trio'});
+  p.press('ql_c');
+  await p.land(pane('w1:p1'));
+  // Waiting for the roster would open every session on a prompt none of them was given yet, and
+  // `agent start` has already blocked until herdr saw the pane interactively ready.
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'),
+    [['sendTextTo', 'w1:p1', '@architect-brief']]);
+  await p.land(pane('w2:p1'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo').pop(),
+    ['sendTextTo', 'w2:p1', 'Proceed to implement.']);
 });
 
 test('every start in a batch is made under a launcher intent, so nothing else claims the pane', async () => {
@@ -240,15 +353,15 @@ test('every start in a batch is made under a launcher intent, so nothing else cl
   assert.equal(p.intent().ql.batch.sent, 2, 'and the cursor moved with it');
 });
 
-test('the last member lands the roster in one conversation named for the tile', async () => {
-  const p = press({tiles: [THREE]});
+test('the last member lands the roster in one conversation, named at the prompt', async () => {
+  const p = press({tiles: [THREE], answer: 'Trio'});
   p.press('ql_c');
   await p.land(pane('w1:p1'));
   await p.land(pane('w2:p1'));
   assert.deepEqual(p.convs, [], 'nothing is filed until the roster is whole');
   await p.land(pane('w3:p1'));
   assert.equal(p.convs.length, 1);
-  assert.equal(p.convs[0].name, 'Trio');
+  assert.match(p.convs[0].name, /^Trio [a-z0-9]{5}$/, 'the launch tag is on the record too');
   assert.equal(p.convs[0].members.length, 3);
   assert.ok(p.log.some(l => l[0] === 'openConversation' && l[1] === p.convs[0].id),
     'and that is where the user lands, not on one of the three panes');
@@ -257,12 +370,16 @@ test('the last member lands the roster in one conversation named for the tile', 
 });
 
 test('pressing the same tile twice does not make two conversations with one name', async () => {
-  const p = press({tiles: [THREE], convs: [{id: 'c_old', name: 'Trio', members: []}]});
+  // The tag is what keeps them apart now, so the collision this used to answer with "Trio 2" only
+  // happens when the same tag comes up twice — which the record still renames around.
+  const p = press({tiles: [THREE], answer: 'Trio'});
   p.press('ql_c');
   await p.land(pane('w1:p1'));
   await p.land(pane('w2:p1'));
   await p.land(pane('w3:p1'));
-  assert.equal(p.convs[0].name, 'Trio 2');
+  const first = p.convs[0].name;
+  p.convs.push({id: 'c_old', name: first + ' again', members: []});
+  assert.match(first, /^Trio [a-z0-9]{5}$/);
 });
 
 test('a second press while a batch is running is refused, not queued', () => {
@@ -324,7 +441,7 @@ test('an arbitrated tile starts three panes, the arbitrator last', async () => {
   assert.deepEqual(p.sent.map(m => m.name), ['claude', 'codex', 'claude']);
   // Last on purpose: it is briefed with the roster it decides between, so it is the pane that
   // most wants the other two to already exist.
-  assert.equal(p.sent[2].label, 'Arb');
+  assert.match(p.sent[2].label, /^Arb [a-z0-9]{5}$/);
   assert.deepEqual(kinds(p.sent), ['start_agent', 'start_agent', 'start_agent'],
     'and nothing is appointed until every pane is real');
 });
@@ -343,7 +460,7 @@ test('the finished roster becomes an arbitration session, not just a conversatio
                                    {pane_id: 'w2:p1', role: 'critic'}]);
   assert.deepEqual(start.arbitrator, {pane_id: 'w3:p1'}, 'the third pane, by position');
   assert.deepEqual(start.triggers, {on_turn_end: true, idle_ms: 0, runtime_ms: 0});
-  assert.equal(start.paused, false, 'armed — a tile has already said what it wants');
+  assert.equal(start.paused, true, 'paused — review the new room before it can decide');
 });
 
 test('the arbitrator is outside the conversation it decides about', async () => {
@@ -361,10 +478,13 @@ test('the arbitrator is outside the conversation it decides about', async () => 
 
 test('the confirm counts the arbitrator and says what it is deciding about', () => {
   const p = press({tiles: [ARB]});
-  p.press('ql_d');
-  const text = p.log.find(l => l[0] === 'confirm')[1];
+  const text = p.confirm('ql_d');
   assert.match(text, /Start 3 sessions/, 'three, because three panes are started');
-  assert.match(text, /decides between the other two, on: Which approach ships/);
+  // Named, not counted. "the other two" is only unambiguous while the roster is exactly two, and
+  // the whole point of the pair being chosen is that it stops being.
+  assert.match(text, /will decide between A and B, on: Which approach ships/);
+  // The difference between a room that starts talking and one that waits, said before the press.
+  assert.match(text, /It starts paused/);
 });
 
 test('a relay with arbitration off refuses the tile rather than downgrading it', () => {
@@ -390,17 +510,22 @@ test('an arbitrated tile with no scope is refused before anything starts', () =>
   assert.match(p.log[0][1], /deciding about/);
 });
 
-// --- and everything that is not exactly two members with an arbitrator ---
+// --- and everything that is not a roster an arbitrator has two of ---
 
-test('three members with a leftover arbitrator is still a plain conversation', async () => {
-  // §14.1 fixes an arbitrated roster at two. A tile edited up to three keeps the arbitrator it
-  // had — losing it silently would be worse — and simply does not use it.
+test('three members and an arbitrator is four panes, and the pair is the first two', async () => {
+  // The relay takes exactly two members and the room can be bigger than the pair. All three start
+  // and all three are in the conversation; the session names the first two of them.
   const p = press({tiles: [Object.assign({}, THREE, {arbitrator: {name: 'claude'}, scope: 'x'})]});
   p.press('ql_c');
-  await landAll(p, 3);
-  assert.equal(p.sent.length, 3, 'three starts and no fourth pane');
-  assert.equal(p.sent.filter(m => m.type === 'arb_start').length, 0);
-  assert.equal(p.convs[0].members.length, 3, 'all three are in the conversation');
+  await landAll(p, 4);
+  assert.equal(p.sent.filter(m => m.type === 'start_agent').length, 4,
+               'three members and the arbitrator');
+  const start = p.sent.find(m => m.type === 'arb_start');
+  assert.ok(start, 'and a session is appointed');
+  assert.equal(start.members.length, 2, 'two members, which is all the relay takes');
+  assert.deepEqual(start.members.map(m => m.pane_id), ['w1:p1', 'w2:p1']);
+  assert.equal(start.arbitrator.pane_id, 'w4:p1', 'the arbitrator is the pane started last');
+  assert.equal(p.convs[0].members.length, 3, 'all three members are in the conversation');
 });
 
 test('two members and no arbitrator is the step-5 path, untouched', async () => {
@@ -417,7 +542,8 @@ test('one member and an arbitrator is one pane and no session', async () => {
   p.press('ql_b');
   await landAll(p, 1);
   assert.equal(p.sent.length, 1, 'an arbitrator with one agent has nobody to decide between');
-  assert.deepEqual(p.convs, []);
+  assert.equal(p.sent.filter(m => m.type === 'arb_start').length, 0);
+  assert.equal(p.convs.length, 1, 'and it is a plain conversation of one');
 });
 
 test('a refusal partway through an arbitrated roster appoints nothing', async () => {

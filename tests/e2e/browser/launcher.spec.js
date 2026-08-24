@@ -56,6 +56,21 @@ const seed = (page, tiles) => page.evaluate(t => {
 const RUN = {id: 'ql_run', label: 'Run the tests', action: 'run', project_id: 'charts',
              command: 'pytest -q'};
 
+// Answering the launch sheet: pick a Project when the tile does not name one, type a name, then
+// the two taps Start takes. Every press goes through this now — the sheet is where the confirm is
+// read, where a template is pointed at a tree and where the launch is named.
+const launch = async (page, {project, name} = {}) => {
+  await expect(page.locator('#qlLaunchName')).toBeVisible();
+  if (project) await dlg(page).getByRole('button', {name: project, exact: true}).click();
+  if (name) await page.fill('#qlLaunchName', name);
+  const start = dlg(page).getByRole('button', {name: 'Start', exact: true});
+  await start.click();
+  // Armed, then fired. A tile starts sessions in someone else's checkout, so the tap that does it
+  // is deliberately not the first one.
+  await expect(dlg(page).getByRole('button', {name: 'Start?', exact: true})).toBeVisible();
+  await dlg(page).getByRole('button', {name: 'Start?', exact: true}).click();
+};
+
 // --- the section ---
 
 test('a tile is on the page, with its payload on it rather than behind a hover', async ({page}) => {
@@ -81,8 +96,10 @@ test('the section leads the page and carries its own way in', async ({page}) => 
     .map(el => el.id));
   expect(order).toEqual(['launcher', 'agents']);
   // Drawn whether or not there is anything under it — an entry point that only appears once you
-  // already have a tile cannot be how the first one is made.
-  await expect(page.locator('#launcher .section-header button')).toHaveText('Edit');
+  // already have a tile cannot be how the first one is made. Two of them once there is a tile,
+  // and + is always the right-hand one: an add button that moves as soon as it has been used is
+  // the shape of a button people stop finding.
+  await expect(page.locator('#launcher .section-header button')).toHaveText(['Edit', '+ New']);
 });
 
 test('an empty launcher still offers the one thing there is to do', async ({page}) => {
@@ -92,8 +109,13 @@ test('an empty launcher still offers the one thing there is to do', async ({page
   // reach it, and the launcher another test here wrote is still on the relay when this page
   // connects. Every test below that starts from nothing says so.
   await seed(page, []);
-  await expect(page.locator('#launcher .section-header button')).toHaveText('+ New');
+  await expect(page.locator('#launcher .section-header button')).toHaveText(['+ New']);
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
+  // And it opens the form rather than the list: that button says Add, and a list is not what
+  // adding looks like.
+  await page.click('#launcher .section-header button');
+  await expect(page.locator('#launcherEditTitle')).toHaveText('New tile');
+  await page.click('#launcherModal button[aria-label="Close"]');
 });
 
 // --- the editor ---
@@ -103,7 +125,6 @@ test('a tile written through the form is on the page, and survives a reload', as
   await seed(page, []);
   await page.click('#launcher .section-header button');
   await expect(page.locator('#launcherModal')).toBeVisible();
-  await page.click('#qlAdd');
   await page.fill('#qlName', 'Charts tests');
   await page.fill('#qlCommand', 'pytest -q tests/charts');
   await dlg(page).getByRole('button', {name: 'Charts', exact: true}).click();
@@ -126,7 +147,6 @@ test('the form refuses a tile the presser could not run, and says which field', 
   await open(page);
   await seed(page, []);
   await page.click('#launcher .section-header button');
-  await page.click('#qlAdd');
   await page.fill('#qlCommand', 'pytest');
   await page.click('#qlSave');
   await expect(page.locator('#qlError')).toHaveText('Give it a name');
@@ -137,19 +157,25 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
   await open(page);
   await seed(page, []);
   await page.click('#launcher .section-header button');
-  await page.click('#qlAdd');
   await page.fill('#qlName', 'Review pair');
   await dlg(page).getByRole('button', {name: 'Start agents'}).click();
   await dlg(page).getByRole('button', {name: '+ claude'}).click();
-  // The arbitrator row is offered at exactly two, which is where §14.1 fixes an arbitrated roster.
+  // One agent is nothing to decide between, so the row is not offered yet.
   await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toHaveCount(0);
   await dlg(page).getByRole('button', {name: '+ codex'}).click();
   await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toBeVisible();
-  await page.fill('#qlRole0', 'proposer');
-  await page.fill('#qlRole1', 'critic');
+  // The roles come with the arbitrator and not before it: a role is what the arbitrator is told a
+  // member is for, so there is nothing to ask until there is one.
+  await expect(page.locator('#qlRole0')).toHaveCount(0);
   await dlg(page).locator('.start-field', {hasText: 'Arbitrator'})
     .getByRole('button', {name: 'claude', exact: true}).click();
+  await page.fill('#qlRole0', 'proposer');
+  await page.fill('#qlRole1', 'critic');
   await page.fill('#qlScope', 'Which approach ships');
+  // A new tile starts as a template — no Project, answered at the press — so the one this asserts
+  // has to be chosen here rather than inherited.
+  await dlg(page).locator('.start-field', {hasText: 'Project'})
+    .getByRole('button', {name: 'Charts', exact: true}).click();
   await page.click('#qlSave');
   await page.click('#launcherModal button[aria-label="Close"]');
 
@@ -158,7 +184,8 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
   await expect(tile).toContainText('claude + codex ⚖ claude');
   expect(await page.evaluate(() => loadLauncher()[0])).toMatchObject({
     action: 'spawn', project_id: 'charts', scope: 'Which approach ships',
-    members: [{name: 'claude', role: 'proposer'}, {name: 'codex', role: 'critic'}],
+    members: [{name: 'claude', role: 'proposer', at: 'architect'},
+              {name: 'codex', role: 'critic', at: 'architect'}],
     arbitrator: {name: 'claude'},
   });
 });
@@ -172,9 +199,10 @@ test('tiles are reordered from the list, and the order is what was written down'
   await page.reload();
   expect(await page.evaluate(() => loadLauncher().map(t => t.label)))
     .toEqual(['Second', 'Run the tests']);
-  // And on screen in that order, which is the half a stored array cannot answer.
+  // And on screen in that order, which is the half a stored array cannot answer. Matched on the
+  // start of the line: the name carries its `@project` badge inside the same span.
   await expect(page.locator('.launcher-tile .launcher-name'))
-    .toHaveText(['Second', 'Run the tests']);
+    .toHaveText([/^Second\b/, /^Run the tests\b/]);
 });
 
 test('deleting asks first, and takes the tile off the page', async ({page}) => {
@@ -229,18 +257,50 @@ test('pressing a run tile opens a terminal for the Project it names', async ({pa
     const real = ws.send.bind(ws);
     ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
   });
-  page.on('dialog', d => d.accept());
   await page.locator('.launcher-tile[data-tile="ql_run"]').click();
+  await launch(page, {name: 'Tonight'});
   await expect.poll(() => sent.filter(m => m.type === 'open_terminal')).toHaveLength(1);
+  const msg = sent.find(m => m.type === 'open_terminal');
   // Exactly the fields relay/start_agent.py accepts. `extra = set(msg) - base_fields` is a hard
   // refusal there, so a stray key is not a warning — it is the whole message rejected, silently.
-  expect(sent.find(m => m.type === 'open_terminal')).toEqual({
-    type: 'open_terminal', project_id: 'charts', placement: 'new_workspace',
-    label: 'Run the tests',
-  });
+  expect(Object.keys(msg).sort())
+    .toEqual(['label', 'placement', 'project_id', 'type']);
+  expect(msg.project_id).toBe('charts');
+  expect(msg.placement).toBe('new_workspace');
+  // The name typed, plus this launch's tag — one press is one tag, worn by everything it starts.
+  expect(msg.label).toMatch(/^Tonight [a-z0-9]{5}$/);
 });
 
-test('saying no to the confirm sends nothing', async ({page}) => {
+test('tiles are banded by Project, and a template is pressed into one', async ({page}) => {
+  await open(page);
+  await seed(page, [Object.assign({}, RUN, {id: 'ql_tpl', label: 'Anywhere', project_id: ''}), RUN]);
+  // Templates first: they are the ones pressable anywhere, so they are what a reader is looking
+  // for when they do not already know which tree they want.
+  await expect(page.locator('#launcher .launcher-band')).toHaveText(['Templates', 'Charts']);
+  // The app's one nomenclature for a Project, beside the name — and `@ask` where a template's
+  // would be, which is the reader's warning that pressing it asks one more question.
+  await expect(page.locator('.launcher-tile[data-tile="ql_tpl"] .badge.proj'))
+    .toHaveText('@ask');
+
+  const sent = [];
+  await page.exposeFunction('__note', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
+  });
+  await page.locator('.launcher-tile[data-tile="ql_tpl"]').click();
+  // One sheet, both questions: a template's Project and the launch's name, asked where the confirm
+  // is read rather than in two dialogs of different kinds.
+  await expect(page.locator('#launcherEditTitle')).toHaveText('Launch: Anywhere');
+  await launch(page, {project: 'Charts', name: 'Tonight'});
+  await expect.poll(() => sent.filter(m => m.type === 'open_terminal')).toHaveLength(1);
+  expect(sent.find(m => m.type === 'open_terminal').project_id).toBe('charts');
+  // And the tile is still a template — the choice was for this press, not written back.
+  expect(await page.evaluate(() =>
+    loadLauncher().find(t => t.id === 'ql_tpl').project_id)).toBe('');
+});
+
+test('a launch nobody named is named for what it makes, plus a tag', async ({page}) => {
   await open(page);
   await seed(page, [RUN]);
   const sent = [];
@@ -249,11 +309,41 @@ test('saying no to the confirm sends nothing', async ({page}) => {
     const real = ws.send.bind(ws);
     ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
   });
-  let asked = '';
-  page.on('dialog', d => { asked = d.message(); d.dismiss(); });
   await page.locator('.launcher-tile[data-tile="ql_run"]').click();
-  // The command verbatim in the confirm, which is what makes dismissing it a decision.
-  await expect.poll(() => asked).toContain('pytest -q');
+  await launch(page);
+  await expect.poll(() => sent.filter(m => m.type === 'open_terminal')).toHaveLength(1);
+  expect(sent.find(m => m.type === 'open_terminal').label).toMatch(/^terminal [a-z0-9]{5}$/);
+});
+
+test('cancelling the sheet sends nothing', async ({page}) => {
+  await open(page);
+  await seed(page, [RUN]);
+  const sent = [];
+  await page.exposeFunction('__note', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
+  });
+  await page.locator('.launcher-tile[data-tile="ql_run"]').click();
+  // The command verbatim on the sheet, which is what makes cancelling it a decision.
+  await expect(dlg(page).locator('.ql-launch-say')).toContainText('pytest -q');
+  await dlg(page).getByRole('button', {name: 'Cancel', exact: true}).click();
+  await page.waitForTimeout(500);
+  expect(sent.filter(m => m.type === 'open_terminal')).toHaveLength(0);
+});
+
+test('one tap only arms the Start, it does not press it', async ({page}) => {
+  await open(page);
+  await seed(page, [RUN]);
+  const sent = [];
+  await page.exposeFunction('__note', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
+  });
+  await page.locator('.launcher-tile[data-tile="ql_run"]').click();
+  await dlg(page).getByRole('button', {name: 'Start', exact: true}).click();
+  await expect(dlg(page).getByRole('button', {name: 'Start?', exact: true})).toBeVisible();
   await page.waitForTimeout(500);
   expect(sent.filter(m => m.type === 'open_terminal')).toHaveLength(0);
 });

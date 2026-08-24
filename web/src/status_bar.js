@@ -811,6 +811,9 @@
         // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
         // has to read as "no terminals" rather than crash the next .filter.
         shells = Array.isArray(msg.shells) ? msg.shells : [];
+        // A pane told to quit is only finished once it turns up as a shell, and a snapshot is the
+        // only thing that says so. Before the render, so the pane it exits is gone from this one.
+        if (typeof endTick === 'function') endTick();
         // Before the render, so a pane's first snapshot and the card for it arrive together.
         convAutoJoin();
         // Which member is ended is a question only a snapshot answers, so the prune rides on one.

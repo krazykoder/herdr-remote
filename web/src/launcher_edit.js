@@ -31,9 +31,22 @@
       if (command !== undefined) d.command = command;
       const scope = val('qlScope');
       if (scope !== undefined) d.scope = scope;
+      // The arbitration settings, and only ever what is on screen: `val` answers undefined for a
+      // field this draw did not make, which is what leaves a tile's clocks alone while its
+      // arbitrator is switched off and on again.
+      ['idle', 'runtime', 'steps', 'runs', 'minutes'].forEach(k => {
+        const got = val('ql' + k[0].toUpperCase() + k.slice(1));
+        if (got !== undefined) d[k] = got === '' ? '' : Number(got);
+      });
+      const warm = document.getElementById('qlWarmup');
+      if (warm) d.warmup = !!warm.checked;
       (d.members || []).forEach((m, i) => {
         const role = val('qlRole' + i);
         if (role !== undefined) m.role = role.trim();
+        const label = val('qlMemberName' + i);
+        if (label !== undefined) m.label = label.trim();
+        const at = val('qlAt' + i);
+        if (at !== undefined) m.at = at;
       });
       return d;
     }
@@ -78,6 +91,138 @@
       if (el) el.innerHTML = launcherListHtml();
     }
 
+    // --- pressing a tile -----------------------------------------------------------------
+    //
+    // Everything a press has to answer, in one dialog: what it is about to do, which tree it runs
+    // in, and what to call what it makes. It was three round trips through two kinds of dialog —
+    // the Project a sheet, the name a native `prompt`, and the confirm folded inside that prompt
+    // where it could not be laid out at all. One sheet, because they are one question.
+    //
+    // Held here rather than read off the fields: picking a Project redraws the sheet, and a name
+    // half typed must survive that.
+    let launcherLaunch = null;
+
+    // Returns false, always — nothing has been started when this opens. launcherLaunchFire is
+    // where that happens, and closing the sheet starts nothing.
+    function launcherLaunchSheet(tile) {
+      launcherLaunch = {id: tile.id, project_id: tile.project_id || '', name: ''};
+      launcherDrawLaunch();
+      return false;
+    }
+
+    // The tile as this press would run it: the stored one, plus the Project chosen here. The
+    // choice is never written back — a template that quietly became a button after one press is
+    // the feature undoing itself.
+    function launcherLaunchTile() {
+      const tile = launcherLaunch && loadLauncher().find(t => t.id === launcherLaunch.id);
+      return tile ? Object.assign({}, tile, {project_id: launcherLaunch.project_id}) : null;
+    }
+
+    function launcherLaunchRead() {
+      const el = document.getElementById('qlLaunchName');
+      if (el && launcherLaunch) launcherLaunch.name = el.value;
+    }
+
+    function launcherLaunchProject(id) {
+      launcherLaunchRead();
+      if (!launcherLaunch) return;
+      launcherLaunch.project_id = id;
+      launcherDrawLaunch();
+    }
+
+    // What this press will actually spawn, drawn rather than described. launcherConfirmLines says
+    // it in a sentence, which is the right form for a confirm and the wrong one for a roster: the
+    // reader is checking a list against what they meant to press, and a list is read as a list.
+    //
+    // Drawn whether or not a Project has been picked, unlike the confirm above it. The roster is a
+    // fact about the tile; the confirm is a fact about the press, and there is no press to describe
+    // until there is somewhere to press it.
+    function launcherRosterHtml(tile) {
+      const roster = tile.action === 'run' ? [] : launcherRoster(tile);
+      if (!roster.length) return '';
+      return '<div class="ql-roster">' + roster.map(m => {
+        const starter = (SHORTCUTS.find(s => s.at === m.at) || {}).label || '';
+        return `<span class="ql-part${m.arb ? ' arb' : ''}">`
+          // Scales for the arbitrator, the robot for a member. It is not a third participant, it is
+          // the one deciding between the other two, and a strip drawing all three alike would tell
+          // the same lie launcherPreview already refuses to.
+          + (m.arb ? '<span class="ql-part-mark" aria-hidden="true">⚖</span>'
+                   : `<span class="ql-part-mark">${launcherIcon('spawn')}</span>`)
+          + `<span class="ql-part-name">${escapeHtml(m.label || m.name)}</span>`
+          + agentBadge(m.name)
+          + (starter ? `<span class="ql-part-role">${escapeHtml(starter)}</span>` : '')
+          + '</span>';
+      }).join('') + '</div>';
+    }
+
+    function launcherDrawLaunch() {
+      const tile = launcherLaunchTile();
+      if (!tile) { closeLauncherEdit(); return; }
+      const title = document.getElementById('launcherEditTitle');
+      // Named for what this sheet does. The same node is the tile *editor's* header, where a bare
+      // tile label reads identically — and one of the two starts sessions on a real host.
+      if (title) title.textContent = `Launch: ${tile.label}`;
+      const el = document.getElementById('launcherEditBody');
+      if (el) {
+        el.innerHTML =
+          // What pressing this does, quoted rather than described — the tile's own label may have
+          // been written by another browser, and this is the evidence for it. Only once there is a
+          // Project: every line of it names one.
+          (tile.project_id
+            ? `<p class="ql-launch-say">${launcherConfirmLines(tile, launcherEnv())
+                .map(escapeHtml).join('<br>')}</p>`
+            : '<p class="ql-none">This tile is a template — pick the Project to start it in.</p>')
+          + launcherRosterHtml(tile)
+          + '<div class="start-field">Project<div class="badge-strip">'
+          + (projects.length
+            ? projects.map(p => badgeHtml(p.label || p.id, p.id === tile.project_id,
+                `launcherLaunchProject('${escapeHtml(p.id)}')`,
+                {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
+            : '<span class="ql-none">This relay has no Projects configured.</span>')
+          + '</div></div>'
+          + `<label class="start-field">Name<input id="qlLaunchName" type="text"`
+          + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
+          + ` placeholder="${escapeHtml(launcherNoun(tile))} — blank is fine"`
+          + ` value="${escapeHtml(launcherLaunch.name)}" /></label>`
+          + `<p class="ql-none">Every pane this starts wears the name and one shared tag, so a `
+          + 'second press of the same tile is never mistaken for this one.</p>'
+          + '<div class="ql-actions">'
+          + '<button class="ql-secondary" onclick="closeLauncherEdit()">Cancel</button>'
+          // arm-btn is what draws the armed state — the orange fill draining over the arm window,
+          // the same one QUIT and the arbitration dialog's two finals wear. Without the class the
+          // button arms and says so in its label with nothing on screen agreeing.
+          + '<button type="button" class="ql-primary arm-btn"'
+          + ' onclick="launcherLaunchFire(this)">Start</button></div>';
+      }
+      const box = document.getElementById('launcherModal');
+      if (box) box.style.display = 'block';
+    }
+
+    function launcherLaunchFire(btn) {
+      launcherLaunchRead();
+      const at = launcherLaunch;
+      if (!at) return;
+      // The one answer that cannot be defaulted: a session started in the wrong tree is worse than
+      // one not started.
+      if (!at.project_id) { showToast('Pick a Project'); return; }
+      // Two taps. A tile starts up to three sessions in someone else's checkout and types a first
+      // prompt into each, which is not something to do on a thumb brushing a list. armButton and
+      // not armFire: this button is drawn by a render and has no id worth having, and armFire is
+      // keyed by one against a table of labels.
+      armButton(btn, 'Start?', () => {
+        const to = at.project_id, name = at.name;
+        closeLauncherEdit();
+        launcherPressIn(at.id, to, name);
+      });
+    }
+
+    // The + in the section header. Straight to the form, because that button says Add and a list
+    // is not what adding looks like — Edit beside it is how the list is reached.
+    function openLauncherNew() {
+      openLauncherEdit();
+      launcherNewTile();
+    }
+
     function openLauncherEdit() {
       launcherDrawList();
       const box = document.getElementById('launcherModal');
@@ -87,6 +232,7 @@
     function closeLauncherEdit() {
       launcherDraft = null;
       launcherEditing = '';
+      launcherLaunch = null;
       const box = document.getElementById('launcherModal');
       if (box) box.style.display = 'none';
     }
@@ -116,9 +262,10 @@
       launcherEditing = '';
       launcherDraft = {
         id: launcherId(), label: '', action: 'run',
-        // The first Project rather than none: there is usually one in play, and a form that opens
-        // with its only required choice unmade reads as broken rather than as a question.
-        project_id: (projects[0] || {}).id || '',
+        // None, deliberately. A tile is more useful as a template than as a button — the same
+        // roster pressed into whichever tree wants it — and a form that opened on one Project
+        // would make the narrower tile the one people make by accident.
+        project_id: '',
         command: '', members: [], scope: '',
       };
       // A relay that starts nothing still has terminals, and one with terminals off still starts
@@ -167,7 +314,8 @@
         showToast(`At most ${LAUNCHER_MEMBERS_MAX} agents`);
         return;
       }
-      d.members = (d.members || []).concat([{name: name, role: ''}]);
+      d.members = (d.members || []).concat(
+        [{name: name, role: '', label: '', at: LAUNCHER_DEFAULT_AT}]);
       launcherDrawForm();
     }
 
@@ -182,7 +330,28 @@
     function launcherPickArb(name) {
       launcherReadForm();
       launcherDraft.arbitrator = name ? {name: name} : null;
+      if (name) launcherArbSeed();
       launcherDrawForm();
+    }
+
+    // Appointing an arbitrator is where the pair stops being two agents and becomes an implementer
+    // and a reviewer, so it is where that is filled in: the roster is put in slot order and each
+    // member is given the roles its slot is usually for. Only ever into an empty field — a role
+    // somebody typed is the answer to this question and must not be overwritten by the suggestion.
+    function launcherArbSeed() {
+      const d = launcherDraft;
+      if (!d) return;
+      d.members = launcherArbOrder(d.members || []);
+      // The phrases live with the pills that light up for them, so the tags are resolved through
+      // that list rather than repeated here — two copies of "fixes what review finds" is a badge
+      // that silently stops matching the field it wrote.
+      if (typeof ARB_ROLE_TAGS === 'undefined') return;
+      d.members.forEach((m, i) => {
+        const slot = LAUNCHER_ARB_SLOTS[i];
+        if (!slot || m.role) return;
+        m.role = slot.tags.map(t => (ARB_ROLE_TAGS.find(x => x.tag === t) || {}).text)
+          .filter(Boolean).join(', ');
+      });
     }
 
     function launcherFormHtml() {
@@ -190,9 +359,11 @@
       const kinds = launcherKinds();
       const terminal = !!(startOptions || {}).terminal;
       const members = d.members || [];
-      // Exactly two is what §14.1 fixes an arbitrated roster at, so the row is offered at exactly
-      // two. A tile that has one anyway keeps it — the field is hidden, not cleared.
-      const canArb = d.action === 'spawn' && members.length === 2;
+      // Two or more. The arbitrator itself still takes exactly two — that is the relay's
+      // MEMBERS_REQUIRED and it does not move — but which two is a question, not an assumption,
+      // the moment there are three in the room. Asked the same way the setup dialog asks it: two
+      // selects over the roster, defaulted to the pair launcherArbOrder picked.
+      const canArb = d.action === 'spawn' && members.length >= 2;
       const arbName = (d.arbitrator || {}).name || '';
       return '<label class="start-field">Name<input id="qlName" type="text"'
         + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
@@ -206,6 +377,8 @@
                                          : 'This relay starts nothing'})
         + '</div></div>'
         + '<div class="start-field">Project<div class="badge-strip">'
+        + badgeHtml('Ask each time', !d.project_id, "launcherPickProject('')",
+                    {title: 'A template — the Project is picked when the tile is pressed'})
         + (projects.length
           ? projects.map(p => badgeHtml(p.label || p.id, p.id === d.project_id,
               `launcherPickProject('${escapeHtml(p.id)}')`,
@@ -224,11 +397,7 @@
             + kinds.map(k => badgeHtml(k, k === arbName, `launcherPickArb('${escapeHtml(k)}')`,
                                        {agent: k})).join('')
             + '</div></div>'
-            + (arbName
-              ? '<label class="start-field">Deciding about<textarea id="qlScope" rows="2"'
-                + ` placeholder="what this session is for">${escapeHtml(d.scope || '')}</textarea>`
-                + '</label>'
-              : '')
+            + (arbName ? launcherArbSetupHtml(d, members) : '')
           : '')
         + '<p id="qlError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>'
         + '<div class="ql-actions">'
@@ -246,20 +415,138 @@
                                      {agent: k, title: 'Add one of these to the roster'})).join('')
           : '<span class="ql-none">This relay starts nothing.</span>')
         + '</div>'
-        // One text field per member and no more. The relay names a pane for the role it was given,
-        // which is the label anybody wanted; a second field for the pane's own name would be a
-        // field that is right to leave blank almost every time.
+        // Three answers per member: what to call it, what it is for, and what to say to it first.
+        // The name is a template rather than the pane's name — launcherNamed puts the launch's tag
+        // after it, because a tile pressed twice is two panes and two called "Reviewer" are two
+        // the roster, the conversation and herdr's status line all fail to tell apart.
         + (members.length
-          ? '<div class="ql-members">' + members.map((m, i) =>
-            '<div class="ql-member">'
-            + `<span class="ql-member-kind">${escapeHtml(m.name)}</span>`
-            + `<input id="qlRole${i}" type="text" maxlength="32" autocapitalize="none"`
-            + ` autocomplete="off" placeholder="role (optional)"`
-            + ` value="${escapeHtml(m.role || '')}" />`
-            + `<button class="ql-del" onclick="launcherDropMember(${i})"`
-            + ` aria-label="Remove ${escapeHtml(m.name)}">✕</button></div>`).join('') + '</div>'
+          ? '<div class="ql-members">' + members.map((m, i) => launcherMemberHtml(m, i)).join('')
+            + '</div>'
           : '<p class="ql-none">Tap an agent above to build the roster. Two of them with an '
             + 'arbitrator is an arbitrated session; more than one without is a conversation.</p>')
+        // Step 4 of the press names what this makes, and so does the tile. Said here too, with the
+        // same mark the conversation card wears, because the roster is where it is decided — and a
+        // second agent added by accident is otherwise a room nobody meant to open.
+        + (members.length > 1
+          ? `<p class="ql-conv">${launcherIcon('conv')}<span>These ${members.length} start `
+            + 'together in one conversation, named when you press the tile.</span></p>'
+          : '')
+        + '</div>';
+    }
+
+    // Everything that is only a question once there is an arbitrator: what it is deciding about,
+    // what each member is *for*, and the clocks and limits it runs under. Drawn in `arb-form`
+    // because that is the block the arbitration setup's own fields are laid out by — the role
+    // picker, the folded clocks and the checkbox all come with their layout when they are inside
+    // it, and a second stylesheet for the same three controls is the thing that drifts.
+    function launcherArbSetupHtml(d, members) {
+      const clocks = typeof arbClockOptions === 'function';
+      return '<div class="arb-form ql-arb">'
+        // The same class and the same sentence the arbitration setup shows, because it is the same
+        // missing thing said in the second place it can be chosen.
+        + '<span class="arb-note">@arbitrator starter prompt — not defined yet.</span>'
+        + '<label>Deciding about<textarea id="qlScope" rows="2"'
+        + ` placeholder="what this session is for">${escapeHtml(d.scope || '')}</textarea></label>`
+        // The two being arbitrated, with a role each. Two slots and not the whole roster: the
+        // arbitrator reads two members, so a third with a role field would be a question about
+        // something nobody is going to be asked. Which two is the select — named rather than
+        // assumed, the same way and for the same reason the setup dialog names them.
+        + '<div class="ql-arb-roles">'
+        + members.slice(0, 2).map((m, i) => '<div class="ql-arb-member">'
+          // Which slot, then who is in it. At exactly two the select has one thing left to say by
+          // the time it reaches Agent 2 — which is the honest shape of the question, not a control
+          // that looks live and is not.
+          + `<span class="ql-member-kind"><span class="ql-arb-slot">Agent ${i + 1}</span>`
+          + launcherPairSelect(members, i)
+          + (typeof agentBadge === 'function' ? agentBadge(m.name)
+             : ` <span class="badge">${escapeHtml(m.name)}</span>`) + '</span>'
+          + (typeof arbRoleField === 'function'
+            ? arbRoleField(`qlRole${i}`, m.role || '')
+            : `<input id="qlRole${i}" type="text" maxlength="240" autocapitalize="none"`
+              + ` autocomplete="off" placeholder="what this one is for"`
+              + ` value="${escapeHtml(m.role || '')}" />`)
+          + '</div>').join('')
+        + (members.length > 2
+          ? `<p class="ql-none">The other ${members.length - 2} start in the conversation too — `
+            + 'the arbitrator is not deciding between them.</p>'
+          : '')
+        + '</div>'
+        // Folded, and for the same reason the dialog folds them: both clocks are Never until
+        // somebody goes looking for them, and three limits nobody changed are the relay's own
+        // defaults. `typeof` because a build without arbitration draws a tile editor that simply
+        // does not offer them, rather than a broken page.
+        + (clocks
+          ? '<details class="arb-more"><summary>Clocks and limits</summary>'
+            + '<label>If a member goes quiet<select id="qlIdle">'
+            + arbClockOptions(ARB_IDLE_CHOICES, d.idle) + '</select></label>'
+            + '<label>If a member works without stopping<select id="qlRuntime">'
+            + arbClockOptions(ARB_RUNTIME_CHOICES, d.runtime) + '</select></label>'
+            + arbLimitField('qlSteps', 'Stop after this many sends', d.steps, ARB_LIMITS.arbSteps)
+            + arbLimitField('qlRuns', 'Stop after this many in a row with nobody joining in',
+                            d.runs, ARB_LIMITS.arbRuns)
+            + arbLimitField('qlMinutes', 'Stop after this many minutes', d.minutes,
+                            ARB_LIMITS.arbMinutes)
+            + '<label class="arb-check"><input id="qlWarmup" type="checkbox"'
+            + `${d.warmup ? ' checked' : ''}> Wake the members before the first instruction</label>`
+            + '<span class="arb-note">agy is always woken — it is the one that needs it.</span>'
+            + '</details>'
+          : '')
+        + '</div>';
+    }
+
+    // Who is in one of the two arbitrated slots. Slot 1 may be any member; slot 2 is everything
+    // that is not already slot 1, because a pair naming the same pane twice is not a pair.
+    function launcherPairSelect(members, slot) {
+      const opts = members
+        .map((m, at) => ({m: m, at: at}))
+        .filter(o => slot === 0 || o.at !== 0);
+      return `<select id="qlPair${slot}" onchange="launcherPickPair(${slot}, this.value)"`
+        + ` aria-label="Which agent is Agent ${slot + 1}">`
+        + opts.map(o => `<option value="${o.at}"${o.at === slot ? ' selected' : ''}>`
+            + escapeHtml(o.m.label ? `${o.m.label} — ${o.m.name}` : o.m.name)
+            + '</option>').join('')
+        + '</select>';
+    }
+
+    // A swap and not a stored index: the pair is the first two of the roster everywhere else, so
+    // moving a member into a slot is moving it up the list. The role rides with it — it is a field
+    // on the member — which is what makes swapping the two slots do the obvious thing.
+    function launcherPickPair(slot, at) {
+      launcherReadForm();
+      const members = (launcherDraft || {}).members || [];
+      const i = Number(at);
+      if (!(i >= 0) || i >= members.length || i === slot) return;
+      const held = members[slot];
+      members[slot] = members[i];
+      members[i] = held;
+      launcherDrawForm();
+    }
+
+    // One member. A card and not a row: three fields side by side is a phone's whole width spent
+    // on placeholders nobody can read.
+    function launcherMemberHtml(m, i) {
+      const at = m.at === undefined ? LAUNCHER_DEFAULT_AT : m.at;
+      return '<div class="ql-member">'
+        + `<span class="ql-member-kind">${escapeHtml(m.name)}</span>`
+        + `<button class="ql-del" onclick="launcherDropMember(${i})"`
+        + ` aria-label="Remove ${escapeHtml(m.name)}">✕</button>`
+        + `<input id="qlMemberName${i}" type="text" maxlength="${LAUNCHER_LABEL_MAX}"`
+        + ` autocapitalize="none" autocomplete="off" placeholder="name (optional)"`
+        + ` value="${escapeHtml(m.label || '')}" />`
+        // No role here. A role is what the *arbitrator* is told this member is for — it means
+        // nothing to the agent, which is never shown it and is not started differently because of
+        // it. So it is asked for in the one place it means something: under the arbitrator, once
+        // there is one. See launcherArbSetupHtml.
+        //
+        // A select over the chips the composer already offers, rather than a textarea: the text of
+        // a starter is edited in one place and every tile that names it follows, which is why the
+        // chips are addressed by name everywhere else in the app.
+        + `<select id="qlAt${i}" aria-label="First prompt for ${escapeHtml(m.name)}">`
+        + `<option value=""${at ? '' : ' selected'}>No first prompt</option>`
+        + (typeof SHORTCUTS === 'undefined' ? '' : SHORTCUTS.map(sc =>
+            `<option value="${escapeHtml(sc.at)}"${sc.at === at ? ' selected' : ''}>`
+            + `@${escapeHtml(sc.at)} — ${escapeHtml(sc.label)}</option>`).join(''))
+        + '</select>'
         + '</div>';
     }
 
@@ -307,12 +594,23 @@
         const out = {name: m.name};
         if (m.role) out.role = m.role;
         if (m.label) out.label = m.label;
+        // '' is a real answer — this member opens with nothing — so it is stored as absent and
+        // read back as absent, and the default only applies to a member being added.
+        if (m.at) out.at = m.at;
         return out;
       });
       // Kept whatever the roster size, exactly as launcherWantsArb expects: a tile widened to
       // three and edited back down to two must still have the arbitrator it was given.
       if (d.arbitrator && d.arbitrator.name) {
         tile.arbitrator = {name: d.arbitrator.name};
+        // Only what was answered. An absent clock is off and an absent limit is the relay's own
+        // DEFAULT_BUDGET — restating either here would be a second copy of a number the relay
+        // owns, kept in step by hand for no gain.
+        ['idle', 'runtime', 'steps', 'runs', 'minutes'].forEach(k => {
+          const n = Number(d[k]);
+          if (n > 0) tile[k] = Math.round(n);
+        });
+        if (d.warmup) tile.warmup = true;
         if (d.arbitrator.role) tile.arbitrator.role = d.arbitrator.role;
         if (d.arbitrator.label) tile.arbitrator.label = d.arbitrator.label;
         const scope = String(d.scope || '').trim();

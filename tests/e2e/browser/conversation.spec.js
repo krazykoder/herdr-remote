@@ -413,10 +413,82 @@ test('naming a conversation is what promotes it out of the evictable tier', asyn
   await expect(page.locator('#conversations .conversation-card')).toContainText('the auth rewrite');
 });
 
+test('an automatic conversation says so in the window it is read in, and goes back', async ({page}) => {
+  await openCard(page);
+  const head = page.locator('#convView .conv-view-head');
+  const tier = page.locator('#convViewTier');
+  // A named conversation is the ordinary case and wears nothing.
+  await expect(tier).toBeHidden();
+  await expect(head).not.toHaveClass(/auto/);
+
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].auto = true;
+    items[0].name = 'herdr-remote · scratch';
+    saveConvIndex(items);
+    renderConvStandalone(false);
+  });
+  // The badge says what it is; the grey says it from across the room, which is what stops a long
+  // thread being typed into under the impression it is being kept.
+  await expect(tier).toBeVisible();
+  await expect(tier).toHaveText('auto');
+  await expect(head).toHaveClass(/auto/);
+
+  // And renaming is what promotes it, so the window has to drop both on the same redraw.
+  page.once('dialog', d => d.accept('the auth rewrite'));
+  await page.locator('#convView .conv-roster-actions button', {hasText: 'Rename'}).click();
+  await expect(tier).toBeHidden();
+  await expect(head).not.toHaveClass(/auto/);
+});
+
+test('a conversation with nothing running is drawn hollow, and offers no End', async ({page}) => {
+  await openCard(page);
+  await page.locator('#convView .back').click();
+  const card = page.locator('#conversations .conversation-card').first();
+  // Live members: a filled dot, whatever colour its lead pane's status paints, and the control
+  // that stops them.
+  await expect(card.locator('.dot')).not.toHaveClass(/ended/);
+  await expect(card.locator('.end-btn')).toBeVisible();
+
+  // The member moved to a pane id nothing is open on. Nothing is deleted — the conversation and
+  // its transcripts survive, and the card is drawn for what is left, which is a record.
+  await page.evaluate(() => {
+    const items = loadConvIndex();
+    items[0].members = items[0].members.map(m => Object.assign({}, m, {
+      key: JSON.stringify(Object.assign(JSON.parse(m.key), {1: '%gone'})),
+    }));
+    saveConvIndex(items);
+    renderConversations();
+  });
+  await expect(card.locator('.dot')).toHaveClass(/ended/);
+  await expect(card.locator('.end-btn')).toHaveCount(0);
+});
+
+test('End on a conversation card takes two taps and quits every live member', async ({page}) => {
+  const sent = [];
+  await openCard(page);
+  await page.locator('#convView .back').click();
+  await page.exposeFunction('__note', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __note(JSON.parse(data)); } catch (e) { /* not json */ } return real(data); };
+  });
+  const end = page.locator('#conversations .conversation-card .end-btn').first();
+  // One tap arms it and sends nothing — the same two-tap the agent cards and QUIT use.
+  await end.click();
+  await expect(end).toHaveText('End all?');
+  expect(sent.filter(m => m.type === 'send_text')).toHaveLength(0);
+  await end.click();
+  await expect.poll(() => sent.filter(m => m.type === 'send_text' && m.text === '/quit'))
+    .not.toHaveLength(0);
+  // The record is untouched: End stops the sessions, Delete is what destroys the transcripts.
+  expect(await page.evaluate(() => loadConvIndex().length)).toBe(1);
+});
+
 test('conversation management actions keep their intended order', async ({page}) => {
   await openCard(page);
   await expect(page.locator('#convView .conv-roster-actions button')).toHaveText([
-    'Delete', 'Copy', 'Duplicate', 'Rename', 'Add pane',
+    'Delete', 'End all', 'Copy', 'Duplicate', 'Rename', 'Add pane',
   ]);
 });
 
@@ -1982,7 +2054,8 @@ test('the picker filters its rows by what they say', async ({page}) => {
     }
   });
   await page.locator('#convView .conv-roster-actions button', {hasText: 'Add pane'}).click();
-  await expect(page.locator('.pick-search')).toBeVisible();
+  // Scoped: the recent sheet carries a search field of its own, so a bare class matches two.
+  await expect(page.locator('#pickSheet .pick-search')).toBeVisible();
   await page.locator('#pickSearch').fill('former 3');
   await expect(page.locator('#pickList .pair-pick')).toHaveCount(1);
   // Typed the way a name is abbreviated, not spelled: the letters in order, inside one field.

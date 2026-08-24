@@ -665,6 +665,7 @@
         // outside the conversation and inside its project.
         arbPart('Arbitrator',
           arbSlot('arbWho', free, at.arbWho || (free[0] || {}).pane_id) +
+          '<span class="arb-note">@arbitrator starter prompt — not defined yet.</span>' +
           // §10's two clocks, off by default and folded away because of it. A turn ending is
           // always a trigger; these are for the two ways a conversation stops without anyone's
           // turn ending — a member that went quiet, and one that has been working long enough to
@@ -931,12 +932,16 @@
       {tag: 'implement', text: 'writes the code'},
       {tag: 'fix-code', text: 'fixes what review finds'},
       {tag: 'review-only', text: 'review only'},
+      {tag: 'review', text: 'reviews the other one\u2019s work'},
       {tag: 'no-code', text: 'no code writing'},
       {tag: 'test-min', text: 'minimal focused test'},
       {tag: 'test-full', text: 'runs the full suite'},
       {tag: 'plan', text: 'plans the next phase'},
       {tag: 'research', text: 'researches without changing files'},
       {tag: 'docs', text: 'writes the documentation'},
+      // Wanted on every member of nearly every session, whatever else it is for: a turn that ends
+      // without saying what comes next is one the arbitrator has to guess the next instruction from.
+      {tag: 'next', text: 'proposes the next steps'},
     ];
 
     // The field is one comma-separated line, because that is what goes on the wire and what the

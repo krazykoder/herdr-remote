@@ -16,6 +16,12 @@
       spawn: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M12 3v4"/>'
         + '<circle cx="8.5" cy="13.5" r="1" fill="currentColor"/>'
         + '<circle cx="15.5" cy="13.5" r="1" fill="currentColor"/><path d="M8.5 17.5h7"/>',
+      // Two bubbles, because what a multi-agent tile makes is not several sessions — it is the
+      // conversation they land in. The same speech-bubble outline convGlyph draws, doubled and at
+      // this file's 24-unit scale, so a tile and the conversation card it becomes read as one
+      // thing rather than two features that happen to be related.
+      conv: '<path d="M17 12a6 6 0 0 1-6.4 6 6.5 6.5 0 0 1-2.9-.7L4 18.5l1-3.2A5.8 5.8 0 0 1 4 12'
+        + 'a6 6 0 0 1 6.5-6A6 6 0 0 1 17 12z"/><path d="M14.5 19.4A6 6 0 0 0 20 15.5"/>',
     };
 
     function launcherIcon(action) {
@@ -26,16 +32,51 @@
         + glyph + '</svg>';
     }
 
-    // What the tile calls the thing it will make. The Project is on it because two tiles that
-    // differ only by which tree they run in are otherwise indistinguishable, and that is exactly
-    // the pair a person most needs to tell apart before pressing.
+    // What the tile calls the thing it will make.
     function launcherKindLine(tile) {
-      const project = (projects.find(p => p.id === tile.project_id) || {}).label || tile.project_id;
+      const many = (tile.members || []).length > 1;
       const kind = tile.action === 'run' ? 'Terminal'
-        : launcherWantsArb(tile) ? 'Arbitrated'
-        : (tile.members || []).length > 1 ? 'Conversation' : 'Session';
-      return `${launcherIcon(tile.action)}<span>${escapeHtml(kind)}</span>`
-        + `<span class="badge proj">${escapeHtml(project || '—')}</span>`;
+        : launcherWantsArb(tile) ? 'Arbitrated' : many ? 'Conversation' : 'Session';
+      // The bubbles rather than the robot as soon as there is more than one agent on the tile:
+      // what this press makes is a room with them in it, and that is what the reader wants to
+      // know before reading which kinds are in the payload line below.
+      return `${launcherIcon(many ? 'conv' : tile.action)}<span>${escapeHtml(kind)}</span>`;
+    }
+
+    // Which tree it runs in, beside the name and in the app's one nomenclature for it — `@project`,
+    // the same badge paneChrome puts after a pane's name. It used to sit up on the kind line, where
+    // it was the only place in the app a Project was drawn without its @.
+    //
+    // A tile with no Project is a template — the same roster pressed into whichever tree wants it
+    // — and the badge says so rather than being left off. The press is where that is answered, so
+    // this is the reader's warning that pressing it asks one more question.
+    function launcherProjectBadge(tile) {
+      const project = tile.project_id
+        ? (projects.find(p => p.id === tile.project_id) || {}).label || tile.project_id
+        : null;
+      return project
+        ? ` <span class="badge proj">@${escapeHtml(project)}</span>`
+        : ' <span class="badge proj">@ask</span>';
+    }
+
+    // The roster, as the badges every other list wears. `+` between them and not a comma: two of
+    // the same kind are two panes, and the badges are what says which kinds without the reader
+    // parsing a line of lowercase words. A command has no badges — it is quoted verbatim.
+    function launcherPayloadHtml(tile) {
+      if (!tile || tile.action === 'run') {
+        return escapeHtml(launcherPreview(tile));
+      }
+      const members = (tile.members || []).map(m => (m && m.name) || '?');
+      const badges = members.map(k => typeof agentBadge === 'function'
+        ? agentBadge(k) : ` <span class="badge">${escapeHtml(k)}</span>`);
+      // The arbitrator is named apart from the two rather than joined into them: it is not a third
+      // participant, it is the one deciding between the other two.
+      return badges.join(' <span class="launcher-plus">+</span>')
+        + (launcherWantsArb(tile)
+          ? ` <span class="launcher-plus">\u2696</span>`
+            + (typeof agentBadge === 'function' ? agentBadge(tile.arbitrator.name)
+               : ` <span class="badge">${escapeHtml(tile.arbitrator.name)}</span>`)
+          : '');
     }
 
     function launcherTileHtml(tile) {
@@ -62,25 +103,58 @@
         + ` onclick="launcherPress('${escapeHtml(tile.id)}')"`
         + ` title="${escapeHtml(gate.reason || payload)}">`
         + `<span class="launcher-kind">${launcherKindLine(tile)}</span>`
-        + `<span class="launcher-name">${escapeHtml(tile.label)}</span>`
-        + (payload ? `<span class="launcher-payload">${escapeHtml(payload)}</span>` : '')
+        + `<span class="launcher-name">${escapeHtml(tile.label)}`
+        + `${launcherProjectBadge(tile)}</span>`
+        + (payload ? `<span class="launcher-payload">${launcherPayloadHtml(tile)}</span>` : '')
         + badge
         + '</button>';
+    }
+
+    // The tiles, in bands. Manual order inside a band, Project order between them: the user
+    // arranges tiles, and which tree a tile belongs to is not something they should have to
+    // arrange around — a template and a Project tile next to each other is the ordering problem
+    // this section had once tiles stopped naming a Project.
+    //
+    // Templates first. They are the ones pressable anywhere, so they are the ones a reader is
+    // looking for when they do not already know which tree they want.
+    function launcherGroups(tiles) {
+      const out = [];
+      const band = (label, list) => { if (list.length) out.push({label: label, tiles: list}); };
+      band('Templates', tiles.filter(t => !t.project_id));
+      projects.forEach(p => band(p.label || p.id, tiles.filter(t => t.project_id === p.id)));
+      // Tiles pointing at a Project this relay does not have. Last, and still drawn: they are the
+      // broken ones, each already wearing its own badge, and a band that hid them would be the one
+      // place the problem is fixable and the last place it is mentioned.
+      const known = new Set(projects.map(p => p.id));
+      band('Missing Project', tiles.filter(t => t.project_id && !known.has(t.project_id)));
+      return out;
     }
 
     function renderLauncher() {
       const el = document.getElementById('launcher');
       if (!el) return;
       const tiles = loadLauncher();
+      const groups = launcherGroups(tiles);
       // The header is drawn whether or not there is anything under it — the one place this
       // section differs from Recents, and the same exception Conversations makes for its own +:
       // an entry point that only appears once you already have a tile cannot be how the first one
       // is made. An install that never switched the launcher on still sees nothing, because
       // applySections takes a section outside the order off screen regardless of its content.
+      // Two controls, and + is always the right-hand one. Adding a tile used to be reachable only
+      // through Edit once the first tile existed — an entry point that moves as soon as it has
+      // been used once, which is the shape of a button people stop finding.
       el.innerHTML = '<div class="section-header">Launcher'
-        + '<button class="section-action" onclick="openLauncherEdit()"'
-        + ' title="Add, edit and reorder tiles" aria-label="Edit the launcher">'
-        + (tiles.length ? 'Edit' : '+ New') + '</button></div>'
-        + tiles.map(launcherTileHtml).join('');
+        + (tiles.length
+          ? '<button class="section-action" onclick="openLauncherEdit()"'
+            + ' title="Edit, reorder and delete tiles" aria-label="Edit the launcher">Edit</button>'
+          : '')
+        + '<button class="section-action" onclick="openLauncherNew()"'
+        + ' title="Add a tile" aria-label="Add a launcher tile">+ New</button></div>'
+        // One band is every tile in it, so a heading over the lot says nothing. Two or more and the
+        // heading is what tells a template from a tile that already knows where it runs.
+        + (groups.length > 1
+          ? groups.map(g => `<div class="launcher-band">${escapeHtml(g.label)}</div>`
+            + g.tiles.map(launcherTileHtml).join('')).join('')
+          : tiles.map(launcherTileHtml).join(''));
       applySections();
     }

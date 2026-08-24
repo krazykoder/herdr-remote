@@ -832,6 +832,7 @@ test('what each member is for is asked, sent, and shown on the strip', () => {
   const html = setupHtml(g);
   assert.match(html, /id="arbRoleFirst"/);
   assert.match(html, /id="arbRoleSecond"/);
+  assert.match(html, /@arbitrator starter prompt — not defined yet/);
   // A badge per tag, and the phrase it writes as its tooltip: the tag is what fits on a pill and
   // the phrase is what the arbitrator is actually shown.
   assert.match(html, /onclick="arbPickRole\('arbRoleFirst', 'review-only'\)"/);

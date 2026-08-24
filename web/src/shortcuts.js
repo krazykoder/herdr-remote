@@ -247,6 +247,7 @@
       return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${agentBadge(a.agent).trimStart()} ${cwd}</div></div>
+    <button class="end-btn arm-btn" aria-label="End ${label}" onclick="event.stopPropagation();armButton(this, 'End?', () => endPane('${a.pane_id}'))">End</button>
     <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
     <span class="chev" aria-hidden="true">›</span>
   </div>`;
@@ -278,6 +279,15 @@
       if (filter) header.insertAdjacentHTML('beforeend', filter);
       header.insertAdjacentHTML('beforeend',
         '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
+      // Reorder, then +. The same right-hand order the Launcher header uses: + is always last,
+      // because it is the one that makes something rather than rearranging what is there.
+      // Starting a session is what this section is a list of, so this is where it belongs — and
+      // with no Project selected the sheet asks for one rather than guessing.
+      if (startOptions) {
+        header.insertAdjacentHTML('beforeend',
+          sectionNewHtml('openStartDialog(activeProject, event)',
+            'Start a session — it asks which Project', 'Start a new session'));
+      }
     }
 
     function terminalCard(s) {
@@ -289,16 +299,32 @@
       return `<div class="agent" role="button" tabindex="0" aria-label="Terminal ${escapeHtml(paneLabel(s))}" onclick="openTerminal('${s.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${s.pane_id}')}">
     <span class="term-glyph" aria-hidden="true">$</span>
     <div class="info"><div class="project">${paneChrome(s)}${host}</div><div class="meta">${cwd}</div></div>
+    <button class="end-btn arm-btn" aria-label="End ${escapeHtml(paneLabel(s))}" onclick="event.stopPropagation();armButton(this, 'End?', () => endPane('${s.pane_id}'))">End</button>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
     }
 
     // Not section(): that maps agentCard over its list. Same header markup, different card, and a
     // colour that is none of the three carrying agent status.
+    // The + on a section header, in the one spelling Conversations already uses. Drawn only where
+    // the relay will actually take it: opening a shell needs both of open_terminal's gates, and
+    // `terminal` in start_options is how the relay reports the pair of them as one answer.
+    function sectionNewHtml(call, title, label) {
+      return `<button class="section-action" onclick="${call}"` +
+        ` title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}">+ New</button>`;
+    }
+
     function terminalsHtml() {
       const list = activeProject ? shells.filter(s => s.project_id === activeProject) : shells;
-      if (!list.length) return '';
-      return `<div class="section-header">Terminals</div>`
+      // The + is drawn whether or not there is anything under it, the same exception Conversations
+      // and the Launcher make: an entry point that only appears once you already have a terminal
+      // cannot be how the first one is opened. A relay with terminal mode off still shows nothing,
+      // because applySections takes a section outside the order off screen regardless.
+      const plus = startOptions && startOptions.terminal
+        ? sectionNewHtml(`openStartDialog(activeProject, event, 'terminal')`,
+            'Open a terminal — it asks which Project', 'Open a new terminal') : '';
+      if (!list.length && !plus) return '';
+      return `<div class="section-header">Terminals${plus}</div>`
         + orderedAgents(list).map(terminalCard).join('');
     }
 
@@ -359,6 +385,10 @@
           c, count, seen, names, liveNames, last: newest.last || '',
           dot: lead ? statusColor(lead) : 'var(--muted)',
           pulse: lead && lead.status === 'working' ? ' pulse' : '',
+          // A conversation with live panes keeps the filled dot its lead pane's status paints —
+          // grey included, because an idle agent is still an agent. With none, there is no status
+          // to paint and the dot is drawn hollow: ended is not a state, it is the absence of one.
+          ended: live.length ? '' : ' ended',
         };
       });
       const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
@@ -382,7 +412,7 @@
         // same way but did not read as different things.
         // Dot, mark, name — the dot is the row's live state and reads first on every card in the
         // list; the mark says what kind of thing the name belongs to.
-        `<div class="conversation-title"><span class="dot${r.pulse}" style="background:${r.dot}"` +
+        `<div class="conversation-title"><span class="dot${r.pulse}${r.ended}" style="background:${r.dot}"` +
         ` aria-hidden="true"></span><span class="conv-kind">${convGlyph()}</span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
         // The tier, on the card rather than in the name: promotion is a rename the user makes,
@@ -390,7 +420,18 @@
         `${r.c.auto ? '<span class="conversation-tier" title="Filed automatically, and dropped ' +
           'first when space runs out. Open it and rename it to keep it for good.">auto</span>' : ''}` +
         `<span class="conversation-count">${r.count} ` +
-        `${r.count === 1 ? 'message' : 'messages'}</span></div>` +
+        `${r.count === 1 ? 'message' : 'messages'}</span>` +
+        // The same control the roster panel calls End all, on the card, for the same reason the
+        // agent cards carry one: the list is where a session is recognised as finished, and going
+        // into a conversation to close it is a trip taken only to press one button. Drawn only
+        // where there is something running — an ended conversation is already where this leads.
+        (r.liveNames.length
+          ? `<button class="end-btn arm-btn" data-conv-id="${escapeHtml(r.c.id)}"` +
+            ` aria-label="End every session in ${escapeHtml(r.c.name)}, keeping the transcripts"` +
+            ` onclick="event.stopPropagation();armButton(this, 'End all?', ` +
+            `() => endConversation(this.dataset.convId))">End</button>`
+          : '') +
+        `</div>` +
         (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
         `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
@@ -648,6 +689,16 @@
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
           agentBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '') +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
+          // End first, then Remove, and only then the way in. The two that take something away sit
+          // together; Open is not one of them. End is offered only where there is something running
+          // to end — an ended row carries Start again in the same place, which is the other half of
+          // the same control: this row is where a member is sent away and brought back.
+          (on ? `<button class="conv-end arm-btn" data-key="${escapeHtml(m.key)}"` +
+            ` onclick="armButton(this, 'End?', () => endConvMember(this.dataset.key))"` +
+            ` aria-label="End this member's session">End</button>` : '') +
+          `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
+          ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
+          ` aria-label="Remove this member from the conversation">Remove</button>` +
           // Every live member, not only whichever one the header's button would pick: the header
           // opens the first, and a conversation of four is exactly where that is the wrong one.
           (on ? `<button class="conv-open" data-key="${escapeHtml(m.key)}"` +
@@ -656,9 +707,7 @@
           (!on && canRespawn(rec.spawn) ? `<button class="conv-again arm-btn" data-key="${escapeHtml(m.key)}"` +
             ` onclick="convArmRespawn(this, this.dataset.key)"` +
             ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
-          `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
-          ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
-          ` aria-label="Remove this member from the conversation">Remove</button></div>`;
+          `</div>`;
       }).join('');
       // The tier, said where the button that changes it is. "How do I make this one mine" is the
       // question an auto record raises, and the answer is one word on the button below it.
@@ -669,6 +718,12 @@
         // Destructive action first, followed by the two ways to preserve the grouping, then edits.
         `<button class="conv-del arm-btn" onclick="armButton(this, 'Delete?', deleteConversation)"` +
         ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
+        // Beside Delete because both end something, and apart from it in colour because they end
+        // very different things: Delete destroys the record, End stops the sessions and leaves it.
+        `<button class="conv-end arm-btn"` +
+        ` onclick="armButton(this, 'End all?', () => endConversation(convViewId))"` +
+        ` aria-label="End every session in this conversation, keeping the transcripts">End all` +
+        `</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button class="arm-btn" onclick="armButton(this, 'Duplicate?', duplicateConversation)"` +
         ` aria-label="Copy this conversation so panes can be added without changing this one">` +
@@ -726,6 +781,13 @@
       // Said on the arm, not on the fire: by the second tap the session is already starting.
       if (armedEl !== btn) { const note = respawnNote(key); if (note) showToast(note); }
       armButton(btn, 'Start again?', () => convRespawn(key));
+    }
+
+    // A member is named by its fingerprint and not by a pane — the roster outlives the panes in it,
+    // which is the whole reason the key has no pane id doing the identifying.
+    function endConvMember(key) {
+      const live = agents.concat(shells).find(x => convMemberKey(x) === key);
+      if (live) endPane(live.pane_id);
     }
 
     function convRespawn(key) {
@@ -1061,6 +1123,12 @@
       const conv = loadConvIndex().find(c => c.id === convViewId);
       if (!conv) { closePanel(); return; }
       document.getElementById('convViewTitle').textContent = conv.name;
+      // Redrawn rather than written once: renaming an auto conversation is what promotes it, so
+      // this is a fact about the conversation that changes while the window is open.
+      const tier = document.getElementById('convViewTier');
+      if (tier) tier.hidden = !conv.auto;
+      const head = view.querySelector('.conv-view-head');
+      if (head) head.classList.toggle('auto', !!conv.auto);
       // Written once per open rather than on every redraw: it never changes, and this runs on every
       // recorded read of every member.
       const mark = document.getElementById('convViewMark');

@@ -141,7 +141,16 @@
           const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
           conv.members = continued && prior
             ? conv.members.map(m => m.key === prior.key
-              ? Object.assign({}, m, {key: next, label: prior.label || paneLabel(a)}) : m)
+              ? Object.assign({}, m, {
+                  key: next, label: prior.label || paneLabel(a),
+                  // The pane this member continues. This is the only place a member's key moves
+                  // from one pane to another, so it is the only place succession is a fact rather
+                  // than a guess — and the guess it replaces handed a quit agent's words to every
+                  // conversation running the same harness in the same directory.
+                  was: (m.was || []).concat(convKeyPaneId(prior.key))
+                    .filter(Boolean).slice(-CONV_WAS_MAX),
+                })
+              : m)
             : (conv.members || []).concat(convMemberOf(a));
           saveConvIndex(items);
           // This conversation and not merely "on": the new pane is a member of exactly one so far,
@@ -297,6 +306,47 @@
       return START_RETRYABLE.test(text) && !/try again/i.test(text) ? text + ' — try again.' : text;
     }
 
+    // The Project a press did not name, asked for in the sheet. Only when the dialog was opened
+    // without one: the landing page's two + New buttons stand in no Project, so the question they
+    // cannot answer is asked here instead of being guessed at.
+    let startAskProject = false;
+
+    function renderStartProjects() {
+      const row = document.getElementById('startProjectRow');
+      if (!row) return;
+      row.hidden = !startAskProject;
+      row.style.display = startAskProject ? '' : 'none';
+      if (!startAskProject) return;
+      row.innerHTML = '<div class="start-field">Project<div class="badge-strip">'
+        + (projects.length
+          ? projects.map(p => badgeHtml(p.label || p.id, p.id === startProjectId,
+              `startPickProject('${escapeHtml(p.id)}')`,
+              {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
+          : '<span class="field-note">This relay has no Projects configured.</span>')
+        + '</div></div>';
+    }
+
+    // Picking one redraws the rest: placement is answered against what that Project has running,
+    // and the answer the previous Project gave means nothing here. submitStart already refuses
+    // without a Project, so the sheet is simply unusable until this is tapped.
+    function startPickProject(id) {
+      startProjectId = id;
+      syncStartProjectBadge();
+      renderStartProjects();
+      renderStartTarget();
+      if (document.getElementById('startSubmit').disabled) {
+        document.getElementById('startPlacement').value = 'new_workspace';
+        renderStartTarget();
+      }
+    }
+
+    function syncStartProjectBadge() {
+      const p = projects.find(x => x.id === startProjectId);
+      const badge = document.getElementById('startProject');
+      badge.textContent = p ? `@${p.label}` : '';
+      badge.hidden = !p;   // an empty badge is a stray outline, not a Project
+    }
+
     function openStartDialog(projectId, ev, mode) {
       if (ev) ev.stopPropagation();
       if (!startOptions) return;
@@ -307,10 +357,11 @@
       const terminal = startMode === 'terminal';
       if (terminal && !startOptions.terminal) return;
       startProjectId = projectId;
-      const p = projects.find(x => x.id === projectId);
-      const badge = document.getElementById('startProject');
-      badge.textContent = p ? `@${p.label}` : '';
-      badge.hidden = !p;   // an empty badge is a stray outline, not a Project
+      // A Project the relay does not have is the same question as none at all — ask, rather than
+      // open the sheet pointed at something that is not there.
+      startAskProject = !projectId || !projects.some(x => x.id === projectId);
+      syncStartProjectBadge();
+      renderStartProjects();
       document.getElementById('startTitle').textContent = terminal ? 'New terminal' : 'Start session';
       document.getElementById('startAgentRows').style.display = terminal ? 'none' : '';
       document.getElementById('startSubmit').textContent = terminal ? 'Open terminal' : 'Start session';
@@ -339,6 +390,9 @@
         document.getElementById('startPlacement').value = 'new_workspace';
         renderStartTarget();
       }
+      // Nothing to start until a Project is picked. submitStart refuses without one anyway, and a
+      // live button that silently does nothing is worse than one that says it is not ready yet.
+      if (!startProjectId) document.getElementById('startSubmit').disabled = true;
       document.getElementById('startSheet').style.display = 'block';
     }
 
@@ -566,15 +620,40 @@
         `</button>`;
     }
 
+    // What a row can be found by. The same shape pickHay builds, so the same words reach the same
+    // pane in both sheets — a switcher that answered "cdx" differently from the picker would be a
+    // second search to learn.
+    function recentHay(x) {
+      const p = x.pane;
+      return (p
+        ? [paneLabel(p), p.agent, p.project, p.cwd, isShell(p.pane_id) ? 'terminal' : p.status]
+        : [x.conv.name, 'conversation'])
+        .map(f => String(f || '').toLowerCase()).filter(Boolean);
+    }
+
     function openRecentSheet() {
+      document.getElementById('recentSearch').value = '';
+      renderRecentSheet();
+      document.getElementById('recentSheet').style.display = 'block';
+    }
+
+    // Redrawn on every keystroke rather than filtered in place: the list is short, and rebuilding
+    // it is what keeps the active-pane mark and the status dots right when a poll lands mid-search.
+    function renderRecentSheet() {
       const box = document.getElementById('recentList');
-      const list = recentItems();
+      const q = document.getElementById('recentSearch').value.trim().toLowerCase();
+      const all = recentItems();
+      const list = q ? all.filter(x => pickMatch(recentHay(x), q)) : all;
       // Same row as the pair and conversation sheets: a list of things to pick reads as one when
       // every list in the app is picked from the same way.
       box.innerHTML = list.length
         ? list.map(x => x.conv ? recentConvRow(x.conv) : recentPaneRow(x.pane)).join('')
-        : '<p class="pair-empty">Nothing is running.</p>';
-      document.getElementById('recentSheet').style.display = 'block';
+        : `<p class="pair-empty">${all.length
+            ? `Nothing here matches &quot;${escapeHtml(q)}&quot;.` : 'Nothing is running.'}</p>`;
+      // The box appears once there is enough to search, the picker's rule: below that it can only
+      // filter a list already entirely on screen. Kept up while something is typed, so clearing it
+      // is always possible.
+      document.getElementById('recentSearch').parentElement.hidden = all.length < 5 && !q;
     }
 
     function closeRecentSheet() {

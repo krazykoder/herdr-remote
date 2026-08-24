@@ -117,6 +117,87 @@
       });
     }
 
+    // --- Ending a session ---
+    // End is QUIT carried one line further. `/quit` exits an agent's TUI and herdr keeps the pane:
+    // it survives as a bare shell still wearing the name the session was started under, which is
+    // how the Terminals section fills up with the remains of agents nobody is running, each still
+    // holding the slot it was given. So the shell is exited too, on the snapshot that shows the
+    // agent has gone.
+    //
+    // Two sends rather than one message because there is no relay verb for this and these are the
+    // two lines a person types. Through submitText and not sendTextTo, so noteSent is never called:
+    // these are control keystrokes, and a transcript claiming the user said "/quit" to an agent is
+    // a transcript that is wrong. The same path, and the same reason, as armQuit above.
+    const END_TIMEOUT_MS = 30000;
+
+    // pane_id -> {at, label}: the panes whose agent has been told to quit and whose shell has not
+    // been exited yet. Never persisted — a reload has no send in flight to finish.
+    const endWatch = new Map();
+
+    function endPane(paneId) {
+      const pane = paneOf(paneId);
+      if (!pane) return false;                    // already where this was trying to get to
+      // The relay refuses send_text at a blocked pane: its box is a permission prompt, not a
+      // composer. Saying so is the whole answer — the user is one tap from unblocking it.
+      // ponytail: no way to end a wedged pane; `herdr pane close` is the upgrade if this bites.
+      if (pane.status === 'blocked') {
+        showToast('That pane is waiting on a prompt — answer it, then end it.');
+        return false;
+      }
+      if (isShell(paneId)) return endShell(paneId);
+      if (!submitText(paneId, '/quit')) return false;
+      burstPoll(paneId);
+      // With terminal mode off the relay lists no shells at all, so a quit pane leaves `agents` and
+      // turns up nowhere — indistinguishable from herdr having closed it. There is nothing to watch
+      // for, so this stops at one line and says so rather than reporting a pane gone that is not.
+      // ponytail: leaves a shell behind on a relay with HERDR_ENABLE_TERMINAL off.
+      if (!startOptions || !startOptions.terminal) {
+        showToast(`Quit ${paneLabel(pane)} — its pane may remain.`, 'info');
+        return true;
+      }
+      endWatch.set(paneId, {at: Date.now(), label: paneLabel(pane)});
+      showToast(`Ending ${paneLabel(pane)}…`, 'info');
+      return true;
+    }
+
+    function endShell(paneId) {
+      if (!submitText(paneId, 'exit')) return false;
+      endWatch.delete(paneId);
+      burstPoll(paneId);
+      return true;
+    }
+
+    // The second line, on the snapshot that shows the first one worked. A pane sitting in `shells`
+    // is one whose agent has exited, which is exactly what `/quit` was aiming for.
+    function endTick() {
+      if (!endWatch.size) return;
+      const now = Date.now();
+      for (const [paneId, at] of Array.from(endWatch)) {
+        if (isShell(paneId)) { endShell(paneId); continue; }
+        // Gone from both lists: herdr closed the pane itself, which some harnesses do on /quit.
+        if (!paneOf(paneId)) { endWatch.delete(paneId); continue; }
+        if (now - at.at > END_TIMEOUT_MS) {
+          endWatch.delete(paneId);
+          showToast(`${at.label} did not quit — it is still running.`);
+        }
+      }
+    }
+
+    // Every live member of a conversation, each by whichever of the two it is. A member that has
+    // already ended is skipped in silence: it is the state this is aiming for, not a failure.
+    // Nothing is deleted and no field is written — the conversation and its transcripts survive,
+    // and go grey because nothing in them is live, which is derived rather than stored.
+    function endConversation(convId) {
+      const conv = loadConvIndex().find(c => c.id === convId);
+      if (!conv) return false;
+      const live = (conv.members || [])
+        .map(m => agents.concat(shells).find(x => convMemberKey(x) === m.key))
+        .filter(Boolean);
+      if (!live.length) { showToast('Nothing in this conversation is still running.'); return false; }
+      live.forEach(p => endPane(p.pane_id));
+      return true;
+    }
+
     // Asking for history is what takes the pane back off the live frame Clear screen left it on.
     function loadMore() {
       paneSource = 'recent-unwrapped';
