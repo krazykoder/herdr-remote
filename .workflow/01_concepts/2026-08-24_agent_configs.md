@@ -218,26 +218,18 @@ a credential goes?* Yes, provider. No, alias.
 
 ### Setting a key's *value* from the app
 
-Different question from rotation, and a different answer: rotation picks between secrets the file
-already blessed, whereas typing a key in sets one. It does not leak anything — a written key cannot
-reach an endpoint the provider file did not name — but it does mean a credential crossing the
-socket and being persisted, so it needs its own gate and its own rules:
+Not a thing this design has. **Every key variable is declared in the provider file**, and the app
+only ever picks among the names already there — so there is no path by which a credential crosses
+the socket, and no code to write that could later be talked into one.
 
-- Behind `HERDR_ENABLE_SECRET_WRITE`, off by default, and refused outright without
-  `HERDR_RELAY_TOKEN`. The same shape as `HERDR_ENABLE_WRITE_EXT`.
-- Write-only. The relay never sends a key back, to anyone, ever — a row says `set` or `missing` and
-  nothing more, and there is no read path to add later.
-- Lands in a relay-owned file (`~/.config/herdr-remote/secrets.env`, `chmod 600`), **never** in
-  `user_state`: that document is broadcast to every connected client.
-- Only for variable names the provider file already lists. Setting a key the file never named is
-  how an unused credential appears on the machine.
-
-Worth having, and not in the first cut — v1 ships rotation, which covers `f1claude` vs `f2claude`
-with no secret ever crossing the wire.
+A new key means two edits on the machine: the value into `~/.config/herdr-remote/secrets.env`, the
+name into the provider's `secrets` list. From then on it is rotatable from a phone like the rest.
+That is a worse day for whoever adds a provider and a much better one for everyone else, which is
+the right way round.
 
 **Not v1**
 - Editing providers from anywhere but the file.
-- Writing a key's value from the app (designed above, gated, deliberately deferred).
+- Writing a key's value from the app, at all. The names are preset; the values stay on the machine.
 - Switching provider on a running session.
 - Provider reachability checks, key rotation, or spend tracking.
 - Aliases for kinds other than `claude`. The model holds for any env-configured CLI, but only the
