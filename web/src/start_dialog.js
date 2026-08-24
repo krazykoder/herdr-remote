@@ -536,7 +536,7 @@
       // refused must leave nothing behind for the next start to open with. Nothing to say for a
       // terminal, or for a role whose prompt is still to be written.
       startPrompt = terminal ? '' : roleStarter(role);
-      startStarter = terminal ? '' : (role || {}).at || '';
+      startStarter = terminal ? '' : ((role || {}).at || NO_STARTER);
       ws.send(JSON.stringify(msg));
     }
 

@@ -891,6 +891,57 @@ test('a session started as something opens as it again, whatever the pane was ca
       (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('architect');
   });
 
+// The two answers an empty starter used to collapse into one. A record written before starters
+// were kept says nothing because nobody was asked; a session deliberately started bare says so.
+// The first opens on the default, the second stays silent.
+async function respawnWithStarter(page, starter) {
+  await openCard(page);
+  await page.evaluate(async (starter) => {
+    projects = [{id: 'p1', label: 'herdr-remote', host: 'local'}];
+    startOptions = {type: 'start_options', agents: ['claude', 'codex'],
+                    roles: ['architect', 'coder']};
+    const items = loadConvIndex();
+    const rec = (await convGet([items[0].members[0].key]))[0];
+    rec.key = 'dead:pane';
+    rec.spawn = {agent: 'claude', role: 'agent', label: 'Solo Claude 7xkrt', starter: starter,
+      project_id: 'p1', project: 'herdr-remote', cwd: '/work/herdr-remote', host: 'local'};
+    await convPut(rec);
+    items[0].members = [{key: 'dead:pane', added: Date.now(), label: 'Solo Claude 7xkrt'}];
+    saveConvIndex(items);
+    await renderConvStandalone(false);
+  }, starter);
+  await tapWire(page);
+  const again = page.locator('#convView .conv-again');
+  await again.click();
+  await again.click();
+  await expect.poll(() => page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
+  await page.evaluate(async () => {
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    await openPendingStart();
+  });
+}
+
+test('a record that predates starters opens on the default rather than silent',
+  async ({page}) => {
+    await respawnWithStarter(page, '');
+    const want = await page.evaluate(() =>
+      (SHORTCUTS.find(x => x.at === START_DEFAULT_AT) || {}).text.trim());
+    expect(want).toBeTruthy();
+    await expect.poll(() => page.evaluate(() =>
+      window.__sent.filter(m => m.type === 'send_text').map(m => m.text).join('\n')))
+      .toContain(want.slice(0, 40));
+  });
+
+test('a session that asked for no starter is started again without one', async ({page}) => {
+  await respawnWithStarter(page, 'none');
+  expect(await page.evaluate(() =>
+    window.__sent.filter(m => m.type === 'send_text').length)).toBe(0);
+  // And it still says so, so the answer does not wear away over restarts.
+  expect(await page.evaluate(async () =>
+    (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('none');
+});
+
 // herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
 // can come up on a key another ended session already recorded under. Continuing by copying over it
 // would delete a transcript some other conversation still names, which is the one thing a restart

@@ -91,6 +91,17 @@
       { name: 'Orchestrator', role: 'agent', at: 'orchestrator' },
     ];
 
+    // What a session is started as when nobody has said otherwise. The first badge is Architect
+    // and this is that name written down, because "the first one" is an accident of order and this
+    // is a decision: a session is better started as something.
+    const START_DEFAULT_AT = 'architect';
+
+    // And what a session *deliberately* started bare records instead of nothing. Empty is also what
+    // a record written before any of this existed says, and the two have to be told apart: one is a
+    // session that asked for no opening prompt, the other is one nobody ever asked. Not a name in
+    // SHORTCUTS, so everything that resolves an `at` already answers nothing for it.
+    const NO_STARTER = 'none';
+
     // The opening text a role badge carries, or '' while its prompt is still to be written.
     function roleStarter(r) {
       return ((SHORTCUTS.find(s => s.at === (r || {}).at) || {}).text || '').trim();

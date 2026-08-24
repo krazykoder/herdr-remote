@@ -71,6 +71,7 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     sendTextTo: (id, text) => { log.push(['sendTextTo', id, text]); return true; },
     // start_dialog's record of what a pane was started as. Stubbed rather than ignored: it is what
     // a restart reads, and it is the half of a starter that has to outlive the text.
+    NO_STARTER: 'none',
     notePaneStarter: (id, at) => log.push(['notePaneStarter', id, at]),
     noteTermCommand: t => log.push(['noteTermCommand', t]),
     isShell: () => true,
@@ -234,11 +235,14 @@ test('a member is recorded as what it was started as, not left to its name', asy
     [['notePaneStarter', 'w2:p1', 'implement']]);
 });
 
-test('a member with no chip records no starter, rather than an empty one', async () => {
+test('a member with no chip records having been started bare, not nothing', async () => {
+  // Nothing is what a record predating any of this says, and that one is given the default on a
+  // restart. This one asked for silence and has to keep it.
   const p = press({tiles: [ONE], answer: 'Nightly'});
   p.press('ql_b');
   await p.land(pane('w2:p1'));
-  assert.deepEqual(p.log.filter(l => l[0] === 'notePaneStarter'), []);
+  assert.deepEqual(p.log.filter(l => l[0] === 'notePaneStarter'),
+    [['notePaneStarter', 'w2:p1', 'none']]);
 });
 
 test('the command is sent through sendTextTo, not straight down the socket', () => {

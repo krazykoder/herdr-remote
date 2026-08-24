@@ -154,7 +154,14 @@
     // opening the session, by proxy.
     function launcherStarter(paneId, member) {
       const at = member && member.at;
-      if (!at || typeof SHORTCUTS === 'undefined') return false;
+      // A member whose starter was cleared in the editor is a deliberate bare start, and is
+      // recorded as one — otherwise it comes back from a restart wearing the default it was
+      // taken off.
+      if (!at) {
+        if (typeof notePaneStarter === 'function') notePaneStarter(paneId, NO_STARTER);
+        return false;
+      }
+      if (typeof SHORTCUTS === 'undefined') return false;
       const text = ((SHORTCUTS.find(s => s.at === at) || {}).text || '').trim();
       // Recorded whether or not there is text for it today. The chip is edited in one place, so a
       // starter with nothing written under it now is one a restart should still open with once

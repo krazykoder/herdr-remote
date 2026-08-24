@@ -941,7 +941,7 @@
       // The arbitrator is briefed by the session, and that brief is the only thing that tells it
       // what it is. A role's opening prompt would have it doing the work it is there to referee.
       startPrompt = newAgentFor === 'arbWho' ? '' : roleStarter(role);
-      startStarter = newAgentFor === 'arbWho' ? '' : (role || {}).at || '';
+      startStarter = newAgentFor === 'arbWho' ? NO_STARTER : ((role || {}).at || NO_STARTER);
       showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
       closeNewAgent();

@@ -847,9 +847,15 @@
       // A recorded `at` that is not one of the four badges is still a starter: a launcher tile's
       // members carry any chip the composer offers. Wrapped as a role with nothing but its name,
       // which is all roleStarter reads — and on the wire it is `agent`, which is what it was.
-      const starter = startRoleOf(spawn.starter)
-        || (spawn.starter && roleStarter({at: spawn.starter}) ? {at: spawn.starter} : null)
-        || startRoleFromLabel(spawn.label);
+      //
+      // And a record that says nothing at all is a record written before any of this was kept, not
+      // a session that asked for silence — those say NO_STARTER. So it falls to the default rather
+      // than coming up bare, which is what every other way of starting a session already does.
+      const starter = spawn.starter === NO_STARTER ? null
+        : startRoleOf(spawn.starter)
+          || (spawn.starter && roleStarter({at: spawn.starter}) ? {at: spawn.starter} : null)
+          || startRoleFromLabel(spawn.label)
+          || startRoleOf(START_DEFAULT_AT);
       const msg = Object.assign({
         type: 'start_agent', name: spawn.agent, project_id: spawn.project_id,
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
@@ -864,7 +870,7 @@
       startPrompt = roleStarter(starter);
       // And the new pane records the same starter, so the session can be ended and started again
       // any number of times without the answer wearing away.
-      startStarter = (starter || {}).at || '';
+      startStarter = (starter || {}).at || NO_STARTER;
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
       ws.send(JSON.stringify(msg));
     }
