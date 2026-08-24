@@ -138,7 +138,7 @@
     // fact about the tile; the confirm is a fact about the press, and there is no press to describe
     // until there is somewhere to press it.
     function launcherRosterHtml(tile) {
-      const roster = tile.action === 'run' ? [] : launcherRoster(tile);
+      const roster = launcherIsTerm(tile) ? [] : launcherRoster(tile);
       if (!roster.length) return '';
       return '<div class="ql-roster">' + roster.map(m => {
         // The @name and not the label: this is the same prompt the composer offers, and a strip
@@ -263,7 +263,7 @@
       const kinds = launcherKinds();
       launcherEditing = '';
       launcherDraft = {
-        id: launcherId(), label: '', action: 'run',
+        id: launcherId(), label: '', action: 'spawn',
         // None, deliberately. A tile is more useful as a template than as a button — the same
         // roster pressed into whichever tree wants it — and a form that opened on one Project
         // would make the narrower tile the one people make by accident.
@@ -271,8 +271,8 @@
         command: '', members: [], scope: '',
       };
       // A relay that starts nothing still has terminals, and one with terminals off still starts
-      // agents. Opening on the half that cannot work is a form whose first act is to refuse.
-      if (!(startOptions || {}).terminal && kinds.length) launcherDraft.action = 'spawn';
+      // agents. Opening on the one that cannot work is a form whose first act is to refuse.
+      if (!kinds.length && (startOptions || {}).terminal) launcherDraft.action = 'term';
       launcherDrawForm();
     }
 
@@ -371,12 +371,15 @@
         + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
         + ` placeholder="what pressing this does" value="${escapeHtml(d.label || '')}" /></label>`
         + '<div class="start-field">What it does<div class="badge-strip">'
-        + badgeHtml('Run a command', d.action === 'run', "launcherPickAction('run')",
-                    {title: terminal ? 'Opens a terminal and types this at it'
-                                     : 'This relay has terminal mode switched off'})
         + badgeHtml('Start agents', d.action === 'spawn', "launcherPickAction('spawn')",
                     {title: kinds.length ? 'Starts one or more sessions'
                                          : 'This relay starts nothing'})
+        + badgeHtml('Start terminal', d.action === 'term', "launcherPickAction('term')",
+                    {title: terminal ? 'Opens a terminal in the Project, and types nothing'
+                                     : 'This relay has terminal mode switched off'})
+        + badgeHtml('Run a command', d.action === 'run', "launcherPickAction('run')",
+                    {title: terminal ? 'Opens a terminal and types this at it'
+                                     : 'This relay has terminal mode switched off'})
         + '</div></div>'
         + '<div class="start-field">Project<div class="badge-strip">'
         + badgeHtml('Ask each time', !d.project_id, "launcherPickProject('')",
@@ -387,8 +390,12 @@
               {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
           : '<span class="ql-none">This relay has no Projects configured.</span>')
         + '</div></div>'
-        + (d.action === 'run'
-          ? '<label class="start-field">Command<textarea id="qlCommand" rows="2"'
+        + (launcherIsTerm(d)
+          // Offered for a `term` too, and optional there: the two differ by whether the line is
+          // required, and a field that vanished between them would make switching one to the other
+          // lose what was typed.
+          ? `<label class="start-field">Command${d.action === 'term' ? ' <span class="field-note">optional</span>' : ''}`
+            + '<textarea id="qlCommand" rows="2"'
             + ' autocapitalize="none" autocomplete="off" spellcheck="false"'
             + ` placeholder="pytest -q">${escapeHtml(d.command || '')}</textarea></label>`
           : launcherMembersHtml(members, kinds))
@@ -544,7 +551,7 @@
         // a starter is edited in one place and every tile that names it follows, which is why the
         // chips are addressed by name everywhere else in the app.
         + `<select id="qlAt${i}" aria-label="First prompt for ${escapeHtml(m.name)}">`
-        + `<option value=""${at ? '' : ' selected'}>No first prompt</option>`
+        + `<option value=""${at ? '' : ' selected'}>@none — no first prompt</option>`
         + (typeof SHORTCUTS === 'undefined' ? '' : SHORTCUTS.map(sc =>
             `<option value="${escapeHtml(sc.at)}"${sc.at === canonAt(at) ? ' selected' : ''}>`
             + `@${escapeHtml(sc.at)} — ${escapeHtml(sc.label)}</option>`).join(''))
@@ -591,7 +598,7 @@
     function launcherTileOf(d) {
       const tile = {id: d.id, label: String(d.label || '').trim(), action: d.action,
                     project_id: d.project_id};
-      if (d.action === 'run') { tile.command = String(d.command || '').trim(); return tile; }
+      if (launcherIsTerm(d)) { tile.command = String(d.command || '').trim(); return tile; }
       tile.members = (d.members || []).map(m => {
         const out = {name: m.name};
         if (m.role) out.role = m.role;

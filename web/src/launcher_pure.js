@@ -24,11 +24,21 @@
     // limit anyone will meet; the document also has user_state's 256 KB over it.
     const LAUNCHER_MAX = 60;
 
-    // The two the renderer knows how to press. A tile carrying anything else is *kept* and drawn
-    // disabled — see launcherGate. Dropping it would let a browser on an older build destroy an
-    // action every other browser can see, which is the failure stateSyncPlan exists to stop one
-    // level up.
-    const LAUNCHER_ACTIONS = ['run', 'spawn'];
+    // The three the renderer knows how to press, in the order the editor offers them: sessions
+    // first, because that is what this launcher is mostly for. A tile carrying anything else is
+    // *kept* and drawn disabled — see launcherGate. Dropping it would let a browser on an older
+    // build destroy an action every other browser can see, which is the failure stateSyncPlan
+    // exists to stop one level up.
+    const LAUNCHER_ACTIONS = ['spawn', 'term', 'run'];
+
+    // Both open a terminal and neither starts an agent; `run` also types a line at it. One
+    // predicate rather than two names threaded through every branch, because the difference
+    // between them is one field and everything else about them is the same.
+    // ponytail: `term` is a `run` with an optional command today. If it grows its own fields —
+    // a shell to open, a directory under the Project — this is where they part.
+    function launcherIsTerm(tile) {
+      return !!tile && (tile.action === 'run' || tile.action === 'term');
+    }
 
     // Exactly what relay/start_agent.py accepts, restated because the relay does not offer it.
     // `extra = set(msg) - base_fields` is a hard refusal there, so a stray key is not a warning —
@@ -76,7 +86,7 @@
     // spawn lands on a conversation now, but one agent in one is still an agent to the person who
     // pressed it, and calling it a conversation would name the container instead of the thing.
     function launcherNoun(tile) {
-      if (!tile || tile.action === 'run') return 'terminal';
+      if (!tile || launcherIsTerm(tile)) return 'terminal';
       return (Array.isArray(tile.members) ? tile.members.length : 0) > 1 ? 'conversation' : 'agent';
     }
 
@@ -206,9 +216,11 @@
       // the same roster pressed into whichever tree wants it. The Project is then asked for at the
       // press, where it is mandatory — see launcherAskProject.
       if (LAUNCHER_ACTIONS.indexOf(tile.action) < 0) return 'Unknown action';
-      if (tile.action === 'run') {
+      if (launcherIsTerm(tile)) {
         const command = typeof tile.command === 'string' ? tile.command.trim() : '';
-        if (!command) return 'Give it a command to run';
+        // A `term` with nothing to type is the whole point of it — an empty prompt in the right
+        // tree. A `run` with nothing to run is a button that opens a terminal and lies about it.
+        if (tile.action === 'run' && !command) return 'Give it a command to run';
         // SEND_TEXT_MAX is the relay's cap on one send_text. Longer text is splittable in the
         // composer, but a launcher command that arrived in two pieces would run the first half at
         // the prompt — so this is a real limit rather than a chunking problem.
@@ -267,7 +279,7 @@
       // start_options' absence is already the app's gate for Start, and open_terminal's two gates
       // are reported inside it as `terminal`. Same signals, read from a tile.
       if (!opts) return { ok: false, reason: 'This relay starts nothing', badge: 'Unavailable' };
-      if (tile.action === 'run') {
+      if (launcherIsTerm(tile)) {
         return opts.terminal ? { ok: true, reason: '', badge: '' }
           : { ok: false, reason: 'Terminal mode is off on this relay', badge: 'No terminals' };
       }
@@ -294,7 +306,7 @@
     // the confirm, which is the whole of this feature's answer to a mislabelled action.
     function launcherPreview(tile) {
       if (!tile) return '';
-      if (tile.action === 'run') return String(tile.command || '');
+      if (launcherIsTerm(tile)) return String(tile.command || '');
       const members = Array.isArray(tile.members) ? tile.members : [];
       const line = members.map(m => (m && m.name) || '?').join(' + ');
       // The arbitrator is named apart from the two rather than joined into them: it is not a third

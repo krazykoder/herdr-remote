@@ -38,8 +38,11 @@
       // and together they are what tells two otherwise identical tiles apart.
       const where = `${project.label || tile.project_id}`
         + (project.host && project.host !== 'local' ? ` on ${project.host}` : '');
-      if (tile.action === 'run') {
-        return [`Run this in a new terminal on ${where}?`, '', tile.command];
+      if (launcherIsTerm(tile)) {
+        const command = String(tile.command || '').trim();
+        return command
+          ? [`Run this in a new terminal on ${where}?`, '', command]
+          : [`Open a terminal on ${where}?`];
       }
       // The arbitrator counts. It is a third pane started on the same relay in the same Project,
       // and a confirm that said "2 sessions" before starting three would be the one number on
@@ -103,7 +106,7 @@
       // `label` — the pane's name, the conversation's, the status line's — so naming it once here
       // is what keeps the launch's name and the tile's name from having to be the same thing.
       const named = launcherNamed(tile, typed);
-      return named.action === 'run' ? launcherRunTile(named) : launcherSpawnTile(named);
+      return launcherIsTerm(named) ? launcherRunTile(named) : launcherSpawnTile(named);
     }
 
     // What the sheet calls back into: the tile as stored, run in the Project just chosen. The

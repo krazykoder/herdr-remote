@@ -4493,9 +4493,9 @@ test('the role badge is what the session is started as, and what opens it', asyn
   await openNewAgentModal(page);
   // Only the roles this relay knows are offered — a badge it would refuse is never drawn.
   await expect(page.locator('#newAgentRoles .badge.pick'))
-    .toHaveText(['@architect', '@reviewer', '@implementer', '@arbitrator']);
+    .toHaveText(['@none', '@architect', '@reviewer', '@implementer', '@arbitrator']);
   await page.locator('#newAgentRoles .badge.pick', {hasText: 'Arbitrator'}).click();
-  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('#Arbitrator');
+  await expect(page.locator('#newAgentRoles .badge.pick.on')).toHaveText('@arbitrator');
   // A second Project, chosen from the list behind @+ rather than from the line.
   await page.locator('#newAgentProjMenu').waitFor({state: 'hidden'});
   await page.locator('.chip-line .badge.more').click();
@@ -4530,7 +4530,7 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   await page.evaluate(() => openStartDialog('p1'));
   await expect(page.locator('#startSheet')).toBeVisible();
   await expect(page.locator('#startRoles .badge.pick'))
-    .toHaveText(['@architect', '@reviewer', '@implementer', '@arbitrator']);
+    .toHaveText(['@none', '@architect', '@reviewer', '@implementer', '@arbitrator']);
   // The first badge is lit before anything is picked: a session is better started as something,
   // and this dialog has never been opened here. Taking it off again is a tap, and is remembered
   // as an answer — see the end of this test.
@@ -4563,8 +4563,10 @@ test('the Start sheet starts as a role too, and remembers which', async ({page})
   // placement beside it — and the same tap takes it off again.
   await page.evaluate(() => { closeStart(); openStartDialog('p1'); });
   await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('@architect');
-  await page.locator('#startRoles .badge.pick', {hasText: 'Architect'}).click();
-  await expect(page.locator('#startRoles .badge.pick.on')).toHaveCount(0);
+  // @none, and not an empty strip: the answer has a badge of its own now, rather than being
+  // reachable only by tapping the lit one off.
+  await page.locator('#startRoles .badge.pick', {hasText: 'none'}).click();
+  await expect(page.locator('#startRoles .badge.pick.on')).toHaveText('@none');
   await page.evaluate(() => { window.__sent.length = 0; });
   await page.locator('#startSubmit').click();
   const bare = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));

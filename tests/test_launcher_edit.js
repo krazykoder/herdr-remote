@@ -132,13 +132,15 @@ test('a new tile opens on no Project, because a template is the more useful tile
   // Opening on one Project would make the narrower tile the one people build by accident. None is
   // a template: the same roster pressed into whichever tree wants it, asked for at the press.
   assert.equal(e.draft().project_id, '');
-  assert.equal(e.draft().action, 'run');
+  // Sessions first: it is what the launcher is mostly for, and it is the first badge offered.
+  assert.equal(e.draft().action, 'spawn');
   assert.match(e.body(), /launcherPickProject\(''\)/, 'and the strip offers it by name');
 });
 
 test('a template saves without a Project, and says so on the tile', () => {
   const e = editor();
   e.run('launcherNewTile()');
+  e.run("launcherPickAction('run')");
   e.field('qlName', 'Tests');
   e.field('qlCommand', 'pytest -q');
   assert.equal(e.run('launcherSaveTile()'), true);
@@ -152,9 +154,33 @@ test('a relay with terminals off opens the form on the half that works', () => {
   assert.equal(e.draft().action, 'spawn');
 });
 
+test('a relay that starts nothing opens the form on a terminal', () => {
+  const e = editor({startOptions: {agents: [], terminal: true}});
+  e.run('launcherNewTile()');
+  assert.equal(e.draft().action, 'term');
+});
+
+test('a terminal tile needs no command, and keeps one if it was typed', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('term')");
+  e.field('qlName', 'Shell');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const [t] = e.tiles();
+  assert.equal(t.action, 'term');
+  assert.equal(t.command, '');
+  // Switching between the two keeps what was typed: they differ by whether the line is required.
+  e.run(`launcherEditTile('${t.id}')`);
+  e.field('qlCommand', 'htop');
+  e.run("launcherPickAction('run')");
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.equal(e.tiles()[0].command, 'htop');
+});
+
 test('a run tile saved from the form carries a command and no roster', () => {
   const e = editor();
   e.run('launcherNewTile()');
+  e.run("launcherPickAction('run')");
   e.field('qlName', '  Run the tests  ');
   e.field('qlCommand', ' pytest -q ');
   assert.equal(e.run('launcherSaveTile()'), true);
@@ -170,6 +196,7 @@ test('a run tile saved from the form carries a command and no roster', () => {
 test('a tile the form cannot save says why and writes nothing', () => {
   const e = editor();
   e.run('launcherNewTile()');
+  e.run("launcherPickAction('run')");
   e.field('qlCommand', 'pytest');
   assert.equal(e.run('launcherSaveTile()'), false);
   assert.equal(e.dom.nodes.qlError.textContent, 'Give it a name');

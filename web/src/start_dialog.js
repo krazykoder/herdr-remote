@@ -271,10 +271,13 @@
     let startRolePick = '';
 
     function renderStartRoles() {
-      document.getElementById('startRoles').innerHTML = startRoles().map(r =>
-        badgeHtml(startRoleTag(r), r.at === startRolePick, `pickStartRole('${r.at}')`,
-          {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
-        .join('');
+      document.getElementById('startRoles').innerHTML =
+        badgeHtml('@none', !startRolePick, "pickStartRole('')",
+          {proj: true, title: 'Starts with nothing typed at it'})
+        + startRoles().map(r =>
+          badgeHtml(startRoleTag(r), r.at === startRolePick, `pickStartRole('${r.at}')`,
+            {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
+          .join('');
     }
 
     // The harness, in the same row of badges rather than in a select beside them: the sheet asks

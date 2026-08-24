@@ -571,3 +571,18 @@ test('a store with no localStorage at all reads empty instead of throwing', () =
   assert.deepEqual(ctx.__out.loadLauncher(), []);
   assert.doesNotThrow(() => ctx.__out.saveLauncher([runTile()]));
 });
+
+test('a terminal tile is a run without the command, and is pressable with none', () => {
+  const {launcherValid, launcherGate, launcherNoun} = pure();
+  const term = {id: 't9', label: 'Shell', action: 'term', project_id: 'p1'};
+  const env = {projects: [{id: 'p1'}], startOptions: {terminal: true, agents: ['claude']}};
+  assert.equal(launcherValid(term), '');
+  assert.equal(launcherNoun(term), 'terminal');
+  // The same gate as a run tile: both open a terminal, so both need terminal mode on.
+  assert.equal(launcherGate(term, env).ok, true);
+  assert.equal(launcherGate(term, {projects: env.projects,
+    startOptions: {agents: ['claude']}}).badge, 'No terminals');
+  // And a run tile still has to have one.
+  assert.equal(launcherValid({id: 'r', label: 'R', action: 'run', project_id: 'p1'}),
+    'Give it a command to run');
+});

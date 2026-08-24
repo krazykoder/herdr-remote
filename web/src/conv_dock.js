@@ -871,10 +871,13 @@
     function renderNewAgent() {
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
         .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
-      document.getElementById('newAgentRoles').innerHTML = startRoles().map((r, i) =>
-        badgeHtml(startRoleTag(r), i === newAgentRole, `pickNewAgentRole(${i})`,
-          {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
-        .join('');
+      document.getElementById('newAgentRoles').innerHTML =
+        badgeHtml('@none', newAgentRole < 0, 'pickNewAgentRole(-1)',
+          {proj: true, title: 'Starts with nothing typed at it'})
+        + startRoles().map((r, i) =>
+          badgeHtml(startRoleTag(r), i === newAgentRole, `pickNewAgentRole(${i})`,
+            {proj: true, title: roleStarter(r) ? `Opens with @${r.at}` : 'No opening prompt yet'}))
+          .join('');
       document.getElementById('newAgentProjects').innerHTML = projects.map(p =>
         badgeHtml(`@${p.label}`, p.id === newAgentProject, `pickNewAgentProject('${p.id}')`,
           {proj: true})).join('');

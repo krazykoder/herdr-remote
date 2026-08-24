@@ -125,6 +125,8 @@ test('a tile written through the form is on the page, and survives a reload', as
   await seed(page, []);
   await page.click('#launcher .section-header button');
   await expect(page.locator('#launcherModal')).toBeVisible();
+  // The form opens on Start agents now, so a command tile says so first.
+  await dlg(page).getByRole('button', {name: 'Run a command'}).click();
   await page.fill('#qlName', 'Charts tests');
   await page.fill('#qlCommand', 'pytest -q tests/charts');
   await dlg(page).getByRole('button', {name: 'Charts', exact: true}).click();
@@ -147,6 +149,7 @@ test('the form refuses a tile the presser could not run, and says which field', 
   await open(page);
   await seed(page, []);
   await page.click('#launcher .section-header button');
+  await dlg(page).getByRole('button', {name: 'Run a command'}).click();
   await page.fill('#qlCommand', 'pytest');
   await page.click('#qlSave');
   await expect(page.locator('#qlError')).toHaveText('Give it a name');
@@ -161,13 +164,13 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
   await dlg(page).getByRole('button', {name: 'Start agents'}).click();
   await dlg(page).getByRole('button', {name: '+ claude'}).click();
   // One agent is nothing to decide between, so the row is not offered yet.
-  await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toHaveCount(0);
+  await expect(dlg(page).locator('.start-field').filter({hasText: /^Arbitrator/})).toHaveCount(0);
   await dlg(page).getByRole('button', {name: '+ codex'}).click();
-  await expect(dlg(page).locator('.start-field', {hasText: 'Arbitrator'})).toBeVisible();
+  await expect(dlg(page).locator('.start-field').filter({hasText: /^Arbitrator/})).toBeVisible();
   // The roles come with the arbitrator and not before it: a role is what the arbitrator is told a
   // member is for, so there is nothing to ask until there is one.
   await expect(page.locator('#qlRole0')).toHaveCount(0);
-  await dlg(page).locator('.start-field', {hasText: 'Arbitrator'})
+  await dlg(page).locator('.start-field').filter({hasText: /^Arbitrator/})
     .getByRole('button', {name: 'claude', exact: true}).click();
   await page.fill('#qlRole0', 'proposer');
   await page.fill('#qlRole1', 'critic');
@@ -184,8 +187,8 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
   await expect(tile).toContainText('claude + codex ⚖ claude');
   expect(await page.evaluate(() => loadLauncher()[0])).toMatchObject({
     action: 'spawn', project_id: 'charts', scope: 'Which approach ships',
-    members: [{name: 'claude', role: 'proposer', at: 'architect'},
-              {name: 'codex', role: 'critic', at: 'architect'}],
+    members: [{name: 'claude', role: 'proposer', at: 'architect-prompt'},
+              {name: 'codex', role: 'critic', at: 'architect-prompt'}],
     arbitrator: {name: 'claude'},
   });
 });

@@ -24,6 +24,9 @@
         + 'a6 6 0 0 1 6.5-6A6 6 0 0 1 17 12z"/><path d="M14.5 19.4A6 6 0 0 0 20 15.5"/>',
     };
 
+    // A terminal is a terminal whether or not a line is typed at it.
+    LAUNCHER_GLYPHS.term = LAUNCHER_GLYPHS.run;
+
     function launcherIcon(action) {
       const glyph = LAUNCHER_GLYPHS[action];
       if (!glyph) return '';
@@ -35,7 +38,7 @@
     // What the tile calls the thing it will make.
     function launcherKindLine(tile) {
       const many = (tile.members || []).length > 1;
-      const kind = tile.action === 'run' ? 'Terminal'
+      const kind = launcherIsTerm(tile) ? 'Terminal'
         : launcherWantsArb(tile) ? 'Arbitrated' : many ? 'Conversation' : 'Session';
       // The bubbles rather than the robot as soon as there is more than one agent on the tile:
       // what this press makes is a room with them in it, and that is what the reader wants to
@@ -63,7 +66,7 @@
     // the same kind are two panes, and the badges are what says which kinds without the reader
     // parsing a line of lowercase words. A command has no badges — it is quoted verbatim.
     function launcherPayloadHtml(tile) {
-      if (!tile || tile.action === 'run') {
+      if (!tile || launcherIsTerm(tile)) {
         return escapeHtml(launcherPreview(tile));
       }
       const members = (tile.members || []).map(m => (m && m.name) || '?');
