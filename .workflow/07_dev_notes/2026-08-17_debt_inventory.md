@@ -53,3 +53,26 @@ artifact, so a bug reproducible on one host may not reproduce on the other.
 
 Closes when: the Pages project points at `web/dist` with `python3 scripts/build.py` as its build
 command.
+
+### `e2e_start_agent.py` identifies a reply by blacklist, and flakes
+`rpc()` in `tests/e2e/e2e_start_agent.py` sends a request and then returns the first message that
+is *not* one of `agents`, `blocked`, `agent_update`, `pane_content` — so any other unsolicited
+broadcast is handed back as if it were the reply. `drain_to_agents()` has the same shape: it reads
+until the first non-empty `agents`, and three checks then assert the connect burst is exactly
+`["versions", "projects", "start_options", "agents"]`, which a broadcast landing inside the burst
+breaks.
+
+Measured 2026-08-25: roughly one run in five fails, on `main` as well as on the branches of the
+day, so it is the harness rather than the relay. The baseline failure was
+`N5 herdr's own refusal reaches the client`; other runs failed elsewhere. Which message actually
+leaked has *not* been diagnosed — `start_options` is only rebroadcast after a `state_put` of
+`agent_configs`, which that run never does, so the obvious suspect is ruled out and the real one is
+still unknown.
+
+Left because the suite is run deliberately rather than in CI, and a fix guessed without seeing the
+offending message could paper over a genuine relay bug.
+
+Closes when: `rpc()` matches the reply positively — the first message whose `command` equals the
+request type, or an `error` — and drops everything else, and the burst checks collect by type
+against a deadline instead of asserting positional order. Diagnose first: dump the unexpected
+message, loop N5 until it fails once, and read what arrived before changing the match.
