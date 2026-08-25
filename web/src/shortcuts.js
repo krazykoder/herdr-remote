@@ -358,6 +358,9 @@
       const archived = all.filter(c => c.archived);
       const active = all.filter(c => !c.archived);
       const autos = active.filter(c => c.auto);
+      // `shown` is the named list, plus the autos while the reader is in that mode — the tab strip
+      // draws from it too, and a strip that could not show the conversation on screen would be the
+      // one thing worse than a strip carrying an extra tab.
       return { all: all, archived: archived, autos: autos,
         shown: active.filter(c => !c.auto)
           .concat(convLandingAutoOn() ? autos.slice(0, CONV_LANDING_AUTO_MAX) : []).sort(by) };
@@ -466,18 +469,25 @@
             unique('project').map(p => ` <span class="badge proj">@${escapeHtml(p)}</span>`).join(''),
         };
       });
-      const autos = list.autos, showAuto = convLandingAutoOn();
-      const autoControl = autos.length
-        ? `<button class="section-action conv-auto-toggle" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
-          `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
-          `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
-      // A mode, not a second list. The archive is where a conversation goes to be out of the way,
-      // and showing it under the active ones puts it back in the way — so this swaps what the
-      // section is showing, and the button says which of the two is on screen.
+      // Two modes over one list, and never a second list underneath. Auto and Archive are both
+      // "not the conversations you named", and drawing either below the named ones puts back on
+      // screen exactly what filing it away was for — so each swaps what the section shows, and
+      // the way out of both is the same arrow.
       const archiveOn = convLandingArchiveOn() && list.archived.length > 0;
+      const autoOn = !archiveOn && convLandingAutoOn() && list.autos.length > 0;
+      const back = call => `<button class="section-action conv-back" onclick="${call}"` +
+        ` title="Back to the conversations you named" aria-label="Back to named conversations">` +
+        `\u2190 Back</button>`;
+      const autoControl = list.autos.length
+        ? (autoOn ? back('toggleConvLandingAuto()')
+          : `<button class="section-action conv-auto-toggle" onclick="toggleConvLandingAuto()"` +
+            ` aria-pressed="false" title="Conversations this app filed on its own">` +
+            `Auto (${list.autos.length})</button>`) : '';
       const archiveControl = list.archived.length
-        ? `<button class="section-action" onclick="toggleConvLandingArchive()" aria-pressed="${archiveOn}">` +
-          `${archiveOn ? 'Back' : 'Archive'} (${list.archived.length})</button>` : '';
+        ? (archiveOn ? back('toggleConvLandingArchive()')
+          : `<button class="section-action" onclick="toggleConvLandingArchive()"` +
+            ` aria-pressed="false" title="Conversations you put away">` +
+            `Archive (${list.archived.length})</button>`) : '';
       // The + is drawn whether or not there is anything under it, which is the one place this
       // section differs from the others: an entry point that only appears once you already have a
       // conversation cannot be how the first one is made.
@@ -546,11 +556,17 @@
         `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`;
       const archivedRows = list.archived.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
       const activeRows = list.shown.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
+      const autoRows = list.autos.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
+      // In a mode the header carries one control — the way back. Nothing else there acts on what
+      // is on screen: + New makes a named conversation, and the other mode's button would be a
+      // second exit that lands somewhere the reader did not ask for.
+      const mode = archiveOn || autoOn;
       el.innerHTML = `<div class="section-header">` +
-        `${archiveOn ? 'Archived conversations' : 'Conversations'}` +
-        // The auto toggle is about the active list and says nothing about the archive.
-        `${archiveOn ? '' : autoControl}${archiveControl}${archiveOn ? '' : newControl}</div>` +
+        `${archiveOn ? 'Archived conversations' : autoOn ? 'Auto conversations' : 'Conversations'}` +
+        `${mode ? (archiveOn ? archiveControl : autoControl)
+          : autoControl + archiveControl + newControl}</div>` +
         (archiveOn ? archivedRows.map(r => card(r, true)).join('')
+        : autoOn ? autoRows.map(r => card(r, false)).join('')
         : activeRows.length ? activeRows.map(r => card(r, false)).join('')
         : '<p class="pair-empty">No conversations yet. Start one here, or record a pane into one '
           + 'from its own menu.</p>');

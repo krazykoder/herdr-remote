@@ -211,8 +211,14 @@
       catch (e) { return false; }
     }
 
+    // Auto and Archive are the same shape: each swaps what the section is showing rather than
+    // adding a second list under it, so at most one can be on. Switching into one leaves the other.
     function toggleConvLandingAuto() {
-      try { localStorage.setItem(CONV_LANDING_AUTO_KEY, convLandingAutoOn() ? 'off' : 'on'); }
+      const on = convLandingAutoOn();
+      try {
+        localStorage.setItem(CONV_LANDING_AUTO_KEY, on ? 'off' : 'on');
+        if (!on) localStorage.setItem(CONV_LANDING_ARCHIVE_KEY, 'off');
+      }
       catch (e) { /* private mode: this session only */ }
       renderConversations();
     }
@@ -223,8 +229,11 @@
     }
 
     function toggleConvLandingArchive() {
-      try { localStorage.setItem(CONV_LANDING_ARCHIVE_KEY,
-        convLandingArchiveOn() ? 'off' : 'on'); }
+      const on = convLandingArchiveOn();
+      try {
+        localStorage.setItem(CONV_LANDING_ARCHIVE_KEY, on ? 'off' : 'on');
+        if (!on) localStorage.setItem(CONV_LANDING_AUTO_KEY, 'off');
+      }
       catch (e) { /* private mode: this session only */ }
       renderConversations();
     }

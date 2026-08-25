@@ -283,12 +283,13 @@ test('restart all goes one member at a time, and waits for a start in flight', (
 
 // --- The archive as a mode ---
 
-function bootArchive(index, on) {
+function bootArchive(index, on, auto) {
   const e = boot();
   e.run(`
     loadConvIndex = () => ${JSON.stringify(index)};
-    convLandingAutoOn = () => false;
+    convLandingAutoOn = () => ${!!auto};
     convLandingArchiveOn = () => ${on};
+    CONV_LANDING_AUTO_MAX = 10;
     convSeenAt = () => 0;
     convNoteCounts = () => {};
     convGlyph = () => '#';
@@ -308,6 +309,32 @@ test('the archive is a mode: opening it shows the archived conversations and not
   assert.match(html, /Put away/);
   assert.doesNotMatch(html, /Active/, 'the active list is not underneath it as well');
   assert.doesNotMatch(html, /\+ New/, 'and nothing here makes a new conversation');
+});
+
+test('auto is a mode too, and the way out of either is the same arrow', () => {
+  const index = [
+    {id: 'c1', name: 'Named', members: [{key: 'k1', label: 'A'}]},
+    {id: 'c2', name: 'Picked up', members: [{key: 'k2', label: 'B'}], auto: true},
+    {id: 'c3', name: 'Put away', members: [{key: 'k3', label: 'C'}], archived: true},
+  ];
+  const auto = bootArchive(index, false, true);
+  assert.match(auto, /Picked up/);
+  assert.doesNotMatch(auto, /Named/, 'the named list is not underneath it as well');
+  assert.doesNotMatch(auto, /\+ New/);
+  assert.match(auto, /\u2190 Back/);
+  assert.doesNotMatch(auto, /Archive \(/, 'and the only control is the way back');
+
+  // Both flags set is a state the toggles do not produce, but a stale localStorage can: the
+  // archive wins, and the reader still gets exactly one list and one way out of it.
+  const both = bootArchive(index, true, true);
+  assert.match(both, /Put away/);
+  assert.doesNotMatch(both, /Picked up/);
+
+  const out = bootArchive(index, false, false);
+  assert.match(out, /Named/);
+  assert.match(out, /Auto \(1\)/);
+  assert.match(out, /Archive \(1\)/);
+  assert.doesNotMatch(out, /\u2190 Back/);
 });
 
 test('delete for good is offered on an archived card and nowhere else', () => {
