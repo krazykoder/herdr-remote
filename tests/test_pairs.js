@@ -28,10 +28,16 @@ const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFo
                'parseTermShortcuts', 'DEFAULT_TERM_SHORTCUTS', 'MAX_TERM_SHORTCUTS', 'escapeHtml',
                'enterAction', 'ctrlChord'];
 
+const AGENT_CONFIGS = fs.readFileSync(
+  path.join(__dirname, '..', 'web', 'src', 'agent_configs.js'), 'utf8');
+
 const ctx = vm.createContext({});
 // `const` is a lexical binding and never lands on the context object, so the block exports
 // itself explicitly. A rename in source therefore fails here loudly, not silently.
-vm.runInContext(PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
+//
+// agent_configs.js is loaded beside it because agentSlash resolves an alias to the harness under
+// it, and the app loads the two together. Nothing here calls into the section it draws.
+vm.runInContext(AGENT_CONFIGS + '\n' + PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
        pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
        navStep, navPush, SHORTCUTS, START_ROLES, roleStarter, startRoleOf, startRoleFromLabel,
@@ -574,6 +580,19 @@ test('a badge whose prompt is still to be written opens with nothing', () => {
   assert.match(roleStarter(startRoleOf('architect')), /System_Prompt_2_Architect/);
   assert.equal(roleStarter(startRoleOf('reviewer')), '');
   assert.equal(roleStarter(null), '');
+});
+
+test('an alias is written the way the harness under it reads', () => {
+  // `ocodex--1-` runs codex. Resolved inside agentSlash, because the name that reaches it comes
+  // from a dozen callers and one of them will always be holding the id rather than the kind — that
+  // is how a session opened with `/ponytail`, which codex answered with `Unrecognized command`.
+  ctx.startOptions = {configs: [{id: 'ocodex--1-', label: 'ocodex', kind: 'codex'},
+                                {id: 'oclaude-1', label: 'oclaude', kind: 'claude'}]};
+  assert.match(ctx.agentSlash('/ponytail', 'ocodex--1-'), /^\$ponytail/);
+  assert.match(ctx.agentSlash('/ponytail', 'oclaude-1'), /^\/ponytail/);
+  // A name nobody has a config for is its own answer, which is every stock start.
+  assert.match(ctx.agentSlash('/ponytail', 'codex'), /^\$ponytail/);
+  assert.match(ctx.agentSlash('/ponytail', 'kiro'), /^\/ponytail/);
 });
 
 test('an opening prompt is written the way the harness under it reads', () => {

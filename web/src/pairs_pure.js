@@ -244,8 +244,19 @@
     // codex invokes its prompts with $; every other agent uses /. Only a line-leading slash is
     // rewritten, so a path or URL inside the shortcut text is left alone. Keyed off the pane the
     // text is going into, not the one it came from.
+    // `agent` may be an alias rather than a harness — `ocodex--1-` runs codex and has to be
+    // written for codex. Resolved here rather than at each caller: a caller that has to remember
+    // to resolve first is a caller that will forget, and this one already cost a session an
+    // opening prompt codex answered with `Unrecognized command '/ponytail'`.
     function agentSlash(text, agent) {
-      return agent === 'codex' ? text.replace(/^\//gm, '$') : text;
+      return agentHarness(agent) === 'codex' ? text.replace(/^\//gm, '$') : text;
+    }
+
+    // The harness under a name that may be either. An unknown name is its own answer, which is
+    // what keeps this working in a page where the configs section is not loaded.
+    function agentHarness(agent) {
+      const name = String(agent || '');
+      return (typeof agentConfigKind === 'function' && agentConfigKind(name)) || name;
     }
 
     // A corrupt blob must not brick the terminal view — it loads as no pairs at all.

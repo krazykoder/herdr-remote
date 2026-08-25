@@ -113,7 +113,13 @@
       startIntent = null;
       // Read once here for the same reason: a start that never came up must not leave its opening
       // words to be said to whatever is started next.
-      const prompt = startPrompt;
+      //
+      // Written for the pane that actually landed, not for the harness the caller had in mind when
+      // it resolved the text. Those two disagree more often than they look: a member swapped from
+      // one harness to another, a start whose kind came off a stale record, an alias resolved
+      // somewhere that only knew its id. The pane is the one place the answer is a fact, and
+      // agentSlash is idempotent, so a prompt already in the right form passes through untouched.
+      const prompt = startPrompt ? agentSlash(startPrompt, a.agent) : '';
       const starterAt = startStarter;
       startPrompt = '';
       startStarter = '';
