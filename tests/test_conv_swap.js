@@ -311,6 +311,16 @@ test('the archive is a mode: opening it shows the archived conversations and not
   assert.doesNotMatch(html, /\+ New/, 'and nothing here makes a new conversation');
 });
 
+test('cards are newest-first, and a pane never seen move keeps its place in the snapshot', () => {
+  const e = boot();
+  e.run(`
+    lastSeen = {b: 200, c: 100};
+    agentCard = a => a.pane_id + ',';
+    out = agentCards([{pane_id: 'a'}, {pane_id: 'b'}, {pane_id: 'c'}, {pane_id: 'd'}]);`);
+  assert.equal(e.run('out'), 'b,c,a,d,',
+    'the two with a clock lead in clock order, the two without follow in snapshot order');
+});
+
 test('auto is a mode too, and the way out of either is the same arrow', () => {
   const index = [
     {id: 'c1', name: 'Named', members: [{key: 'k1', label: 'A'}]},

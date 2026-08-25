@@ -254,11 +254,20 @@
   </div>`;
     }
 
-    // The one place the user's order is applied to cards. Every list on the main page — the hoist,
-    // each status section, a Project's panes — ends here, so ordering once at the bottom covers
-    // all of them and cannot fall out of step between two of them.
+    // The one place a card list is ordered. Every list on the main page — the hoist, each status
+    // section, a Project's panes — ends here, so ordering once at the bottom covers all of them
+    // and cannot fall out of step between two of them.
+    //
+    // Most recently active first, not the manual order the tab strip uses. The two lists are read
+    // for different reasons: the strip is a fixed set of places you learn the position of, so it
+    // must not move under the tap, while the cards are "what is going on right now" and the pane
+    // that just moved is the one being looked for. A pane this browser has never watched move
+    // sorts last and keeps snapshot order, which is what a fresh reload shows.
     function agentCards(list) {
-      return orderedAgents(list).map(agentCard).join('');
+      return list.map((agent, index) => ({agent, index}))
+        .sort((a, b) => (lastSeen[b.agent.pane_id] || 0) - (lastSeen[a.agent.pane_id] || 0)
+          || a.index - b.index)
+        .map(x => agentCard(x.agent)).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -279,7 +288,9 @@
       const filter = agentKindsHtml(agents);
       if (filter) header.insertAdjacentHTML('beforeend', filter);
       header.insertAdjacentHTML('beforeend',
-        '<button class="section-action" onclick="openOrder()" aria-label="Reorder tabs">Reorder</button>');
+        '<button class="section-action" onclick="openOrder()"' +
+        ' title="The order of the tab strip. The cards below are newest-first."' +
+        ' aria-label="Reorder tabs">Reorder tabs</button>');
       // Reorder, then +. The same right-hand order the Launcher header uses: + is always last,
       // because it is the one that makes something rather than rearranging what is there.
       // Starting a session is what this section is a list of, so this is where it belongs — and
