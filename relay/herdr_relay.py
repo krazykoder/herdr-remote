@@ -909,6 +909,30 @@ def get_all_panes():
 pane_config = {}
 
 
+# Panes this relay started, watched briefly for a menu herdr does not call blocked. A codex opened
+# in a directory it has not been trusted in shows its trust prompt while herdr still reports the
+# pane `idle` — there is no transition, so nothing is broadcast, and the app shows a pane sitting
+# quiet at a question nobody can answer from it. Watched only for a short window after the start and
+# only while the pane is idle: one extra pane read per poll, on one pane, over the minute a first
+# prompt can appear in.
+# ponytail: spawn only. A mid-session menu arrives at a pane herdr does call blocked (verified
+# against codex 0.145.0), so this does not become a read of every idle pane.
+SPAWN_WATCH_S = 90
+spawn_watch = {}  # pane_id -> monotonic deadline
+
+
+def spawn_menu_pending(pane_id, now):
+    """Is this pane still inside its post-start window? Expired entries are dropped as they are
+    found, which is the whole of this map's cleanup."""
+    deadline = spawn_watch.get(pane_id)
+    if deadline is None:
+        return False
+    if deadline <= now:
+        del spawn_watch[pane_id]
+        return False
+    return True
+
+
 def snapshot_message():
     """The full-state broadcast. `shells` is present whenever terminal mode is on, including as an
     empty list — its presence is the client's feature gate, as start_options is for Start."""
@@ -1786,6 +1810,13 @@ async def _poll_once():
             config = pane_config.get(a["pane_id"])
             if config:
                 a["config"] = config
+            # A first prompt at a pane herdr still calls idle. Read before the snapshot goes out,
+            # so the status the client is given is the one the pane is really in and the blocked
+            # branch below announces it like any other.
+            if a["status"] == "idle" and spawn_menu_pending(a["pane_id"], time.monotonic()):
+                first = await asyncio.to_thread(read_pane, a["pane_id"], remote=a.get("remote"))
+                if detect_choices(first):
+                    a["status"] = "blocked"
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -2895,6 +2926,7 @@ async def handle_client(ws, listener="lan"):
                     continue
                 if plan.get("config"):
                     pane_config[pane_id] = plan["config"]
+                spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
                 log.info("Start agent ok: pane=%s label=%r name=%r",
                          pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",

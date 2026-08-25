@@ -102,5 +102,33 @@ class ChoiceDigitTests(unittest.TestCase):
             self.assertIsNone(herdr_relay.choice_digit(text), text)
 
 
+class SpawnWatchTests(unittest.TestCase):
+    """The window a just-started pane is read in.
+
+    herdr calls a codex sitting at its trust prompt `idle` — verified against herdr 0.8.0 with
+    codex 0.145.0 — so the poll's blocked branch never fires and the first prompt of a pane's life
+    is the one nobody is told about. The watch is what makes that pane get read at all.
+    """
+
+    def setUp(self):
+        herdr_relay.spawn_watch.clear()
+
+    def test_a_pane_nobody_started_is_never_read(self):
+        self.assertFalse(herdr_relay.spawn_menu_pending("w9:p1", 100.0))
+
+    def test_a_just_started_pane_is_read_until_its_window_passes(self):
+        herdr_relay.spawn_watch["w9:p1"] = 100.0 + herdr_relay.SPAWN_WATCH_S
+        self.assertTrue(herdr_relay.spawn_menu_pending("w9:p1", 100.0))
+        self.assertFalse(herdr_relay.spawn_menu_pending(
+            "w9:p1", 101.0 + herdr_relay.SPAWN_WATCH_S))
+
+    def test_an_expired_window_is_forgotten_rather_than_kept(self):
+        # The map's only cleanup: a pane that closed inside its window is never seen again, and
+        # an entry per start would otherwise accumulate for the life of the process.
+        herdr_relay.spawn_watch["w9:p1"] = 100.0
+        herdr_relay.spawn_menu_pending("w9:p1", 200.0)
+        self.assertNotIn("w9:p1", herdr_relay.spawn_watch)
+
+
 if __name__ == "__main__":
     unittest.main()
