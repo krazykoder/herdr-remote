@@ -248,6 +248,24 @@ test('kiro: a prompt is what a rule hangs over, and a reply is what hangs under 
   assert.match(rows[155], /^  Git rebase rewrites/);
 });
 
+// A turn kiro has not answered yet: the prompt, then the pane's own footer. The placeholder in
+// that footer is indented, and the walk back for what opened it runs past kiro's column-0 chrome
+// to the last marker above — so the footer was read as the answer, and `ask a question or describe
+// a task ↵` was recorded and sent as if kiro had said it.
+test('kiro: an unanswered turn has no closing message, footer or not', () => {
+  const rows = [
+    '─'.repeat(40),
+    '  explain what a git rebase does',
+    '',
+    '─'.repeat(40),
+    'kiro_default · deepseek-3.2 · 13%                    ~/code · (main)',
+    '',
+    ' ask a question or describe a task ↵',
+    '                                          /copy to clipboard',
+  ];
+  assert.equal(find(rows, 'kiro'), null);
+});
+
 test('kiro: its own chrome is neither a prompt nor a message', () => {
   const rows = fixture('pane_kiro_done.txt');
   // Every prompt and nothing else. The credit line, the rules and the status bar are in column 0,

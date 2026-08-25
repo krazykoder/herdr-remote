@@ -575,8 +575,9 @@ except AgentConfigError as e:
 
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
 # `› 1. Yes, continue` — the marker is whichever glyph the TUI puts against the selected row, and
-# the line is the whole of the option. See detect_choices.
-CHOICE_RE = re.compile(r"^\s*[\u203a>\u276f*\u2022]?\s*([1-9])[.)]\s+(\S.*)$")
+# the line is the whole of the option. Captured rather than skipped: one row of a real menu always
+# carries it, and it is the only thing that separates a menu from prose. See detect_choices.
+CHOICE_RE = re.compile(r"^\s*([\u203a>\u276f*\u2022])?\s*([1-9])[.)]\s+(\S.*)$")
 CHOICE_ANSWER_RE = re.compile(r"^([1-9])(?:[.)]\s.*)?$")
 CHOICE_TAIL = 25       # lines from the bottom a menu can be in
 CHOICE_MAX = 6         # options offered on; a longer list is prose that happens to be numbered
@@ -1189,18 +1190,23 @@ def detect_choices(text):
     TUI and they change with its version, and the option a person is being asked to pick is the one
     thing this must not paraphrase.
 
-    Only the tail is scanned, and the numbers must run 1, 2, 3 from the last line up: an agent that
-    wrote a numbered list in its answer is the false positive to avoid, and a real menu is the last
-    thing on screen. Read only where herdr already says the pane is blocked, which is the other
-    half of why this is safe to be this simple.
+    Only the tail is scanned, the numbers must run 1, 2, 3 from the last line up, and one of those
+    rows must carry the TUI's selection marker. The marker is what makes this safe on a pane herdr
+    has *not* called blocked — which is every pane now, since a start reads its own pane for a
+    trust prompt and a send refuses to type at a menu. Without it, an agent that ends its answer
+    with a numbered list of questions is read as a menu: kiro does exactly that, and the pane
+    flickered between blocked and idle while the client drew buttons for prose.
     """
-    found = {}
+    found, marked = {}, False
     for line in text.splitlines()[-CHOICE_TAIL:]:
         m = CHOICE_RE.match(line)
         if m:
+            marked = marked or bool(m.group(1))
             # First writing wins: a redrawn frame lists every option twice and the cursor marker
             # moves between the two copies.
-            found.setdefault(int(m.group(1)), m.group(2).strip())
+            found.setdefault(int(m.group(2)), m.group(3).strip())
+    if not marked:
+        return None
     picked = [f"{n}. {found[n]}" for n in range(1, len(found) + 1) if n in found]
     return picked[:CHOICE_MAX] if len(picked) >= 2 else None
 
@@ -1476,6 +1482,10 @@ async def pane_menu_options(pane_id, remote=None):
     text = await asyncio.to_thread(read_pane, pane_id, remote=remote)
     options = detect_choices(text)
     if options:
+        # Watched from here on, so the poll reads it too. Without that the snapshot that follows
+        # this message says `idle` — herdr does not call a pane at a menu blocked — and the client
+        # is told the pane is waiting and then, a second later, that it is not.
+        spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
         a = agent_cache.get(pane_id) or {}
         await broadcast({
             "type": "blocked", "pane_id": pane_id,
@@ -1484,6 +1494,25 @@ async def pane_menu_options(pane_id, remote=None):
             "prompt": text[:500], "options": options,
         })
     return options
+
+
+async def submit_init_line(pane_id, line, remote=None):
+    """Type one of a kind's own init lines and press Enter once. Returns whether it went out.
+
+    Not submit_paste, because these are slash commands the TUI runs itself: kiro prints nothing for
+    `/tools trust-all` and never leaves `idle`, so the watch loop spends its whole window waiting
+    for a status change that cannot come and then reports a line that landed as unsent — eight
+    seconds of every kiro start, and a warning in the log saying the opposite of what happened.
+
+    The one thing still worth checking is the one submit_paste checks first: a menu on screen eats
+    the text and the Enter behind it answers the menu.
+    """
+    if await pane_menu_options(pane_id, remote=remote):
+        return False
+    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, line, remote=remote)
+    await asyncio.sleep(submit_settle(line))
+    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+    return True
 
 
 async def submit_paste(pane_id, text, remote=None, out=None):
@@ -1733,8 +1762,9 @@ def agent_init_exec(pane_id, kind, remote):
     """
     for line in agent_init_prompts(kind):
         try:
-            if not on_loop(submit_paste(pane_id, line, remote=remote), wait=True):
-                log.warning("Agent started as %s but %r was not confirmed", pane_id, line)
+            if not on_loop(submit_init_line(pane_id, line, remote=remote), wait=True):
+                log.warning("Agent started as %s but %r was not sent: a menu was on screen",
+                            pane_id, line)
         except Exception as e:
             # Said out loud rather than raised: this is the difference between an agent that
             # answers and one that sits on a permission prompt nobody can see.

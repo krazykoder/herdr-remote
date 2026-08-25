@@ -113,14 +113,17 @@ def _kiro_user_line(row, rows, i):
     return False
 
 
-# No `chrome`: kiro's footer needs no cut. Its credit line, its rule and its status bar are all in
-# column 0, so none of them can open a positional block, and the composer placeholder under them is
-# indented but sits under the status bar rather than under a rule — which is exactly the question
-# `_kiro_user_line` asks. `composer: False` for the same reason agy does not need it: kiro's newest
-# reply is *below* its newest prompt, because the live composer is not one.
+# `chrome` is the rule kiro's footer opens with, and it is a cut for the same reason agy's composer
+# line is one: the placeholder under it is indented, and the walk back for what opened it runs
+# straight past kiro's column-0 chrome to the last `●` above it. A turn where kiro had not answered
+# yet was recorded as kiro saying `ask a question or describe a task ↵ / /copy to clipboard`, which
+# went into the record and into the thread as if it were an answer.
+#
+# `composer: False` for the same reason agy does not need it: kiro's newest reply is *below* its
+# newest prompt, because the live composer is not one.
 GUTTERS["kiro"] = {
     "speaker": None, "result": [], "user": [], "opens": ["●"], "composer": False,
-    "user_line": _kiro_user_line, "end_line": _KIRO_CALL,
+    "user_line": _kiro_user_line, "end_line": _KIRO_CALL, "chrome": _KIRO_RULE,
 }
 
 
@@ -180,8 +183,11 @@ def transcript(rows, g):
     mark = (g or {}).get("chrome")
     if not mark or not rows:
         return rows
+    # A string is the whole of the line; a pattern is a shape, which is what a harness whose footer
+    # opens with a rule needs — the rule is a different width in every pane.
+    hit = mark.match if hasattr(mark, "match") else (lambda row: row.rstrip() == mark)
     for j in range(len(rows) - 1, max(-1, len(rows) - 1 - CHROME_ROWS), -1):
-        if (rows[j] or "").rstrip() == mark:
+        if hit(rows[j] or ""):
             # Inclusive: the composer line is the anchor `final_message` reads back from — the
             # newest prompt — and it carries no text of its own to be mistaken for one.
             return rows[:j + 1]

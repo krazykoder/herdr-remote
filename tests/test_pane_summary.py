@@ -150,6 +150,23 @@ class FinalMessage(unittest.TestCase):
         self.assertTrue(rows[153].startswith("  In one short paragraph"), rows[153])
         self.assertTrue(rows[155].startswith("  Git rebase rewrites"), rows[155])
 
+    def test_kiro_has_no_closing_message_for_a_turn_it_has_not_answered(self):
+        # The prompt, then the pane's own footer. The placeholder in that footer is indented, and
+        # the walk back for what opened it runs past kiro's column-0 chrome to the last marker
+        # above — so the footer was read as the answer, and `ask a question or describe a task ↵`
+        # went into the record and into the thread as something kiro said.
+        rows = [
+            "─" * 40,
+            "  explain what a git rebase does",
+            "",
+            "─" * 40,
+            "kiro_default · deepseek-3.2 · 13%                    ~/code · (main)",
+            "",
+            " ask a question or describe a task ↵",
+            "                                          /copy to clipboard",
+        ]
+        self.assertIsNone(final_message(rows, "kiro"))
+
     def test_kiros_own_chrome_is_neither_a_prompt_nor_a_message(self):
         # Its credit line, its rules and its status bar are in column 0, which a positional block
         # cannot start on. The composer placeholder under them *is* indented, and is refused

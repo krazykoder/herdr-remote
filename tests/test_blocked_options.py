@@ -63,12 +63,22 @@ class ChoiceTests(unittest.TestCase):
         prose = "Two things:\n\n1. Fix the test\n2. Then report back\n" + ("\n" * 40)
         self.assertIsNone(herdr_relay.detect_choices(prose))
 
+    def test_a_question_ending_in_a_numbered_list_is_not_a_menu(self):
+        # kiro closes a turn this way constantly, and it is at the bottom of the pane where a menu
+        # would be. Nothing selects a row of it, which is the difference — the pane was flipping
+        # between blocked and idle while the client drew buttons for prose.
+        asked = ("What would you like me to do?\n\n"
+                 "1. Set up the workflow structure\n"
+                 "2. Improve the existing architecture\n"
+                 "3. Add a new feature\n")
+        self.assertIsNone(herdr_relay.detect_choices(asked))
+
     def test_a_menu_must_start_at_one_and_not_skip(self):
-        self.assertIsNone(herdr_relay.detect_choices("  2. Second\n  3. Third\n"))
-        self.assertIsNone(herdr_relay.detect_choices("  1. Only one\n"))
+        self.assertIsNone(herdr_relay.detect_choices("› 2. Second\n  3. Third\n"))
+        self.assertIsNone(herdr_relay.detect_choices("› 1. Only one\n"))
 
     def test_options_beyond_the_cap_are_dropped_rather_than_offered(self):
-        many = "\n".join(f"  {n}. Option {n}" for n in range(1, 9))
+        many = "\n".join(f"{'›' if n == 1 else ' '} {n}. Option {n}" for n in range(1, 9))
         self.assertEqual(len(herdr_relay.detect_choices(many)), herdr_relay.CHOICE_MAX)
 
 

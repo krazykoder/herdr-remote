@@ -87,9 +87,10 @@
       // and column 0 is what it refuses — kiro's tool calls, its credit line, its rules and its
       // status bar all live there, and none of them is ever typed.
       //
-      // No `chrome`, unlike agy: kiro's whole footer is in column 0, so none of it can open a
-      // positional block, and the composer placeholder under it is indented but sits under the
-      // status bar rather than under a rule — which is the question `userLine` already asks.
+      // `chrome` is the rule kiro's footer opens with, and it is a cut for the same reason agy's
+      // composer line is one: the placeholder under it is indented, and the walk back for what
+      // opened it runs straight past kiro's column-0 chrome to the last `●` above it. A turn where
+      // kiro had not answered yet was read as kiro saying `ask a question or describe a task ↵`.
       // `composer: false` for the reason pi has it: the live composer is not a prompt, so the
       // newest reply is below the newest prompt rather than above it.
       //
@@ -98,7 +99,7 @@
       // reached for a tool before saying anything is recorded as kiro saying `<｜DSML｜function_calls`.
       kiro: {
         speaker: null, result: [], user: [], opens: ['●'], composer: false,
-        endLine: /^\s*<｜DSML｜/,
+        endLine: /^\s*<｜DSML｜/, chrome: /^─{20,}\s*$/,
         userLine: (row, rows, i) => {
           if (!(row || '').trim() || /^\S/.test(row || '') || !rows) return false;
           for (let j = i - 1; j >= 0; j--) {
@@ -130,8 +131,11 @@
     function transcriptRows(rows, g) {
       const mark = (g || {}).chrome;
       if (!mark || !rows || !rows.length) return rows;
+      // A string is the whole of the line; a pattern is a shape, which is what a harness whose
+      // footer opens with a rule needs — the rule is a different width in every pane.
+      const hit = mark.test ? (row => mark.test(row)) : (row => row.replace(/\s+$/, '') === mark);
       for (let j = rows.length - 1; j >= 0 && j > rows.length - 1 - CHROME_ROWS; j--) {
-        if ((rows[j] || '').replace(/\s+$/, '') === mark) return rows.slice(0, j + 1);
+        if (hit(rows[j] || '')) return rows.slice(0, j + 1);
       }
       return rows;
     }

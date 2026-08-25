@@ -1387,6 +1387,10 @@
       color: var(--muted);
     }
 
+    /* `.start-field` is declared later and lays its label above its input; these rows are a switch
+       *beside* its word, so the pair has to win on specificity rather than on order. */
+    .start-field.start-check { flex-direction: row; }
+
     .ql-solo { margin: 8px 0 0; }
 
     .ql-solo input,
