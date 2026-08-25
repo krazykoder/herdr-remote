@@ -112,7 +112,15 @@ class SubmitPaste(unittest.TestCase):
         # pane and reports `unknown` for it — the same word it uses for a TUI that has not started.
         # PANE_GONE never arrives, because only `exit` closes the pane, so the End sat out the full
         # 45s window with the client's next message queued behind it.
-        self.assertTrue(self.run_paste(["idle", "unknown"], text="/quit"))
+        self.assertTrue(self.run_paste(["idle", "unknown"], text="/quit", agent="agy"))
+
+    def test_quit_at_a_pane_with_no_agent_yet_proves_nothing(self):
+        # `unknown` is also what a pane whose TUI has not come up reports, and there it is the
+        # starting state rather than an agent leaving. Nothing was there to receive the line, so
+        # the wait stands.
+        out = {}
+        self.assertFalse(self.run_paste(["unknown"], text="/quit", out=out))
+        self.assertEqual(out.get("reason"), "unconfirmed")
 
     def test_an_ordinary_prompt_still_waits_out_an_unknown_pane(self):
         # The other side of that: `unknown` under anything but a closing line is a TUI still coming

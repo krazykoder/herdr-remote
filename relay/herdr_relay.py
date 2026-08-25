@@ -1568,6 +1568,12 @@ async def submit_init_line(pane_id, line, remote=None):
     the text and the Enter behind it answers the menu.
     """
     if not await pane_ready(pane_id, remote=remote):
+        # Two ways to fail that wait, and only one of them is worth typing into. A pane that is
+        # simply slow gets the line anyway — it is the one it was started for. A pane herdr no
+        # longer lists has exited, and there is nothing there to read it.
+        if await asyncio.to_thread(pane_agent_status, pane_id, remote=remote) == PANE_GONE:
+            log.warning("Pane %s is gone; %r was not sent", pane_id, line)
+            return False
         log.warning("Pane %s never reported a status; %r goes out anyway", pane_id, line)
     if await pane_menu_options(pane_id, remote=remote):
         return False
@@ -1635,6 +1641,11 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     # Only inside that window — an ordinary send must not pay a status call and two seconds.
     if spawn_menu_pending(pane_id, time.monotonic()):
         await pane_ready(pane_id, remote=remote)
+    # Whether there was an agent here when this went out. `unknown` below means "no agent on this
+    # pane", which is the proof a closing line landed only if one was there to leave: at a pane
+    # whose TUI has not come up yet it is the ordinary starting state, and reading it as success
+    # would confirm a `/quit` that nothing ever received.
+    had_agent = bool((agent_cache.get(pane_id) or {}).get("agent"))
     # Nothing is typed at a pane showing a menu. See pane_menu_options: the text would be eaten by
     # the modal and the Enter would answer it.
     if await pane_menu_options(pane_id, remote=remote):
@@ -1679,8 +1690,9 @@ async def submit_paste(pane_id, text, remote=None, out=None):
         # prompt, with nobody left to have read it. That is a failure with its own reason rather
         # than a send to keep watching or to record. `unknown` under ordinary text stays what it
         # always was — a pane still starting — and falls through to the wait below.
-        if status == PANE_GONE or (status == "unknown" and text.strip() in CLOSING_LINES):
-            if text.strip() in CLOSING_LINES:
+        closing = text.strip() in CLOSING_LINES
+        if status == PANE_GONE or (status == "unknown" and closing and had_agent):
+            if closing:
                 return True
             if out is not None:
                 out["reason"] = "pane_gone"
