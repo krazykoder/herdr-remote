@@ -47,9 +47,29 @@ function historyCtx({stored = null, paneLines = 200, status = 'working', now = 1
   return {el, store, reads, clock, tick, run: src => vm.runInContext(src, ctx)};
 }
 
+function approvalHtml(choice) {
+  const from = SRC.indexOf('function approvalHtml(o)');
+  const to = SRC.indexOf('\n    let paneLines', from);
+  const ctx = vm.createContext({
+    escapeHtml: s => String(s).replace(/[&<>\"]/g,
+      c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])),
+  });
+  vm.runInContext(SRC.slice(from, to) + '\n;__out = approvalHtml;', ctx);
+  return ctx.__out(choice);
+}
+
 test('the default is what the ceiling has always been', () => {
   assert.equal(historyCtx().run('paneHistoryMax()'), 5000);
   assert.equal(historyCtx().run('historyStep()'), 500, 'and so is the step at that ceiling');
+});
+
+test('a numbered menu choice stays data in its click handler', () => {
+  const choice = "1. yes'); globalThis.pwned = true; ('";
+  const html = approvalHtml(choice);
+  const attr = html.match(/onclick="([^"]+)"/)[1].replace(/&quot;/g, '"');
+  const calls = [];
+  new Function('respond', attr)(value => calls.push(value));
+  assert.deepEqual(calls, [choice]);
 });
 
 test('a stored choice is honoured', () => {

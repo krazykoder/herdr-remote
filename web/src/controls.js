@@ -261,21 +261,37 @@
     const menuHeld = new Map();
 
     function holdForMenu(paneId, text) {
-      if (paneId && text) menuHeld.set(paneId, text);
+      if (paneId && text) menuHeld.set(paneId, {text: text, sawBlocked: false, at: Date.now()});
     }
+
+    // How long a held message waits for the poll to report the menu the relay has already seen.
+    // Giving up is safe because the relay refuses again at a pane still showing one: a late try
+    // costs one pane read and the message is held afresh. Waiting for ever is not safe — a relay
+    // too old to publish the state would hold the text for the life of the page.
+    const MENU_HOLD_WAIT_MS = 10000;
 
     // Sent again the moment the pane is no longer at the question. Called from the snapshot, which
     // is the only thing that knows a pane has moved.
     function sendHeldAfterMenu(list) {
       if (!menuHeld.size) return;
+      const seen = new Set();
       for (const a of list || []) {
-        if (a.status === 'blocked' || !menuHeld.has(a.pane_id)) continue;
-        const text = menuHeld.get(a.pane_id);
+        seen.add(a.pane_id);
+        const held = menuHeld.get(a.pane_id);
+        if (!held) continue;
+        // A trust prompt can be reported idle. The relay turns it into blocked on the next spawn
+        // snapshot; wait for that state before treating a later non-blocked snapshot as its answer.
+        if (a.status === 'blocked') { held.sawBlocked = true; continue; }
+        if (!held.sawBlocked && Date.now() - held.at < MENU_HOLD_WAIT_MS) continue;
+        const text = held.text;
         // Dropped before the send: a second refusal puts it straight back, and holding it in two
         // places at once is how a message gets sent twice.
         menuHeld.delete(a.pane_id);
         submitText(a.pane_id, text);
       }
+      // A pane that is no longer in the snapshot has ended, and text held for one is not going
+      // anywhere. Dropped here rather than left to accumulate for the life of the page.
+      for (const id of Array.from(menuHeld.keys())) if (!seen.has(id)) menuHeld.delete(id);
     }
 
     function submitText(paneId, text) {

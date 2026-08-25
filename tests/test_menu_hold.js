@@ -21,6 +21,7 @@ const NAMES = ['submitText', 'holdForMenu', 'sendHeldAfterMenu', 'lastSubmitted'
 
 function harness(agents) {
   const wire = [];
+  let now = 1000;
   const ctx = vm.createContext({
     console, agents, shells: [], startOptions: {agents: ['codex']}, activePane: null,
     paneOf: id => agents.find(a => a.pane_id === id) || null,
@@ -31,7 +32,7 @@ function harness(agents) {
     ws: {readyState: 1, send: m => { const o = JSON.parse(m); wire.push([o.pane_id, o.text]); }},
     chunkText: text => [text],
     burstPoll: () => {}, showToast: () => {},
-    Date: {now: () => 1000},
+    Date: {now: () => now},
     document: {
       getElementById: () => ({addEventListener: () => {}, style: {}, dataset: {},
                               classList: {add: () => {}, remove: () => {}, toggle: () => {}}}),
@@ -40,7 +41,7 @@ function harness(agents) {
     setTimeout: () => 0, clearTimeout: () => {},
   });
   vm.runInContext(src('controls.js') + `\n;__out = {${NAMES.join(', ')}};`, ctx);
-  return Object.assign({}, ctx.__out, {wire});
+  return Object.assign({}, ctx.__out, {wire, advance: ms => { now += ms; }});
 }
 
 const PANE = {pane_id: 'w5:p1', agent: 'codex', label: 'ARCH', status: 'blocked', host: 'local'};
@@ -60,9 +61,21 @@ test('the text a send was refused for goes in once the pane is off the menu', ()
 test('a held message is sent once and not on every snapshot after it', () => {
   const h = harness([PANE]);
   h.holdForMenu('w5:p1', 'hello');
+  h.sendHeldAfterMenu([PANE]);
   const live = [Object.assign({}, PANE, {status: 'idle'})];
   h.sendHeldAfterMenu(live);
   h.sendHeldAfterMenu(live);
+  assert.deepEqual(h.wire, [['w5:p1', 'hello']]);
+});
+
+test('an idle snapshot before the relay publishes the menu does not resend into it', () => {
+  const h = harness([PANE]);
+  h.holdForMenu('w5:p1', 'hello');
+  const idle = [Object.assign({}, PANE, {status: 'idle'})];
+  h.sendHeldAfterMenu(idle);
+  assert.deepEqual(h.wire, [], 'trust prompts can initially look idle');
+  h.sendHeldAfterMenu([PANE]);
+  h.sendHeldAfterMenu(idle);
   assert.deepEqual(h.wire, [['w5:p1', 'hello']]);
 });
 
@@ -71,4 +84,26 @@ test('nothing is held for a send that was never refused', () => {
   h.submitText('w5:p1', 'hello');
   h.sendHeldAfterMenu([Object.assign({}, PANE, {status: 'idle'})]);
   assert.deepEqual(h.wire, [['w5:p1', 'hello']]);
+});
+
+test('a snapshot that never reports the menu is not waited on for ever', () => {
+  // A relay too old to publish the state at all, or a pane whose window has passed. The relay's own
+  // refusal is what makes trying safe: a pane still at the menu refuses it again and holds it again.
+  const h = harness([PANE]);
+  h.holdForMenu('w5:p1', 'hello');
+  const idle = [Object.assign({}, PANE, {status: 'idle'})];
+  h.sendHeldAfterMenu(idle);
+  assert.deepEqual(h.wire, [], 'not on the snapshot right behind the refusal');
+  h.advance(11000);
+  h.sendHeldAfterMenu(idle);
+  assert.deepEqual(h.wire, [['w5:p1', 'hello']]);
+});
+
+test('text held for a pane that has ended is dropped', () => {
+  const h = harness([PANE]);
+  h.holdForMenu('w5:p1', 'hello');
+  h.sendHeldAfterMenu([]);
+  h.advance(11000);
+  h.sendHeldAfterMenu([Object.assign({}, PANE, {status: 'idle'})]);
+  assert.deepEqual(h.wire, [], 'the pane it was for is gone');
 });
