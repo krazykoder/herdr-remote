@@ -41,6 +41,10 @@ ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # are in because `claude-opus-4-8[1m]` is a real one.
 MODEL = re.compile(r"^[A-Za-z0-9 ._:@/+\[\]-]{1,120}$")
 
+# A CLI flag, for a provider whose model is argv rather than an environment variable. Anchored for
+# the same reason ENV_NAME is: this ends up in the argv of a process the relay spawns.
+FLAG = re.compile(r"^--?[A-Za-z][A-Za-z0-9-]{0,31}$")
+
 MAX_ALIASES = 64
 MAX_LABEL = 32
 
@@ -70,6 +74,9 @@ class Provider:
     unset: tuple[str, ...] = ()
     model_var: str = ""
     model_option_var: str = ""
+    # The other way a model reaches the agent: on argv, as `--model <name>`, appended after the
+    # `--` in `herdr agent start`. Stock harnesses take it this way and have no variable for it.
+    model_flag: str = ""
     # Suggestions for the alias editor's model field, nothing more. The field stays free text —
     # model names move faster than any file — so this is a shortcut, not an allowlist.
     models: tuple[str, ...] = ()
@@ -90,6 +97,33 @@ class Alias:
     model: str = ""
     model_option: str = ""
     key: str = ""       # '' means the provider's first offered key
+
+
+# The harnesses this relay can start, as providers in their own right.
+#
+# A stock provider names no endpoint, no configuration directory and no secret — it is the CLI the
+# user already has, with `--model` on argv. That is why these are built in rather than left to the
+# file: the file exists so that a client can never cause a credential to reach an endpoint it did
+# not name, and a provider with neither a credential nor an endpoint has nothing to guard. What it
+# buys is the thing the badge needs — a session on a non-default model is an *alias*, so it has a
+# name, and `oclaude1` and `claude-sonnet` are drawn the same way.
+#
+# The model lists are suggestions for the editor, not an allowlist; the field stays free text. A
+# file entry reusing one of these ids replaces it, which is how a machine whose models have moved
+# on says so without waiting for a release.
+STOCK_PROVIDERS = (
+    Provider(id="stock-agy", label="Stock", kind="agy", model_flag="--model", models=(
+        "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
+        "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low",
+        "gemini-3.5-flash-high", "gemini-3.5-flash-medium", "gemini-3.5-flash-low",
+        "gemini-3.1-pro-high", "gemini-3.1-pro-low",
+        "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium")),
+    Provider(id="stock-claude", label="Stock", kind="claude", model_flag="--model", models=(
+        "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-8[1m]",
+        "claude-opus-4-6[1m]", "claude-sonnet-4-6", "claude-haiku-4-5")),
+    Provider(id="stock-codex", label="Stock", kind="codex", model_flag="--model", models=(
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4")),
+)
 
 
 def _obj(raw, path):
@@ -170,6 +204,8 @@ def parse_providers(raw: str) -> list[Provider]:
                            required=False, pattern=ENV_NAME, max_len=64),
             model_option_var=_str(item.get("model_option_var"), f"{at}.model_option_var",
                                   required=False, pattern=ENV_NAME, max_len=64),
+            model_flag=_str(item.get("model_flag"), f"{at}.model_flag",
+                            required=False, pattern=FLAG, max_len=32),
             models=tuple(_str(m, f"{at}.models[{j}]", pattern=MODEL, max_len=120)
                          for j, m in enumerate(models)),
         ))
@@ -177,11 +213,16 @@ def parse_providers(raw: str) -> list[Provider]:
 
 
 def load_providers(path: str = "") -> list[Provider]:
-    """Read the provider file. Absent is not an error — it means the feature is simply off."""
+    """The file's providers, followed by the stock ones the file did not already claim.
+
+    Absent is not an error — it means no *custom* providers, which is the default state. The stock
+    entries are offered either way: see STOCK_PROVIDERS for why that does not widen the boundary
+    this module exists to hold.
+    """
     target = Path(os.path.expanduser(path or DEFAULT_CONFIG))
-    if not target.is_file():
-        return []
-    return parse_providers(target.read_text(encoding="utf-8"))
+    from_file = parse_providers(target.read_text(encoding="utf-8")) if target.is_file() else []
+    named = {p.id for p in from_file}
+    return from_file + [p for p in STOCK_PROVIDERS if p.id not in named]
 
 
 def parse_aliases(raw, providers: list[Provider]) -> list[Alias]:
@@ -275,7 +316,8 @@ def public_providers(providers: list[Provider], environ=None) -> list[dict]:
         # ones that do something and says so about the ones it does not. codex takes its model
         # from CODEX_HOME/config.toml rather than the environment, and a field that silently goes
         # nowhere is worse than no field.
-        "has_model": bool(p.model_var), "has_model_option": bool(p.model_option_var),
+        "has_model": bool(p.model_var or p.model_flag),
+        "has_model_option": bool(p.model_option_var),
         "models": list(p.models),
     } for p in providers]
 
@@ -344,6 +386,18 @@ def export_line(alias: Alias, provider: Provider, environ=None) -> str:
     return " " + "; ".join(parts) + "; clear" if parts else ""
 
 
+def model_args(alias: Alias, provider: Provider) -> tuple[str, ...]:
+    """The model, when this provider carries it on argv rather than in the environment.
+
+    Appended after the `--` in `herdr agent start`, so it reaches the harness's own CLI. Data, not
+    a shell word: locally it is one element of an argv, and a remote start quotes every element
+    before ssh hands the line to a login shell.
+    """
+    if provider.model_flag and alias.model:
+        return (provider.model_flag, alias.model)
+    return ()
+
+
 def preview_command(alias: Alias, provider: Provider) -> str:
     """The same session, as a line the user can paste into their own terminal.
 
@@ -354,7 +408,8 @@ def preview_command(alias: Alias, provider: Provider) -> str:
     ponytail: the harness kind doubles as the binary name, which is true for claude, codex and pi.
     A provider whose CLI is called something else gets a `command` field here.
     """
-    return "; ".join(_statements(alias, provider, {}, refs=True) + [provider.kind])
+    run = shlex.join((provider.kind,) + model_args(alias, provider))
+    return "; ".join(_statements(alias, provider, {}, refs=True) + [run])
 
 
 def resolve(config_id: str, kind: str, aliases: list[Alias], providers: list[Provider]):

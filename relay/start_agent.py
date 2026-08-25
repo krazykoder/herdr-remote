@@ -498,7 +498,8 @@ def slot_advice(area, sidebar, band=NARROW_SLOT_COLS):
             f"(terminal {area + sidebar} cols, sidebar {sidebar})")
 
 
-def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS, unattended=False):
+def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS, unattended=False,
+                     extra_args=()):
     """herdr attaches an agent to an existing pane sitting at its shell prompt.
 
     The positional is herdr's *agent name*, which is unique per host — passing the agent kind
@@ -507,12 +508,18 @@ def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS, un
 
     pane_id is always a pane the relay just created or one that passed
     validate_start_request — never a raw client value.
+
+    `extra_args` is argv the agent config asked for — today the `--model` of a stock provider. It
+    comes from agent_configs, which is the only thing on this machine allowed to name argv on a
+    client's behalf, and it goes last so a config can never displace AGENT_ARGS or the unattended
+    flag.
     """
     args = ("agent", "start", label, "--kind", kind, "--pane", pane_id,
             "--timeout", str(timeout_ms))
     extra = tuple(AGENT_ARGS.get(kind) or ())
     if unattended:
         extra += UNATTENDED_ARGS.get(kind, ())
+    extra += tuple(extra_args)
     return args + ("--",) + extra if extra else args
 
 

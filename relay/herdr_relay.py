@@ -54,6 +54,7 @@ from agent_configs import (
     ConfigError as AgentConfigError,
     export_line,
     load_providers,
+    model_args,
     parse_aliases,
     public_configs,
     public_providers,
@@ -1886,7 +1887,8 @@ def start_agent_exec(plan):
             return None, env_err
 
     args = agent_start_args(plan["name"], plan["agent_name"], target_pane,
-                            unattended=bool(plan.get("unattended")))
+                            unattended=bool(plan.get("unattended")),
+                            extra_args=plan.get("config_args") or ())
     deadline = time.monotonic() + PANE_READY_WAIT
     while True:
         data, err = _herdr_json(*args, remote=remote, timeout=START_EXEC_TIMEOUT)
@@ -3276,6 +3278,9 @@ async def handle_client(ws, listener="lan"):
                     # The only place a secret value is ever read, and it goes straight into the
                     # plan the worker thread types. Never logged, never sent, never stored.
                     plan["env_line"] = export_line(*pair)
+                    # The other half of a config: a stock provider has no environment to export
+                    # and says which model it wants on the harness's own argv instead.
+                    plan["config_args"] = model_args(*pair)
                 detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
                           f"placement={plan['placement']} host={plan['remote'] or 'local'} "
                           f"config={plan.get('config') or '-'} "

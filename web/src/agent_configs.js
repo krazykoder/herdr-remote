@@ -235,7 +235,10 @@
                 {proj: true, title: k.set ? 'This relay holds ' + k.name
                   : k.name + ' is not set on the relay'})).join('')
             + '</div></div>'
-          : '<div class="cfg-note">This provider names no key variables.</div>')
+          : `<div class="cfg-note">${provider.base_url
+              ? 'This provider names no key variables.'
+              : 'Stock harness — it runs on whatever login the CLI already has on the relay\'s'
+                + ' machine, so there is no key to choose.'}</div>`)
         // The line the relay will actually run, with the key as a `$VAR` reference rather than a
         // value — so it is both safe to show and pasteable into the user's own shell, which is
         // how a wrong endpoint gets found in one paste instead of one spawn. Only for a saved

@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from agent_configs import (  # noqa: E402
-    Alias, ConfigError, export_line, parse_aliases, parse_providers, preview_command,
-    public_configs, public_providers, resolve,
+    STOCK_PROVIDERS, Alias, ConfigError, export_line, load_providers, model_args, parse_aliases,
+    parse_providers, preview_command, public_configs, public_providers, resolve,
 )
+from start_agent import agent_start_args  # noqa: E402
 
 PROVIDERS = """
 {"version": 1, "providers": [
@@ -227,6 +228,78 @@ class Wire(unittest.TestCase):
     def test_a_key_the_relay_does_not_hold_says_so(self):
         rows = public_configs(aliases(oclaude()), providers(), {})
         self.assertFalse(rows[0]["key_set"])
+
+
+class StockProviders(unittest.TestCase):
+    """A harness the machine already has, offered as a provider so a model choice can have a name.
+
+    The reason these are built in rather than written into the file: the file's job is to be the
+    only place an endpoint or a secret can be named, and a stock provider names neither. What it
+    adds is an *alias* — and an alias has a name, which is the whole point. A session on
+    `claude-sonnet` badges as `claude-sonnet`; a session on the default model badges as `claude`.
+    """
+
+    def test_no_file_still_offers_the_harnesses_this_machine_has(self):
+        got = load_providers(str(ROOT / "does-not-exist.json"))
+        self.assertEqual([p.id for p in got], [p.id for p in STOCK_PROVIDERS])
+
+    def test_the_file_comes_first_and_may_replace_one(self):
+        path = Path(self.enterContext(__import__("tempfile").TemporaryDirectory())) / "c.json"
+        path.write_text('{"providers": [{"id": "stock-codex", "kind": "codex",'
+                        ' "model_flag": "--model", "models": ["gpt-9"]}]}')
+        got = load_providers(str(path))
+        self.assertEqual([p.id for p in got],
+                         ["stock-codex", "stock-agy", "stock-claude"])
+        self.assertEqual(got[0].models, ("gpt-9",))
+
+    def stock(self, kind):
+        return next(p for p in STOCK_PROVIDERS if p.kind == kind)
+
+    def alias(self, kind, model):
+        return Alias(id="x", label="x", provider=f"stock-{kind}", model=model)
+
+    def test_the_model_goes_on_argv_and_nothing_is_typed_at_the_shell(self):
+        # A stock provider has no environment and no secret, so there is no export line at all —
+        # the pane's shell is left exactly as the user's login left it.
+        a, p = self.alias("claude", "claude-sonnet-5"), self.stock("claude")
+        self.assertEqual(export_line(a, p, ENV), "")
+        self.assertEqual(model_args(a, p), ("--model", "claude-sonnet-5"))
+        self.assertEqual(preview_command(a, p), "claude --model claude-sonnet-5")
+
+    def test_no_model_named_means_the_harness_default(self):
+        a, p = self.alias("agy", ""), self.stock("agy")
+        self.assertEqual(model_args(a, p), ())
+        self.assertEqual(preview_command(a, p), "agy")
+
+    def test_an_alias_on_a_stock_provider_survives_the_document(self):
+        doc = {"aliases": [{"id": "claude-sonnet", "label": "claude-sonnet",
+                            "provider": "stock-claude", "model": "claude-sonnet-5"}]}
+        got = parse_aliases(doc, list(STOCK_PROVIDERS))
+        self.assertEqual([(a.id, a.model) for a in got], [("claude-sonnet", "claude-sonnet-5")])
+        rows = public_configs(got, list(STOCK_PROVIDERS), {})
+        self.assertEqual(rows[0]["kind"], "claude")
+        self.assertEqual(rows[0]["command"], "claude --model claude-sonnet-5")
+
+    def test_the_editor_is_told_the_model_field_does_something(self):
+        rows = public_providers(list(STOCK_PROVIDERS), {})
+        self.assertTrue(all(r["has_model"] for r in rows))
+        self.assertFalse(any(r["has_model_option"] for r in rows))
+        self.assertFalse(any(r["keys"] for r in rows))
+
+    def test_a_flag_that_is_not_one_is_fatal(self):
+        for bad in ["model", "-", "--a b", "--$(id)", "-;x"]:
+            with self.assertRaises(ConfigError, msg=bad):
+                parse_providers('{"providers": [{"id": "a", "kind": "claude",'
+                                f' "model_flag": {bad!r}}}]}}'.replace("'", '"'))
+
+    def test_the_config_cannot_displace_the_flags_the_relay_decided(self):
+        # agy's own argv comes first and the config's is appended: a config that could reorder
+        # this could drop --dangerously-skip-permissions and leave a remote agy stalled.
+        args = agent_start_args("agy", "arch", "p1", extra_args=("--model", "gemini-3.1-pro-low"))
+        self.assertEqual(args[args.index("--") + 1:],
+                         ("--dangerously-skip-permissions", "--model", "gemini-3.1-pro-low"))
+        # And a kind with no argv of its own still gets none when the config asks for none.
+        self.assertNotIn("--", agent_start_args("claude", "a", "p1"))
 
 
 if __name__ == "__main__":
