@@ -1324,6 +1324,13 @@
       color: var(--red);
     }
 
+    /* What this tile will start, rather than what is wrong with it: a roster that runs its tools
+       without asking. Read off the members, so a tile says it without being opened. */
+    .launcher-badge.solo {
+      border-color: var(--orange);
+      color: var(--orange);
+    }
+
     .ql-insecure {
       display: flex;
       gap: 8px;
@@ -1341,13 +1348,17 @@
 
     .ql-insecure strong { color: var(--red); }
 
-    /* The two checkboxes that say a session will act without being asked. Same shape in both
-       places it is offered — the tile editor and the Start dialog — because it is the same
-       question and a reader should not have to learn it twice. */
+    /* The control that says a session will act without being asked. A switch rather than a tick:
+       it is a mode the session runs in, not a fact being recorded about it, and the three places
+       it is offered — the tile editor, the Start sheet, the conversation's New agent — draw the
+       same one, because it is the same question.
+
+       Still an <input type="checkbox"> underneath. The switch is the appearance; the semantics,
+       the keyboard and the screen reader are the platform's. */
     .ql-solo,
     .start-check {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       align-items: center;
       font-size: 0.75rem;
       line-height: 1.35;
@@ -1357,7 +1368,55 @@
     .ql-solo { margin: 8px 0 0; }
 
     .ql-solo input,
-    .start-check input { flex: 0 0 auto; margin: 0; }
+    .start-check input {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 auto;
+      position: relative;
+      width: 34px;
+      height: 20px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--border, var(--muted));
+      border-radius: 10px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .ql-solo input::after,
+    .start-check input::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+
+    /* Orange on, and orange is this app's word for "worth reading twice" — the same colour the
+       gate badges wear. Never green: this is not a thing going well. */
+    .ql-solo input:checked,
+    .start-check input:checked {
+      background: color-mix(in srgb, var(--orange) 30%, transparent);
+      border-color: var(--orange);
+    }
+
+    .ql-solo input:checked::after,
+    .start-check input:checked::after {
+      background: var(--orange);
+      transform: translateX(14px);
+    }
+
+    .ql-solo input:focus-visible,
+    .start-check input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+    /* On, the words beside it stop being a caption and start being the state. */
+    .ql-solo:has(input:checked),
+    .start-check:has(input:checked) { color: var(--text); }
 
     /* --- agent configs --- */
     /* Under the tiles, in the launcher's own grid, and spanning it: a config is one line of facts
@@ -7954,6 +8013,12 @@
         <div class="start-field">Prompt
           <div id="newAgentRoles" class="badge-strip"></div>
         </div>
+        <!-- The same row the Start sheet carries, under the agent for the same reason: it is a
+             fact about the agent, and only claude and codex have a flag for it. -->
+        <label class="start-field start-check" id="newAgentUnattendedRow" style="display:none">
+          <input type="checkbox" id="newAgentUnattended" onchange="pickNewAgentUnattended(this.checked)" />
+          <span>Skip approvals <span class="field-note">it runs tools without asking</span></span>
+        </label>
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>
         <!-- One line, because there is usually one Project in play and the rest are a tap away. -->

@@ -32,6 +32,7 @@ const NAMES = ['LAUNCHER_KEY', 'LAUNCHER_PENDING_KEY', 'LAUNCHER_MAX', 'LAUNCHER
                'launcherWantsConv', 'launcherWantsArb',
                'LAUNCHER_DEFAULT_AT', 'launcherTag', 'launcherNoun', 'launcherAutoName',
                'launcherClean', 'launcherMemberName', 'launcherNamed', 'launcherUnattended',
+               'launcherSolo',
                'LAUNCHER_ARB_SLOTS', 'launcherArbOrder'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
@@ -155,6 +156,20 @@ test('a member on an agent config is started without approval prompts, and a sto
   // Answered either way, the answer wins — including a stock member somebody wants left alone.
   assert.equal(launcherUnattended({name: 'claude', config: 'oclaude', unattended: false}), false);
   assert.equal(launcherUnattended({name: 'claude', unattended: true}), true);
+});
+
+test('a tile says on its face that it starts something that will not ask', () => {
+  // Read off the members every time rather than stored: a roster edited from a custom agent to a
+  // stock one stops saying it, with no second field to keep in step.
+  const {launcherSolo} = pure();
+  assert.equal(launcherSolo(spawnTile({members: [{name: 'claude', config: 'oclaude'}]})), true);
+  assert.equal(launcherSolo(spawnTile()), false);
+  assert.equal(launcherSolo(spawnTile({members: [{name: 'claude', unattended: true}]})), true);
+  assert.equal(launcherSolo(
+    spawnTile({members: [{name: 'claude', config: 'oclaude', unattended: false}]})), false);
+  // The arbitrator is started by the same message as the rest of the roster, so it counts too.
+  assert.equal(launcherSolo(spawnTile({arbitrator: {name: 'claude', config: 'oclaude'}})), true);
+  assert.equal(launcherSolo(runTile()), false, 'a terminal tile starts no agent at all');
 });
 
 test('a role never becomes a pane label, however short it is', () => {

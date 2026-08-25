@@ -100,6 +100,12 @@
         ? '<span class="launcher-badge insecure" title="The providers behind this tile do not'
           + ' protect what is sent to them">insecure</span>'
         : '';
+      // The other thing a tile can be that its name does not say. Beside the insecure mark and in
+      // the same shape: both are facts about what pressing it does, and neither is a gate.
+      const solo = launcherSolo(tile)
+        ? '<span class="launcher-badge solo" title="Starts without approval prompts — it runs'
+          + ' tools without asking">skips approvals</span>'
+        : '';
       // aria-disabled and not the `disabled` attribute: a disabled button is skipped by the
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
       // pressed is the one thing its reader most needs. It is still not pressable — nothing is
@@ -117,7 +123,7 @@
         + `<span class="launcher-name">${escapeHtml(tile.label)}`
         + `${launcherProjectBadge(tile)}</span>`
         + (payload ? `<span class="launcher-payload">${launcherPayloadHtml(tile)}</span>` : '')
-        + insecure + badge
+        + insecure + solo + badge
         + '</button>';
     }
 

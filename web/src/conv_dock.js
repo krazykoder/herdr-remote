@@ -823,6 +823,10 @@
     // and the environment are two answers, and the relay is told both.
     let newAgentConfig = '';
     let newAgentCustom = false;
+    // null until the box is touched, then this dialog's own answer. Same rule as the Start sheet's:
+    // on under an agent config, off on a stock harness, and whatever was said last wins until the
+    // dialog closes. See startUnattendedOn.
+    let newAgentUnattended = null;
     let newAgentRole = 0;
     let newAgentProject = '';
     // Which arbitration slot asked for this one, or '' for the ordinary route in. A slot's start
@@ -862,6 +866,9 @@
 
     function closeNewAgent() {
       newAgentFor = '';
+      // A fresh dialog asks it fresh: an answer given about claude says nothing about the codex
+      // the next one might pick.
+      newAgentUnattended = null;
       document.getElementById('newAgentModal').style.display = 'none';
       closeDockMenu('newAgentProjMenu');
     }
@@ -890,6 +897,7 @@
                   {agent: c.kind, title: c.command || c.provider_label || ''})).join('')
               : '')
           : '');
+      renderNewAgentUnattended();
       document.getElementById('newAgentRoles').innerHTML =
         badgeHtml('@none', newAgentRole < 0, 'pickNewAgentRole(-1)',
           {proj: true, title: 'Starts with nothing typed at it'})
@@ -943,6 +951,27 @@
       if (window.cue) cue('tick');
     }
 
+    // The same question the Start sheet asks, in the other dialog that starts an agent. Drawn only
+    // for a harness this relay has a flag for — startUnattendedOffered reads what it advertised.
+    function newAgentUnattendedOn() {
+      if (typeof startUnattendedOffered !== 'function'
+        || !startUnattendedOffered(newAgentKind)) return false;
+      return newAgentUnattended === null ? !!newAgentConfig : newAgentUnattended;
+    }
+
+    function renderNewAgentUnattended() {
+      const row = document.getElementById('newAgentUnattendedRow');
+      const box = document.getElementById('newAgentUnattended');
+      if (!row || !box) return;
+      row.style.display = typeof startUnattendedOffered === 'function'
+        && startUnattendedOffered(newAgentKind) ? 'flex' : 'none';
+      box.checked = newAgentUnattendedOn();
+    }
+
+    function pickNewAgentUnattended(on) {
+      newAgentUnattended = !!on;
+    }
+
     // Every Project as a list, for the ones the line could not hold — the same @+ the instruction
     // row uses, doing the same job.
     function toggleNewAgentProjects() {
@@ -969,6 +998,7 @@
         project_id: newAgentProject, slot: slotFor(),
       }, startRoleFields(role, typed));
       if (newAgentConfig) msg.config = newAgentConfig;
+      if (newAgentUnattendedOn()) msg.unattended = true;
       // Where is not asked: beside what this Project is already running, which is what a new member
       // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
       // gets a workspace of its own.

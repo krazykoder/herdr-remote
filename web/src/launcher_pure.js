@@ -44,6 +44,14 @@
       return !!(tile && tile.insecure);
     }
 
+    // Does pressing this tile start anything that will run tools without asking? Read off the
+    // members rather than stored on the tile: the answer is per member, and a tile whose one custom
+    // agent was swapped for a stock one must stop saying it without anybody editing a second field.
+    function launcherSolo(tile) {
+      return (tile && Array.isArray(tile.members) ? tile.members : []).some(launcherUnattended)
+        || launcherUnattended(tile && tile.arbitrator);
+    }
+
     function launcherIsTerm(tile) {
       return !!tile && (tile.action === 'run' || tile.action === 'term');
     }
