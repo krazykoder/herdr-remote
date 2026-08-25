@@ -1304,6 +1304,27 @@
       cursor: not-allowed;
     }
 
+    /* The tile's marks, side by side on the line the payload leaves behind. Wrapping is allowed
+       but rarely needed: at this size all three fit a phone's tile. */
+    .launcher-badges {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-top: auto;
+      min-width: 0;
+    }
+
+    .launcher-badges .launcher-badge {
+      align-self: auto;
+      margin-top: 0;
+      padding: 1px 4px;
+      font-size: 0.5rem;
+      letter-spacing: 0.03em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .launcher-badge {
       align-self: flex-start;
       margin-top: auto;
@@ -1373,12 +1394,12 @@
       -webkit-appearance: none;
       flex: 0 0 auto;
       position: relative;
-      width: 34px;
-      height: 20px;
+      width: 26px;
+      height: 15px;
       margin: 0;
       padding: 0;
       border: 1px solid var(--border, var(--muted));
-      border-radius: 10px;
+      border-radius: 8px;
       background: var(--surface);
       cursor: pointer;
       transition: background 0.15s ease, border-color 0.15s ease;
@@ -1390,8 +1411,8 @@
       position: absolute;
       top: 2px;
       left: 2px;
-      width: 14px;
-      height: 14px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       background: var(--muted);
       transition: transform 0.15s ease, background 0.15s ease;
@@ -1408,7 +1429,7 @@
     .ql-solo input:checked::after,
     .start-check input:checked::after {
       background: var(--orange);
-      transform: translateX(14px);
+      transform: translateX(11px);
     }
 
     .ql-solo input:focus-visible,

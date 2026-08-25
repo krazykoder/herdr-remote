@@ -104,7 +104,7 @@
       // the same shape: both are facts about what pressing it does, and neither is a gate.
       const solo = launcherSolo(tile)
         ? '<span class="launcher-badge solo" title="Starts without approval prompts — it runs'
-          + ' tools without asking">skips approvals</span>'
+          + ' tools without asking">no approvals</span>'
         : '';
       // aria-disabled and not the `disabled` attribute: a disabled button is skipped by the
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
@@ -123,7 +123,10 @@
         + `<span class="launcher-name">${escapeHtml(tile.label)}`
         + `${launcherProjectBadge(tile)}</span>`
         + (payload ? `<span class="launcher-payload">${launcherPayloadHtml(tile)}</span>` : '')
-        + insecure + solo + badge
+        // One row, and never a column: a tile can carry all three at once, and stacked they push
+        // the payload out of the tile. The row is what makes them small enough to sit together.
+        + (insecure || solo || badge
+          ? `<span class="launcher-badges">${insecure}${solo}${badge}</span>` : '')
         + '</button>';
     }
 
