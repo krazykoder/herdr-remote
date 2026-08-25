@@ -26,7 +26,7 @@ function boot() {
     paneLabel: a => a.label || '', roleOf: a => a.role || '',
     startRoleFromLabel: () => null, paneStarter: new Map(),
   });
-  vm.runInContext(src + '\n;__out = {convSpawn};', ctx);
+  vm.runInContext(src + '\n;__out = {convSpawn, convContinued};', ctx);
   return ctx.__out;
 }
 
@@ -47,4 +47,26 @@ test('a pane the relay has forgotten the config of keeps the one already recorde
   const {convSpawn} = boot();
   assert.equal(convSpawn({agent: 'claude'}, 1, {config: 'oclaude1'}).config, 'oclaude1');
   assert.equal(convSpawn({agent: 'claude'}, 1, null).config, '', 'and a session that never had one says so');
+});
+
+test('a member swapped to another harness stops wearing the old one\'s alias', () => {
+  // The record for the pane that ended says `oclaude`; the pane running now is a stock codex. What
+  // the relay says about the live pane wins, and what it does not say is not filled in from a
+  // session that was a different agent.
+  const {convSpawn} = boot();
+  const rec = convSpawn({agent: 'codex'}, 2, {agent: 'claude', config: 'oclaude1'});
+  assert.equal(rec.config, '');
+  assert.equal(rec.agent, 'codex');
+});
+
+test('continuing a transcript carries the starter and nothing else about the pane that ended', () => {
+  // Swap keeps the row, the name and the history — the transcript is the conversation. The spawn
+  // record is not: it describes a pane that has exited, down to the alias it came up under.
+  const {convContinued} = boot();
+  const next = convContinued({key: 'old', entries: [{text: 'hi'}], label: 'ARCH',
+    spawn: {agent: 'claude', config: 'oclaude1', label: 'ARCH', starter: '@architect'}},
+    'new', 'ARCH');
+  assert.equal(next.entries.length, 1, 'the history is what continues');
+  assert.deepEqual(next.spawn, {starter: '@architect'});
+  assert.equal(next.continued, true);
 });

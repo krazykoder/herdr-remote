@@ -195,6 +195,22 @@
     // chose the dead member and asked its replacement to continue the same thread. Copy its record
     // under the new physical pane key; the old key remains for any other conversation that still
     // names that ended session.
+    // The record a replacement starts life with. The transcript continues; the identity does not.
+    // `spawn` describes the pane that ended — its harness, its label, the agent config it came up
+    // under — and a member swapped from oclaude to stock codex would go on wearing all three,
+    // because convSpawn falls back to what was recorded before whenever the live pane does not say.
+    // The starter is the one part that carries: it is the role this member is in the conversation
+    // for, and nothing else remembers it once the browser that watched the start reloads.
+    function convContinued(old, newKey, label) {
+      return Object.assign({}, old, {
+        key: newKey, label: label || old.label || '', entries: (old.entries || []).slice(),
+        spawn: {starter: ((old.spawn || {}).starter) || ''},
+        // The new pane cannot be aligned to the old pane's output. Keep the continuation boundary
+        // until its first completed turn, then append that whole turn after this history.
+        continued: true, backfilled: true, depth: 0, lastTurn: 0,
+      });
+    }
+
     async function convContinueTranscript(oldKey, newKey, label) {
       if (!oldKey || !newKey || oldKey === newKey) return true;
       const old = convHeld.get(oldKey) || (await convGet([oldKey]))[0];
@@ -205,12 +221,7 @@
       // joining as a new member, which is what a restart did before it could continue anything.
       const taken = convHeld.get(newKey) || (await convGet([newKey]))[0];
       if (taken && (taken.entries || []).length && convReferenced().has(newKey)) return false;
-      const next = Object.assign({}, old, {
-        key: newKey, label: label || old.label || '', entries: (old.entries || []).slice(),
-        // The new pane cannot be aligned to the old pane's output. Keep the continuation boundary
-        // until its first completed turn, then append that whole turn after this history.
-        continued: true, backfilled: true, depth: 0, lastTurn: 0,
-      });
+      const next = convContinued(old, newKey, label);
       if (!(await convPut(next))) return false;
       convHeld.set(newKey, next);
       return true;
@@ -916,11 +927,20 @@
         // `prev` is what makes it durable past the relay: pane_config is in memory there, so a
         // relay restart drops `config` off the snapshot while the pane it describes runs on. The
         // record already knew, and keeps knowing.
-        config: a.config || (prev || {}).config || '',
+        // Inherited only from a spawn of the same harness. A record written before this pane was
+        // swapped describes a different agent entirely, and its alias would otherwise be read back
+        // onto the one running now — a member restarted as stock codex kept saying `oclaude`.
+        config: a.config || (sameKind(a, prev) ? prev.config : '') || '',
         project_id: a.project_id || '', project: a.project || '', cwd: a.cwd || '',
         host: a.host || '', workspace_id: a.workspace_id || '', tab_id: a.tab_id || '',
         captured: now,
       };
+    }
+
+    // Is what was recorded before about the same harness as the pane in hand? An empty `agent` on
+    // the old record is not a mismatch — it predates the field.
+    function sameKind(a, prev) {
+      return !!prev && (!prev.agent || prev.agent === (a.agent || ''));
     }
 
     function convStarterOf(a, prev) {
