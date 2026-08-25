@@ -31,6 +31,7 @@ from start_agent import (
     agent_init_prompts,
     agent_name_from_label,
     agent_start_args,
+    unattended_kinds,
     claimable_spacer,
     dig,
     is_spacer,
@@ -437,6 +438,10 @@ def start_options_message():
         "terminal": TERMINAL,
         "configs": public_configs(agent_aliases(), AGENT_PROVIDERS),
         "providers": public_providers(AGENT_PROVIDERS),
+        # Which kinds can be started with their own approval prompts off. The flag is the vendor's
+        # and differs per harness, so the client asks for the *state* and is told here which kinds
+        # can be in it — a checkbox drawn against a kind that cannot is a start refused later.
+        "unattended": unattended_kinds(),
     }
 
 
@@ -1677,7 +1682,8 @@ def start_agent_exec(plan):
             _rollback_layout(rollback, remote)
             return None, env_err
 
-    args = agent_start_args(plan["name"], plan["agent_name"], target_pane)
+    args = agent_start_args(plan["name"], plan["agent_name"], target_pane,
+                            unattended=bool(plan.get("unattended")))
     deadline = time.monotonic() + PANE_READY_WAIT
     while True:
         data, err = _herdr_json(*args, remote=remote, timeout=START_EXEC_TIMEOUT)
@@ -2975,7 +2981,10 @@ async def handle_client(ws, listener="lan"):
                     plan["env_line"] = export_line(*pair)
                 detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
                           f"placement={plan['placement']} host={plan['remote'] or 'local'} "
-                          f"config={plan.get('config') or '-'}")
+                          f"config={plan.get('config') or '-'} "
+                          # Worth a line of its own in the audit log: this is the start that will
+                          # run tools without asking anyone.
+                          f"unattended={'yes' if plan.get('unattended') else 'no'}")
                 log.info("Start agent from %s (%s): %s", ip, device, detail)
                 audit("start_agent", ip, device, "", detail)
                 # Several herdr calls, one of them waiting out the agent's startup — off the loop.

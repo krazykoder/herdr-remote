@@ -255,6 +255,10 @@
       };
       if (tab) msg.workspace_id = a.workspace_id;
       if (a.config) msg.config = a.config;
+      // A duplicate comes up the way the pane it came from did, and the same default decides it:
+      // the snapshot does not say how that one was started, so a config is the whole of what is
+      // known about it.
+      if (a.config && startUnattendedOffered(a.agent)) msg.unattended = true;
       // A duplicate opens the way the pane it came from opened. The wire role alone cannot say
       // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
       // same way a conversation resolves it: what this browser watched, then the pane's name.
@@ -301,6 +305,35 @@
     // both — `name` is what it starts, `config` is what it starts it under.
     let startConfigPick = '';
     let startCustomOpen = false;
+    // null until the checkbox is touched, and then the user's own answer for the rest of this
+    // dialog. Held apart from the default so that picking a different agent moves the box with the
+    // pick right up until someone disagrees with it, and never after.
+    let startUnattendedPick = null;
+
+    // Which harnesses this relay can start with their own approval prompts off. Empty against a
+    // relay too old to say, and then the row is not drawn at all rather than drawn and refused.
+    function startUnattendedOffered(kind) {
+      return ((startOptions || {}).unattended || []).indexOf(kind) >= 0;
+    }
+
+    // On under an agent config, off on a stock harness. A config is an endpoint the user set up for
+    // work that runs without them; a stock start is the one they are sitting in front of.
+    function startUnattendedOn() {
+      if (!startUnattendedOffered(startAgentPick)) return false;
+      return startUnattendedPick === null ? !!startConfigPick : startUnattendedPick;
+    }
+
+    function renderStartUnattended() {
+      const row = document.getElementById('startUnattendedRow');
+      const box = document.getElementById('startUnattended');
+      if (!row || !box) return;
+      row.style.display = startUnattendedOffered(startAgentPick) ? 'flex' : 'none';
+      box.checked = startUnattendedOn();
+    }
+
+    function pickStartUnattended(on) {
+      startUnattendedPick = !!on;
+    }
 
     function startConfigs() {
       return typeof agentConfigRows === 'function' ? agentConfigRows() : [];
@@ -332,6 +365,7 @@
       // the start still carried a config nobody can see.
       if (!startCustomOpen) startConfigPick = '';
       renderStartAgents();
+      renderStartUnattended();
       if (window.cue) cue('tick');
     }
 
@@ -341,6 +375,7 @@
       startConfigPick = id;
       startAgentPick = row.kind;
       renderStartAgents();
+      renderStartUnattended();
       if (window.cue) cue('tick');
     }
 
@@ -348,6 +383,7 @@
       startAgentPick = kind;
       startConfigPick = '';
       renderStartAgents();
+      renderStartUnattended();
       if (window.cue) cue('tick');
     }
 
@@ -487,7 +523,11 @@
       startAgentPick = kinds.includes(remembered) ? remembered : (kinds[0] || '');
       startConfigPick = '';
       startCustomOpen = false;
+      // A fresh dialog asks the question fresh: an answer given to the last start says nothing
+      // about this one, which may be a different harness entirely.
+      startUnattendedPick = null;
       renderStartAgents();
+      renderStartUnattended();
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
       restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
       document.getElementById('startName').value = '';  // blank means "let the relay name it"
@@ -577,6 +617,9 @@
       // a statement about width, and a desktop asking for "wide" would move the new session
       // straight back out of the split the user picked.
       if (!terminal && startConfigPick) msg.config = startConfigPick;
+      // Only when it is on. The relay's default is a session that asks before it acts, and saying
+      // so on the wire would be a longer way of saying nothing.
+      if (!terminal && startUnattendedOn()) msg.unattended = true;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields
       // answered that for an agent, this answers it for the other message. Omitted, not empty — the

@@ -36,6 +36,20 @@ AGENT_ARGS = {"agy": ("--dangerously-skip-permissions",)}
 # side and per kind for the same reason AGENT_ARGS is: a client that could name the first prompt
 # could name any first prompt.
 AGENT_INIT = {"kiro": ("/tools trust-all",)}
+# Argv that turns a harness's own approval prompts off, asked for per start rather than baked into
+# the kind the way AGENT_ARGS is. The flag differs per harness and both are the vendor's own; what
+# the client sends is `unattended`, and which argv that becomes is decided here — a client that
+# could name argv could name any argv.
+#
+# This is a real grant: an agent started this way runs tools without asking. It is the same trade
+# the operator makes typing the flag themselves, and it is available only where starting agents is
+# already allowed (HERDR_ENABLE_WRITE_EXT). Asked for at a kind with no entry here, the start is
+# refused rather than quietly started interactive — a session that ignored it would sit on its
+# first tool call with nobody to answer it.
+UNATTENDED_ARGS = {
+    "claude": ("--dangerously-skip-permissions",),
+    "codex": ("--dangerously-bypass-approvals-and-sandbox",),
+}
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 # herdr waits this long for the agent to reach interactive readiness. Explicit rather than
 # left to herdr's 30s default because the relay's own subprocess timeout must exceed it —
@@ -69,7 +83,8 @@ NARROW_SLOT_COLS = (69, 70)
 # herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
 # only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
 SIDEBAR_BOUNDS = (18, 36)
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config"}
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config",
+               "unattended"}
 # An agent config's id. Checked for shape here and for existence in the relay, which is the only
 # place that knows what the provider file authorised — this module stays free of files.
 CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -190,6 +205,12 @@ def validate_start_request(msg, projects, agents, allowed):
     if config and not CONFIG_ID_RE.match(config):
         return None, "bad config id"
     plan["config"] = config
+    # Off unless asked for, and refused rather than dropped where the kind has no flag for it: the
+    # client's checkbox and the session that comes up must agree about whether anyone is going to
+    # be asked before a tool runs.
+    plan["unattended"] = bool(msg.get("unattended"))
+    if plan["unattended"] and name not in UNATTENDED_ARGS:
+        return None, "that agent has no unattended flag"
     return plan, None
 
 
@@ -466,7 +487,7 @@ def slot_advice(area, sidebar, band=NARROW_SLOT_COLS):
             f"(terminal {area + sidebar} cols, sidebar {sidebar})")
 
 
-def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
+def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS, unattended=False):
     """herdr attaches an agent to an existing pane sitting at its shell prompt.
 
     The positional is herdr's *agent name*, which is unique per host — passing the agent kind
@@ -478,8 +499,15 @@ def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
     """
     args = ("agent", "start", label, "--kind", kind, "--pane", pane_id,
             "--timeout", str(timeout_ms))
-    extra = AGENT_ARGS.get(kind)
+    extra = tuple(AGENT_ARGS.get(kind) or ())
+    if unattended:
+        extra += UNATTENDED_ARGS.get(kind, ())
     return args + ("--",) + extra if extra else args
+
+
+def unattended_kinds():
+    """The kinds that can be started without their approval prompts, for the client's Start gate."""
+    return sorted(UNATTENDED_ARGS)
 
 
 def agent_init_prompts(kind):

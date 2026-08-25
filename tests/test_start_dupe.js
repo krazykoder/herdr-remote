@@ -229,6 +229,7 @@ test('the dialog opens on a starter until one is deliberately taken off', () => 
 // --- an alias carried, and an alias gone ---
 
 const OCLAUDE = {agents: ['claude', 'codex'], roles: ['architect', 'reviewer', 'agent'],
+                 unattended: ['claude', 'codex'],
                  configs: [{id: 'oclaude1', label: 'oclaude1', kind: 'claude'}]};
 
 test('a duplicate carries the agent config the pane was started under', () => {
@@ -247,4 +248,26 @@ test('a duplicate of a config the relay has dropped asks rather than falls back'
   run('duplicatePane()');
   assert.deepEqual(sent, [], 'nothing is started');
   assert.ok(calls.some(c => c[0] === 'toast' && /gone/.test(c[1])), 'and it says why');
+});
+
+test('a duplicate comes up as unattended when the pane it copies was on a config', () => {
+  // The snapshot does not say how the original was started, so the config is the whole of what is
+  // known about it — and it is the same thing the Start dialog defaults on.
+  const {sent, run} = startCtx({pane: {...PANE, config: 'oclaude1'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.equal(sent[0].unattended, true);
+});
+
+test('a duplicate of a stock pane still asks before it acts', () => {
+  const {sent, run} = startCtx({pane: PANE, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.ok(!('unattended' in sent[0]));
+});
+
+test('the box is offered only where the relay has a flag for the harness', () => {
+  const {run} = startCtx({options: Object.assign({}, OCLAUDE, {unattended: []})});
+  assert.equal(run("startUnattendedOffered('claude')"), false);
+  const {run: run2} = startCtx({options: OCLAUDE});
+  assert.equal(run2("startUnattendedOffered('claude')"), true);
+  assert.equal(run2("startUnattendedOffered('pi')"), false);
 });

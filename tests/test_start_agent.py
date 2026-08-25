@@ -15,6 +15,7 @@ from start_agent import (
     agent_name_from_label,
     agent_init_prompts,
     agent_start_args,
+    unattended_kinds,
     claimable_spacer,
     dig,
     SPACER_LABEL,
@@ -128,6 +129,22 @@ class ValidateBasicsTests(unittest.TestCase):
         del msg["name"]
         _, err = validate_start_request(msg, PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "agent not in allowlist")
+
+    def test_unattended_is_off_unless_it_is_asked_for(self):
+        plan, err = validate_start_request(start(), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertFalse(plan["unattended"])
+        plan, err = validate_start_request(
+            start(unattended=True), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertTrue(plan["unattended"])
+
+    def test_a_kind_with_no_flag_for_it_is_refused_rather_than_started_interactive(self):
+        # The checkbox and the session have to agree. A start that dropped this would come up
+        # asking before every tool call, with nobody on the other end to answer.
+        _, err = validate_start_request(
+            start(name="pi", unattended=True), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "that agent has no unattended flag")
 
     def test_unknown_role(self):
         _, err = validate_start_request(start(role="root"), PROJECTS, LIVE, ALLOWED)
@@ -260,6 +277,28 @@ class ArgsTests(unittest.TestCase):
         self.assertEqual(["/tools trust-all"], agent_init_prompts("kiro"))
         self.assertEqual([], agent_init_prompts("claude"))
         self.assertEqual([], agent_init_prompts("nonesuch"))
+
+    def test_an_unattended_start_carries_the_flag_its_harness_calls_it(self):
+        # Two harnesses, two spellings, and the client names neither: it asks for the state and the
+        # argv is decided here.
+        self.assertEqual(
+            agent_start_args("claude", "Architect 1", "w3:p1", unattended=True)[-2:],
+            ("--", "--dangerously-skip-permissions"))
+        self.assertEqual(
+            agent_start_args("codex", "Architect 1", "w3:p1", unattended=True)[-2:],
+            ("--", "--dangerously-bypass-approvals-and-sandbox"))
+        self.assertEqual(sorted(unattended_kinds()), ["claude", "codex"])
+
+    def test_an_unattended_start_keeps_the_argv_its_kind_already_needed(self):
+        # agy is started this way whether or not anyone asked, because its own prompt is invisible
+        # to the relay. Asking on top of that must not lose the flag it already had.
+        args = agent_start_args("agy", "Architect 1", "w3:p1", unattended=True)
+        self.assertEqual(args[-2:], ("--", "--dangerously-skip-permissions"))
+        self.assertEqual(args.count("--dangerously-skip-permissions"), 1)
+
+    def test_a_start_nobody_asked_that_of_is_unchanged(self):
+        self.assertNotIn("--", agent_start_args("claude", "Architect 1", "w3:p1"))
+        self.assertNotIn("--", agent_start_args("codex", "Architect 1", "w3:p1"))
 
     def test_pane_split_goes_right_at_the_project_cwd(self):
         args = pane_split_args("w1:p2", "/work/charts")

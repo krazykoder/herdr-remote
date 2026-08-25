@@ -54,7 +54,7 @@
     // instead of a spawn that mysteriously does nothing.
     const OPEN_TERMINAL_FIELDS = ['type', 'project_id', 'placement', 'label', 'slot'];
     const START_AGENT_FIELDS = ['type', 'name', 'role', 'project_id', 'placement', 'label', 'slot',
-                                'config'];
+                                'config', 'unattended'];
 
     // Always. The other two placements name a live pane — `workspace_id` for a tab, `split_from`
     // for a split — and a tile saved last week cannot: the pane it would have named is gone, and
@@ -365,6 +365,15 @@
       }, OPEN_TERMINAL_FIELDS);
     }
 
+    // Whether this member is started with its harness's own approval prompts off. Unanswered means
+    // the default rather than off: a member on an agent config is one the user set up an endpoint
+    // for and expects to work unattended, and a stock harness is one they are sitting in front of.
+    // Every tile saved before the checkbox existed reads through here, which is why the default
+    // lives in one function rather than in each caller.
+    function launcherUnattended(m) {
+      return m && m.unattended === undefined ? !!(m && m.config) : !!(m && m.unattended);
+    }
+
     // One member's start_agent. Called once per member and never in a loop that does not wait:
     // next_role_label reads the live agent list to pick "Architect 2", so two starts in flight at
     // once can choose the same name and the relay renames around the collision — leaving a roster
@@ -387,6 +396,9 @@
         label: member.label,
         slot: tile.slot,
         config: member.config,
+        // Only ever sent when it is on: the relay's default is an interactive session, and `false`
+        // on the wire would say the same thing at more length.
+        unattended: launcherUnattended(member) || undefined,
       }, START_AGENT_FIELDS);
     }
 

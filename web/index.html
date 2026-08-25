@@ -1341,6 +1341,24 @@
 
     .ql-insecure strong { color: var(--red); }
 
+    /* The two checkboxes that say a session will act without being asked. Same shape in both
+       places it is offered — the tile editor and the Start dialog — because it is the same
+       question and a reader should not have to learn it twice. */
+    .ql-solo,
+    .start-check {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .ql-solo { margin: 8px 0 0; }
+
+    .ql-solo input,
+    .start-check input { flex: 0 0 auto; margin: 0; }
+
     /* --- agent configs --- */
     /* Under the tiles, in the launcher's own grid, and spanning it: a config is one line of facts
        about a named environment, not a tile you press to start something. Every colour on the row
@@ -7772,6 +7790,15 @@
           <div class="start-field">Agent
             <div id="startAgents" class="badge-strip"></div>
           </div>
+          <!-- Under the agent, because it is a fact about the agent and not about the session:
+               claude and codex each have a flag for it and nothing else does, so the row is drawn
+               only where the relay says the kind takes one. On by default under an agent config,
+               off on a stock harness — the endpoint a user configured is the one they mean to leave
+               running. -->
+          <label class="start-field start-check" id="startUnattendedRow" style="display:none">
+            <input type="checkbox" id="startUnattended" onchange="pickStartUnattended(this.checked)" />
+            <span>Skip approvals <span class="field-note">it runs tools without asking</span></span>
+          </label>
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
         <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"

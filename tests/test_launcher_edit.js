@@ -24,6 +24,9 @@ const EDIT = src('launcher_edit.js');
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
 const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true,
+                 // The kinds this relay can start with their own approval prompts off. The tile
+                 // editor draws the checkbox against these and against nothing else.
+                 unattended: ['claude', 'codex'],
                  configs: [{id: 'oclaude', label: 'oClaude', kind: 'claude'}]};
 
 // Every element the editor writes into or reads back, invented on demand. `innerHTML` is recorded
@@ -300,6 +303,34 @@ test('agents are added one tap at a time and each keeps its own role', () => {
   assert.deepEqual(e.tiles()[0].members,
     [{name: 'claude', role: 'proposer', at: 'architect-prompt'},
      {name: 'codex', role: 'critic', at: 'architect-prompt'}]);
+});
+
+test('a member on a config starts unattended, a stock one does not, and either can be told otherwise', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Pair');
+  e.run("launcherAddMember('claude', 'oclaude')");
+  e.run("launcherAddMember('codex')");
+  assert.match(e.body(), /id="qlSolo0" checked/, 'on under a config');
+  assert.match(e.body(), /id="qlSolo1"(?! checked)/, 'off on the stock harness');
+  // Both answered against their default, which is the pair worth storing.
+  e.dom.get('qlSolo0').checked = false;
+  e.dom.get('qlSolo1').checked = true;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.deepEqual(e.tiles()[0].members, [
+    {name: 'claude', config: 'oclaude', at: 'architect-prompt', unattended: false},
+    {name: 'codex', at: 'architect-prompt', unattended: true},
+  ]);
+});
+
+test('no checkbox is drawn for a harness the relay has no flag for', () => {
+  // pi and kiro have none. A box drawn there would be a start refused on arrival.
+  const e = editor({startOptions: Object.assign({}, OPTIONS, {agents: ['pi'], unattended: []})});
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.run("launcherAddMember('pi')");
+  assert.doesNotMatch(e.body(), /qlSolo0/);
 });
 
 test('custom aliases are offered in both tile pickers and retain their config id', () => {

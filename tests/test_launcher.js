@@ -31,7 +31,7 @@ const NAMES = ['LAUNCHER_KEY', 'LAUNCHER_PENDING_KEY', 'LAUNCHER_MAX', 'LAUNCHER
                'launcherArbMsg',
                'launcherWantsConv', 'launcherWantsArb',
                'LAUNCHER_DEFAULT_AT', 'launcherTag', 'launcherNoun', 'launcherAutoName',
-               'launcherClean', 'launcherMemberName', 'launcherNamed',
+               'launcherClean', 'launcherMemberName', 'launcherNamed', 'launcherUnattended',
                'LAUNCHER_ARB_SLOTS', 'launcherArbOrder'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
@@ -141,6 +141,20 @@ test('a custom member carries its provider-backed config id', () => {
   const {launcherSpawnMsg} = pure();
   const tile = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
   assert.equal(launcherSpawnMsg(tile, tile.members[0]).config, 'oclaude');
+});
+
+test('a member on an agent config is started without approval prompts, and a stock one is not', () => {
+  // The default, and the whole of why it is a default: an alias names an endpoint the user set up
+  // for work that runs without them, and a stock harness is the one they are sitting in front of.
+  const {launcherSpawnMsg, launcherUnattended} = pure();
+  const custom = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.equal(launcherSpawnMsg(custom, custom.members[0]).unattended, true);
+  const stock = spawnTile({members: [{name: 'claude'}]});
+  assert.ok(!('unattended' in launcherSpawnMsg(stock, stock.members[0])),
+            'off is the relay default, and saying so on the wire says nothing');
+  // Answered either way, the answer wins — including a stock member somebody wants left alone.
+  assert.equal(launcherUnattended({name: 'claude', config: 'oclaude', unattended: false}), false);
+  assert.equal(launcherUnattended({name: 'claude', unattended: true}), true);
 });
 
 test('a role never becomes a pane label, however short it is', () => {

@@ -54,6 +54,8 @@
         if (label !== undefined) m.label = label.trim();
         const at = val('qlAt' + i);
         if (at !== undefined) m.at = at;
+        const solo = document.getElementById('qlSolo' + i);
+        if (solo) m.unattended = !!solo.checked;
       });
       return d;
     }
@@ -329,7 +331,8 @@
       }
       if (config) launcherMembersCustom = true;
       d.members = (d.members || []).concat(
-        [{name: name, config: config || '', role: '', label: '', at: LAUNCHER_DEFAULT_AT}]);
+        [{name: name, config: config || '', role: '', label: '', at: LAUNCHER_DEFAULT_AT,
+          unattended: launcherUnattended({name: name, config: config || ''})}]);
       launcherDrawForm();
     }
 
@@ -609,7 +612,23 @@
             `<option value="${escapeHtml(sc.at)}"${sc.at === canonAt(at) ? ' selected' : ''}>`
             + `@${escapeHtml(sc.at)} — ${escapeHtml(sc.label)}</option>`).join(''))
         + '</select>'
+        // Said in the tile because it is decided per member: two agents in one roster can want
+        // different answers, and the tile is where a roster is written down. Only for the kinds a
+        // relay has a flag for — see UNATTENDED_ARGS; the rest are drawn without it rather than
+        // with a control that would refuse the start.
+        + (launcherUnattendedOffered(m.name)
+          ? `<label class="ql-solo"><input type="checkbox" id="qlSolo${i}"`
+            + `${launcherUnattended(m) ? ' checked' : ''}`
+            + ` aria-label="Start ${escapeHtml(m.name)} without approval prompts" />`
+            + '<span>Skip approvals — it runs tools without asking</span></label>'
+          : '')
         + '</div>';
+    }
+
+    // The relay says which harnesses it can start this way. An older relay says nothing, and then
+    // nothing is offered: the checkbox would be a start refused on arrival.
+    function launcherUnattendedOffered(kind) {
+      return ((startOptions || {}).unattended || []).indexOf(kind) >= 0;
     }
 
     function launcherDrawForm() {
@@ -663,6 +682,11 @@
         // '' is a real answer — this member opens with nothing — so it is stored as absent and
         // read back as absent, and the default only applies to a member being added.
         if (m.at) out.at = m.at;
+        // Absent while it agrees with the default for a member like this — on under an agent
+        // config, off on a stock harness — and written down the moment the user disagrees. Same
+        // rule as every other optional field here: a tile stores answers, not restatements.
+        const solo = launcherUnattended(m);
+        if (solo !== !!m.config) out.unattended = solo;
         return out;
       });
       // Kept whatever the roster size, exactly as launcherWantsArb expects: a tile widened to
