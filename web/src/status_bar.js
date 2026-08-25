@@ -866,6 +866,9 @@
         // start named itself with. After openPendingStart, so a start this tab is still holding
         // the answer for lands the ordinary way.
         if (typeof convResumeRespawn === 'function') convResumeRespawn();
+        // Restart all, one member per landing. After the two above, which are what clear the way
+        // for the next one — see convRestartStep.
+        if (typeof convRestartStep === 'function') convRestartStep();
         openNotificationPane();
       }
       else if (msg.type === 'agent_update') {

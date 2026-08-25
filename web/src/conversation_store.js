@@ -278,6 +278,29 @@
       } catch (e) { /* nothing to evict is not an error */ }
     }
 
+    // Erase these transcripts outright, from both stores and from the fold held in memory.
+    //
+    // Eviction is the ordinary way a record leaves — oldest first, and never one a named
+    // conversation still references. This is the other one: the reader asked for a conversation to
+    // have never happened, so the words go with it rather than being left for a sweep that would
+    // refuse to take them. The caller decides which keys those are; a key some other conversation
+    // still shows is not one of them.
+    async function convForget(keys) {
+      const list = (keys || []).filter(Boolean);
+      if (!list.length) return;
+      // The in-memory fold first, or the next poll writes the record back out of it.
+      for (const k of list) { convHeld.delete(k); convQueues.delete(k); }
+      const all = convFallbackAll();
+      for (const k of list) delete all[k];
+      convFallbackWrite(all);
+      const db = await openConvDB();
+      if (!db) return;
+      try {
+        const write = db.transaction(CONV_DB_STORE, 'readwrite').objectStore(CONV_DB_STORE);
+        await Promise.all(list.map(k => idbReq(write.delete(k))));
+      } catch (e) { /* no database, or it is already gone: the fallback copy is deleted either way */ }
+    }
+
     function loadConvIndex() { return parseConvIndex(localStorage.getItem(CONV_INDEX_KEY)); }
 
     // The transcripts of panes read this session, so a 3s poll folds into memory and touches the

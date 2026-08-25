@@ -97,6 +97,10 @@ class Alias:
     model: str = ""
     model_option: str = ""
     key: str = ""       # '' means the provider's first offered key
+    # Switched off from the app. Kept in the document and drawn in the launcher, offered nowhere
+    # and refused at a start: the point of it is to put a config away without losing what it took
+    # to write, so "disabled" has to mean the same as "gone" everywhere a session is begun.
+    off: bool = False
 
 
 # The harnesses this relay can start, as providers in their own right.
@@ -265,7 +269,8 @@ def parse_aliases(raw, providers: list[Provider]) -> list[Alias]:
             continue
         seen.add(aid)
         out.append(Alias(id=aid, label=label, provider=provider.id,
-                         model=model, model_option=option, key=key))
+                         model=model, model_option=option, key=key,
+                         off=bool(item.get("off"))))
     return out
 
 
@@ -296,6 +301,7 @@ def public_configs(aliases: list[Alias], providers: list[Provider], environ=None
             "provider": p.id, "provider_label": p.label,
             "model": a.model, "model_option": a.model_option,
             "key": key, "key_set": bool(key and env.get(key)),
+            "off": a.off,
             "command": preview_command(a, p),
         })
     return out
@@ -424,6 +430,11 @@ def resolve(config_id: str, kind: str, aliases: list[Alias], providers: list[Pro
     alias = next((a for a in aliases if a.id == config_id), None)
     if not alias:
         return None, f"Unknown agent config: {config_id}"
+    # Disabled is the same answer as gone, and for the same reason it is an answer rather than a
+    # fallback: a tile or a record naming a config the user switched off must not come up on the
+    # stock provider wearing that config's name.
+    if alias.off:
+        return None, f"Agent config {config_id} is switched off"
     provider = next((p for p in providers if p.id == alias.provider), None)
     if not provider:
         return None, f"Agent config {config_id} has no provider on this relay"

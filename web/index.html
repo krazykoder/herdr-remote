@@ -1506,6 +1506,20 @@
     .cfg-key { color: var(--muted); }
     .cfg-unset { color: var(--red); }
 
+    /* Switched off: dimmed, and said in a word as well. Dimming alone reads as "not loaded yet" on
+       a list the relay fills in a moment after the page draws. */
+    .cfg-row.cfg-off { opacity: 0.55; }
+
+    .cfg-off-tag {
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+    }
+
     .cfg-empty, .cfg-note {
       grid-column: 1 / -1;
       font-size: 0.7rem;
@@ -2046,8 +2060,22 @@
       margin-left: auto;
     }
 
-    .conversation-title .archive-btn + .end-btn {
+    .conversation-title .archive-btn + .end-btn,
+    .conversation-title .archive-btn + .conv-purge {
       margin-left: 0;
+    }
+
+    /* Red, and only in the archive. It is the one control on this page that destroys words as well
+       as the record — the roster's Delete leaves them, and wears no colour for that reason. */
+    .conversation-title .conv-purge {
+      border: 1px solid var(--red);
+      border-radius: 5px;
+      background: transparent;
+      color: var(--red);
+      font: inherit;
+      font-size: 0.65rem;
+      padding: 3px 6px;
+      cursor: pointer;
     }
 
     /* The tier, not the name. Naming an auto conversation promotes it, so this is what goes away
@@ -4574,18 +4602,37 @@
       opacity: 0.65;
     }
 
-    /* The name gives up the width, and Remove keeps its place at the end of every row. */
+    /* The name gives up the width first, and the state after it: what a row must never lose is
+       the actions at its end. */
     .conv-roster-row .who {
+      flex: 0 1 auto;
+      min-width: 3ch;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .conv-roster-row .tag {
-      flex: 1;
+      flex: 1 1 auto;
+      min-width: 0;
       font-size: 0.6rem;
       color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* Six buttons on a live row is more than a phone has width for, and a button pushed off the
+       edge is a button that does not exist. Grouped, so the overflow wraps the whole group onto a
+       second line rather than orphaning the last one — the name, the badge and the state keep
+       their row either way, which is the row a reader scans. */
+    .conv-roster-acts {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 4px;
+      flex: 0 1 auto;
     }
 
     .conv-roster-row.gone .tag {
@@ -4595,15 +4642,18 @@
     .conv-roster .conv-drop,
     .conv-roster .conv-swap,
     .conv-roster .conv-again,
+    .conv-roster .conv-reset,
+    .conv-roster .conv-restart,
     .conv-roster .conv-open,
     .conv-roster .conv-end,
     .conv-roster-actions button {
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
-         buttons and no thread. 32px is a thumb, and every one of these is either reversible or
+         buttons and no thread. 30px is a thumb, and every one of these is either reversible or
          asked twice. */
-      min-height: 32px;
-      padding: 4px 10px;
+      min-height: 30px;
+      padding: 4px 7px;
+      flex-shrink: 0;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: none;
@@ -4643,9 +4693,19 @@
     }
 
     .conv-roster .conv-open,
-    .conv-roster .conv-again {
+    .conv-roster .conv-again,
+    .conv-roster .conv-restart,
+    .conv-roster-actions .conv-restart {
       color: var(--blue);
       border-color: var(--blue);
+    }
+
+    /* Reset neither ends a session nor brings one back — it leaves the pane exactly where it is
+       and empties it. Muted, like Swap, because it is the third thing. */
+    .conv-roster .conv-reset,
+    .conv-roster-actions .conv-reset {
+      color: var(--muted);
+      border-color: var(--border);
     }
 
     /* Neither blue nor orange. Swap is not a way back into what is already there, and on a live

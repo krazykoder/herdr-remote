@@ -95,6 +95,9 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
     // under one is named by it rather than by its harness.
     configBadge: (kind, config) => ` <span class="badge">${config || kind}</span>`,
     agentConfigRows: () => startOptions.configs || [],
+    // What every picker reads: the configs a session may actually start under. A switched-off
+    // one is listed by agentConfigRows and offered by neither.
+    agentConfigOffered: () => (startOptions.configs || []).filter(c => !c.off),
     // The launch sheet's two-tap Start. Recorded rather than armed: what this suite checks is
     // that the second tap is what reaches launcherPressIn.
     armButton: (btn, label, run) => { log.push(['arm', label]); run(); },

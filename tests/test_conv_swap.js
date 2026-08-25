@@ -198,3 +198,166 @@ test('an archived conversation is not drawn among the active ones', () => {
   assert.doesNotMatch(html, /Put away/);
   assert.match(html, /No conversations yet/, 'an all-archived list reads as an empty one');
 });
+
+
+// --- Reset and Restart ---
+
+test('reset clears the harness and then says the words the session was started with', () => {
+  // Two sends into one pane, in that order: the opening prompt must reach a cleared session. The
+  // relay keeps a pane's messages in the order they arrived, which is why this needs no waiting.
+  const e = boot({live: [{pane_id: 'w1:p1', agent: 'claude'}],
+                  recs: [{key: 'w1:p1', spawn: {agent: 'claude', starter: 'architect-prompt'}}]});
+  e.run(`
+    sent = [];
+    agentSlash = t => t;
+    agentHarness = a => a;
+    respawnStarter = () => ({at: 'architect-prompt'});
+    roleStarter = () => 'You are the architect.';
+    sendTextTo = (pane, text) => { sent.push([pane, text]); return true; };`);
+  assert.equal(e.run("convResetMember('w1:p1')"), true);
+  assert.deepEqual(e.run('JSON.stringify(sent)') && JSON.parse(e.run('JSON.stringify(sent)')),
+    [['w1:p1', '/clear'], ['w1:p1', 'You are the architect.']]);
+});
+
+test('a harness that calls it something else gets its own word', () => {
+  const e = boot({live: [{pane_id: 'w1:p1', agent: 'pi'}],
+                  recs: [{key: 'w1:p1', spawn: {agent: 'pi', starter: 'none'}}]});
+  e.run(`
+    sent = [];
+    agentSlash = t => t;
+    agentHarness = a => a;
+    respawnStarter = () => null;
+    roleStarter = r => (r ? 'never asked for' : '');
+    sendTextTo = (pane, text) => { sent.push([pane, text]); return true; };`);
+  e.run("convResetMember('w1:p1')");
+  // NO_STARTER, so the clear is the whole of it — a session that asked for silence is started
+  // again in silence.
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(sent)')), [['w1:p1', '/new']]);
+});
+
+test('reset does nothing for a member with no live pane', () => {
+  const e = boot();
+  e.run(`sent = []; agentSlash = t => t; agentHarness = a => a; roleStarter = () => '';
+         sendTextTo = () => { sent.push(1); return true; };`);
+  assert.equal(e.run("convResetMember('k1')"), false);
+  assert.equal(e.run('sent.length'), 0);
+});
+
+test('restarting a live member ends it and starts the same thing again', () => {
+  const e = boot({live: [{pane_id: 'w1:p1'}], recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
+  e.run("respawned = []; convRespawn = k => respawned.push(k);");
+  e.run("convRestartMember('w1:p1')");
+  assert.deepEqual(e.log, [['end', 'w1:p1']], 'the session it had');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), ['w1:p1'],
+    'and the same one started again, with no dialog in between');
+});
+
+test('restart all goes one member at a time, and waits for a start in flight', () => {
+  // A restart owns startIntent and the respawn note, and there is one of each — fired in a loop
+  // they would trample each other and only the last member would continue its thread.
+  const e = boot({
+    live: [{pane_id: 'a'}, {pane_id: 'b'}],
+    recs: [{key: 'a', spawn: {agent: 'claude', project_id: 'p1'}},
+           {key: 'b', spawn: {agent: 'claude', project_id: 'p1'}}],
+  });
+  e.run(`
+    projects = [{id: 'p1'}];
+    pendingStart = null;
+    fired = [];
+    showSpawnStatus = () => {};
+    showToast = () => {};
+    loadConvIndex = () => [{id: 'c1', members: [{key: 'a'}, {key: 'b'}]}];
+    convRestartMember = k => fired.push(k);
+    convRestartAll();`);
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(fired)')), ['a'], 'one out, one queued');
+  e.run("pendingStart = 'w1:p9'; convRestartStep();");
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(fired)')), ['a'], 'and it waits for that one');
+  e.run('pendingStart = null; convRestartStep();');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(fired)')), ['a', 'b']);
+  e.run('convRestartStep();');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(fired)')), ['a', 'b'], 'and then stops');
+});
+
+
+// --- The archive as a mode ---
+
+function bootArchive(index, on) {
+  const e = boot();
+  e.run(`
+    loadConvIndex = () => ${JSON.stringify(index)};
+    convLandingAutoOn = () => false;
+    convLandingArchiveOn = () => ${on};
+    convSeenAt = () => 0;
+    convNoteCounts = () => {};
+    convGlyph = () => '#';
+    agentBadge = a => '';
+    paneLabel = a => a.label || a.pane_id;
+    fmtAgo = () => 'just now';
+    applySections = () => {};
+    renderConversations();`);
+  return e.fields.conversations.innerHTML;
+}
+
+test('the archive is a mode: opening it shows the archived conversations and nothing else', () => {
+  const html = bootArchive([
+    {id: 'c1', name: 'Active', members: [{key: 'k1', label: 'A'}]},
+    {id: 'c2', name: 'Put away', members: [{key: 'k2', label: 'B'}], archived: true},
+  ], true);
+  assert.match(html, /Put away/);
+  assert.doesNotMatch(html, /Active/, 'the active list is not underneath it as well');
+  assert.doesNotMatch(html, /\+ New/, 'and nothing here makes a new conversation');
+});
+
+test('delete for good is offered on an archived card and nowhere else', () => {
+  const index = [
+    {id: 'c1', name: 'Active', members: [{key: 'k1', label: 'A'}]},
+    {id: 'c2', name: 'Put away', members: [{key: 'k2', label: 'B'}], archived: true},
+  ];
+  assert.match(bootArchive(index, true), /purgeConversation/);
+  assert.doesNotMatch(bootArchive(index, false), /purgeConversation/,
+    'the active list keeps the reversible Delete in the roster and no other');
+});
+
+test('a conversation that was never archived cannot be deleted for good', async () => {
+  const e = boot();
+  e.run(`
+    forgot = []; saved = [];
+    loadConvIndex = () => [{id: 'c1', name: 'Active', members: [{key: 'k1'}]}];
+    saveConvIndex = i => saved.push(i);
+    convForget = async keys => { forgot.push(keys); };
+    endConvMember = () => {};
+    renderConversations = () => {};
+    showToast = () => {};
+    out = purgeConversation('c1');`);
+  await e.run('out');
+  assert.equal(e.run('saved.length'), 0, 'the record is untouched');
+  assert.equal(e.run('forgot.length'), 0, 'and so are the words');
+});
+
+test('deleting an archived conversation ends its panes and erases what it recorded', async () => {
+  const e = boot();
+  e.run(`
+    forgot = [];
+    ended = [];
+    saved = [];
+    convViewId = null;
+    loadConvIndex = () => [
+      {id: 'c1', name: 'Put away', members: [{key: 'k1'}, {key: 'k2'}], archived: true},
+      {id: 'c2', name: 'Elsewhere', members: [{key: 'k2'}]},
+    ];
+    saveConvIndex = i => saved.push(i);
+    convReferenced = () => new Set(['k2']);
+    convForget = async keys => { forgot.push(keys); };
+    endConvMember = k => ended.push(k);
+    convHiddenAll = () => ({});
+    convViews = () => ({});
+    renderConversations = () => {};
+    showToast = () => {};
+    out = purgeConversation('c1');`);
+  await e.run('out');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(ended)')), ['k1', 'k2'],
+    'a pane still running is the one part of "it never happened" no record can erase');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(forgot)')), [['k1']],
+    'and a member another conversation still shows keeps its words');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(saved[0].map(c => c.id))')), ['c2']);
+});

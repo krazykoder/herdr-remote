@@ -342,7 +342,9 @@
     }
 
     function startConfigs() {
-      return typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+      // Offered, not merely known: a config the user switched off is refused by the relay, so it
+      // must not be on a strip that starts something.
+      return typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
     }
 
     // Stock kinds, then one `+custom`. One badge and not a badge per alias: there will be more

@@ -17,7 +17,7 @@
     function launcherKinds() { return (startOptions && startOptions.agents) || []; }
 
     function launcherConfigs() {
-      return typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+      return typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
     }
 
     // Everything typed since the last repaint, back into the draft. Called before every redraw

@@ -230,6 +230,35 @@ class Wire(unittest.TestCase):
         self.assertFalse(rows[0]["key_set"])
 
 
+class SwitchedOff(unittest.TestCase):
+    """Disabled is kept, listed, and refused — the same answer as gone, everywhere a session starts.
+
+    The point of it is to put a config away without losing what it took to write. So the row stays
+    in the document and on the launcher, and the one thing that changes is that nothing will start
+    under it: a tile or a conversation record naming it is refused rather than quietly falling back
+    to the stock provider under that config's name.
+    """
+
+    def off(self, **over):
+        return aliases(oclaude(**dict({"off": True}, **over)))[0]
+
+    def test_it_survives_the_document_and_says_so_on_the_wire(self):
+        a = self.off()
+        self.assertTrue(a.off)
+        self.assertTrue(public_configs([a], providers(), ENV)[0]["off"])
+
+    def test_a_start_naming_one_is_refused(self):
+        pair, err = resolve("oclaude1", "claude", [self.off()], providers())
+        self.assertIsNone(pair)
+        self.assertIn("switched off", err)
+
+    def test_an_ordinary_one_is_untouched(self):
+        a = aliases(oclaude())[0]
+        self.assertFalse(a.off)
+        self.assertFalse(public_configs([a], providers(), ENV)[0]["off"])
+        self.assertIsNotNone(resolve("oclaude1", "claude", [a], providers())[0])
+
+
 class StockProviders(unittest.TestCase):
     """A harness the machine already has, offered as a provider so a model choice can have a name.
 

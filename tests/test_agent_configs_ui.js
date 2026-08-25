@@ -22,7 +22,8 @@ const NAMES = ['AGENT_CONFIG_KEY', 'AGENT_CONFIG_MAX', 'parseAgentConfigs', 'loa
                'agentConfigKind', 'agentConfigBands', 'agentConfigRowHtml', 'agentConfigsHtml',
                'openAgentConfig', 'agentConfigSet', 'agentConfigType', 'agentConfigName', 'saveAgentConfig',
                'agentConfigModelHtml', 'MODEL_SUGGESTIONS',
-               'deleteAgentConfig'];
+               'deleteAgentConfig', 'agentConfigOffered', 'agentConfigLive',
+               'agentConfigToggleOff', 'agentConfigDraft'];
 
 const CLAUDE = {id: 'oclaude1', label: 'oclaude1', kind: 'claude', provider: 'router',
                 provider_label: 'AgentRouter', model: 'claude-opus-5', model_option: '',
@@ -197,4 +198,37 @@ test('switching to a provider without model variables drops hidden model values'
   const saved = JSON.parse(s.store.herdr_agent_configs).aliases[0];
   assert.equal(saved.model, '');
   assert.equal(saved.model_option, '');
+});
+
+
+// --- Switched off ---
+
+const OFF = Object.assign({}, CLAUDE, {id: 'oclaude9', label: 'oclaude9', off: true});
+
+test('a switched-off config is listed but never offered', () => {
+  // The whole of what disabling means: it stays where it can be switched back on, and everything
+  // that starts something reads the offered list instead.
+  const s = boot({configs: [CLAUDE, OFF]});
+  assert.deepEqual(s.agentConfigRows().map(r => r.id), ['oclaude1', 'oclaude9']);
+  assert.deepEqual(s.agentConfigOffered().map(r => r.id), ['oclaude1']);
+  assert.equal(s.agentConfigLive('oclaude9', 'claude'), false,
+    'so a tile or a record naming it gets no button rather than a refusal after the tap');
+  assert.equal(s.agentConfigLive('oclaude1', 'claude'), true);
+});
+
+test('the row says so in a word as well as in its opacity', () => {
+  const s = boot({configs: [OFF]});
+  const html = s.agentConfigRowHtml(OFF);
+  assert.match(html, /cfg-off/);
+  assert.match(html, />off</);
+});
+
+test('the toggle is a draft edit, and the flag survives a save', () => {
+  const s = boot({configs: [CLAUDE],
+                  store: {herdr_agent_configs: JSON.stringify({aliases: [
+                    {id: 'oclaude1', label: 'oclaude1', provider: 'router'}]})}});
+  s.openAgentConfig('oclaude1');
+  s.agentConfigToggleOff();
+  s.saveAgentConfig();
+  assert.equal(JSON.parse(s.store.herdr_agent_configs).aliases[0].off, true);
 });

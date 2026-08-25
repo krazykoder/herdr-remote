@@ -884,7 +884,7 @@
     function renderNewAgent() {
       // The same strip the Start sheet draws, for the same reason: stock kinds, then one
       // `+custom` that opens the agent configs rather than a badge per alias.
-      const configs = typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+      const configs = typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
         .map(k => badgeHtml(k, !newAgentConfig && k === newAgentKind, `pickNewAgentKind('${k}')`,
                             {agent: k})).join('')
@@ -929,7 +929,7 @@
     }
 
     function pickNewAgentConfig(id) {
-      const rows = typeof agentConfigRows === 'function' ? agentConfigRows() : [];
+      const rows = typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
       const row = rows.find(c => c.id === id);
       if (!row) return;
       newAgentConfig = id;

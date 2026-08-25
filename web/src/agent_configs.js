@@ -48,7 +48,16 @@
     // endpoint — so the client asks before it sends, and puts the choice back to the reader.
     function agentConfigLive(id, kind) {
       const row = agentConfigRow(id);
-      return !!(row && (!kind || row.kind === kind));
+      // Switched off counts as gone, which is the whole of what disabling means: the relay refuses
+      // a start naming one, so a button that offered it would be a refusal after the tap.
+      return !!(row && !row.off && (!kind || row.kind === kind));
+    }
+
+    // The configs a session may actually be started under. Everything that offers a choice reads
+    // this; the launcher's own list reads agentConfigRows, because a switched-off config still has
+    // to be drawn somewhere or there is no way to switch it back on.
+    function agentConfigOffered() {
+      return agentConfigRows().filter(r => !r.off);
     }
 
     function agentConfigProviders() {
@@ -89,19 +98,21 @@
               : escapeHtml(row.key) + ' is not set on the relay — the session would start without'
                 + ' a key'}">$${escapeHtml(row.key)}${row.key_set ? '' : ' ✕'}</span>`
         : '';
-      return `<button class="cfg-row" onclick="openAgentConfig('${escapeHtml(row.id)}')"`
+      const off = row.off
+        ? '<span class="cfg-off-tag" title="Switched off — not offered anywhere">off</span>' : '';
+      return `<button class="cfg-row${row.off ? ' cfg-off' : ''}"`
+        + ` onclick="openAgentConfig('${escapeHtml(row.id)}')"`
         + ` title="View and edit ${escapeHtml(row.label)}">`
         + `<span class="cfg-line">${badge}`
-        + `<span class="cfg-provider">${escapeHtml(row.provider_label || row.provider)}</span></span>`
+        + `<span class="cfg-provider">${escapeHtml(row.provider_label || row.provider)}</span>${off}</span>`
         + `<span class="cfg-line cfg-sub"><span class="cfg-model">`
         + `${escapeHtml(row.model || 'default model')}</span>${key}</span>`
         + '</button>';
     }
 
     function agentConfigsHtml() {
-      // Nothing to draw without a provider file: aliases would have nothing to be aliases *of*,
-      // and a header over an empty list that can never fill is worse than no header. The same
-      // rule start_options already applies to Start.
+      // Nothing to draw without a provider: aliases need something to be aliases *of*. Stock
+      // providers make this available without a file; an actually empty list still has no action.
       if (!agentConfigProviders().length) return '';
       const bands = agentConfigBands();
       return '<div class="section-header" style="margin-top:18px">Agent configs'
@@ -129,7 +140,7 @@
       const row = id ? agentConfigRow(id) : null;
       const stored = loadAgentConfigs().find(a => a.id === id)
         || (row ? {id: row.id, label: row.label, provider: row.provider, model: row.model,
-                   model_option: row.model_option, key: row.key} : null);
+                   model_option: row.model_option, key: row.key, off: row.off} : null);
       // `saved` freezes the id: it is derived from the name while a config is being made, and a
       // rename afterwards must not silently become a different config.
       agentConfigDraft = stored ? Object.assign({saved: true}, stored)
@@ -248,9 +259,19 @@
             + `<pre class="cfg-command" onclick="writeClipboard(this.textContent, function(){})"`
             + ' title="Tap to copy">' + escapeHtml(row.command) + '</pre>'
           : d.id ? '' : '<div class="cfg-note">Save it to see the command it will run.</div>')
+        // Switched off rather than deleted: what it took to write this down is worth keeping even
+        // when the config is not one anybody should be starting today. Off, it is drawn here and
+        // offered nowhere — the relay refuses a start naming it, so this is not a UI filter that a
+        // stale tile could get around.
+        + (d.off
+          ? '<div class="cfg-note">Switched off. It is kept here and offered nowhere — no strip'
+            + ' lists it, and a start naming it is refused.</div>'
+          : '')
         + '<div class="ql-actions">'
         + (d.id && loadAgentConfigs().some(a => a.id === d.id)
           ? '<button class="ql-secondary" onclick="deleteAgentConfig()">Delete</button>'
+            + `<button class="ql-secondary" onclick="agentConfigToggleOff()">`
+            + `${d.off ? 'Enable' : 'Disable'}</button>`
           : '<button class="ql-secondary" onclick="closeLauncherEdit()">Cancel</button>')
         + '<button class="ql-primary" onclick="saveAgentConfig()">Save config</button></div>';
     }
@@ -268,6 +289,15 @@
       }
     }
 
+    // A draft edit like every other field on this form, and saved by the same button: a toggle
+    // that wrote straight through would be the one control here that does not need Save, which is
+    // a worse surprise than one more tap.
+    function agentConfigToggleOff() {
+      if (!agentConfigDraft) return;
+      agentConfigDraft.off = !agentConfigDraft.off;
+      drawAgentConfig();
+    }
+
     function saveAgentConfig() {
       const d = agentConfigDraft;
       if (!d || !d.id || !d.provider) return;
@@ -275,6 +305,7 @@
       const at = items.findIndex(a => a.id === d.id);
       const row = {id: d.id, label: d.label || d.id, provider: d.provider,
                    model: d.model || '', model_option: d.model_option || '', key: d.key || ''};
+      if (d.off) row.off = true;
       if (at < 0) items.push(row); else items[at] = row;
       saveAgentConfigs(items);
       closeLauncherEdit();
