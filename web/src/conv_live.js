@@ -283,6 +283,16 @@
       for (const bucket of buckets) bucket.lastFetch = 0;
     }
 
+    // Does any live pane under this fingerprint hold a turn past what this bucket has been answered
+    // through? `turn` is the relay's own row id, from its own writes, so the two are comparable —
+    // and a relay too old to send it says nothing here, leaving the cadence to do the work.
+    function convLiveNewer(fp, bucket) {
+      if (typeof agents === 'undefined' || !Array.isArray(agents)) return false;
+      const key = convFpKey(fp);
+      return agents.some(a => Number(a.turn) > (bucket.syncedTo || 0)
+        && convFpKey([a.host, a.agent, a.cwd]) === key);
+    }
+
     // One query for the whole roster. Sent only when the answer on hand cannot serve: a member with
     // no bucket yet, or a bucket old enough to be worth asking again. `force` is a turn ending or
     // the ⟳, both of which are someone saying "now".
@@ -325,6 +335,12 @@
         if (!bucket) { syncedTo = 0; needsFetch = true; continue; }
         if (bucket.syncedTo < syncedTo) syncedTo = bucket.syncedTo;
         if (now - bucket.lastFetch >= CONV_LIVE_EVERY) needsFetch = true;
+        // The relay says on every snapshot which row this pane's record ends at, so a thread that
+        // is behind asks now rather than at the next cadence. That gap is not theoretical: a turn
+        // whose pane painted nothing yet is held back by the relay for up to HERDR_LATE_TURN_MS
+        // and lands with no status change behind it — the invalidate convReadTurnEnd sent when the
+        // turn ended fetched a record that had not been written yet, and nothing said so.
+        if (convLiveNewer(fp, bucket)) needsFetch = true;
       }
       if (!needsFetch) return;
 

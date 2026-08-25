@@ -107,6 +107,21 @@ class SubmitPaste(unittest.TestCase):
                 self.assertTrue(self.run_paste(["idle", herdr_relay.PANE_GONE], text=line))
                 self.assertEqual(len(self.enters()), 1)
 
+    def test_quit_is_taken_the_moment_the_agent_leaves_the_pane(self):
+        # What `/quit` really does, measured against a live agy: the agent exits, herdr keeps the
+        # pane and reports `unknown` for it — the same word it uses for a TUI that has not started.
+        # PANE_GONE never arrives, because only `exit` closes the pane, so the End sat out the full
+        # 45s window with the client's next message queued behind it.
+        self.assertTrue(self.run_paste(["idle", "unknown"], text="/quit"))
+
+    def test_an_ordinary_prompt_still_waits_out_an_unknown_pane(self):
+        # The other side of that: `unknown` under anything but a closing line is a TUI still coming
+        # up, which is the case the wait exists for. It must not read as "the agent left".
+        out = {}
+        self.assertTrue(self.run_paste(["unknown", "unknown", "idle", "working"],
+                                       text="write the tests", out=out))
+        self.assertEqual(out, {})
+
     def test_a_pane_that_has_gone_under_an_ordinary_prompt_did_not_take_it(self):
         # The other half, and the one that matters to the record: a harness that died holding the
         # prompt looks exactly like one that quit on purpose. Only the two closing lines are proof

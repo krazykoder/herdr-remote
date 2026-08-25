@@ -187,6 +187,30 @@ test('the cadence holds the question back, and invalidating lets it through', ()
   assert.equal(sent.length, 2);
 });
 
+test('a snapshot saying the record moved gets the question through inside the cadence', () => {
+  // The late-turn case. A pane that painted nothing when its turn ended has that turn held back by
+  // the relay for up to HERDR_LATE_TURN_MS and written with no status change behind it, so the
+  // invalidate that fires on a turn ending has already come and gone. Without the snapshot's own
+  // watermark the thread sits on stale rows until the cadence comes round.
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a', turn: 9}]);
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(4, FP_A, 1000, 'a')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 2, 'the pane holds row 9 and this bucket is answered through 4');
+  assert.equal(asked().since_id, 4, 'and it asks for the difference, not the window');
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(9, FP_A, 2000, 'b')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 2, 'caught up, the cadence holds the next one back again');
+});
+
+test('a relay too old to send a watermark leaves the cadence alone', () => {
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(4, FP_A, 1000, 'a')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 1);
+});
+
 test('a forced ask is for the record, not the difference', () => {
   reset();
   convLiveFetch([KEY_A]);

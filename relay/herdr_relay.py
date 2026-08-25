@@ -815,7 +815,7 @@ START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
 # stderr. Matching either survives that, and neither is a substring of any other refusal.
 PANE_NOT_READY = ("agent_pane_busy", "not an available shell")
 PANE_READY_WAIT = 20     # seconds to keep offering the pane before giving up
-PANE_READY_POLL = 1.0
+PANE_READY_POLL = 0.25   # measured: herdr's refusal clears in well under half a second
 
 
 # %r@%h:%p — one socket per user@host:port, in the user's own runtime dir. Not LOG_DIR: the path
@@ -1065,6 +1065,19 @@ def read_pane(pane_id, remote=None):
 LATE_TURN_MS = int(os.environ.get("HERDR_LATE_TURN_MS", "45000"))
 # pane_id -> {"was", "status", "until"} for panes whose turn end had nothing to record yet.
 late_turns = {}
+# pane_id -> the newest conversation-log row id written for it. Carried on the snapshot as `turn`,
+# so a client can tell its cached thread is behind without asking. A turn ending used to be enough
+# of a signal on its own — the row went in inside the poll that produced the status — but a turn
+# held back by LATE_TURN_MS lands with no transition behind it, and the client that already asked
+# heard nothing more until its own cadence came round. In memory, like everything else keyed by
+# pane id: ids are only ever compared against what this relay answered.
+pane_turn_ids = {}
+
+
+def note_turn_ids(pane_id, ids):
+    """Remember the newest row this pane's last turn wrote. Nothing written, nothing to say."""
+    if ids:
+        pane_turn_ids[pane_id] = max(ids)
 
 # pane_id -> {"ws", "until", "idled"} for a send the relay could not prove landed. A send is
 # unconfirmed for one of two reasons and both resolve themselves in time: a pane that was already
@@ -1186,8 +1199,8 @@ async def collect_late_turns(agents):
                 continue
             late_turns.pop(pid, None)
             git = await probe_git(a)
-            await asyncio.to_thread(
-                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git)
+            note_turn_ids(pid, await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git))
             log.info("late turn at %s: %s", pid,
                      f"{said} message(s) after the status changed" if said
                      else "nothing said before the deadline")
@@ -1561,6 +1574,9 @@ async def submit_init_line(pane_id, line, remote=None):
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, line, remote=remote)
     await asyncio.sleep(submit_settle(line))
     await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+    # Only the client's own sends were logged, so a line this relay typed for itself left no trace
+    # at all — "did the wake-up go in" was a question only a pane read could answer.
+    log.info("Typed at %s: %r", pane_id, line)
     return True
 
 
@@ -1649,15 +1665,21 @@ async def submit_paste(pane_id, text, remote=None, out=None):
                 out["reason"] = "queued"
             return False
         first = False
-        # The pane is gone. For the two lines that close one — `/quit` and `exit` — that is the
-        # proof itself, and watching further is watching a pane that no longer exists: a dying pane
-        # reports no status, this loop read that as a TUI still starting, and every End cost the
-        # full window while the client's next message waited behind it.
+        # The agent is gone. For the two lines that close one — `/quit` and `exit` — that is the
+        # proof itself, and watching further is watching a pane that has already done what it was
+        # asked: the loop read it as a TUI still starting, and every End cost the full window while
+        # the client's next message waited behind it.
         #
-        # For anything else it is the opposite news. A pane that vanished under an ordinary prompt
-        # is a harness that died holding it, and there is nobody left to have read it — so it is a
-        # failure with its own reason rather than a send to keep watching or to record.
-        if status == PANE_GONE:
+        # Two spellings, because the two lines end differently. `exit` closes the pane, so herdr
+        # stops listing it — PANE_GONE. `/quit` only ends the *agent*: herdr keeps the pane and
+        # reports `unknown` for it, which is the same word it uses for a TUI that has not started
+        # yet. Read against a closing line the ambiguity is gone — nothing else is being waited for.
+        #
+        # For any other text a vanished pane is the opposite news: a harness that died holding the
+        # prompt, with nobody left to have read it. That is a failure with its own reason rather
+        # than a send to keep watching or to record. `unknown` under ordinary text stays what it
+        # always was — a pane still starting — and falls through to the wait below.
+        if status == PANE_GONE or (status == "unknown" and text.strip() in CLOSING_LINES):
             if text.strip() in CLOSING_LINES:
                 return True
             if out is not None:
@@ -2016,6 +2038,11 @@ async def _poll_once():
             config = pane_config.get(a["pane_id"])
             if config:
                 a["config"] = config
+            # The newest row this pane's record holds, so a thread on screen can tell it is behind.
+            # Only ever set by this relay's own writes, which is all a client compares it against.
+            turn = pane_turn_ids.get(a["pane_id"])
+            if turn:
+                a["turn"] = turn
             # A first prompt at a pane herdr still calls idle. Read before the snapshot goes out,
             # so the status the client is given is the one the pane is really in and the blocked
             # branch below announces it like any other.
@@ -2100,8 +2127,8 @@ async def _poll_once():
                         continue
                     late_turns.pop(pid, None)
                     git = await probe_git(a)
-                    await asyncio.to_thread(
-                        conv_log.record_turn_end, a, captured, was, status, git=git)
+                    note_turn_ids(pid, await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git))
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
                 # A pane ending a turn means one of two opposite things, and arbitration decides
