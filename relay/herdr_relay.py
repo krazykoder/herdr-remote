@@ -1140,7 +1140,14 @@ async def confirm_pending_sends(agents):
         status = (a or {}).get("status") or ""
         if a is None:
             pending_sends.pop(pid, None)
-            continue        # the pane is gone; there is nothing left to confirm or to tell anyone
+            # The pane is gone. For `/quit` and `exit` that is what was asked for, so it is the
+            # confirmation — the handler hands off before the pane has finished going. For anything
+            # else there is nothing left to confirm and nothing a person could do about it.
+            if wait.get("closing"):
+                await tell_sender(wait["ws"], {
+                    "type": "command_result", "command": "send_text", "ok": True, "pending": False,
+                    "pane_id": pid, "message": "the pane took it"})
+            continue
         if not wait["idled"]:
             wait["idled"] = ends_turn(status)
         elif status in SUBMIT_TOOK:
@@ -1606,7 +1613,7 @@ async def pane_ready(pane_id, remote=None):
     return False
 
 
-async def submit_paste(pane_id, text, remote=None, out=None):
+async def submit_paste(pane_id, text, remote=None, out=None, window=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
     The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
@@ -1663,7 +1670,11 @@ async def submit_paste(pane_id, text, remote=None, out=None):
         await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
         return True
     start = time.monotonic()
-    deadline = start + submit_window(pane_id)
+    # `window` is how long the caller is prepared to hold. Unset means the harness's own full
+    # window, which is what a caller that needs the answer — arbitration — asks for. The websocket
+    # handler asks for a short one instead: see SUBMIT_FAST.
+    watch = window or submit_window(pane_id)
+    deadline = start + watch
     presses, first = 0, True
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
@@ -1715,7 +1726,7 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     # in the composer and a person has to press Enter. Silence here is what made this bug take
     # three attempts to find.
     log.warning("submit: pane=%s never left %s after %d Enter press(es) in %.0fs — text may be "
-                "unsent", pane_id, SUBMIT_READY, presses, submit_window(pane_id))
+                "unsent", pane_id, SUBMIT_READY, presses, watch)
     if out is not None:
         out["reason"] = "unconfirmed"
     return False
@@ -3031,7 +3042,14 @@ async def handle_client(ws, listener="lan"):
                     # same empty composer either way. The text is still recorded as sent, because
                     # it very likely was; what the client is told is that nobody confirmed it.
                     out = {}
-                    if await submit_paste(pane_id, text, remote=remote, out=out):
+                    # Held only while there is something left to do. The presses are spent inside
+                    # SUBMIT_FAST and everything after it is watching — which `confirm_pending_sends`
+                    # already does, on the poll, and tells this same client about. Waiting the full
+                    # harness window here blocked every later message from this browser instead:
+                    # one connection is handled a message at a time, so a 45s watch at an agy pane
+                    # was 45s of an unresponsive app.
+                    if await submit_paste(pane_id, text, remote=remote, out=out,
+                                          window=SUBMIT_FAST):
                         # Said out loud when it *did* land, too. It used to be silence, and a client
                         # with nothing to show for a send drew its own tick the moment the socket
                         # took the text — which is a claim about this end of the wire, not about the
@@ -3067,6 +3085,10 @@ async def handle_client(ws, listener="lan"):
                         # so — a client too old to read it sees the same failure it always saw.
                         pending_sends[pane_id] = {
                             "ws": ws, "until": int(time.time() * 1000) + CONFIRM_MS,
+                            # A pane that ends is the proof a closing line landed, and the poll is
+                            # where that is noticed now — the handler no longer waits long enough
+                            # to see it itself.
+                            "closing": text.strip() in CLOSING_LINES,
                             # A queued message is behind a turn that has to end first; a pane that
                             # never moved has already ended one, so its next move is the answer.
                             "idled": not queued}

@@ -21,6 +21,7 @@ it did, gives up rather than pressing forever — and never, under any of those,
 pane that is `blocked`, because that box is a permission prompt and Enter accepts its default.
 """
 import asyncio
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -129,6 +130,31 @@ class SubmitPaste(unittest.TestCase):
         self.assertTrue(self.run_paste(["unknown", "unknown", "idle", "working"],
                                        text="write the tests", out=out))
         self.assertEqual(out, {})
+
+    def test_a_caller_may_hold_for_less_than_the_harness_window(self):
+        # What the websocket handler asks for. The presses are spent early and the rest of the
+        # window is watching, which the poll does — holding it here holds every later message from
+        # that browser, which is what made an unconfirmed agy send freeze the app for 45 seconds.
+        out = {}
+        with patch.object(herdr_relay, "SUBMIT_TIMEOUT", 30), \
+             patch.object(herdr_relay, "SUBMIT_POLL", 0.001):
+            started = time.monotonic()
+            took = asyncio.run(self.paste_with_window(["idle"], "hello", 0.05, out))
+        self.assertFalse(took)
+        self.assertEqual(out.get("reason"), "unconfirmed")
+        self.assertLess(time.monotonic() - started, 5,
+                        "the window the caller asked for, not the harness's own")
+
+    async def paste_with_window(self, statuses, text, window, out):
+        def herdr(*args, remote=None):
+            self.calls.append(args)
+            return ""
+
+        with patch.object(herdr_relay, "pane_agent_status", lambda *a, **k: statuses[-1]), \
+             patch.object(herdr_relay, "shell_panes", set()), \
+             patch.object(herdr_relay, "agent_cache", {}), \
+             patch.object(herdr_relay, "run_herdr", herdr):
+            return await herdr_relay.submit_paste("w1:p1", text, out=out, window=window)
 
     def test_a_pane_that_has_gone_under_an_ordinary_prompt_did_not_take_it(self):
         # The other half, and the one that matters to the record: a harness that died holding the

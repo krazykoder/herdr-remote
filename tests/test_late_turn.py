@@ -159,9 +159,10 @@ class PendingSends(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(herdr_relay.pending_sends.clear)
         self.ws = Socket()
 
-    def wait(self, idled=True, until=None):
+    def wait(self, idled=True, until=None, closing=False):
         herdr_relay.pending_sends["w1:p1"] = {
-            "ws": self.ws, "until": _later() if until is None else until, "idled": idled}
+            "ws": self.ws, "until": _later() if until is None else until, "idled": idled,
+            "closing": closing}
 
     async def test_a_pane_going_to_work_is_the_confirmation(self):
         self.wait(idled=True)
@@ -193,6 +194,15 @@ class PendingSends(unittest.IsolatedAsyncioTestCase):
         self.wait()
         await herdr_relay.confirm_pending_sends([])
         self.assertEqual([], self.ws.sent)
+        self.assertEqual({}, herdr_relay.pending_sends)
+
+    async def test_a_pane_that_vanished_under_a_closing_line_is_the_confirmation(self):
+        # `/quit` and `exit` are asking for exactly this. The handler hands the watch over before
+        # the pane has finished going, so this is where the End is answered — and without it the
+        # client is left holding "watching…" over a pane that did what it was told.
+        self.wait(closing=True)
+        await herdr_relay.confirm_pending_sends([])
+        self.assertEqual([True], [m["ok"] for m in self.ws.sent])
         self.assertEqual({}, herdr_relay.pending_sends)
 
     async def test_a_client_that_hung_up_does_not_break_the_poll(self):
