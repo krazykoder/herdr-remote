@@ -194,6 +194,7 @@
     const CONV_AUTO_KEY = 'herdr_conv_auto', CONV_AUTO_SEEN_KEY = 'herdr_conv_auto_seen';
     const CONV_AUTO_SEEN_MAX = 500;
     const CONV_LANDING_AUTO_KEY = 'herdr_conv_landing_auto', CONV_LANDING_AUTO_MAX = 10;
+    const CONV_LANDING_ARCHIVE_KEY = 'herdr_conv_landing_archive';
 
     // The toggle exists so auto conversations cannot bury the named ones, which is a question
     // about this reader's screen and not about the agents — so it is not one of the four synced
@@ -212,6 +213,18 @@
 
     function toggleConvLandingAuto() {
       try { localStorage.setItem(CONV_LANDING_AUTO_KEY, convLandingAutoOn() ? 'off' : 'on'); }
+      catch (e) { /* private mode: this session only */ }
+      renderConversations();
+    }
+
+    function convLandingArchiveOn() {
+      try { return localStorage.getItem(CONV_LANDING_ARCHIVE_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvLandingArchive() {
+      try { localStorage.setItem(CONV_LANDING_ARCHIVE_KEY,
+        convLandingArchiveOn() ? 'off' : 'on'); }
       catch (e) { /* private mode: this session only */ }
       renderConversations();
     }

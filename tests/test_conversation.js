@@ -564,6 +564,15 @@ test('a named conversation may be empty, but malformed entries are dropped', () 
   assert.deepStrictEqual(ids(index(items)), ['c1']);
 });
 
+test('archive is optional synced index metadata, so old rows stay active', () => {
+  const rows = parseConvIndex(index([
+    {id: 'active', name: 'Active', members: []},
+    {id: 'archived', name: 'Archived', members: [], archived: true},
+  ]));
+  assert.equal(rows[0].archived, undefined);
+  assert.equal(rows[1].archived, true);
+});
+
 test('the roster is capped far above the recording cap, and keeps ended members', () => {
   // MEMBER_MAX is a ceiling on how many panes record at once — a statement about the view. An
   // ended member costs a label and draws history, and a conversation continued across several

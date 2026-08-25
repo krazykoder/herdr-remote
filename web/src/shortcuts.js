@@ -355,11 +355,27 @@
       // the work that decides — newest message first, then the fuller record.
       const by = (a, b) => (!!a.auto - !!b.auto) || seenOf(b) - seenOf(a) || countOf(b) - countOf(a);
       const all = loadConvIndex().sort(by);
-      const autos = all.filter(c => c.auto);
-      return { all: all, autos: autos,
-        shown: all.filter(c => !c.auto)
+      const archived = all.filter(c => c.archived);
+      const active = all.filter(c => !c.archived);
+      const autos = active.filter(c => c.auto);
+      return { all: all, archived: archived, autos: autos,
+        shown: active.filter(c => !c.auto)
           .concat(convLandingAutoOn() ? autos.slice(0, CONV_LANDING_AUTO_MAX) : []).sort(by) };
     }
+
+    function setConversationArchived(id, archived) {
+      const items = loadConvIndex().map(c => {
+        if (c.id !== id) return c;
+        const next = Object.assign({}, c);
+        if (archived) next.archived = true; else delete next.archived;
+        return next;
+      });
+      saveConvIndex(items);
+      renderConversations();
+    }
+
+    function archiveConversation(id) { setConversationArchived(id, true); }
+    function unarchiveConversation(id) { setConversationArchived(id, false); }
 
     // One End button, wherever it is drawn — four cards and two rows, all of them redrawn by the
     // poll under whoever is aiming at them. Four states in one place:
@@ -398,12 +414,33 @@
       if (!el) return;
       const now = Date.now();
       const list = convLandingList();
-      const rows = list.shown.map(c => {
+      // Both lists, because the archive is drawn from the same rows: building only the shown ones
+      // left `archivedRows` matching nothing, so the Archive button counted cards it could never
+      // draw and an archived conversation could not be got back at.
+      const rows = list.shown.concat(list.archived).map(c => {
         const members = c.members || [];
         const count = members.reduce((n, m) => n + (Number(m.messages) || 0), 0);
         const seen = Math.max(0, ...members.map(m => Number(m.seen) || 0));
         const live = members.map(m => agents.find(a => convMemberKey(a) === m.key)).filter(Boolean);
         const names = members.map(m => escapeHtml(m.label || (agents.find(a => convMemberKey(a) === m.key) || {}).label || 'Former pane'));
+        // What each member is and where it is working, in the order of how much each source knows.
+        // The member record, written when it joined; then the live pane, which is right for a
+        // member that has come back under a new name; then the key itself, which carries the
+        // harness and the directory of every member ever recorded, including the ones that predate
+        // the fields above. The directory's last segment is a guess at the Project and is the last
+        // resort for exactly that reason — a member filed before this existed still shows where it
+        // was working, and one filed since shows what the relay calls it.
+        const badgeValues = members.map(m => {
+          const pane = agents.find(a => convMemberKey(a) === m.key) || {};
+          let key = [];
+          try { key = JSON.parse(m.key || '[]'); } catch (e) { /* a member key from before this */ }
+          const cwd = key[3] || '';
+          return { agent: m.agent || pane.agent || key[2] || '',
+            project: m.project || pane.project || cwd.split('/').filter(Boolean).pop() || '' };
+        });
+        // Unique, because a conversation of four claudes in one Project is one badge and one
+        // Project — the card says what is in it, not how many.
+        const unique = (field) => Array.from(new Set(badgeValues.map(x => x[field]).filter(Boolean)));
         const liveNames = live.map(a => escapeHtml(paneLabel(a)));
         // The newest message across the members, which is the one line that says whether this
         // conversation is worth opening. Written by convNoteCounts as each member records.
@@ -425,29 +462,32 @@
           ended: live.length ? '' : ' ended',
           // Carried out of the row builder: the card's End is drawn below, where `live` is not.
           livePanes: live.map(a => a.pane_id),
+          badges: unique('agent').map(a => agentBadge(a)).join('') +
+            unique('project').map(p => ` <span class="badge proj">@${escapeHtml(p)}</span>`).join(''),
         };
       });
-      const autos = list.autos, showAuto = convLandingAutoOn(), shown = rows;
+      const autos = list.autos, showAuto = convLandingAutoOn();
       const autoControl = autos.length
         ? `<button class="section-action conv-auto-toggle" onclick="toggleConvLandingAuto()" aria-pressed="${showAuto}" ` +
           `title="Shows up to ${CONV_LANDING_AUTO_MAX} latest automatic conversations">` +
           `${showAuto ? 'Hide auto' : 'Show auto'} (${autos.length})</button>` : '';
+      const archiveControl = list.archived.length
+        ? `<button class="section-action" onclick="toggleConvLandingArchive()" aria-pressed="${convLandingArchiveOn()}">` +
+          `${convLandingArchiveOn() ? 'Hide archive' : 'Archive'} (${list.archived.length})</button>` : '';
       // The + is drawn whether or not there is anything under it, which is the one place this
       // section differs from the others: an entry point that only appears once you already have a
       // conversation cannot be how the first one is made.
       const newControl = `<button class="section-action conv-new" onclick="newConversation()"` +
         ` title="Start an empty conversation and add panes to it"` +
         ` aria-label="Start a new conversation">+ New</button>`;
-      el.innerHTML = `<div class="section-header">Conversations${autoControl}${newControl}</div>` +
-        (list.all.length ? shown.map(r =>
+      const card = (r, archived) =>
         `<div class="conversation-card" role="button" tabindex="0" data-conv-id="${escapeHtml(r.c.id)}"` +
         ` onclick="openConversation(this.dataset.convId)"` +
         ` onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openConversation(this.dataset.convId); }">` +
-        // The mark, then the live dot: what this card is, then how its panes are doing. The dot
-        // alone was doing both jobs, which is why a conversation card and an agent card opened the
-        // same way but did not read as different things.
         // Dot, mark, name — the dot is the row's live state and reads first on every card in the
-        // list; the mark says what kind of thing the name belongs to.
+        // list; the mark says what kind of thing the name belongs to. The dot alone was doing both
+        // jobs, which is why a conversation card and an agent card opened the same way but did not
+        // read as different things.
         `<div class="conversation-title"><span class="dot${r.pulse}${r.ended}" style="background:${r.dot}"` +
         ` aria-hidden="true"></span><span class="conv-kind">${convGlyph()}</span>` +
         `<span class="name">${escapeHtml(r.c.name)}</span>` +
@@ -461,6 +501,14 @@
           'first when space runs out. Open it and rename it to keep it for good.">auto</span>' : ''}` +
         `<span class="conversation-count">${r.count} ` +
         `${r.count === 1 ? 'message' : 'messages'}</span>` +
+        // Archiving is the reader saying "not now" about a conversation they mean to keep — the
+        // one thing the auto tier cannot express, since that is about how a conversation was made
+        // rather than whether anyone wants to look at it. Recorded on the conversation and not in
+        // this browser, so a card put away on a phone is away on the desktop too.
+        `<button class="archive-btn" data-conv-id="${escapeHtml(r.c.id)}"` +
+        ` onclick="event.stopPropagation(); ${archived ? 'unarchiveConversation' : 'archiveConversation'}(this.dataset.convId)"` +
+        ` aria-label="${archived ? 'Unarchive' : 'Archive'} ${escapeHtml(r.c.name)}">` +
+        `${archived ? 'Unarchive' : 'Archive'}</button>` +
         // The same control the roster panel calls End all, on the card, for the same reason the
         // agent cards carry one: the list is where a session is recognised as finished, and going
         // into a conversation to close it is a trip taken only to press one button. Drawn only
@@ -475,13 +523,22 @@
               fire: 'endConversation(this.dataset.convId)'})
           : '') +
         `</div>` +
+        // What is in it, before what was said in it: which harnesses, and which Projects they are
+        // working in. A conversation is recognised by its members long before its newest line is
+        // read, and on a phone that line is the only other thing on the card.
+        (r.badges ? `<div class="conversation-meta">${r.badges}</div>` : '') +
         (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
         `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
         `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
-        `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`
-        ).join('')
+        `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`;
+      const archivedRows = list.archived.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
+      const activeRows = list.shown.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
+      el.innerHTML = `<div class="section-header">Conversations${autoControl}${archiveControl}${newControl}</div>` +
+        (activeRows.length ? activeRows.map(r => card(r, false)).join('')
         : '<p class="pair-empty">No conversations yet. Start one here, or record a pane into one '
-          + 'from its own menu.</p>');
+          + 'from its own menu.</p>') +
+        (convLandingArchiveOn() && archivedRows.length
+          ? `<div class="section-header">Archived conversations</div>${archivedRows.map(r => card(r, true)).join('')}` : '');
       applySections();
     }
 
@@ -927,6 +984,7 @@
     // binding to a reload the same way — same treatment, when someone hits it.
     const CONV_RESPAWN_KEY = 'herdr_conv_respawn';
     const CONV_RESPAWN_MS = 120000;
+    let convRespawnResuming = '';
 
     function convRespawnRef() {
       return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -994,10 +1052,19 @@
       if (!pane) return;
       const conv = loadConvIndex().find(c => c.id === held.conv);
       if (!conv) { forgetConvRespawn(); return; }
-      const rec = (await convGet([held.key]).catch(() => []))[0];
-      convAdoptRespawn(conv, held.key, pane, ((rec || {}).spawn || {}).starter || '');
-      showSpawnStatus(`"${paneLabel(pane)}" was already running — continued in "${conv.name}".`,
-                      'success');
+      if (convRespawnResuming === held.ref) return;
+      convRespawnResuming = held.ref;
+      try {
+        const rec = (await convGet([held.key]).catch(() => []))[0];
+        // A later Start may have replaced this tab's one pending note while the record was read.
+        // That new start owns the pane now; never continue an older member over it.
+        if ((heldConvRespawn() || {}).ref !== held.ref) return;
+        convAdoptRespawn(conv, held.key, pane, ((rec || {}).spawn || {}).starter || '');
+        showSpawnStatus(`"${paneLabel(pane)}" was already running — continued in "${conv.name}".`,
+                        'success');
+      } finally {
+        if (convRespawnResuming === held.ref) convRespawnResuming = '';
+      }
     }
 
     function convRespawn(key) {
@@ -1011,6 +1078,7 @@
       const back = held && held.key === key && held.conv === conv.id
         ? convRespawnPane(held.ref) : null;
       if (back) {
+        if (convRespawnResuming === held.ref) return;
         showSpawnStatus(`"${paneLabel(back)}" is already running — continuing "${conv.name}".`,
                         'busy');
         convAdoptRespawn(conv, key, back, (spawn || {}).starter || '');
@@ -1459,8 +1527,19 @@
       // Not `kinds.map(configBadge)`: map hands the callback an index too, and the second argument
       // is the config to name it by — so every badge after the first was named by a number, and
       // the whole render threw.
+      // And where those agents are working. Same question the landing card answers with the same
+      // badge, asked of the thread that is open: a conversation whose members sit in two Projects
+      // is one whose header has to say so, because nothing else on this screen does.
+      const projects = [];
+      for (const m of members) {
+        const rec = composed.recs.find(r => r.key === m.key);
+        const pane = live.get(m.key);
+        const project = ((rec && rec.spawn) || {}).project || (pane && pane.project) || m.project || '';
+        if (project && !projects.includes(project)) projects.push(project);
+      }
       document.getElementById('convViewAgents').innerHTML =
-        kinds.map(k => configBadge(k[0], k[1])).join('');
+        kinds.map(k => configBadge(k[0], k[1])).join('') +
+        projects.map(p => ` <span class="badge proj">@${escapeHtml(p)}</span>`).join('');
       convViewRecs = composed.recs;
       convViewEntries = entries;
       // The panel is its own element and diffed on its own: a message arriving must not rewrite the

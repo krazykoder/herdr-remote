@@ -130,3 +130,71 @@ test('the note is written before the start goes out, and cleared once it is acte
   e.run('forgetConvRespawn()');
   assert.equal(held(e), null);
 });
+
+test('only one snapshot resumes a restart while its record is loading', async () => {
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
+  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
+    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
+  e.run(`let opens = 0;
+    openPendingStart = () => { opens += 1; };
+    showSpawnStatus = () => {};
+    paneLabel = a => a.label || a.agent || a.pane_id;
+    convGet = () => new Promise(resolve => setTimeout(
+      () => resolve([{spawn: {starter: 'architect'}}]), 0));`);
+  await e.run('Promise.all([convResumeRespawn(), convResumeRespawn()])');
+  assert.equal(e.run('opens'), 1);
+  assert.equal(held(e), null);
+});
+
+
+// --- The archive on the landing list ---
+
+test('an archived conversation is drawn under the archive, not lost with the button that counts it', () => {
+  // The rows were built from the shown list alone, so the archived ones matched nothing when the
+  // archive was opened: the button said "Archive (1)" and there was never a card under it, which
+  // is a conversation put away and not gettable back.
+  const e = boot();
+  e.run(`
+    loadConvIndex = () => [
+      {id: 'c1', name: 'Active', members: [{key: 'k1', label: 'A', agent: 'claude', project: 'Charts'}]},
+      {id: 'c2', name: 'Put away', members: [{key: 'k2', label: 'B', agent: 'agy', project: 'Relay'}],
+       archived: true},
+    ];
+    convLandingAutoOn = () => false;
+    convLandingArchiveOn = () => true;
+    convSeenAt = () => 0;
+    convNoteCounts = () => {};
+    convGlyph = () => '#';
+    agentBadge = a => '<span class="badge">' + a + '</span>';
+    paneLabel = a => a.label || a.pane_id;
+    fmtAgo = () => 'just now';
+    applySections = () => {};
+    renderConversations();`);
+  const html = e.fields.conversations.innerHTML;
+  assert.match(html, /Archived conversations/);
+  assert.match(html, /Put away/, 'the archived card itself, not just its heading');
+  assert.match(html, /Unarchive/, 'and the way back');
+  assert.match(html, /badge">agy</, 'wearing the harness badge its members carry');
+  assert.match(html, /badge proj">@Relay/, 'and the Project they are working in');
+});
+
+test('an archived conversation is not drawn among the active ones', () => {
+  const e = boot();
+  e.run(`
+    loadConvIndex = () => [
+      {id: 'c2', name: 'Put away', members: [{key: 'k2', label: 'B'}], archived: true},
+    ];
+    convLandingAutoOn = () => false;
+    convLandingArchiveOn = () => false;
+    convSeenAt = () => 0;
+    convNoteCounts = () => {};
+    convGlyph = () => '#';
+    agentBadge = a => '';
+    paneLabel = a => a.label || a.pane_id;
+    fmtAgo = () => 'just now';
+    applySections = () => {};
+    renderConversations();`);
+  const html = e.fields.conversations.innerHTML;
+  assert.doesNotMatch(html, /Put away/);
+  assert.match(html, /No conversations yet/, 'an all-archived list reads as an empty one');
+});

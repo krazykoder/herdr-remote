@@ -67,6 +67,7 @@
       { at: 'review-fix', label: 'Review, edit & fix', text: 'Review, edit, fix; then propose next steps.' },
       { at: 'review-only', label: 'Review only', text: 'Review only. Dont edit/ change code; then propose next steps.' },
       { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
+      { at: 'continue', label: 'Continue', text: 'Continue.' },
       { at: 'test', label: 'Test',
         text: 'Write /update tests this needs, run them, and report what actually failed.' },
       { at: 'test-min', label: 'Test, minimally',

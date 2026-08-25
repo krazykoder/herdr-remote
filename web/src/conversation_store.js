@@ -998,7 +998,8 @@
     }
 
     function convMemberOf(a) {
-      return { key: convMemberKey(a), added: Date.now(), label: paneLabel(a) };
+      return { key: convMemberKey(a), added: Date.now(), label: paneLabel(a),
+        agent: a.agent || '', project: a.project || '' };
     }
 
     function openConvDialog(paneId) {
