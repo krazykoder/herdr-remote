@@ -862,10 +862,6 @@
           }
         }
         openPendingStart();
-        // A restart whose answer was lost with the tab that asked for it. Runs on every snapshot
-        // and does nothing on almost all of them — there is a note in sessionStorage only in the
-        // couple of minutes after Start again was pressed.
-        if (typeof convResumeRespawn === 'function') convResumeRespawn();
         openNotificationPane();
       }
       else if (msg.type === 'agent_update') {

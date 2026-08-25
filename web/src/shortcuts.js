@@ -915,109 +915,11 @@
         ? { note: 'Session ended. Pick what to start in its place.' } : null);
     }
 
-    // A live pane that is this member already come back. The binding between a start and the
-    // conversation it was started for lives in memory (`startIntent`), and it is applied when the
-    // relay's answer arrives — so a tab reloaded between the press and the answer leaves the agent
-    // running, unclaimed, while the row still names the pane that ended and offers Start again.
-    // Pressing it then would start a second one.
-    //
-    // Matched on everything the record holds: same host, same harness, same directory, same name
-    // the reader recognises, and exactly one candidate. Nothing looser — two agy panes in one
-    // directory are two colleagues, and handing one of them a conversation that belongs to the
-    // other is the wrong repair healPairs already refuses to make.
-    //
-    // Claimed by a *named* conversation is what disqualifies a pane, not claimed at all: the
-    // recorder files every unreferenced pane into an auto conversation on the next snapshot, so an
-    // orphan is always spoken for within three seconds and `convReferenced` would rule out the
-    // only pane this can ever be about. An auto conversation is bookkeeping — a named one is a
-    // grouping someone made, and nothing is taken out of one of those.
-    function convRespawnAdopt(rec) {
-      const spawn = (rec || {}).spawn || {};
-      const label = String((rec || {}).label || spawn.label || '').trim();
-      if (!label) return null;
-      const claimed = convKept();
-      const same = agents.filter(a =>
-        !claimed.has(convMemberKey(a)) &&
-        (a.host || 'local') === (spawn.host || 'local') &&
-        (a.agent || '') === (spawn.agent || '') &&
-        (a.cwd || '') === (spawn.cwd || '') &&
-        String(paneLabel(a) || '').trim() === label);
-      return same.length === 1 ? same[0] : null;
-    }
-
-    // Option C, and the other half of convRespawnAdopt: the press itself is written down, so the
-    // adoption happens on the first snapshot after a reload rather than waiting for the reader to
-    // press Start again a second time. sessionStorage, not localStorage — this is about one tab
-    // coming back, and a second tab must not act on a start it never made.
-    //
-    // ponytail: only the respawn path is remembered. A swap begun from the Start dialog loses its
-    // binding the same way; record it here too if anyone hits that one.
-    const CONV_RESPAWN_KEY = 'herdr_conv_respawn';
-    const CONV_RESPAWN_MS = 120000;
-
-    function rememberConvRespawn(conv, key) {
-      try {
-        sessionStorage.setItem(CONV_RESPAWN_KEY,
-                               JSON.stringify({conv: conv, key: key, at: Date.now()}));
-      } catch (e) { /* private mode: this tab only, which is all this was for */ }
-    }
-
-    function forgetConvRespawn() {
-      try { sessionStorage.removeItem(CONV_RESPAWN_KEY); } catch (e) { /* nothing to forget */ }
-    }
-
-    // Called on every snapshot. Everything it needs is a fact on disk — which conversation, which
-    // member, and what that member was started as — so it survives the tab that pressed the button
-    // going away entirely.
-    async function convResumeRespawn() {
-      if (!agents.length || typeof convGet !== 'function') return;
-      let held = null;
-      try { held = JSON.parse(sessionStorage.getItem(CONV_RESPAWN_KEY) || 'null'); }
-      catch (e) { held = null; }
-      if (!held || !held.key) return;
-      // A start that never came up must not adopt whatever is running an hour later.
-      if (Date.now() - (held.at || 0) > CONV_RESPAWN_MS) { forgetConvRespawn(); return; }
-      const conv = loadConvIndex().find(c => c.id === held.conv);
-      if (!conv) { forgetConvRespawn(); return; }
-      const rec = (await convGet([held.key]).catch(() => []))[0];
-      const back = rec && convRespawnAdopt(rec);
-      // No candidate yet is not a failure — the pane may still be starting. Left for the next
-      // snapshot, and dropped by the deadline above if it never arrives.
-      if (!back) return;
-      forgetConvRespawn();
-      startIntent = { conv: conv.id, replace: held.key };
-      startPrompt = '';
-      startStarter = ((rec || {}).spawn || {}).starter || '';
-      pendingStart = back.pane_id;
-      showSpawnStatus(`"${paneLabel(back)}" was already running — continued in "${conv.name}".`,
-                      'success');
-      openPendingStart();
-    }
-
     function convRespawn(key) {
       const conv = loadConvIndex().find(c => c.id === convViewId);
       const rec = convViewRecs.find(r => r.key === key);
       const spawn = rec && rec.spawn;
       if (!ws || !conv || !canRespawn(spawn)) return;
-      // Already running, so this is a succession that lost its answer rather than a start. The
-      // same intent is set and the landing path runs on the pane that is there — transcript
-      // carried across, pair repointed, thread opened — with no second agent started.
-      //
-      // No opening prompt. It would arrive at an agent that has been working for however long the
-      // reload took, as an instruction nobody typed just now; the reader is at the thread and can
-      // say what they want said.
-      const back = convRespawnAdopt(rec);
-      if (back) {
-        forgetConvRespawn();
-        startIntent = { conv: conv.id, replace: key };
-        startPrompt = '';
-        startStarter = (spawn || {}).starter || '';
-        pendingStart = back.pane_id;
-        showSpawnStatus(`"${paneLabel(back)}" is already running — continuing "${conv.name}".`,
-                        'busy');
-        openPendingStart();
-        return;
-      }
       // herdr recycles workspace IDs, so a stale one cannot be trusted to name the workspace the
       // session was in. New tab only where that workspace is live on that host right now.
       const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
@@ -1070,9 +972,6 @@
       // any number of times without the answer wearing away.
       startStarter = (starter || {}).at || NO_STARTER;
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
-      // Before the send, not after: the answer is what a reload loses, so the note has to be on
-      // disk by the time there is anything to lose.
-      rememberConvRespawn(conv.id, key);
       ws.send(JSON.stringify(msg));
     }
 
