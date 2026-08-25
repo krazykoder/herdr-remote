@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 import herdr_relay  # noqa: E402
+import start_agent  # noqa: E402
 from start_agent import SPACER_LABEL  # noqa: E402
 
 
@@ -270,6 +271,24 @@ class AgentInitTests(unittest.TestCase):
         with patch.object(herdr_relay, "submit_init_line", new=send):
             asyncio.run(herdr_relay.drain_init(pane_id, **kw))
         return sent
+
+    def test_agy_is_woken_at_the_start_rather_than_queued_behind_a_prompt(self):
+        # The opposite order to kiro's, and for the opposite reason: kiro's line is a grant that
+        # follows the work, agy's is the question the empty first answer belongs to.
+        sent = []
+        async def send(pane, line, remote=None):
+            sent.append((pane, line))
+            return True
+        with patch.object(herdr_relay, "submit_init_line", new=send), \
+             patch.object(herdr_relay, "on_loop", new=lambda coro, wait=False: asyncio.run(coro)):
+            herdr_relay.agent_wake_exec("w1:p1", "agy", None)
+        self.assertEqual(sent, [("w1:p1", start_agent.WARMUP_TEXT)])
+        self.assertEqual(herdr_relay.init_pending, {})
+
+    def test_a_kind_with_no_wake_up_is_sent_nothing(self):
+        with patch.object(herdr_relay, "submit_init_line",
+                          side_effect=AssertionError("nothing to send")):
+            herdr_relay.agent_wake_exec("w1:p1", "kiro", None)
 
     def test_a_start_queues_the_line_rather_than_typing_it(self):
         herdr_relay.agent_init_queue("w1:p1", "kiro", None)

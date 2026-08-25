@@ -29,6 +29,7 @@ from start_agent import (
     SPACER_LABEL,
     StartAgentConfigError,
     agent_init_prompts,
+    agent_wake_prompts,
     agent_name_from_label,
     agent_start_args,
     unattended_kinds,
@@ -1755,6 +1756,11 @@ def start_agent_exec(plan):
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
 
+    # The wake-up, for a kind that needs one. Typed here, so it is in front of whatever the client
+    # opens the pane with — that is the whole point of it: a first prompt into a cold agy is
+    # answered with nothing, and this is the message that answer belongs to.
+    agent_wake_exec(pane_id, plan["name"], remote)
+
     # Queued, not typed: these lines follow the pane's first prompt rather than leading it. See
     # agent_init_queue. Never fatal for the same reason the width below is not — an agent that is
     # up and asking for permission is worth more than no agent, and a person can type the line
@@ -1769,6 +1775,24 @@ def start_agent_exec(plan):
             log.warning("Agent started as %s but slot %r was not applied: %s",
                         pane_id, plan["slot"], slot_err)
     return pane_id, None
+
+
+def agent_wake_exec(pane_id, kind, remote):
+    """Wake this kind's agent before anyone asks it for anything. Never fatal.
+
+    agy is the only kind with one today, and it is the same line arbitration warms a member with —
+    one wording, so an agent woken at start and an agent woken on resume are asked the same
+    question. Sent through the same one-press path a kind's init lines use: what matters is that
+    the pane has been spoken to before the prompt lands, not that it has answered.
+    """
+    for line in agent_wake_prompts(kind):
+        try:
+            if not on_loop(submit_init_line(pane_id, line, remote=remote), wait=True):
+                log.warning("Agent started as %s but its wake-up was not sent: a menu was on "
+                            "screen", pane_id)
+        except Exception as e:
+            log.warning("Agent started as %s but its wake-up was not delivered: %r", pane_id, e)
+            return
 
 
 def agent_init_queue(pane_id, kind, remote):

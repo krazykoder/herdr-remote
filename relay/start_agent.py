@@ -36,6 +36,17 @@ AGENT_ARGS = {"agy": ("--dangerously-skip-permissions",)}
 # side and per kind for the same reason AGENT_ARGS is: a client that could name the first prompt
 # could name any first prompt.
 AGENT_INIT = {"kiro": ("/tools trust-all",)}
+# What a cold agent is asked before it is asked to work, and which kinds are asked it at start.
+#
+# A first prompt into an agent that has been sitting idle — and a pane that has just come up is as
+# cold as an agent gets — is often answered with nothing at all: the harness wakes, redraws, and
+# the turn ends with no reply. agy does that reliably enough to have been arbitration's default
+# since it existed; this is the same line, sent at every agy start rather than only inside a
+# session. Its own message, before whatever the pane is opened with, so the reply that is nothing
+# belongs to a question that was asking for nothing.
+WARMUP_TEXT = ("Hi — are you ready for work? I will send you instructions shortly. "
+               "Reply with one short line and do nothing else.")
+AGENT_WAKE = {"agy": (WARMUP_TEXT,)}
 # Argv that turns a harness's own approval prompts off, asked for per start rather than baked into
 # the kind the way AGENT_ARGS is. The flag differs per harness and both are the vendor's own; what
 # the client sends is `unattended`, and which argv that becomes is decided here — a client that
@@ -513,6 +524,11 @@ def unattended_kinds():
 def agent_init_prompts(kind):
     """The lines this kind needs typed at it once it is up. Empty for every kind that needs none."""
     return list(AGENT_INIT.get(kind) or ())
+
+
+def agent_wake_prompts(kind):
+    """The lines this kind is woken with, before whatever it is opened with. Usually none."""
+    return list(AGENT_WAKE.get(kind) or ())
 
 
 def pane_rename_args(pane_id, label):
