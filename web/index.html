@@ -2723,6 +2723,56 @@
       font-size: 0.75rem;
     }
 
+    /* The landing page's own search, fixed to the foot. Not a sheet: it has no way in and no way
+       out, it is simply there while the landing page is, so it is styled as a bar rather than as a
+       dialog. The results grow upwards out of it and are capped at half the screen, because the
+       thing being searched for is behind them. */
+    .landing-search {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 90;
+      /* The page is centred and capped at 1100px on a wide screen; a fixed bar is out of that flow
+         and would run the full window unless it is given the same cap and centred itself. */
+      max-width: 1100px;
+      margin-inline: auto;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .landing-search input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+    }
+
+    .landing-search input:focus {
+      outline: none;
+      border-color: var(--blue);
+    }
+
+    /* Its own scroller above the box. The rows are the picker's, so a pane found here looks like
+       the same pane found anywhere else. */
+    .landing-search-results {
+      max-height: 50vh;
+      overflow-y: auto;
+      margin: -8px -12px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Room for the bar, or the last card on the page is behind it and unreachable. */
+    body.landing-search #agentListView {
+      padding-bottom: 60px;
+    }
+
     /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
        is a real choice, not a disabled one. */
     .pair-pick.past {
@@ -7247,6 +7297,9 @@
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
         to stay on.</div>
+      <label class="toggle-option"><input type="checkbox" id="landingSearchOn" onchange="setLandingSearch(this.checked)"> Search bar at the foot of the page</label>
+      <div class="hint">Searches every pane and every conversation by name, including the ones
+        behind the Auto and Archive modes.</div>
       <!-- The launcher's own tiles are reachable from its section header too. Here as well because
            an install whose stored order predates the launcher has that section switched off — and
            the first tile saved is what switches it back on, so there has to be somewhere to save
@@ -7401,6 +7454,17 @@
     <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
     <div class="conversations" id="conversations" style="display:none"></div>
+  </div>
+
+  <!-- Fixed to the foot of the landing page, hidden everywhere else — see syncLandingSearch. The
+       results sit above the box rather than below it, so the finger that is typing is not on top
+       of what it is looking for. -->
+  <div class="landing-search" id="landingSearch" hidden>
+    <div class="landing-search-results" id="landingSearchResults" hidden></div>
+    <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
+           aria-label="Search panes and conversations" autocomplete="off"
+           autocorrect="off" autocapitalize="none" spellcheck="false"
+           oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)" />
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
@@ -8352,6 +8416,7 @@
   <script src="src/pane_picker.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
+  <script src="src/landing_search.js"></script>
   <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
   <script src="src/arbitration.js"></script>

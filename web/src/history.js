@@ -211,8 +211,9 @@
       });
       syncBackLabel();
       // The section shortcuts belong to the landing page, and this is the one call every view
-      // change already makes.
+      // change already makes. The search bar at its foot is landing-only for the same reason.
       renderSectionTabs();
+      if (typeof syncLandingSearch === 'function') syncLandingSearch();
     }
 
     // The pane header always exits to the list; only the status-bar arrows walk history.
