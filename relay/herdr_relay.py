@@ -165,6 +165,12 @@ SEND_SETTLE_MAX = 0.9
 # blocked agent is showing is a permission prompt and Enter accepts its default. That is the whole
 # reason this verifies rather than simply pressing twice and hoping.
 SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something to submit
+# A pane herdr can say anything at all about: the agent is up, whatever it is doing. What a line
+# typed at a starting TUI needs to wait for — see pane_ready.
+SUBMIT_STARTED = ("idle", "done", "working", "blocked")
+INIT_READY_WAIT_S = 30              # how long a starting TUI is given to report a status
+INIT_READY_POLL = 0.5
+INIT_SETTLE_S = 2.0                 # ...and to finish painting once it has
 SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
@@ -1525,15 +1531,40 @@ async def submit_init_line(pane_id, line, remote=None):
     for a status change that cannot come and then reports a line that landed as unsent — eight
     seconds of every kiro start, and a warning in the log saying the opposite of what happened.
 
+    What it does keep from submit_paste is the wait in front: `agent start` returns when herdr says
+    the agent is interactively ready, and a TUI that is ready is not necessarily listening —
+    antigravity spends seconds after that painting its first frame, and everything typed into it
+    goes nowhere. So the pane is watched until herdr gives it a status at all, and then left a beat
+    longer. Without it agy's wake-up was typed into a screen that was still drawing itself.
+
     The one thing still worth checking is the one submit_paste checks first: a menu on screen eats
     the text and the Enter behind it answers the menu.
     """
+    if not await pane_ready(pane_id, remote=remote):
+        log.warning("Pane %s never reported a status; %r goes out anyway", pane_id, line)
     if await pane_menu_options(pane_id, remote=remote):
         return False
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, line, remote=remote)
     await asyncio.sleep(submit_settle(line))
     await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
     return True
+
+
+async def pane_ready(pane_id, remote=None):
+    """Wait for a just-started TUI to be listening. Returns whether it said so before the deadline.
+
+    Two waits, because they answer different questions. herdr's status is the pane's own answer to
+    "is there an agent here yet" — `unknown` and `` both mean not yet, exactly as submit_paste
+    reads them. INIT_SETTLE_S is the part herdr cannot answer: a harness that has reported itself
+    is still painting, and antigravity in particular drops whatever arrives while it does.
+    """
+    deadline = time.monotonic() + INIT_READY_WAIT_S
+    while time.monotonic() < deadline:
+        if await asyncio.to_thread(pane_agent_status, pane_id, remote=remote) in SUBMIT_STARTED:
+            await asyncio.sleep(INIT_SETTLE_S)
+            return True
+        await asyncio.sleep(INIT_READY_POLL)
+    return False
 
 
 async def submit_paste(pane_id, text, remote=None, out=None):
@@ -1566,6 +1597,11 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
     "still starting" and waits out to the timeout, leaving the command unentered at the prompt.
     """
+    # A pane this relay started a moment ago gets the same wait its own opening lines get: `agent
+    # start` returns on herdr's readiness, and a TUI that is ready is not always listening yet.
+    # Only inside that window — an ordinary send must not pay a status call and two seconds.
+    if spawn_menu_pending(pane_id, time.monotonic()):
+        await pane_ready(pane_id, remote=remote)
     # Nothing is typed at a pane showing a menu. See pane_menu_options: the text would be eaten by
     # the modal and the Enter would answer it.
     if await pane_menu_options(pane_id, remote=remote):

@@ -272,6 +272,23 @@ class AgentInitTests(unittest.TestCase):
             asyncio.run(herdr_relay.drain_init(pane_id, **kw))
         return sent
 
+    def test_a_starting_pane_is_waited_for_before_anything_is_typed(self):
+        # `agent start` returns on herdr's readiness and antigravity spends seconds after that
+        # painting its first frame. Everything typed into it in the meantime is dropped, which is
+        # how agy came up having been sent two messages and holding neither.
+        seen = ["", "unknown", "idle"]
+        with patch.object(herdr_relay, "pane_agent_status", side_effect=lambda *a, **k: seen.pop(0)), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0), \
+             patch.object(herdr_relay, "INIT_SETTLE_S", 0):
+            self.assertTrue(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+        self.assertEqual(seen, [])
+
+    def test_a_pane_that_never_reports_one_is_given_up_on_rather_than_waited_on_for_ever(self):
+        with patch.object(herdr_relay, "pane_agent_status", return_value=""), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0), \
+             patch.object(herdr_relay, "INIT_READY_WAIT_S", 0.01):
+            self.assertFalse(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+
     def test_agy_is_woken_at_the_start_rather_than_queued_behind_a_prompt(self):
         # The opposite order to kiro's, and for the opposite reason: kiro's line is a grant that
         # follows the work, agy's is the question the empty first answer belongs to.
