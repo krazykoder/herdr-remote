@@ -43,7 +43,7 @@ class SubmitPaste(unittest.TestCase):
             self.addCleanup(p.stop)
         self.calls = []
 
-    def run_paste(self, statuses, text="hello", shell=False, agent=None):
+    def run_paste(self, statuses, text="hello", shell=False, agent=None, out=None):
         """Drive one submit_paste over a scripted sequence of pane statuses.
 
         The last entry repeats once the script runs out, which is how "and it stays that way" is
@@ -69,7 +69,7 @@ class SubmitPaste(unittest.TestCase):
              patch.object(herdr_relay, "shell_panes", shells), \
              patch.object(herdr_relay, "agent_cache", cache), \
              patch.object(herdr_relay, "run_herdr", herdr):
-            took = asyncio.run(herdr_relay.submit_paste("w1:p1", text))
+            took = asyncio.run(herdr_relay.submit_paste("w1:p1", text, out=out))
         return took
 
     def enters(self):
@@ -101,8 +101,21 @@ class SubmitPaste(unittest.TestCase):
         # `/quit` and `exit` end the pane, and a pane herdr no longer lists is proof the text ran.
         # Read as "still starting" this cost the full window — 45s for agy — and every later
         # message from that browser waited behind it, which is what made Start again feel slow.
-        self.assertTrue(self.run_paste(["idle", herdr_relay.PANE_GONE]))
-        self.assertEqual(len(self.enters()), 1)
+        for line in herdr_relay.CLOSING_LINES:
+            with self.subTest(line=line):
+                self.calls = []
+                self.assertTrue(self.run_paste(["idle", herdr_relay.PANE_GONE], text=line))
+                self.assertEqual(len(self.enters()), 1)
+
+    def test_a_pane_that_has_gone_under_an_ordinary_prompt_did_not_take_it(self):
+        # The other half, and the one that matters to the record: a harness that died holding the
+        # prompt looks exactly like one that quit on purpose. Only the two closing lines are proof
+        # of delivery; anything else is a send nobody read, and saying otherwise would put a turn
+        # in the conversation log that never happened.
+        out = {}
+        self.assertFalse(self.run_paste(["idle", herdr_relay.PANE_GONE],
+                                        text="write the tests", out=out))
+        self.assertEqual(out.get("reason"), "pane_gone")
 
     def test_a_pane_that_swallowed_the_first_enter_is_pressed_again(self):
         # The paste-layout case: the pane is up and idle, the Enter went into a composer still

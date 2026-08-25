@@ -729,6 +729,12 @@
           showToast(`${where} is waiting on a prompt — answer it and this goes in behind it.`,
                     'info');
         }
+        // Gone, not silent. The relay watched the pane vanish under this text, so there is nobody
+        // left to check with and nothing was delivered — "check the pane" would send the reader to
+        // a pane that is not there.
+        else if (msg.reason === 'pane_gone') {
+          showToast(`${where} closed before it took that — nothing was delivered.`);
+        }
         else showToast(`That pane did not confirm the send — check ${where}.`);
       }
       else if (msg.type === 'command_result' &&

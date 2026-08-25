@@ -289,6 +289,21 @@ class AgentInitTests(unittest.TestCase):
              patch.object(herdr_relay, "INIT_READY_WAIT_S", 0.01):
             self.assertFalse(asyncio.run(herdr_relay.pane_ready("w1:p1")))
 
+    def test_a_pane_that_has_exited_is_not_waited_on_at_all(self):
+        # A pane herdr no longer lists is never going to report a status, so the full
+        # INIT_READY_WAIT_S is spent watching nothing — with the client's next message queued
+        # behind it, since one connection is handled a message at a time.
+        calls = []
+
+        def status(pane_id, remote=None):
+            calls.append(pane_id)
+            return herdr_relay.PANE_GONE
+
+        with patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0):
+            self.assertFalse(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+        self.assertEqual(calls, ["w1:p1"], "one look is enough — the pane is gone")
+
     def test_agy_is_woken_at_the_start_rather_than_queued_behind_a_prompt(self):
         # The opposite order to kiro's, and for the opposite reason: kiro's line is a grant that
         # follows the work, agy's is the question the empty first answer belongs to.

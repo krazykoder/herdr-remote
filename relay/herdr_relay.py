@@ -170,8 +170,13 @@ SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something t
 SUBMIT_STARTED = ("idle", "done", "working", "blocked")
 # herdr listed its panes and this one was not there — it has exited. Distinct from "" (the call
 # failed) and from `unknown` (listed, no agent yet), because those two mean wait and this one means
-# stop: the text that closed the pane is the last thing it will ever take.
+# stop: whatever this pane was going to do with the text, it is not going to do it now.
 PANE_GONE = "gone"
+# The two lines whose whole purpose is to close the pane, so a pane that has gone is the proof they
+# landed. Everything else that arrives at a vanished pane is a send that failed: an agent that
+# crashed on the prompt looks identical from here, and reporting that as delivered would put a turn
+# in the record that no agent ever read.
+CLOSING_LINES = ("/quit", "exit")
 INIT_READY_WAIT_S = 30              # how long a starting TUI is given to report a status
 INIT_READY_POLL = 0.5
 INIT_SETTLE_S = 2.0                 # ...and to finish painting once it has
@@ -1644,12 +1649,20 @@ async def submit_paste(pane_id, text, remote=None, out=None):
                 out["reason"] = "queued"
             return False
         first = False
-        # The pane is gone, which for the two things that close one — `/quit` and `exit` — is the
-        # proof itself. Watched for as long as anything else before this: a dying pane reports no
-        # status, the loop read that as a TUI still starting, and every End cost the full window
-        # while the client's next message waited behind it.
+        # The pane is gone. For the two lines that close one — `/quit` and `exit` — that is the
+        # proof itself, and watching further is watching a pane that no longer exists: a dying pane
+        # reports no status, this loop read that as a TUI still starting, and every End cost the
+        # full window while the client's next message waited behind it.
+        #
+        # For anything else it is the opposite news. A pane that vanished under an ordinary prompt
+        # is a harness that died holding it, and there is nobody left to have read it — so it is a
+        # failure with its own reason rather than a send to keep watching or to record.
         if status == PANE_GONE:
-            return True
+            if text.strip() in CLOSING_LINES:
+                return True
+            if out is not None:
+                out["reason"] = "pane_gone"
+            return False
         if status in SUBMIT_TOOK:
             return True
         # Out of presses is not out of patience. The presses are spent in under two seconds, and
@@ -2989,6 +3002,15 @@ async def handle_client(ws, listener="lan"):
                             "type": "command_result", "command": "send_text", "ok": True,
                             "pending": False, "pane_id": pane_id,
                             "message": "the pane took it"}))
+                    elif out.get("reason") == "pane_gone":
+                        # No pending watcher and no record: the pane closed under this text, so
+                        # there is nothing left to confirm it and nobody who read it. Told plainly,
+                        # because the client's own composer still holds the words.
+                        refused = True
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": False,
+                            "pending": False, "pane_id": pane_id, "reason": "pane_gone",
+                            "message": "the pane closed before it took this"}))
                     elif out.get("reason") == "menu":
                         # Never sent, so never recorded and never watched: the text is still in the
                         # client's hands and the pane is at a question that has to be answered
