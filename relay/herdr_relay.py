@@ -168,6 +168,10 @@ SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something t
 # A pane herdr can say anything at all about: the agent is up, whatever it is doing. What a line
 # typed at a starting TUI needs to wait for — see pane_ready.
 SUBMIT_STARTED = ("idle", "done", "working", "blocked")
+# herdr listed its panes and this one was not there — it has exited. Distinct from "" (the call
+# failed) and from `unknown` (listed, no agent yet), because those two mean wait and this one means
+# stop: the text that closed the pane is the last thing it will ever take.
+PANE_GONE = "gone"
 INIT_READY_WAIT_S = 30              # how long a starting TUI is given to report a status
 INIT_READY_POLL = 0.5
 INIT_SETTLE_S = 2.0                 # ...and to finish painting once it has
@@ -1434,8 +1438,13 @@ def pane_agent_status(pane_id, remote=None):
 
     Two spellings mean "herdr does not know", and the caller must treat them alike: `unknown`,
     which is what a real `pane list` returns for a pane carrying no agent — including the case that
-    matters, an agent that has not finished starting — and an empty string, for a pane herdr did not
-    list at all or a call that failed. Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
+    matters, an agent that has not finished starting — and an empty string, for a call that failed.
+    Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
+
+    PANE_GONE is the third answer, and it is not a kind of "does not know": herdr listed its panes
+    and this one was not among them. That is a pane that has exited, which is what `/quit` and
+    `exit` are for — so a caller waiting for the pane to take them can stop rather than watch a
+    closed pane for the rest of its window.
     """
     data, err = _herdr_json("pane", "list", remote=remote)
     if err:
@@ -1443,7 +1452,7 @@ def pane_agent_status(pane_id, remote=None):
     for p in dig_panes(data):
         if p.get("pane_id") == pane_id:
             return p.get("agent_status") or ""
-    return ""
+    return PANE_GONE
 
 
 def live_panes():
@@ -1560,7 +1569,10 @@ async def pane_ready(pane_id, remote=None):
     """
     deadline = time.monotonic() + INIT_READY_WAIT_S
     while time.monotonic() < deadline:
-        if await asyncio.to_thread(pane_agent_status, pane_id, remote=remote) in SUBMIT_STARTED:
+        status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
+        if status == PANE_GONE:
+            return False
+        if status in SUBMIT_STARTED:
             await asyncio.sleep(INIT_SETTLE_S)
             return True
         await asyncio.sleep(INIT_READY_POLL)
@@ -1632,6 +1644,12 @@ async def submit_paste(pane_id, text, remote=None, out=None):
                 out["reason"] = "queued"
             return False
         first = False
+        # The pane is gone, which for the two things that close one — `/quit` and `exit` — is the
+        # proof itself. Watched for as long as anything else before this: a dying pane reports no
+        # status, the loop read that as a TUI still starting, and every End cost the full window
+        # while the client's next message waited behind it.
+        if status == PANE_GONE:
+            return True
         if status in SUBMIT_TOOK:
             return True
         # Out of presses is not out of patience. The presses are spent in under two seconds, and

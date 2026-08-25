@@ -97,6 +97,13 @@ class SubmitPaste(unittest.TestCase):
         self.assertTrue(self.run_paste(["", "", "idle", "working"]))
         self.assertEqual(len(self.enters()), 1)
 
+    def test_a_pane_that_has_gone_took_what_closed_it(self):
+        # `/quit` and `exit` end the pane, and a pane herdr no longer lists is proof the text ran.
+        # Read as "still starting" this cost the full window — 45s for agy — and every later
+        # message from that browser waited behind it, which is what made Start again feel slow.
+        self.assertTrue(self.run_paste(["idle", herdr_relay.PANE_GONE]))
+        self.assertEqual(len(self.enters()), 1)
+
     def test_a_pane_that_swallowed_the_first_enter_is_pressed_again(self):
         # The paste-layout case: the pane is up and idle, the Enter went into a composer still
         # redrawing itself, and nothing happened. One more press is the whole fix.
