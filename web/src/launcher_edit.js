@@ -162,6 +162,7 @@
           + `<span class="ql-part-name">${escapeHtml(m.label || m.name)}</span>`
           + configBadge(m.name, m.config)
           + (starter ? `<span class="ql-part-role">@${escapeHtml(starter)}</span>` : '')
+          + launcherUnattendedHtml(m, '', true)
           + '</span>';
       }).join('') + '</div>';
     }
@@ -616,13 +617,22 @@
         // different answers, and the tile is where a roster is written down. Only for the kinds a
         // relay has a flag for — see UNATTENDED_ARGS; the rest are drawn without it rather than
         // with a control that would refuse the start.
-        + (launcherUnattendedOffered(m.name)
-          ? `<label class="ql-solo"><input type="checkbox" id="qlSolo${i}"`
-            + `${launcherUnattended(m) ? ' checked' : ''}`
-            + ` aria-label="Start ${escapeHtml(m.name)} without approval prompts" />`
-            + '<span>Skip approvals — it runs tools without asking</span></label>'
-          : '')
+        + launcherUnattendedHtml(m, 'qlSolo' + i)
         + '</div>';
+    }
+
+    // One rendering for the editable member card and the read-only launch sheet. The latter is
+    // deliberately a disabled native checkbox: the tile's saved answer is visible but cannot be
+    // changed while confirming a launch.
+    function launcherUnattendedHtml(m, id, readOnly) {
+      if (!launcherUnattendedOffered(m.name)) return '';
+      const checked = launcherUnattended(m) ? ' checked' : '';
+      const disabled = readOnly ? ' disabled' : '';
+      const ident = id ? ` id="${id}"` : '';
+      return `<label class="ql-solo${readOnly ? ' ql-solo-readonly' : ''}">`
+        + `<input type="checkbox"${ident}${checked}${disabled}`
+        + ` aria-label="Start ${escapeHtml(m.name)} without approval prompts" />`
+        + '<span>Skip approvals</span></label>';
     }
 
     // The relay says which harnesses it can start this way. An older relay says nothing, and then

@@ -85,7 +85,8 @@
       // so a session can be started as a Reviewer today, and the day someone writes the text every
       // tile and every record naming it opens with it, with no migration. `promptChips` is what
       // keeps them out of the composer until then — a chip that types nothing is a dead control.
-      { at: 'architect-prompt', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+      { at: 'architect-prompt', label: 'Architect prompt',
+        text: '/ponytail\n/caveman\n\nRead Instructions here: @.agent/prompts/System_Prompt_2_Architect.md\nThen wait for tasks to work on.' },
       { at: 'reviewer-prompt', label: 'Reviewer prompt', text: '' },
       { at: 'implementer-prompt', label: 'Implementer prompt', text: '' },
       { at: 'arbitrator-prompt', label: 'Arbitrator prompt', text: '' },

@@ -1382,7 +1382,8 @@
       gap: 10px;
       align-items: center;
       font-size: 0.75rem;
-      line-height: 1.35;
+      line-height: 1;
+      white-space: nowrap;
       color: var(--muted);
     }
 
@@ -1622,6 +1623,11 @@
       min-width: 0;
     }
 
+    /* The member card's field rule above is intentionally full-width; do not let it turn this
+       switch into a full-width input. */
+    .ql-member .ql-solo { flex: 1 1 100%; }
+    .ql-member .ql-solo input { flex: 0 0 auto; min-width: 0; }
+
     /* The arbitration block, borrowed whole: `arb-form` is what lays out the role picker, the
        folded clocks and the checkbox, so the launcher wears it rather than restating it. Only the
        frame is changed — inside the tile editor it is a panel, not the top of a panel. */
@@ -1722,6 +1728,16 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    /* The launch sheet repeats the saved setting without permitting a last-second mutation. */
+    .ql-part .ql-solo {
+      margin: 0 0 0 2px;
+      gap: 4px;
+      font-size: 0.62rem;
+    }
+
+    .ql-solo-readonly { cursor: default; }
+    .ql-solo-readonly input { cursor: default; opacity: 1; }
 
     /* Which of the two slots this is. Quieter than the name beside it — the name is what the
        reader is looking for, the slot is only what tells the two role fields apart. */
@@ -7877,7 +7893,7 @@
                running. -->
           <label class="start-field start-check" id="startUnattendedRow" style="display:none">
             <input type="checkbox" id="startUnattended" onchange="pickStartUnattended(this.checked)" />
-            <span>Skip approvals <span class="field-note">it runs tools without asking</span></span>
+            <span>Skip approvals</span>
           </label>
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
@@ -8038,7 +8054,7 @@
              fact about the agent, and only claude and codex have a flag for it. -->
         <label class="start-field start-check" id="newAgentUnattendedRow" style="display:none">
           <input type="checkbox" id="newAgentUnattended" onchange="pickNewAgentUnattended(this.checked)" />
-          <span>Skip approvals <span class="field-note">it runs tools without asking</span></span>
+          <span>Skip approvals</span>
         </label>
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>

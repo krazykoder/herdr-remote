@@ -520,6 +520,22 @@ test('End on a conversation card takes two taps and quits every live member', as
   expect(await page.evaluate(() => loadConvIndex().length)).toBe(1);
 });
 
+test('End on a conversation member takes two taps and quits that member', async ({page}) => {
+  const sent = [];
+  await openCard(page);
+  await page.exposeFunction('__noteMemberEnd', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __noteMemberEnd(JSON.parse(data)); } catch (e) {} return real(data); };
+  });
+  const end = page.locator('#convViewRoster .conv-roster-row .conv-end');
+  await end.click();
+  await expect(end).toHaveText('End?');
+  await end.click();
+  await expect.poll(() => sent.filter(m => m.type === 'send_text' && m.text === '/quit'))
+    .not.toHaveLength(0);
+});
+
 test('an arm that expires puts the word back on the button that is on screen', async ({page}) => {
   await openCard(page);
   await page.locator('#convView .back').click();

@@ -324,6 +324,15 @@ test('a member on a config starts unattended, a stock one does not, and either c
   ]);
 });
 
+test('the launch sheet repeats each eligible member’s saved approval setting', () => {
+  const e = editor({tiles: [spawnTile({members: [
+    {name: 'claude', config: 'oclaude'}, {name: 'codex'},
+  ]})]});
+  e.run('launcherLaunchSheet(loadLauncher()[0])');
+  assert.match(e.body(), /class="ql-solo ql-solo-readonly"><input type="checkbox" checked disabled/);
+  assert.match(e.body(), /class="ql-solo ql-solo-readonly"><input type="checkbox" disabled/);
+});
+
 test('no checkbox is drawn for a harness the relay has no flag for', () => {
   // pi and kiro have none. A box drawn there would be a start refused on arrival.
   const e = editor({startOptions: Object.assign({}, OPTIONS, {agents: ['pi'], unattended: []})});

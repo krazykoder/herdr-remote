@@ -584,6 +584,8 @@ test('an opening prompt is written the way the harness under it reads', () => {
   assert.match(roleStarter(startRoleOf('architect'), 'codex'), /^\$ponytail/m);
   assert.match(roleStarter(startRoleOf('architect'), 'codex'), /^\$caveman/m);
   assert.match(roleStarter(startRoleOf('architect'), 'claude'), /^\/ponytail/m);
+  assert.match(roleStarter(startRoleOf('architect')), /Read Instructions here: @\.agent\/prompts\/System_Prompt_2_Architect\.md/);
+  assert.match(roleStarter(startRoleOf('architect')), /Then wait for tasks to work on\.$/);
   // No harness named is the two callers that ask only whether a starter has text at all.
   assert.match(roleStarter(startRoleOf('architect')), /^\/ponytail/m);
 });
