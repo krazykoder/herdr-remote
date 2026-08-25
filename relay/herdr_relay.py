@@ -926,6 +926,12 @@ pane_config = {}
 SPAWN_WATCH_S = 90
 spawn_watch = {}  # pane_id -> monotonic deadline
 
+# A kind's own opening lines wait this long for a first prompt to follow before they are sent on
+# their own. Long enough for a client to start a pane and then type into it, short enough that a
+# pane nobody prompts is still trusted while the person who started it is still looking at it.
+INIT_AFTER_WAIT_S = 45
+init_pending = {}  # pane_id -> (monotonic deadline, [line], remote)
+
 
 def spawn_menu_pending(pane_id, now):
     """Is this pane still inside its post-start window? Expired entries are dropped as they are
@@ -1735,10 +1741,11 @@ def start_agent_exec(plan):
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
 
-    # Before the width, because it is what makes the agent usable at all — and never fatal for the
-    # same reason the width is not: an agent that is up and asking for permission is worth more
-    # than no agent, and a person can type the line themselves.
-    agent_init_exec(pane_id, plan["name"], remote)
+    # Queued, not typed: these lines follow the pane's first prompt rather than leading it. See
+    # agent_init_queue. Never fatal for the same reason the width below is not — an agent that is
+    # up and asking for permission is worth more than no agent, and a person can type the line
+    # themselves.
+    agent_init_queue(pane_id, plan["name"], remote)
 
     # Width last, and never fatal. The session is up and usable at whatever width the placement
     # gave it; failing the start here would roll back a working agent over a layout preference.
@@ -1750,25 +1757,47 @@ def start_agent_exec(plan):
     return pane_id, None
 
 
-def agent_init_exec(pane_id, kind, remote):
-    """Type this kind's first prompts into the agent this relay just started. Never fatal.
-
-    `terminal_init_exec`'s opposite number, and it needs none of the waiting that one does:
-    `agent start` has already blocked until herdr saw the agent interactively ready, which is the
-    precondition the shell version has to discover for itself.
+def agent_init_queue(pane_id, kind, remote):
+    """Queue this kind's own first lines behind the first prompt the pane is given.
 
     The lines come from AGENT_INIT, which is server-side and keyed by kind — never from the client
     and never from the label. Most kinds have none.
+
+    Behind the prompt rather than in front of it, which is what kiro wants: a `/tools trust-all`
+    typed into a freshly started kiro is answered by the pane and then the opening prompt lands on
+    top of it, so what the reader sees first is a turn about a slash command. Sent as its own
+    message after the prompt goes in, the pane answers the prompt and takes the grant on the way.
+
+    Nobody has to send that prompt, though — a pane started from the app with nothing to say is a
+    pane that would never be trusted at all. So the queue has a deadline, and the poll drains it
+    when the deadline passes. See init_pending.
     """
-    for line in agent_init_prompts(kind):
+    lines = agent_init_prompts(kind)
+    if lines:
+        init_pending[pane_id] = (time.monotonic() + INIT_AFTER_WAIT_S, lines, remote)
+
+
+async def drain_init(pane_id, now=None):
+    """Type whatever is queued for this pane. Never fatal, and never tried twice.
+
+    Called from two places: the first prompt this relay delivers to the pane, which is what these
+    lines are meant to follow, and the poll once the deadline has passed with no prompt in sight.
+    """
+    queued = init_pending.get(pane_id)
+    if not queued:
+        return
+    deadline, lines, remote = queued
+    if now is not None and now < deadline:
+        return
+    del init_pending[pane_id]
+    for line in lines:
         try:
-            if not on_loop(submit_init_line(pane_id, line, remote=remote), wait=True):
-                log.warning("Agent started as %s but %r was not sent: a menu was on screen",
-                            pane_id, line)
+            if not await submit_init_line(pane_id, line, remote=remote):
+                log.warning("Pane %s was not sent %r: a menu was on screen", pane_id, line)
         except Exception as e:
             # Said out loud rather than raised: this is the difference between an agent that
             # answers and one that sits on a permission prompt nobody can see.
-            log.warning("Agent started as %s but %r was not delivered: %r", pane_id, line, e)
+            log.warning("Pane %s was not sent %r: %r", pane_id, line, e)
             return
 
 
@@ -1889,6 +1918,11 @@ async def _poll_once():
                 first = await asyncio.to_thread(read_pane, a["pane_id"], remote=a.get("remote"))
                 if detect_choices(first):
                     a["status"] = "blocked"
+            # A pane nobody ever prompted. Its kind's opening lines are still owed to it.
+            await drain_init(a["pane_id"], now=time.monotonic())
+        # A pane that closed inside its window is never coming back to be drained.
+        for pid in set(init_pending) - {a["pane_id"] for a in agents}:
+            del init_pending[pid]
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -2910,6 +2944,9 @@ async def handle_client(ws, listener="lan"):
                     await asyncio.sleep(SEND_SETTLE)
                 if not refused:
                     await record_sent(pane_id, text)
+                    # What a kind's own opening lines were waiting for: the pane has been given
+                    # something to work on, and the grant goes in behind it as its own message.
+                    await drain_init(pane_id)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,

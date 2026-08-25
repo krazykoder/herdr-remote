@@ -10,6 +10,7 @@ Blocking herdr calls are faked. What is being tested is the order and content of
 sends, and that a failure anywhere stops the rest — not herdr's behaviour, which the E2E probe
 covers against the real binary.
 """
+import asyncio
 import json
 import sys
 import unittest
@@ -250,17 +251,46 @@ class PaneNotAtItsPromptYetTests(unittest.TestCase):
 
 
 class AgentInitTests(unittest.TestCase):
-    def test_kiro_init_uses_the_confirmed_send_path(self):
-        sent = object()
-        def paste(*args, **kwargs):
-            self.assertEqual(args, ("w1:p1", "/tools trust-all"))
-            self.assertEqual(kwargs, {"remote": None})
-            return sent
+    """A kind's own opening lines wait for the pane's first prompt and then follow it.
 
-        with patch.object(herdr_relay, "submit_paste", new=paste), \
-             patch.object(herdr_relay, "on_loop", return_value=True) as on_loop:
-            herdr_relay.agent_init_exec("w1:p1", "kiro", None)
-        on_loop.assert_called_once_with(sent, wait=True)
+    In front of the prompt they were a turn of their own: kiro answered `/tools trust-all` and the
+    opening prompt landed on top of that answer. Behind it, the pane answers what it was asked and
+    takes the grant on the way.
+    """
+
+    def setUp(self):
+        herdr_relay.init_pending.clear()
+        self.addCleanup(herdr_relay.init_pending.clear)
+
+    def drain(self, pane_id, **kw):
+        sent = []
+        async def send(pane, line, remote=None):
+            sent.append((pane, line, remote))
+            return True
+        with patch.object(herdr_relay, "submit_init_line", new=send):
+            asyncio.run(herdr_relay.drain_init(pane_id, **kw))
+        return sent
+
+    def test_a_start_queues_the_line_rather_than_typing_it(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        self.assertEqual(herdr_relay.init_pending["w1:p1"][1], ["/tools trust-all"])
+
+    def test_a_kind_with_no_opening_line_queues_nothing(self):
+        herdr_relay.agent_init_queue("w1:p1", "claude", None)
+        self.assertEqual(herdr_relay.init_pending, {})
+
+    def test_the_first_prompt_takes_the_queue_with_it(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        self.assertEqual(self.drain("w1:p1"), [("w1:p1", "/tools trust-all", None)])
+        # Once. A second prompt is not a second grant.
+        self.assertEqual(self.drain("w1:p1"), [])
+
+    def test_a_pane_nobody_prompts_is_drained_when_its_deadline_passes(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        deadline = herdr_relay.init_pending["w1:p1"][0]
+        self.assertEqual(self.drain("w1:p1", now=deadline - 1), [])
+        self.assertEqual(self.drain("w1:p1", now=deadline),
+                         [("w1:p1", "/tools trust-all", None)])
 
 
 if __name__ == "__main__":
