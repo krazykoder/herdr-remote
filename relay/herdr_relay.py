@@ -1613,6 +1613,27 @@ async def pane_ready(pane_id, remote=None):
     return False
 
 
+# How many of one client's messages the relay answers at once. Past it the read loop stops reading,
+# which is the backpressure: every handler can spawn a herdr subprocess, and a client is not owed an
+# unbounded number of them.
+HANDLER_INFLIGHT = 8
+
+
+async def run_in_lane(lanes, key, coro):
+    """Run `coro` after everything already queued under `key`, and before anything queued after it.
+
+    The unit is the pane, because that is the unit of dependence — a paste split into chunks, the
+    Enter behind it, the read that checks what landed. `asyncio.Lock` hands itself to waiters in the
+    order they asked, and acquiring it is each task's first await, so a lane preserves the order the
+    messages arrived in. Two lanes have nothing to say to each other and run at the same time.
+    """
+    lock = lanes.get(key)
+    if lock is None:
+        lock = lanes[key] = asyncio.Lock()
+    async with lock:
+        return await coro
+
+
 async def submit_paste(pane_id, text, remote=None, out=None, window=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
@@ -2694,6 +2715,9 @@ async def handle_client(ws, listener="lan"):
     log.info("Client connected: ip=%s device=%s origin=%s", ip, device, origin or "-")
     clients.add(ws)
     connected_at = time.monotonic()
+    # Declared out here because the `finally` waits on them, and a socket can close before the read
+    # loop that fills this is ever reached.
+    inflight = set()
     try:
         # What this client is talking to, before anything it might have to explain. The page is
         # deployed apart from the relay and can be months older than it, so "which versions"
@@ -2729,24 +2753,22 @@ async def handle_client(ws, listener="lan"):
                 "sessions": [(await asyncio.to_thread(arb_session_message, session))["session"]
                              for session in open_sessions],
             }))
-        async for raw in ws:
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            msg_type = msg.get("type")
+        # One message, handled. Lifted out of the read loop so it can be dispatched rather than
+        # awaited — see the decision log for one lane per pane. Everything it closes over, from the
+        # socket to which listener the client came through, is what it closed over inline.
+        async def handle_message(msg, msg_type):
             if msg_type == "respond":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 # Permanent, not a phase gate: SAFE_RESPONSES is a list of agent approval strings,
                 # and sending "yes, single permission" to a shell is meaningless at best.
                 if pane_id in shell_panes:
                     await ws.send(json.dumps({
                         "type": "error", "message": "respond is not available on a terminal pane"}))
-                    continue
+                    return
                 text = msg.get("text", "")
                 # A numbered choice off a pane's own menu — see detect_choices. What goes to the
                 # pane is the digit alone: the label came out of that pane and typing it back is
@@ -2754,7 +2776,7 @@ async def handle_client(ws, listener="lan"):
                 digit = choice_digit(text)
                 if digit is None and text.strip().lower() not in SAFE_RESPONSES:
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 # The allowlist name, not free text: a response is one of SAFE_RESPONSES by the
                 # check above, so this says everything the console needs without echoing input.
@@ -2784,12 +2806,12 @@ async def handle_client(ws, listener="lan"):
                 if not GIT_TRACK:
                     await ws.send(json.dumps({
                         "type": "error", "message": "git_commits: git tracking is off"}))
-                    continue
+                    return
                 try:
                     cwd, remote, first, last = git_range_target(msg)
                 except ValueError as e:
                     await ws.send(json.dumps({"type": "error", "message": f"git_commits: {e}"}))
-                    continue
+                    return
                 found = await asyncio.to_thread(git_probe.commits, cwd, first, last, remote)
                 await ws.send(json.dumps({
                     "type": "git_commits", "cwd": cwd, "host": msg.get("host") or "local",
@@ -2801,7 +2823,7 @@ async def handle_client(ws, listener="lan"):
                 if conv_log is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "conversation log is off"}))
-                    continue
+                    return
                 try:
                     # Off the event loop: resolving a commit is a subprocess, and an ssh round trip
                     # for a directory on another host.
@@ -2816,7 +2838,7 @@ async def handle_client(ws, listener="lan"):
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))
-                    continue
+                    return
                 out_msg = {
                     "type": "conv_log", "truncated": truncated,
                     "turns": [conv_as_wire(r) for r in rows],
@@ -2849,7 +2871,7 @@ async def handle_client(ws, listener="lan"):
                 if arbitration is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "arbitration is off"}))
-                    continue
+                    return
                 if msg_type == "arb_detail":
                     # Answered to the asking client and never broadcast: this is the one
                     # arbitration message that carries prose — an arbitrator's prompt, its
@@ -2870,11 +2892,11 @@ async def handle_client(ws, listener="lan"):
                     except ArbiterError as e:
                         await ws.send(json.dumps({
                             "type": "error", "code": e.code, "message": str(e)}))
-                        continue
+                        return
                     except (KeyError, sqlite3.Error, OSError) as e:
                         await ws.send(json.dumps({"type": "error",
                                                   "message": f"{msg_type}: {e}"}))
-                        continue
+                        return
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
                         # Echoed, so a client can tell a copy with no prose in it from a session
@@ -2885,7 +2907,7 @@ async def handle_client(ws, listener="lan"):
                         # sheet is somebody looking *now*, and what Resume would do is exactly
                         # the thing that changes while a session sits stopped.
                         "plan": {k: v for k, v in plan.items() if k != "prompt_id"}}))
-                    continue
+                    return
                 try:
                     if msg_type == "arb_start":
                         # The relay assigns the id; a client never names one, because every path
@@ -2942,15 +2964,15 @@ async def handle_client(ws, listener="lan"):
                     else:
                         await ws.send(json.dumps({
                             "type": "error", "message": f"unknown message type: {msg_type}"}))
-                        continue
+                        return
                 except ArbiterError as e:
                     log.info("Arbitration %s from %s refused: %s", msg_type, ip, e.code)
                     await ws.send(json.dumps({
                         "type": "error", "code": e.code, "message": str(e)}))
-                    continue
+                    return
                 except (KeyError, sqlite3.Error, OSError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"{msg_type}: {e}"}))
-                    continue
+                    return
                 audit(msg_type, ip, device, session["id"], f"state={session['state']}")
                 await broadcast(await asyncio.to_thread(arb_session_message, session))
             elif msg_type == "read_pane":
@@ -2958,7 +2980,7 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 lines = read_pane_lines(msg.get("lines"))
                 remote = pane_remote_map.get(pane_id)
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
@@ -2984,11 +3006,11 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 keys = msg.get("keys", [])
                 if not all(k in SAFE_KEYS for k in keys):
                     await ws.send(json.dumps({"type": "error", "message": "keys contain disallowed values"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 log.info("Keys from %s (%s): pane=%s keys=%s", ip, device, pane_id, keys)
                 audit("send_keys", ip, device, pane_id, f"keys={keys}")
@@ -2998,23 +3020,23 @@ async def handle_client(ws, listener="lan"):
                 except Exception as e:
                     log.warning("send_keys command failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "send_keys command failed"}))
-                    continue
+                    return
                 if result.returncode != 0:
                     log.warning("send_keys command failed for pane %s with exit %s", pane_id, result.returncode)
                     await ws.send(json.dumps({"type": "error", "message": "send_keys command failed"}))
-                    continue
+                    return
                 await ws.send(json.dumps({"type": "command_result", "command": "send_keys", "ok": True}))
             elif msg_type == "send_text":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 text = msg.get("text", "")
                 # The bound stays — an unbounded write is a real abuse vector.
                 if not text or len(text) > SEND_TEXT_MAX:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 # `submit` asks the relay to submit the text, rather than the client sending its own
                 # `send_keys ["Enter"]` behind this message. Two separate reasons, and both of them
@@ -3130,11 +3152,11 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 label, label_err = validate_pane_label(msg.get("label", ""))
                 if label_err:
                     await ws.send(json.dumps({"type": "error", "message": label_err}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 audit("rename_pane", ip, device, pane_id, f"label={label!r}")
                 try:
@@ -3143,11 +3165,11 @@ async def handle_client(ws, listener="lan"):
                 except Exception as e:
                     log.warning("rename failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
-                    continue
+                    return
                 if result.returncode != 0:
                     log.warning("rename failed for pane %s with exit %s", pane_id, result.returncode)
                     await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
-                    continue
+                    return
                 await ws.send(json.dumps({"type": "command_result", "command": "rename_pane",
                                           "ok": True, "pane_id": pane_id, "label": label}))
             elif msg_type == "set_slot":
@@ -3157,13 +3179,13 @@ async def handle_client(ws, listener="lan"):
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
                 pane_id = msg.get("pane_id", "")
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": pane_err}))
-                    continue
+                    return
                 slot = msg.get("slot")
                 remote = pane_remote_map.get(pane_id)
                 log.info("Set slot from %s (%s): pane=%s slot=%s", ip, device, pane_id, slot)
@@ -3178,13 +3200,13 @@ async def handle_client(ws, listener="lan"):
                 workspace_id = msg.get("workspace_id", "")
                 if not workspace_id:
                     await ws.send(json.dumps({"type": "error", "message": "workspace_id required"}))
-                    continue
+                    return
                 # workspace_id is its own ID space and collides like pane_id does, so it
                 # gets its own guard — the pane ambiguity set says nothing about it (D6).
                 remote, ws_err = resolve_workspace_remote(latest_agents, workspace_id)
                 if ws_err:
                     await ws.send(json.dumps({"type": "error", "message": ws_err}))
-                    continue
+                    return
                 log.info("Create tab from %s (%s): workspace=%s host=%s", ip, device, workspace_id, remote or "local")
                 audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
                 await asyncio.to_thread(
@@ -3200,12 +3222,12 @@ async def handle_client(ws, listener="lan"):
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
                 plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
                 if start_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": start_err}))
-                    continue
+                    return
                 # The config's id has a shape by now; this is where it gets a meaning. Refused
                 # rather than dropped: a start that quietly ignored the config the user picked
                 # would come up on the stock provider under the alias's name.
@@ -3217,7 +3239,7 @@ async def handle_client(ws, listener="lan"):
                         await ws.send(json.dumps({
                             "type": "command_result", "command": "start_agent",
                             "ok": False, "error": config_err}))
-                        continue
+                        return
                     # The only place a secret value is ever read, and it goes straight into the
                     # plan the worker thread types. Never logged, never sent, never stored.
                     plan["env_line"] = export_line(*pair)
@@ -3235,7 +3257,7 @@ async def handle_client(ws, listener="lan"):
                     log.warning("Start agent failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": exec_err}))
-                    continue
+                    return
                 if plan.get("config"):
                     pane_config[pane_id] = plan["config"]
                 spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
@@ -3250,17 +3272,17 @@ async def handle_client(ws, listener="lan"):
                 if not TERMINAL:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": "terminal mode disabled"}))
-                    continue
+                    return
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
                 plan, open_err = validate_open_terminal(
                     msg, PROJECTS, latest_agents + latest_shells)
                 if open_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": open_err}))
-                    continue
+                    return
                 detail = (f"project={plan['project_id']} placement={plan['placement']} "
                           f"host={plan['remote'] or 'local'} label={plan['label']!r}")
                 log.info("Open terminal from %s (%s): %s", ip, device, detail)
@@ -3270,7 +3292,7 @@ async def handle_client(ws, listener="lan"):
                     log.warning("Open terminal failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": exec_err}))
-                    continue
+                    return
                 log.info("Open terminal ok: pane=%s label=%r", pane_id, plan["label"])
                 await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
@@ -3293,7 +3315,7 @@ async def handle_client(ws, listener="lan"):
                 # reason localStorage is still the working copy.
                 if user_state is None:
                     await ws.send(json.dumps({"type": "state", "docs": {}}))
-                    continue
+                    return
                 names = msg.get("names") or list(STATE_DOCS)
                 docs = await asyncio.to_thread(user_state.get, names)
                 await ws.send(json.dumps({"type": "state", "docs": docs}))
@@ -3304,7 +3326,7 @@ async def handle_client(ws, listener="lan"):
                 if user_state is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "state store unavailable"}))
-                    continue
+                    return
                 name, body = msg.get("name", ""), msg.get("body")
                 try:
                     new_rev = await asyncio.to_thread(
@@ -3314,10 +3336,10 @@ async def handle_client(ws, listener="lan"):
                     # round trip to find out what it lost to.
                     await ws.send(json.dumps({"type": "state_conflict", "name": name,
                                               "rev": c.rev, "body": c.body}))
-                    continue
+                    return
                 except ValueError as e:
                     await ws.send(json.dumps({"type": "error", "message": f"state_put: {e}"}))
-                    continue
+                    return
                 audit("state_put", ip, device, "", f"doc={name} rev={new_rev} bytes={len(body)}")
                 await ws.send(json.dumps({"type": "state_ack", "name": name, "rev": new_rev}))
                 await broadcast({"type": "state",
@@ -3338,9 +3360,46 @@ async def handle_client(ws, listener="lan"):
                     "type": "error",
                     "message": f"unknown message type {msg_type!r} — the relay may be older than this client",
                 }))
+
+        # The lanes. One per pane, so two messages about one pane keep their order and two about
+        # different panes do not wait for each other; one shared lane for everything that names no
+        # pane, which keeps a roster's starts sequential without depending on the client to send
+        # them one at a time.
+        lanes = {}
+
+        async def dispatch(msg, msg_type):
+            try:
+                await run_in_lane(lanes, msg.get("pane_id") or "", handle_message(msg, msg_type))
+            except (ConnectionClosedError, ConnectionClosedOK):
+                pass    # the client hung up while its own message was still being answered
+            except Exception:
+                # Inline, this closed the connection. As a task it would be swallowed instead, so
+                # it is logged with its traceback and the socket is left up — one bad message is
+                # not a reason to drop a client mid-session.
+                log.exception("Handling %r from %s (%s) failed", msg_type, ip, device)
+
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            msg_type = msg.get("type")
+            # At the ceiling this stops reading the socket, which is what pushes back on a client
+            # that would otherwise have the relay spawning herdr subprocesses without limit.
+            if len(inflight) >= HANDLER_INFLIGHT:
+                await dispatch(msg, msg_type)
+                continue
+            task = asyncio.create_task(dispatch(msg, msg_type))
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
     except (ConnectionClosedError, ConnectionClosedOK):
         pass
     finally:
+        # Not cancelled: a cancelled submit_paste is a pane that was handed text and never given
+        # its Enter. They finish against a closed socket, which their own handler catches, and
+        # awaiting them here is also what keeps the tasks referenced until they are done.
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
         duration = int(time.monotonic() - connected_at)
         log.info("Client disconnected: ip=%s device=%s duration=%ds", ip, device, duration)
         clients.discard(ws)
