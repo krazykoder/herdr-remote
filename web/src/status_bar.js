@@ -869,8 +869,19 @@
         if (!update || !update.pane_id) return;
         const existing = agents.find(a => a.pane_id === update.pane_id);
         const previousStatus = existing?.status || prevStatuses[update.pane_id];
+        const previousTurn = existing?.turn;
         if (existing) Object.assign(existing, update);
         else agents.push({ ...update });
+        // The relay's record grew a row for this pane. It is not a status change — the snapshot
+        // carrying the status went out before the turn was read and written — so nothing else here
+        // would notice, and a thread showing this pane would stay a turn behind until some other
+        // pane moved. The fetch itself is gated on the watermark (conv_live.js): a redraw for a
+        // pane no open thread contains asks for nothing.
+        if (update.turn && update.turn !== previousTurn
+            && typeof convLiveOn === 'function' && convLiveOn()) {
+          renderConvView();
+          if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+        }
         if (previousStatus && previousStatus !== update.status) {
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();

@@ -1074,10 +1074,21 @@ late_turns = {}
 pane_turn_ids = {}
 
 
-def note_turn_ids(pane_id, ids):
-    """Remember the newest row this pane's last turn wrote. Nothing written, nothing to say."""
-    if ids:
-        pane_turn_ids[pane_id] = max(ids)
+async def note_turn_ids(pane_id, ids, agent=None):
+    """Remember the newest row this pane's last turn wrote, and say so. Nothing written, nothing
+    to say.
+
+    The snapshot carries this as well, but it goes out *before* the turn is read and recorded —
+    so a client that asked for the record on the transition asked a moment early, heard nothing,
+    and then had to wait for some other pane to move before it looked again. This is the message
+    that says the row exists, sent the moment it does.
+    """
+    if not ids:
+        return
+    pane_turn_ids[pane_id] = max(ids)
+    if agent is not None:
+        await broadcast({"type": "agent_update",
+                         "agent": {**agent, "turn": pane_turn_ids[pane_id]}})
 
 # pane_id -> {"ws", "until", "idled"} for a send the relay could not prove landed. A send is
 # unconfirmed for one of two reasons and both resolve themselves in time: a pane that was already
@@ -1206,8 +1217,8 @@ async def collect_late_turns(agents):
                 continue
             late_turns.pop(pid, None)
             git = await probe_git(a)
-            note_turn_ids(pid, await asyncio.to_thread(
-                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git))
+            await note_turn_ids(pid, await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git), a)
             log.info("late turn at %s: %s", pid,
                      f"{said} message(s) after the status changed" if said
                      else "nothing said before the deadline")
@@ -2150,8 +2161,8 @@ async def _poll_once():
                         continue
                     late_turns.pop(pid, None)
                     git = await probe_git(a)
-                    note_turn_ids(pid, await asyncio.to_thread(
-                        conv_log.record_turn_end, a, captured, was, status, git=git))
+                    await note_turn_ids(pid, await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git), a)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
                 # A pane ending a turn means one of two opposite things, and arbitration decides
