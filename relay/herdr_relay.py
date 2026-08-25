@@ -574,10 +574,16 @@ except AgentConfigError as e:
     sys.exit(1)
 
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
-# `› 1. Yes, continue` — the marker is whichever glyph the TUI puts against the selected row, and
+# `› 1. Yes, continue` — the marker is whichever glyph the TUI puts against the *selected* row, and
 # the line is the whole of the option. Captured rather than skipped: one row of a real menu always
-# carries it, and it is the only thing that separates a menu from prose. See detect_choices.
-CHOICE_RE = re.compile(r"^\s*([\u203a>\u276f*\u2022])?\s*([1-9])[.)]\s+(\S.*)$")
+# carries one, and it is the only thing that separates a menu from prose. See detect_choices.
+#
+# Only the pointing glyphs count. A bullet is not a selection: `•` is codex's own speaker gutter,
+# so `• 1. 1d973b3 — mods` — the first line of an answer that happens to be a numbered list — read
+# as a selected menu row, and the pane flickered between blocked and idle every poll. Still
+# stepped over, so a menu drawn with bullets on its rows still parses; it just cannot prove itself
+# with one.
+CHOICE_RE = re.compile(r"^\s*(?:([\u203a>\u276f])|[*\u2022])?\s*([1-9])[.)]\s+(\S.*)$")
 CHOICE_ANSWER_RE = re.compile(r"^([1-9])(?:[.)]\s.*)?$")
 CHOICE_TAIL = 25       # lines from the bottom a menu can be in
 CHOICE_MAX = 6         # options offered on; a longer list is prose that happens to be numbered
@@ -1482,8 +1488,16 @@ async def pane_menu_options(pane_id, remote=None):
     pane is one tap from answering it, and the poll would not say so for another interval.
 
     Shells are exempt. Every rule here is about a TUI, and a shell has no modal to protect.
+
+    And only a pane that could plausibly be at one is read at all: one inside its post-start window,
+    where herdr calls a trust prompt `idle`, or one herdr has already called blocked. An ordinary
+    idle pane is never read here, so nothing it happens to have printed can flip it — reading every
+    pane is what let a codex answer written as a numbered list be taken for a menu.
     """
     if pane_id in shell_panes:
+        return None
+    if not (spawn_menu_pending(pane_id, time.monotonic())
+            or (agent_cache.get(pane_id) or {}).get("status") == "blocked"):
         return None
     text = await asyncio.to_thread(read_pane, pane_id, remote=remote)
     options = detect_choices(text)

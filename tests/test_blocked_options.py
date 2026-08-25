@@ -73,6 +73,18 @@ class ChoiceTests(unittest.TestCase):
                  "3. Add a new feature\n")
         self.assertIsNone(herdr_relay.detect_choices(asked))
 
+    def test_the_speaker_glyph_is_not_a_selection(self):
+        # `•` is codex's own gutter, so the first line of an answer that happens to be a numbered
+        # list wears one. That pane flickered between blocked and idle every poll, offering five
+        # commit hashes as things to press.
+        answer = ("• 1. 1d973b3 — 2025-07-01 — mods\n"
+                  "  2. d2448c5 — 2025-06-02 — numba fix\n"
+                  "  3. 3a190d1 — 2025-05-07 — gitignore\n")
+        self.assertIsNone(herdr_relay.detect_choices(answer))
+
+    def test_a_bullet_on_a_row_still_parses_where_something_else_selects(self):
+        self.assertEqual(herdr_relay.detect_choices("❯ 1. Yes\n• 2. No"), ["1. Yes", "2. No"])
+
     def test_a_menu_must_start_at_one_and_not_skip(self):
         self.assertIsNone(herdr_relay.detect_choices("› 2. Second\n  3. Third\n"))
         self.assertIsNone(herdr_relay.detect_choices("› 1. Only one\n"))
