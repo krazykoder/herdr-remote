@@ -722,6 +722,13 @@
         // took a minute to be confirmed is not a different outcome from one that took none, and
         // wording it differently made the slow path read as a warning.
         else if (msg.ok) showToast(`✓ Sent to ${where}`, 'ok');
+        // A pane at a menu took nothing, which is not the same as a pane that took it and said
+        // nothing: the text is held here and goes out again as soon as the question is answered.
+        else if (msg.reason === 'menu') {
+          holdForMenu(msg.pane_id, lastSubmitted.get(msg.pane_id));
+          showToast(`${where} is waiting on a prompt — answer it and this goes in behind it.`,
+                    'info');
+        }
         else showToast(`That pane did not confirm the send — check ${where}.`);
       }
       else if (msg.type === 'command_result' &&
@@ -781,6 +788,9 @@
         }
       }
       else if (msg.type === 'agents') {
+        // Before the timeline: a message held back by a menu belongs in the pane the moment the
+        // pane can take it, and the rest of this branch is bookkeeping.
+        sendHeldAfterMenu(msg.agents);
         // Track timeline on status changes
         let ring = false;
         for (const a of msg.agents) {

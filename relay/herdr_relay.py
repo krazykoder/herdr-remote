@@ -1451,6 +1451,36 @@ def submit_window(pane_id):
     return SUBMIT_SLOW.get(agent, SUBMIT_TIMEOUT)
 
 
+async def pane_menu_options(pane_id, remote=None):
+    """The menu this pane is showing, if it is showing one — and every client told about it.
+
+    A pane at a numbered menu takes no text. The characters go into a modal that ignores them and
+    the Enter behind them accepts whatever row the cursor is on, so a prompt typed at a codex asking
+    whether it may trust the directory was lost *and* answered the question for the user. That is
+    how a start came up trusted, silent, and with its opening prompt nowhere: the block a person saw
+    for a moment was dismissed by the very message that was supposed to follow it.
+
+    Read rather than inferred from status, because herdr reports a pane at its trust prompt as
+    `idle` — there is no status to consult. Broadcast on the way past: whoever is looking at this
+    pane is one tap from answering it, and the poll would not say so for another interval.
+
+    Shells are exempt. Every rule here is about a TUI, and a shell has no modal to protect.
+    """
+    if pane_id in shell_panes:
+        return None
+    text = await asyncio.to_thread(read_pane, pane_id, remote=remote)
+    options = detect_choices(text)
+    if options:
+        a = agent_cache.get(pane_id) or {}
+        await broadcast({
+            "type": "blocked", "pane_id": pane_id,
+            "agent": a.get("agent", ""), "project": a.get("project", ""),
+            "host": a.get("host", "local"),
+            "prompt": text[:500], "options": options,
+        })
+    return options
+
+
 async def submit_paste(pane_id, text, remote=None, out=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
@@ -1481,6 +1511,12 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
     "still starting" and waits out to the timeout, leaving the command unentered at the prompt.
     """
+    # Nothing is typed at a pane showing a menu. See pane_menu_options: the text would be eaten by
+    # the modal and the Enter would answer it.
+    if await pane_menu_options(pane_id, remote=remote):
+        if out is not None:
+            out["reason"] = "menu"
+        return False
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
     await asyncio.sleep(submit_settle(text))
     # A shell is none of the cases below. It has no TUI to be mid-boot, no composer to be mid-paste
@@ -2767,6 +2803,7 @@ async def handle_client(ws, listener="lan"):
                 # Optional, because the other clients still send their own Enter and must keep
                 # working; those get the old fixed settle below and nothing more.
                 submit = bool(msg.get("submit"))
+                refused = False  # a pane at a menu takes nothing, and records nothing
                 # Length, not the text: this line goes to the console the relay was started from,
                 # and a person watching their own terminal has not asked to be shown every message
                 # they send from their phone. The audit log below keeps the text itself.
@@ -2790,6 +2827,16 @@ async def handle_client(ws, listener="lan"):
                             "type": "command_result", "command": "send_text", "ok": True,
                             "pending": False, "pane_id": pane_id,
                             "message": "the pane took it"}))
+                    elif out.get("reason") == "menu":
+                        # Never sent, so never recorded and never watched: the text is still in the
+                        # client's hands and the pane is at a question that has to be answered
+                        # first. The options went out with the broadcast above.
+                        refused = True
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": False,
+                            "pending": False, "pane_id": pane_id, "reason": "menu",
+                            "message": "the pane is waiting on a prompt — answer it, "
+                                       "then send this again"}))
                     else:
                         queued = out.get("reason") == "queued"
                         # Not the end of the story any more: the pane is watched until it goes to
@@ -2805,6 +2852,19 @@ async def handle_client(ws, listener="lan"):
                             "pending": True, "pane_id": pane_id, "reason": out.get("reason"),
                             "message": "queued behind what the pane is doing"
                                        if queued else "the pane has not confirmed it yet"}))
+                elif await pane_menu_options(pane_id, remote=remote):
+                    # The same refusal for a client that presses Enter for itself. It keeps the text
+                    # out of the modal; the `send_keys ["Enter"]` behind it is still that client's
+                    # to send, and it still answers the menu.
+                    # ponytail: send_keys is left open on purpose — it is also how a person answers
+                    # a menu. If a client is ever seen dismissing prompts with a bare Enter, the
+                    # guard belongs there and needs a way to say "this Enter is an answer".
+                    refused = True
+                    await ws.send(json.dumps({
+                        "type": "command_result", "command": "send_text", "ok": False,
+                        "pending": False, "pane_id": pane_id, "reason": "menu",
+                        "message": "the pane is waiting on a prompt — answer it, "
+                                   "then send this again"}))
                 else:
                     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)
@@ -2812,7 +2872,8 @@ async def handle_client(ws, listener="lan"):
                     # arriving right behind this — which is what a client that submits for itself
                     # does — lands late enough. One choke point, rather than a delay in each client.
                     await asyncio.sleep(SEND_SETTLE)
-                await record_sent(pane_id, text)
+                if not refused:
+                    await record_sent(pane_id, text)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,

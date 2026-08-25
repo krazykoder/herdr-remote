@@ -254,8 +254,33 @@
     //
     // A socket that is not open is a refusal, not a send: this returns false so the caller keeps the
     // message in the box rather than clearing it over a message the relay never saw.
+    // pane_id -> the text the relay refused because the pane was at a menu. Nothing was typed, so
+    // this is the whole of the message and it is still the client's to send: a start into a codex
+    // asking whether it may trust the directory is the case this exists for, and losing its opening
+    // prompt to the trust prompt is what made a spawn look like it had failed.
+    const menuHeld = new Map();
+
+    function holdForMenu(paneId, text) {
+      if (paneId && text) menuHeld.set(paneId, text);
+    }
+
+    // Sent again the moment the pane is no longer at the question. Called from the snapshot, which
+    // is the only thing that knows a pane has moved.
+    function sendHeldAfterMenu(list) {
+      if (!menuHeld.size) return;
+      for (const a of list || []) {
+        if (a.status === 'blocked' || !menuHeld.has(a.pane_id)) continue;
+        const text = menuHeld.get(a.pane_id);
+        // Dropped before the send: a second refusal puts it straight back, and holding it in two
+        // places at once is how a message gets sent twice.
+        menuHeld.delete(a.pane_id);
+        submitText(a.pane_id, text);
+      }
+    }
+
     function submitText(paneId, text) {
       if (!text || !paneId || !ws || ws.readyState !== 1) return false;
+      lastSubmitted.set(paneId, text);
       // One message per chunk. Nothing before the last one submits, so they land in the agent's
       // composer as one text; the relay handles a connection's messages in order.
       const parts = chunkText(text);
@@ -270,6 +295,10 @@
       }
       return true;
     }
+
+    // What was last handed to a pane, so a refusal can carry it: `command_result` names the pane and
+    // not the text, and the chunks it was split into are not what anyone would want re-sent.
+    const lastSubmitted = new Map();
 
     // One text into one pane, from whichever composer had it. The pane's own composer is one
     // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
