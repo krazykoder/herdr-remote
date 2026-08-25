@@ -209,7 +209,9 @@ test('reset clears the harness and then says the words the session was started w
                   recs: [{key: 'w1:p1', spawn: {agent: 'claude', starter: 'architect-prompt'}}]});
   e.run(`
     sent = [];
-    agentSlash = t => t;
+    // The codex substitution, as agentSlash really does it: a leading slash becomes a dollar.
+    // The clear must not go through it — see the codex test below.
+    agentSlash = (t, a) => (a === 'codex' && t[0] === '/' ? '$' + t.slice(1) : t);
     agentHarness = a => a;
     respawnStarter = () => ({at: 'architect-prompt'});
     roleStarter = () => 'You are the architect.';
@@ -360,4 +362,24 @@ test('deleting an archived conversation ends its panes and erases what it record
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(forgot)')), [['k1']],
     'and a member another conversation still shows keeps its words');
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(saved[0].map(c => c.id))')), ['c2']);
+});
+
+
+test('codex is cleared with a slash command, not with the dollar a skill wears there', () => {
+  // agentSlash rewrites a leading `/` to `$` for codex because that is how a *skill* is invoked
+  // there — `$ponytail`. `/clear` is a slash command and codex spells it the way everyone else
+  // does; `$clear` would land in the composer as text.
+  const e = boot({live: [{pane_id: 'w1:p1', agent: 'codex'}],
+                  recs: [{key: 'w1:p1', spawn: {agent: 'codex', starter: 'architect-prompt'}}]});
+  e.run(`
+    sent = [];
+    agentSlash = (t, a) => (a === 'codex' && t[0] === '/' ? '$' + t.slice(1) : t);
+    agentHarness = a => a;
+    respawnStarter = () => ({at: 'architect-prompt'});
+    roleStarter = () => '/ponytail full';
+    sendTextTo = (pane, text) => { sent.push([pane, text]); return true; };`);
+  e.run("convResetMember('w1:p1')");
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(sent)')),
+    [['w1:p1', '/clear'], ['w1:p1', '$ponytail full']],
+    'the command as typed, and the starter still through agentSlash');
 });

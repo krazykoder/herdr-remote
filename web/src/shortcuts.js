@@ -1214,10 +1214,11 @@
       const live = agents.find(x => convMemberKey(x) === key);
       if (!live) return false;
       const rec = (convViewRecs || []).find(r => r.key === key) || {};
-      // agentSlash on both, and for the same reason openPendingStart applies it: codex takes a
-      // leading `/` as its own composer's command rather than as text.
+      // Not through agentSlash. That rewrites a leading `/` to `$` for codex because a *skill* is
+      // invoked that way there — `$ponytail`, `$caveman`. This is a slash command, and codex spells
+      // those the same as everyone else: `$clear` would be typed at the composer as text.
       const cmd = RESET_CMD[agentHarness(live.agent)] || '/clear';
-      if (!sendTextTo(live.pane_id, agentSlash(cmd, live.agent))) return false;
+      if (!sendTextTo(live.pane_id, cmd)) return false;
       // Second, and into the same pane, so the relay's per-pane lane keeps the order: the opening
       // words must arrive at a cleared session and not before it is cleared.
       const prompt = roleStarter(respawnStarter(rec.spawn || {}), live.agent);

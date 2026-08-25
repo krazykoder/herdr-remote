@@ -1238,6 +1238,52 @@
       border-color: var(--blue);
     }
 
+    /* A tile is a button, so its Edit cannot live inside it — nesting one button in another is not
+       markup a browser will keep. The wrapper is the grid cell instead, and the two are siblings:
+       pressing Edit never reaches the tile, with no stopPropagation to remember. */
+    .launcher-tile-wrap {
+      position: relative;
+      display: flex;
+      min-width: 0;
+    }
+
+    .launcher-tile-wrap .launcher-tile {
+      flex: 1;
+      min-width: 0;
+      /* Room for the corner the button sits in, kept by every line rather than by the one that
+         happens to be longest today. */
+      padding-right: 26px;
+    }
+
+    /* Quiet until it is looked for: a launcher is pressed far more often than it is edited, and a
+       control that is as loud as the tile it sits on is a mis-tap waiting to happen. */
+    .launcher-edit {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.7rem;
+      line-height: 1;
+      opacity: 0.5;
+      cursor: pointer;
+    }
+
+    .launcher-edit:hover, .launcher-edit:focus-visible {
+      opacity: 1;
+      color: var(--blue);
+      background: var(--surface);
+    }
+
     /* A tile stands in for a thing that will exist, so it carries the kind's colour the way an
        agent card carries its agent's — the terminal green of a shell, the blue of a session. */
     .launcher-tile .launcher-kind {
@@ -1315,12 +1361,17 @@
       min-width: 0;
     }
 
+    /* On the tile these are footnotes, not headlines: the tile's name and payload are what is
+       read, and three full-strength marks under them turn a keypad into a warning board. Paled
+       rather than recoloured, so `insecure` keeps its red and `no approvals` its orange — the
+       band headings above them are where either is stated at full strength. */
     .launcher-badges .launcher-badge {
       align-self: auto;
       margin-top: 0;
-      padding: 1px 4px;
-      font-size: 0.5rem;
-      letter-spacing: 0.03em;
+      padding: 0 3px;
+      font-size: 0.44rem;
+      letter-spacing: 0.02em;
+      opacity: 0.6;
       overflow: hidden;
       text-overflow: ellipsis;
     }
@@ -1510,14 +1561,16 @@
        a list the relay fills in a moment after the page draws. */
     .cfg-row.cfg-off { opacity: 0.55; }
 
+    /* Orange is the app's amber, as .conversation-tier.idle says: a switched-off config is not
+       broken and not merely quiet — it is a state the reader put it in and can put it out of. */
     .cfg-off-tag {
       font-size: 0.55rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       padding: 1px 5px;
-      border: 1px solid var(--border);
+      border: 1px solid var(--orange);
       border-radius: 4px;
-      color: var(--muted);
+      color: var(--orange);
     }
 
     .cfg-empty, .cfg-note {

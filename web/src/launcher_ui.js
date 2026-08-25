@@ -110,7 +110,10 @@
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
       // pressed is the one thing its reader most needs. It is still not pressable — nothing is
       // wired to it yet, and step 4's handler returns on a closed gate.
-      return `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
+      // The tile and its Edit are siblings inside one grid cell — see .launcher-tile-wrap for why
+      // Edit cannot be inside the button it edits.
+      return `<div class="launcher-tile-wrap">`
+        + `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
         + ` data-tile="${escapeHtml(tile.id)}" aria-disabled="${gate.ok ? 'false' : 'true'}"`
         // A gone Project is the one closed gate the presser can fix, so this tile is still worth
         // a pointer: the press opens it on that field rather than reporting a dead end.
@@ -127,7 +130,15 @@
         // the payload out of the tile. The row is what makes them small enough to sit together.
         + (insecure || solo || badge
           ? `<span class="launcher-badges">${insecure}${solo}${badge}</span>` : '')
-        + '</button>';
+        + '</button>'
+        // Straight to this tile's form, without going through the Edit sheet to find it again.
+        // Drawn on every tile including a gated one: a tile that cannot be pressed is exactly the
+        // one somebody has come to fix.
+        + `<button class="launcher-edit" data-tile="${escapeHtml(tile.id)}"`
+        + ` onclick="launcherEditFromTile(this.dataset.tile)"`
+        + ` title="Edit ${escapeHtml(tile.label)}"`
+        + ` aria-label="Edit the tile ${escapeHtml(tile.label)}">\u270e</button>`
+        + '</div>';
     }
 
     // The tiles, in bands. Manual order inside a band, Project order between them: the user

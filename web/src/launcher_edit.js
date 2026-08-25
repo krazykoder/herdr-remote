@@ -303,6 +303,13 @@
       launcherDrawForm();
     }
 
+    // The pencil in a tile's corner. The sheet has to be up before the form can be drawn into it,
+    // which is the same two steps launcherRepoint takes and the reason neither calls the other.
+    function launcherEditFromTile(id) {
+      openLauncherEdit();
+      launcherEditTile(id);
+    }
+
     // A stale tile, opened on the one field that is wrong. Not a wizard: the Project strip is
     // already in the form, and what a repoint *is* is picking a different one and saving.
     function launcherRepoint(id) {
