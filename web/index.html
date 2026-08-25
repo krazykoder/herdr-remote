@@ -6433,6 +6433,17 @@
       color: var(--bg);
     }
 
+    /* An option carrying the pane's own words rather than Yes/No. They are as long as whoever
+       wrote that TUI made them, and a row of three cannot be allowed to push the nav off the
+       screen — so each takes its share and cuts, with the whole line in the title. */
+    .btn-choice {
+      flex: 1 1 0;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .term-input {
       padding: 8px 12px;
       display: flex;

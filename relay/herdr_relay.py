@@ -569,6 +569,12 @@ except AgentConfigError as e:
     sys.exit(1)
 
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
+# `› 1. Yes, continue` — the marker is whichever glyph the TUI puts against the selected row, and
+# the line is the whole of the option. See detect_choices.
+CHOICE_RE = re.compile(r"^\s*[\u203a>\u276f*\u2022]?\s*([1-9])[.)]\s+(\S.*)$")
+CHOICE_ANSWER_RE = re.compile(r"^([1-9])(?:[.)]\s.*)?$")
+CHOICE_TAIL = 25       # lines from the bottom a menu can be in
+CHOICE_MAX = 6         # options offered on; a longer list is prose that happens to be numbered
 SUBAGENT_OPTIONS = ["approve all pending", "configure individually", "exit (cancel subagents)"]
 CHROME_RE = re.compile(
     r"^[\s─━═_—│|◔◑◕●\s]+$"
@@ -1141,6 +1147,52 @@ def detect_options(text):
     if "approve all pending" in lower:
         return SUBAGENT_OPTIONS
     return None
+
+
+def detect_choices(text):
+    """A numbered menu at the bottom of a pane, as its own lines.
+
+    codex asks everything this way — the trust prompt it opens with, every approval after it — and
+    none of it matches the two claude shapes above, so a codex pane arrived at the client wearing
+    claude's three buttons and pressing one sent it a sentence it has no idea what to do with.
+
+    The labels are read out of the pane rather than kept in a table here: they are somebody else's
+    TUI and they change with its version, and the option a person is being asked to pick is the one
+    thing this must not paraphrase.
+
+    Only the tail is scanned, and the numbers must run 1, 2, 3 from the last line up: an agent that
+    wrote a numbered list in its answer is the false positive to avoid, and a real menu is the last
+    thing on screen. Read only where herdr already says the pane is blocked, which is the other
+    half of why this is safe to be this simple.
+    """
+    found = {}
+    for line in text.splitlines()[-CHOICE_TAIL:]:
+        m = CHOICE_RE.match(line)
+        if m:
+            # First writing wins: a redrawn frame lists every option twice and the cursor marker
+            # moves between the two copies.
+            found.setdefault(int(m.group(1)), m.group(2).strip())
+    picked = [f"{n}. {found[n]}" for n in range(1, len(found) + 1) if n in found]
+    return picked[:CHOICE_MAX] if len(picked) >= 2 else None
+
+
+def blocked_options(content, agent):
+    """What to offer for a pane herdr says is blocked.
+
+    The claude shapes first, because they are matched on their own wording and are what the client
+    has always been sent. Then whatever numbered menu the pane is actually showing. And nothing at
+    all if neither is there and the pane is not a claude — claude's three strings were the fallback
+    for every harness, so a blocked codex arrived offering `yes, single permission`, which is not
+    one of its choices and does nothing when it is typed at it.
+    """
+    return (detect_options(content) or detect_choices(content)
+            or (TOOL_OPTIONS if agent == "claude" else []))
+
+
+def choice_digit(text):
+    """The number an option carries, for a response that names one. `2. No, quit` -> `2`."""
+    m = CHOICE_ANSWER_RE.match(text.strip())
+    return m.group(1) if m else None
 
 
 async def broadcast(msg, except_ws=None):
@@ -1741,13 +1793,12 @@ async def _poll_once():
             content = None
             if status == "blocked" and was != "blocked":
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
-                options = detect_options(content)
                 await broadcast({
                     "type": "blocked", "pane_id": pid,
                     "agent": a["agent"], "project": a["project"],
                     "host": a.get("host", "local"),
                     "prompt": content[:500],
-                    "options": options or TOOL_OPTIONS
+                    "options": blocked_options(content, a["agent"])
                 })
                 # Web Push notification
                 await send_web_push(
@@ -2138,14 +2189,13 @@ async def event_push():
                 content = read_pane(pane_id, remote=remote)
             else:
                 content = event.get("prompt", "Agent is blocked")
-            options = detect_options(content)
             await broadcast({
                 "type": "blocked", "pane_id": pane_id,
                 "agent": agent_data.get("agent", ""),
                 "project": agent_data.get("project", ""),
                 "host": host,
                 "prompt": content[:500],
-                "options": options or TOOL_OPTIONS
+                "options": blocked_options(content, agent_data.get("agent", ""))
             })
 
         if update:
@@ -2406,7 +2456,11 @@ async def handle_client(ws, listener="lan"):
                         "type": "error", "message": "respond is not available on a terminal pane"}))
                     continue
                 text = msg.get("text", "")
-                if text.strip().lower() not in SAFE_RESPONSES:
+                # A numbered choice off a pane's own menu — see detect_choices. What goes to the
+                # pane is the digit alone: the label came out of that pane and typing it back is
+                # not how the menu is answered.
+                digit = choice_digit(text)
+                if digit is None and text.strip().lower() not in SAFE_RESPONSES:
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
                     continue
                 remote = pane_remote_map.get(pane_id)
@@ -2417,9 +2471,16 @@ async def handle_client(ws, listener="lan"):
                 # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
                 # inserted as literal text and the approval never submits. Paste, let the TUI
                 # settle, then press Enter.
-                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
-                await asyncio.sleep(SEND_SETTLE)
-                await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+                #
+                # A numbered menu takes the digit and acts on it there and then — no Enter, which
+                # would land in whatever the pane shows next. Verified against codex 0.24 at its
+                # trust prompt: the digit alone answered it.
+                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, digit or text,
+                                        remote=remote)
+                if digit is None:
+                    await asyncio.sleep(SEND_SETTLE)
+                    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter",
+                                            remote=remote)
                 await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)

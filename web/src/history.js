@@ -415,17 +415,40 @@
         `<div class="qa-right">${summary}</div></div>`;
       let middle = '';
       if (blocked) {
-        const opts = a.options || ['yes, single permission', 'trust, always allow', 'no (tab to edit)'];
-        middle = opts.map(o => {
-          const cls = o.includes('yes') || o.includes('approve') ? 'btn-yes' : o.includes('trust') ? 'btn-trust' : 'btn-no';
-          const icon = o.includes('yes') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : o.includes('trust') ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-          const label = o.includes('yes') ? 'Yes' : o.includes('trust') ? 'Yes All' : 'No';
-          return `<button class="${cls}" onclick="respond('${o.replace(/'/g, "\\'")}')">${icon} ${label}</button>`;
-        }).join('');
+        // No fallback list any more. The relay sends claude's three where it saw them, the pane's
+        // own numbered menu where there was one, and nothing at all otherwise — a codex pane used
+        // to arrive wearing claude's buttons, and pressing one typed a sentence at a menu that
+        // wanted a number.
+        middle = (a.options || []).map(approvalHtml).join('');
       }
       // Approvals first and on their own line, nav underneath: the row order is what puts the
       // thing that needs answering closest to the terminal it is about.
       setQuickActions(qa, middle + (showNav ? navRow : ''));
+    }
+
+    // One of a blocked pane's choices, as a button. Two shapes arrive: claude's own wording, which
+    // this has always keyed off, and `1. Yes, continue` — a numbered menu the relay read out of the
+    // pane, which is how codex asks everything from its opening trust prompt onwards.
+    //
+    // A numbered option keeps the words the pane offered it under. They are longer than `Yes`, and
+    // they are the only ones that are certainly right: paraphrasing the choice somebody is about to
+    // make is the one thing not to do here. The relay turns it back into the digit on the way out.
+    function approvalHtml(o) {
+      const num = /^([1-9])[.)]\s*(.+)$/.exec(String(o));
+      const body = num ? num[2] : String(o);
+      const low = body.toLowerCase();
+      const kind = /^no\b|^exit\b|^quit\b|^cancel\b/.test(low) ? 'no'
+        : /trust|always|all pending|don'?t ask|dont ask/.test(low) ? 'trust'
+        : /^yes\b|approve|continue|allow|proceed/.test(low) ? 'yes'
+        : 'no';
+      const icon = kind === 'yes'
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+        : kind === 'trust'
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      const label = num ? body : (kind === 'yes' ? 'Yes' : kind === 'trust' ? 'Yes All' : 'No');
+      return `<button class="btn-${kind}${num ? ' btn-choice' : ''}" title="${escapeHtml(body)}"` +
+        ` onclick="respond('${String(o).replace(/'/g, "\\'")}')">${icon} ${escapeHtml(label)}</button>`;
     }
 
     let paneLines = 200;
