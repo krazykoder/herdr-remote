@@ -25,6 +25,7 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
     path.join(__dirname, '..', 'web', 'src', 'shortcuts.js'), 'utf8');
   const log = [];
   const fields = {};
+  const store = {};
   const ctx = vm.createContext({
     console, JSON, Math, Date, Object, Array, Set, Map, String, Number, setTimeout, clearTimeout,
     document: {getElementById: id => (fields[id] = fields[id] || {id, value: '', style: {}, innerHTML: ''}),
@@ -33,13 +34,18 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
     escapeHtml: s => String(s), agents: live, shells: [], startOptions: options,
     loadConvIndex: () => [{id: 'c1', members: [{key: 'k1'}]}],
     convMemberKey: a => a.pane_id || '',
+    sessionStorage: {
+      getItem: k => (store[k] === undefined ? null : store[k]),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: k => { delete store[k]; },
+    },
     openStartDialog: p => log.push(['open', p || '']),
     renderStartAgents: () => log.push(['render']),
     endPane: id => log.push(['end', id]),
   });
   vm.runInContext(src, ctx);
   vm.runInContext(`convViewId = 'c1'; convViewRecs = ${JSON.stringify(recs)};`, ctx);
-  return {log, fields, run: s => vm.runInContext(s, ctx),
+  return {log, fields, store, run: s => vm.runInContext(s, ctx),
           intent: () => vm.runInContext('JSON.stringify(startIntent)', ctx)};
 }
 
@@ -75,4 +81,52 @@ test('a member of no conversation, or a relay that starts nothing, swaps nothing
   assert.equal(boot({options: null}).run("convSwapMember('k1')"), false);
   assert.equal(boot().run("convSwapMember('nobody')"), true,
     'an unknown key still opens the dialog — the conversation is real and the member is its own');
+});
+
+
+// --- Picking a restarted member back up ---
+//
+// The relay's answer to a start names the pane it made, and it arrives on one socket, once. Reload
+// the tab in between and the agent is running with nothing tying it to the conversation it was
+// started for. So the start names itself: the relay stamps that id on the pane and carries it on
+// every snapshot, and what follows is an equality rather than a guess at which pane this was.
+
+const HELD = 'herdr_conv_respawn';
+
+function held(e) { return JSON.parse(e.store[HELD] || 'null'); }
+
+test('the pane a restart names itself with is the one it is found by', () => {
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}, {pane_id: 'w1:p8', ref: 'rXYZ'}]});
+  assert.equal(e.run("(convRespawnPane('rABC') || {}).pane_id"), 'w1:p9');
+  assert.equal(e.run("convRespawnPane('rNOPE')"), null);
+  assert.equal(e.run("convRespawnPane('')"), null, 'a pane carrying no ref matches no start');
+});
+
+test('a note older than the window names a pane somebody else is using by now', () => {
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
+  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
+    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now() - 130000}))`);
+  assert.equal(e.run('JSON.stringify(heldConvRespawn())'), 'null');
+  assert.equal(held(e), null, 'and it is dropped rather than reconsidered on the next snapshot');
+});
+
+test('a pane a start in flight will land on is not filed as a fresh one', () => {
+  // convAutoJoin files every unreferenced pane into a conversation of its own on the next
+  // snapshot. A key some conversation names is one convContinueTranscript refuses to write over,
+  // so filing this pane would split the thread it was started to continue into two members.
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
+  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
+    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
+  assert.equal(e.run("convStartClaimed({pane_id: 'w1:p9', ref: 'rABC'})"), true);
+  assert.equal(e.run("convStartClaimed({pane_id: 'w1:p8', ref: 'rXYZ'})"), false,
+    'and every other pane is filed exactly as before');
+});
+
+test('the note is written before the start goes out, and cleared once it is acted on', () => {
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
+  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
+    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
+  assert.equal(held(e).ref, 'rABC');
+  e.run('forgetConvRespawn()');
+  assert.equal(held(e), null);
 });

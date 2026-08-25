@@ -265,8 +265,13 @@
       for (const c of items) for (const m of (c && c.members) || []) if (m && m.key) had.add(m.key);
       // Only a pane an agent is running in has messages to record — the same gate the menu item
       // uses, so a harness the app cannot read is not filed under a record it can never write to.
+      // A pane a restart in flight is about to continue a thread onto is not a fresh pane. Filing
+      // it here would put its key in a conversation of its own, and a key some conversation names
+      // is one convContinueTranscript refuses to write over — so the thread it was started to
+      // continue would gain a second member instead of carrying on.
       const fresh = agents.filter(a => convMemberKey(a) && !had.has(convMemberKey(a))
-        && profileFor(a.agent));
+        && profileFor(a.agent)
+        && !(typeof convStartClaimed === 'function' && convStartClaimed(a)));
       if (!fresh.length) return;
       const added = fresh.map(a => {
         const conv = {

@@ -43,6 +43,7 @@ from start_agent import (
     plan_slot,
     slot_advice,
     validate_pane_label,
+    validate_start_ref,
     tab_create_args,
     validate_open_terminal,
     validate_start_request,
@@ -935,6 +936,14 @@ def get_all_panes():
 # ponytail: in-memory, one entry per started pane. If it needs to survive a relay restart it
 # belongs in the state store keyed by [host, cwd, label], not by pane id.
 pane_config = {}
+# pane_id -> the client's own id for the start that made it, when it named one. The answer to a
+# start is a single message on the socket that asked, so a browser reloaded while herdr is bringing
+# the agent up loses the only record of which pane it was waiting for — and then has nothing to
+# match on but the pane's name and directory, which two colleagues in one checkout share. Carried
+# on the snapshot so that match is an equality instead of a guess. Opaque here: never parsed, never
+# logged, never passed to a shell. In memory, like pane_config beside it — a relay restart drops it,
+# and by then no client is still waiting on that start.
+pane_ref = {}
 
 
 # Panes this relay started, watched briefly for a menu herdr does not call blocked. A codex opened
@@ -2093,6 +2102,11 @@ async def _poll_once():
             config = pane_config.get(a["pane_id"])
             if config:
                 a["config"] = config
+            # The id the client that started this pane gave it, so the browser that asked can find
+            # it again after a reload has thrown away the answer it was given.
+            ref = pane_ref.get(a["pane_id"])
+            if ref:
+                a["ref"] = ref
             # The newest row this pane's record holds, so a thread on screen can tell it is behind.
             # Only ever set by this relay's own writes, which is all a client compares it against.
             turn = pane_turn_ids.get(a["pane_id"])
@@ -3234,6 +3248,14 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": "write extensions disabled"}))
                     return
+                # Refused rather than dropped, like the config beside it: a client that named its
+                # start and was quietly given a pane carrying no name would wait out its whole
+                # window and then decide the start had failed.
+                ref, ref_err = validate_start_ref(msg.get("ref"))
+                if ref_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": ref_err}))
+                    return
                 plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
                 if start_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
@@ -3271,6 +3293,8 @@ async def handle_client(ws, listener="lan"):
                     return
                 if plan.get("config"):
                     pane_config[pane_id] = plan["config"]
+                if ref:
+                    pane_ref[pane_id] = ref
                 spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
                 log.info("Start agent ok: pane=%s label=%r name=%r",
                          pane_id, plan["label"], plan["agent_name"])

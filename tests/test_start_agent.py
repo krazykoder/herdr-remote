@@ -28,6 +28,7 @@ from start_agent import (
     unique_agent_name,
     validate_pane_label,
     validate_start_request,
+    validate_start_ref,
 )
 
 PROJECTS = [
@@ -387,6 +388,36 @@ class ClientLabelTests(unittest.TestCase):
     def test_control_characters_are_refused(self):
         _, err = validate_start_request(start(label="a\nb"), PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "label contains control characters")
+
+
+class StartRefTests(unittest.TestCase):
+    """The client's own id for a start, so the pane it makes can be found again by equality.
+
+    A reload throws away the relay's answer, and a browser with nothing but the pane's name and
+    directory to match on cannot tell two colleagues in one checkout apart. This is what it names
+    the start with instead — and it lands on every other client's snapshot, so it is bounded here.
+    """
+
+    def test_absent_is_not_an_error(self):
+        self.assertEqual(validate_start_ref(None), ("", ""))
+        self.assertEqual(validate_start_ref(""), ("", ""))
+        self.assertEqual(validate_start_ref("   "), ("", ""))
+
+    def test_an_ordinary_token_passes(self):
+        self.assertEqual(validate_start_ref("rm8x2k_9-a"), ("rm8x2k_9-a", ""))
+
+    def test_not_a_string(self):
+        self.assertEqual(validate_start_ref(7)[1], "ref must be a string")
+
+    def test_bounded(self):
+        self.assertEqual(validate_start_ref("r" * 65)[1], "ref is longer than 64 characters")
+
+    def test_punctuation_and_control_characters_are_refused(self):
+        # It is echoed to every client on the snapshot, so the alphabet is the guard rather than
+        # whatever each of them happens to do with the string.
+        for bad in ("a b", "a\nb", "a;b", "<script>", "a\x7f"):
+            self.assertEqual(validate_start_ref(bad)[1],
+                             "ref may only hold letters, digits, '-' and '_'", bad)
 
 
 class DigTests(unittest.TestCase):

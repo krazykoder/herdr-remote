@@ -557,6 +557,30 @@ def validate_pane_label(raw):
     return label, ""
 
 
+def validate_start_ref(raw):
+    """Return (ref, error) for the client's own id for a start.
+
+    A start's answer names the pane it made, and that answer only exists on the socket that asked
+    — reload the tab and the browser has no way to say which pane it was waiting for. So a client
+    may name the start itself, and the relay carries that name on the pane for as long as it lives.
+
+    Bounded and narrow because it is client text that ends up on every other client's snapshot:
+    an opaque token, never parsed here, never shown to a user, and never passed to a shell.
+    """
+    if raw is None:
+        return "", ""
+    if not isinstance(raw, str):
+        return "", "ref must be a string"
+    ref = raw.strip()
+    if not ref:
+        return "", ""
+    if len(ref) > 64:
+        return "", "ref is longer than 64 characters"
+    if not all(c.isalnum() or c in "-_" for c in ref):
+        return "", "ref may only hold letters, digits, '-' and '_'"
+    return ref, ""
+
+
 def dig(data, *path):
     """Read a nested JSON path, returning "" if any hop is missing or not a dict.
 

@@ -862,6 +862,10 @@
           }
         }
         openPendingStart();
+        // A restart whose answer was lost with the tab that asked for it, picked up by the id that
+        // start named itself with. After openPendingStart, so a start this tab is still holding
+        // the answer for lands the ordinary way.
+        if (typeof convResumeRespawn === 'function') convResumeRespawn();
         openNotificationPane();
       }
       else if (msg.type === 'agent_update') {

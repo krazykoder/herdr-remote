@@ -915,11 +915,107 @@
         ? { note: 'Session ended. Pick what to start in its place.' } : null);
     }
 
+    // A restart names itself, so the pane it makes can be found again by equality rather than by
+    // resemblance. The relay stamps this on the pane and carries it on every snapshot; the note
+    // here is what survives the reload that threw away the relay's answer.
+    //
+    // sessionStorage, not localStorage: this is one tab coming back, and a second tab must not act
+    // on a start it never made. Two minutes, because a start that has not produced a pane by then
+    // failed, and the pane running an hour later is somebody else's.
+    //
+    // ponytail: only the respawn path names itself. A swap begun from the Start dialog loses its
+    // binding to a reload the same way — same treatment, when someone hits it.
+    const CONV_RESPAWN_KEY = 'herdr_conv_respawn';
+    const CONV_RESPAWN_MS = 120000;
+
+    function convRespawnRef() {
+      return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+
+    function rememberConvRespawn(conv, key, ref) {
+      try {
+        sessionStorage.setItem(CONV_RESPAWN_KEY,
+                               JSON.stringify({conv: conv, key: key, ref: ref, at: Date.now()}));
+      } catch (e) { /* private mode: this tab only, which is all this was for */ }
+    }
+
+    function heldConvRespawn() {
+      let held = null;
+      try { held = JSON.parse(sessionStorage.getItem(CONV_RESPAWN_KEY) || 'null'); }
+      catch (e) { return null; }
+      if (!held || !held.ref) return null;
+      if (Date.now() - (held.at || 0) > CONV_RESPAWN_MS) { forgetConvRespawn(); return null; }
+      return held;
+    }
+
+    function forgetConvRespawn() {
+      try { sessionStorage.removeItem(CONV_RESPAWN_KEY); } catch (e) { /* nothing to forget */ }
+    }
+
+    // The pane a start in flight will land on, so nothing else claims it first. The recorder files
+    // every unreferenced pane into an auto conversation on the next snapshot, and a pane filed
+    // there is a pane some conversation already names — which is exactly what stops the succession
+    // below continuing the thread onto it.
+    function convStartClaimed(a) {
+      if (!a) return false;
+      if (typeof pendingStart !== 'undefined' && pendingStart && a.pane_id === pendingStart) return true;
+      const held = heldConvRespawn();
+      return !!(held && a.ref && a.ref === held.ref);
+    }
+
+    // The pane this restart made, once herdr has it. Equality on the id the client itself chose —
+    // no name, no directory, nothing two colleagues in one checkout could share.
+    function convRespawnPane(ref) {
+      return (ref && agents.find(a => a.ref === ref)) || null;
+    }
+
+    // Continue the conversation onto a pane that is already running: the same succession Start
+    // again performs when the relay's answer arrives, run from a note on disk instead.
+    function convAdoptRespawn(conv, key, pane, starter) {
+      startIntent = { conv: conv.id, replace: key };
+      // No opening prompt. It would reach an agent that has been working for however long the
+      // reload took, as an instruction nobody typed just now.
+      startPrompt = '';
+      startStarter = starter || '';
+      pendingStart = pane.pane_id;
+      forgetConvRespawn();
+      openPendingStart();
+    }
+
+    // Called on every snapshot, and does nothing on almost all of them — there is a note only in
+    // the couple of minutes after Start again was pressed.
+    async function convResumeRespawn() {
+      if (!agents.length || typeof convGet !== 'function') return;
+      const held = heldConvRespawn();
+      if (!held) return;
+      const pane = convRespawnPane(held.ref);
+      // Not there yet is not a failure: herdr may still be bringing the agent up. Left for the
+      // next snapshot, and dropped by the deadline when it never arrives.
+      if (!pane) return;
+      const conv = loadConvIndex().find(c => c.id === held.conv);
+      if (!conv) { forgetConvRespawn(); return; }
+      const rec = (await convGet([held.key]).catch(() => []))[0];
+      convAdoptRespawn(conv, held.key, pane, ((rec || {}).spawn || {}).starter || '');
+      showSpawnStatus(`"${paneLabel(pane)}" was already running — continued in "${conv.name}".`,
+                      'success');
+    }
+
     function convRespawn(key) {
       const conv = loadConvIndex().find(c => c.id === convViewId);
       const rec = convViewRecs.find(r => r.key === key);
       const spawn = rec && rec.spawn;
       if (!ws || !conv || !canRespawn(spawn)) return;
+      // This member's own restart, already landed — the press before this one, whose answer went
+      // down with the tab. Continued onto that pane rather than starting a second agent beside it.
+      const held = heldConvRespawn();
+      const back = held && held.key === key && held.conv === conv.id
+        ? convRespawnPane(held.ref) : null;
+      if (back) {
+        showSpawnStatus(`"${paneLabel(back)}" is already running — continuing "${conv.name}".`,
+                        'busy');
+        convAdoptRespawn(conv, key, back, (spawn || {}).starter || '');
+        return;
+      }
       // herdr recycles workspace IDs, so a stale one cannot be trusted to name the workspace the
       // session was in. New tab only where that workspace is live on that host right now.
       const tab = !!spawn.workspace_id && agents.some(x => x.workspace_id === spawn.workspace_id
@@ -972,6 +1068,10 @@
       // any number of times without the answer wearing away.
       startStarter = (starter || {}).at || NO_STARTER;
       showSpawnStatus(`Continuing "${conv.name}"…`, 'busy');
+      // Named and written down before the send, not after: the answer is what a reload loses, so
+      // the note has to be on disk by the time there is anything to lose.
+      msg.ref = convRespawnRef();
+      rememberConvRespawn(conv.id, key, msg.ref);
       ws.send(JSON.stringify(msg));
     }
 
