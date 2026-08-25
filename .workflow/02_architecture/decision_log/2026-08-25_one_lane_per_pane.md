@@ -1,15 +1,13 @@
 # Decision Log: A client's messages run one lane per pane, not one lane per socket
 
-**Status: written, measured, not shipped.** The implementation lives on `wip/one-lane-per-pane`
-(`38643b5`) with its tests. What made the serial handler *felt* was one 45-second wait, and
-`83fa29c` removed that by handing an unconfirmed send to the poll after four seconds — after
-which no stall was reproducible by hand across every harness. What remains for this change is a
-remote `read_pane` and a 6-second `start_agent`, neither of which anyone has noticed. It is
-recorded here so the reasoning does not have to be rebuilt, and it ships the day one of those
-two starts costing someone something.
+**Status: shipped.** Written and measured before it landed: implemented on
+`wip/one-lane-per-pane` with its tests, held back while `83fa29c` — which hands an unconfirmed
+send to the poll after four seconds — was tried on its own, and merged after a session of live
+agents across every harness showed per-pane ordering holding and nothing stalling. `83fa29c` is
+still the fix for the wait people actually felt; this is the general answer behind it.
 
 **Class B** — no wire change, no new message, no new environment variable, no new storage. What
-changes is when the relay runs what it was already sent. **Branch:** `feat/kiro-agent`.
+changes is when the relay runs what it was already sent. **Branch:** `feat/agent-configs`.
 
 ## Decision
 
