@@ -166,31 +166,10 @@
       return out;
     }
 
-    // Compact is one line a tile: the kind's glyph, the name, and the marks that say what pressing
-    // it does. The payload goes — a keypad of twenty tiles is a page of scrolling at full size, and
-    // the reader of one already knows what their own tiles run. Per browser rather than shared:
-    // this is about the screen it is drawn on, not about the tiles.
+    // Compact is two lines a tile: the kind's glyph and the name, and the badges under them. The
+    // payload as prose goes — a keypad of twenty tiles is a page of scrolling at full size, and the
+    // reader of one already knows what their own tiles run. See compactButton in utils.js.
     const LAUNCHER_COMPACT_KEY = 'herdr_launcher_compact';
-
-    function launcherCompactOn() {
-      try { return localStorage.getItem(LAUNCHER_COMPACT_KEY) === 'on'; }
-      catch (e) { return false; }
-    }
-
-    function toggleLauncherCompact() {
-      try { localStorage.setItem(LAUNCHER_COMPACT_KEY, launcherCompactOn() ? 'off' : 'on'); }
-      catch (e) { /* private mode: session-only */ }
-      renderLauncher();
-    }
-
-    // Rows, which is what it makes of the grid. aria-pressed rather than two icons: the button is
-    // a state, and swapping the glyph under the reader's finger is how a toggle stops reading as
-    // one thing.
-    const LAUNCHER_COMPACT_ICON =
-      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-      + ' stroke-width="2" stroke-linecap="round" aria-hidden="true">'
-      + '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/>'
-      + '<line x1="4" y1="17" x2="20" y2="17"/></svg>';
 
     function renderLauncher() {
       const el = document.getElementById('launcher');
@@ -205,16 +184,13 @@
       // Two controls, and + is always the right-hand one. Adding a tile used to be reachable only
       // through Edit once the first tile existed — an entry point that moves as soon as it has
       // been used once, which is the shape of a button people stop finding.
-      const compact = launcherCompactOn();
+      const compact = compactOn(LAUNCHER_COMPACT_KEY);
       // The class is set from the document every draw, and not toggled where the button is: a
       // repaint from another browser's tile arriving would otherwise drop it.
       el.classList.toggle('compact', compact);
       el.innerHTML = '<div class="section-header">Launcher'
         + (tiles.length
-          ? '<button class="section-action" onclick="toggleLauncherCompact()"'
-            + ` aria-pressed="${compact ? 'true' : 'false'}"`
-            + ' title="Two lines a tile: the name, and the badges under it"'
-            + ' aria-label="Compact tiles">' + LAUNCHER_COMPACT_ICON + '</button>'
+          ? compactButton(LAUNCHER_COMPACT_KEY, 'renderLauncher', 'Compact tiles')
             + '<button class="section-action" onclick="openLauncherEdit()"'
             + ' title="Edit, reorder and delete tiles" aria-label="Edit the launcher">Edit</button>'
           : '')

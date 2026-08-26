@@ -289,8 +289,13 @@
     function addOrderButton() {
       const header = document.querySelector('#agents .section-header');
       if (!header) return;
+      // The kind filter on a line of its own under the header, not inside it. In the header it was
+      // competing for the same row as the title and the two right-hand buttons — on a phone that
+      // row is full before the first badge is drawn, and the badges are the part that got squeezed.
+      // Under it they are a strip of tags at full size, which is what a thing meant to be tapped
+      // has to be.
       const filter = agentKindsHtml(agents);
-      if (filter) header.insertAdjacentHTML('beforeend', filter);
+      if (filter) header.insertAdjacentHTML('afterend', filter);
       header.insertAdjacentHTML('beforeend',
         '<button class="section-action" onclick="openOrder()"' +
         ' title="The order of the tab strip. The cards below are newest-first."' +
@@ -442,6 +447,8 @@
         ` aria-label="${rest} ${escapeHtml(name)}">${armed ? ask : rest}</button>`;
     }
 
+    const CONV_COMPACT_KEY = 'herdr_conv_compact';
+
     function renderConversations() {
       const el = document.getElementById('conversations');
       if (!el) return;
@@ -521,6 +528,9 @@
       // The + is drawn whether or not there is anything under it, which is the one place this
       // section differs from the others: an entry point that only appears once you already have a
       // conversation cannot be how the first one is made.
+      // Two lines a card: the name and what is in it. Offered in every mode, the archive included
+      // — a long archive is exactly the list somebody wants smaller. See compactButton.
+      const compactControl = compactButton(CONV_COMPACT_KEY, 'renderConversations', 'Compact cards');
       const newControl = `<button class="section-action conv-new" onclick="newConversation()"` +
         ` title="Start an empty conversation and add panes to it"` +
         ` aria-label="Start a new conversation">+ New</button>`;
@@ -575,10 +585,10 @@
         // What is in it, before what was said in it: which harnesses, and which Projects they are
         // working in. A conversation is recognised by its members long before its newest line is
         // read, and on a phone that line is the only other thing on the card.
-        (r.badges ? `<div class="conversation-meta">${r.badges}</div>` : '') +
+        (r.badges ? `<div class="conversation-meta kinds">${r.badges}</div>` : '') +
         (r.last ? `<div class="conversation-last">${escapeHtml(r.last)}</div>` : '') +
-        `<div class="conversation-meta">${r.names.join(' · ')}</div>` +
-        `<div class="conversation-meta">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
+        `<div class="conversation-meta names">${r.names.join(' · ')}</div>` +
+        `<div class="conversation-meta live">${r.liveNames.length ? 'Live: ' + r.liveNames.join(', ') : 'No live members'}` +
         `${r.seen ? ' · Last activity ' + fmtAgo(new Date(Math.min(r.seen, now))) : ''}</div></div>`;
       const archivedRows = list.archived.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
       const activeRows = list.shown.map(c => rows.find(r => r.c.id === c.id)).filter(Boolean);
@@ -587,10 +597,11 @@
       // is on screen: + New makes a named conversation, and the other mode's button would be a
       // second exit that lands somewhere the reader did not ask for.
       const mode = archiveOn || autoOn;
+      el.classList.toggle('compact', compactOn(CONV_COMPACT_KEY));
       el.innerHTML = `<div class="section-header">` +
         `${archiveOn ? 'Archived conversations' : autoOn ? 'Auto conversations' : 'Conversations'}` +
-        `${mode ? (archiveOn ? archiveControl : autoControl)
-          : autoControl + archiveControl + newControl}</div>` +
+        `${mode ? (archiveOn ? archiveControl : autoControl) + compactControl
+          : compactControl + autoControl + archiveControl + newControl}</div>` +
         (archiveOn ? archivedRows.map(r => card(r, true)).join('')
         : autoOn ? autoRows.map(r => card(r, false)).join('')
         : activeRows.length ? activeRows.map(r => card(r, false)).join('')

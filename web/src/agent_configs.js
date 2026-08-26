@@ -110,17 +110,28 @@
         + '</button>';
     }
 
+    // A row is a name, a provider, a model and a key — two lines of it at full size, and two lines
+    // still when compact, but with nothing allowed to wrap into a third. See compactButton.
+    const CFG_COMPACT_KEY = 'herdr_cfg_compact';
+
     function agentConfigsHtml() {
       // Nothing to draw without a provider: aliases need something to be aliases *of*. Stock
       // providers make this available without a file; an actually empty list still has no action.
       if (!agentConfigProviders().length) return '';
       const bands = agentConfigBands();
       return '<div class="section-header" style="margin-top:18px">Agent configs'
+        + (bands.length
+          ? compactButton(CFG_COMPACT_KEY, 'renderLauncher', 'Compact configs') : '')
         + '<button class="section-action" onclick="openAgentConfig(\'\')"'
         + ' title="Add a config" aria-label="Add an agent config">+ New</button></div>'
+        // The rows in a box of their own, because the mode is a class and the launcher's own grid
+        // is where they would otherwise hang: a section cannot be told apart from its neighbour by
+        // a class on the element they share.
         + (bands.length
-          ? bands.map(b => `<div class="launcher-band">${escapeHtml(b.kind)}</div>`
-            + b.rows.map(agentConfigRowHtml).join('')).join('')
+          ? `<div class="cfg-list${compactOn(CFG_COMPACT_KEY) ? ' compact' : ''}">`
+            + bands.map(b => `<div class="launcher-band">${escapeHtml(b.kind)}</div>`
+              + b.rows.map(agentConfigRowHtml).join('')).join('')
+            + '</div>'
           : '<div class="cfg-empty">No configs yet. + New names one — a model and a key, against'
             + ' a provider this relay already has.</div>');
     }

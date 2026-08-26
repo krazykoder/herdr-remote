@@ -108,3 +108,40 @@
     let startOptions = null, startProjectId = null, startMode = 'agent';
     // Pairs live only in this browser. The relay has no pair message and stores no pair data.
     let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
+
+    // --- Compact sections ---
+    //
+    // Three sections draw a list of things the reader mostly recognises by name: the launcher's
+    // tiles, the agent configs under them, and the conversation cards. Each is worth its full
+    // height the first week and a page of scrolling by the second, so each carries a toggle that
+    // drops it to two lines a row. One switch, one icon and one place to store the answer, because
+    // three copies of a two-line preference is how the three of them end up behaving differently.
+    //
+    // In localStorage rather than in the shared documents: this is about the screen it is drawn on,
+    // not about the tiles, the configs or the conversations.
+    const COMPACT_ICON =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" stroke-linecap="round" aria-hidden="true">'
+      + '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/>'
+      + '<line x1="4" y1="17" x2="20" y2="17"/></svg>';
+
+    function compactOn(key) {
+      try { return localStorage.getItem(key) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleCompact(key, render) {
+      try { localStorage.setItem(key, compactOn(key) ? 'off' : 'on'); }
+      catch (e) { /* private mode: session-only */ }
+      if (typeof render === 'function') render();
+    }
+
+    // aria-pressed rather than two icons: the button is a state, and swapping the glyph under the
+    // reader's finger is how a toggle stops reading as one thing. The redraw is named rather than
+    // captured, so this stays a string a section header can concatenate.
+    function compactButton(key, render, label) {
+      return `<button class="section-action" onclick="toggleCompact('${key}', ${render})"`
+        + ` aria-pressed="${compactOn(key) ? 'true' : 'false'}"`
+        + ' title="Two lines a row: the name, and the badges under it"'
+        + ` aria-label="${label}">${COMPACT_ICON}</button>`;
+    }

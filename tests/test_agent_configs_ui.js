@@ -54,6 +54,10 @@ function boot(opts = {}) {
          configs: opts.configs || []}
       : opts.startOptions,
     stateSyncMark: name => marked.push(name),
+    // utils.js's, over the same store — see compactButton there. The section only concatenates it.
+    compactOn: k => store[k] === 'on',
+    compactButton: (k, render, label) =>
+      `<button class="section-action" aria-pressed="${store[k] === 'on'}" aria-label="${label}"></button>`,
     escapeHtml: s => String(s).replace(/[&<>"]/g, c =>
       ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])),
     agentBadge: (text, kind) => ` <span class="badge" data-kind="${kind || text}">${text}</span>`,
@@ -231,4 +235,18 @@ test('the toggle is a draft edit, and the flag survives a save', () => {
   s.agentConfigToggleOff();
   s.saveAgentConfig();
   assert.equal(JSON.parse(s.store.herdr_agent_configs).aliases[0].off, true);
+});
+
+test('compact is offered where there is a list, and says so on the list', () => {
+  const off = boot({configs: [CLAUDE]});
+  assert.match(off.agentConfigsHtml(), /aria-label="Compact configs"/);
+  assert.match(off.agentConfigsHtml(), /class="cfg-list"/);
+
+  const on = boot({configs: [CLAUDE], store: {herdr_cfg_compact: 'on'}});
+  assert.match(on.agentConfigsHtml(), /class="cfg-list compact"/);
+
+  // An empty section has nothing to make smaller, and a toggle over one row of prose is a control
+  // that does nothing visible the first time it is pressed.
+  const none = boot({configs: []});
+  assert.doesNotMatch(none.agentConfigsHtml(), /Compact configs/);
 });

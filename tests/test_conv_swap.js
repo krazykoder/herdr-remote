@@ -28,10 +28,18 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
   const store = {};
   const ctx = vm.createContext({
     console, JSON, Math, Date, Object, Array, Set, Map, String, Number, setTimeout, clearTimeout,
-    document: {getElementById: id => (fields[id] = fields[id] || {id, value: '', style: {}, innerHTML: ''}),
+    document: {getElementById: id => (fields[id] = fields[id] || {id, value: '', style: {}, innerHTML: '',
+                                                                 classes: new Set(),
+                                                                 classList: {toggle(n, on) {
+                                                                   if (on) fields[id].classes.add(n);
+                                                                   else fields[id].classes.delete(n);
+                                                                 }}}),
                querySelector: () => null, createElement: () => ({style: {}}), addEventListener() {}},
     window: {addEventListener() {}}, localStorage: {getItem: () => null, setItem() {}},
     escapeHtml: s => String(s), agents: live, shells: [], startOptions: options,
+    // utils.js's, which this module only concatenates into a header — see compactButton there.
+    compactOn: () => false,
+    compactButton: () => '<button class="section-action" aria-label="Compact cards"></button>',
     loadConvIndex: () => [{id: 'c1', members: [{key: 'k1'}]}],
     convMemberKey: a => a.pane_id || '',
     sessionStorage: {
@@ -442,4 +450,33 @@ test('codex is cleared with a slash command, not with the dollar a skill wears t
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(sent)')),
     [['w1:p1', '/clear'], ['w1:p1', '$ponytail full']],
     'the command as typed, and the starter still through agentSlash');
+});
+
+test('compact is a class on the section and a mode the cards are drawn for', () => {
+  const rows = [{id: 'c1', name: 'Nightly', members: [{key: 'k1', label: 'Arch', agent: 'claude',
+                                                       messages: 3, last: 'all done'}]}];
+  const e = boot();
+  e.run(`
+    loadConvIndex = () => ${JSON.stringify(rows)};
+    convLandingAutoOn = () => false;
+    convLandingArchiveOn = () => false;
+    CONV_LANDING_AUTO_MAX = 10;
+    convSeenAt = () => 0;
+    convNoteCounts = () => {};
+    convGlyph = () => '#';
+    agentBadge = a => '<span class="badge">' + a + '</span>';
+    paneLabel = a => a.label || a.pane_id;
+    fmtAgo = () => 'just now';
+    applySections = () => {};
+    compactOn = () => true;
+    renderConversations();`);
+  assert.ok(e.fields.conversations.classes.has('compact'),
+    'the mode is on the section, so the cards need no second shape to be drawn in');
+  const html = e.fields.conversations.innerHTML;
+  // The three meta lines are told apart by name, which is what lets a mode keep the members' kinds
+  // and drop the prose. Unnamed, the only way to pick one was by its place in the card.
+  assert.match(html, /conversation-meta kinds/);
+  assert.match(html, /conversation-meta names/);
+  assert.match(html, /conversation-meta live/);
+  assert.match(html, /aria-label="Compact cards"/, 'and the header carries the toggle');
 });
