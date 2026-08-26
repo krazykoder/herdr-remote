@@ -764,19 +764,26 @@ test('landing keeps auto conversations optional and bounded', async ({page}) => 
     renderConversations();
   });
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
-  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Show auto (12)');
+  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Auto (12)');
+
+  // A mode rather than a second list: it swaps what the section shows, and the one control left in
+  // the header is the way back out of it. Still bounded in the mode — the count on the button is
+  // the whole tier, and CONV_LANDING_AUTO_MAX of them are drawn.
   await page.locator('#conversations .conv-auto-toggle').click();
-  await expect(page.locator('#conversations .conversation-card')).toHaveCount(11);
-  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Hide auto (12)');
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(10);
+  await expect(page.locator('#conversations .conv-back')).toHaveText('← Back');
+
+  // The same bound on the list every other reader of it draws from — the tab strip above the
+  // conversation view among them, where twelve auto tabs would bury the named one.
+  expect(await page.evaluate(() => convLandingList().shown.length)).toBe(11);
 });
 
 test('landing lists the named ones first, newest activity at the top of each tier',
   async ({page}) => {
   await page.goto('/');
-  await page.evaluate(() => {
+  const seed = () => page.evaluate(() => {
     const conv = (id, seen, auto) => ({id: id, name: id, created: 1, auto: auto,
       members: [{key: id + ':m', added: 1, label: id, seen: seen, messages: 2}]});
-    localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on');
     // Written in the order that is wrong on both counts: quietest named one first, and an auto
     // record livelier than either of them.
     saveConvIndex([conv('quiet', 1000), conv('busy-auto', 9000, true), conv('loud', 5000),
@@ -784,9 +791,20 @@ test('landing lists the named ones first, newest activity at the top of each tie
     toggleSection('conversations', true);
     renderConversations();
   });
-  expect(await page.evaluate(() => Array.from(
-    document.querySelectorAll('#conversations .conversation-card'))
-    .map(el => el.dataset.convId))).toEqual(['loud', 'quiet', 'busy-auto', 'old-auto']);
+  const shown = () => page.evaluate(() => Array.from(
+    document.querySelectorAll('#conversations .conversation-card')).map(el => el.dataset.convId));
+
+  await page.evaluate(() => localStorage.setItem(CONV_LANDING_AUTO_KEY, 'off'));
+  await seed();
+  expect(await shown()).toEqual(['loud', 'quiet']);
+  // Each tier is sorted the same way, and the auto one is a mode of its own rather than a tail on
+  // the named list — so the same rule is checked where those records are actually drawn.
+  await page.evaluate(() => localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on'));
+  await seed();
+  expect(await shown()).toEqual(['busy-auto', 'old-auto']);
+  // And the list every other reader draws from still carries both tiers, named first.
+  expect(await page.evaluate(() => convLandingList().shown.map(c => c.id)))
+    .toEqual(['loud', 'quiet', 'busy-auto', 'old-auto']);
 });
 
 test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
@@ -2480,12 +2498,12 @@ test('the conversation view carries the conversations as tabs', async ({page}) =
     localStorage.setItem('herdr_conv_landing_auto', 'on');
   });
   // No read: recording would stamp all three with the same `seen`, and the order under test is
-  // the one the landing list sorts by.
-  await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  // the one the landing list sorts by. Opened by id rather than by clicking a card — with auto
+  // switched on the landing page is showing that tier and this one is not on it.
+  await page.evaluate(() => openConversation('c2'));
   const tabs = page.locator('#convStrip .conv-tab');
-  // Same list and same order as the landing page it was opened from — the named ones first,
-  // newest message at the top of each tier.
+  // Same list and same order as the landing page sorts by — the named ones first, newest message
+  // at the top of each tier.
   await expect(tabs).toHaveCount(3);
   await expect(tabs.locator('.name')).toHaveText(
     ['the release', 'new authentication feature', 'relay · Architect 1']);
@@ -2509,7 +2527,7 @@ test('conversation tabs appear before its transcript finishes loading', async ({
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
 });
 
-test('the strip hides the auto conversations exactly when the landing list does', async ({page}) => {
+test('the strip carries the auto conversations exactly when they are switched on', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
     const key = convMemberKey(paneOf(activePane));
@@ -2525,10 +2543,12 @@ test('the strip hides the auto conversations exactly when the landing list does'
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
   await page.locator('#conversations .conversation-card').click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
+  // Switched on, the landing page shows that tier instead of the named one — and the strip, which
+  // is one list for both, now carries both.
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conv-auto-toggle').click();
-  await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
-  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
+  await page.locator('#conversations .conversation-card', {hasText: 'relay'}).click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(2);
 });
 

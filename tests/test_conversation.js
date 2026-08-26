@@ -565,6 +565,28 @@ test('an index carrying one pane twice reads it once, keeping the row with the h
   assert.deepEqual(members[0].was, ['w1:p9'], 'and it is the one that knows where it has been');
 });
 
+test('two browsers filing one fresh pane leave one auto conversation, not two', () => {
+  // Both mint a conversation for the same pane before either has seen the other's, and the state
+  // merge appends the second because appending what a browser created is what it is for. The
+  // relay's row comes first in the merged list, so that is the one every browser keeps.
+  const raw = JSON.stringify({version: 1, items: [
+    {id: 'c_first', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+    {id: 'c_second', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+    {id: 'c_other', name: 'herdr · claude', auto: true, members: [{key: 'k2'}]},
+  ]});
+  assert.deepEqual(Array.from(parseConvIndex(raw), c => c.id), ['c_first', 'c_other']);
+});
+
+test('a named conversation sharing a pane with an auto one keeps both', () => {
+  // A pane added to a conversation somebody named is still filed under the auto record it has been
+  // recording into. Dropping that one on the strength of the named row deletes the pane's history.
+  const raw = JSON.stringify({version: 1, items: [
+    {id: 'c_named', name: 'the review', members: [{key: 'k1'}, {key: 'k2'}]},
+    {id: 'c_auto', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+  ]});
+  assert.deepEqual(Array.from(parseConvIndex(raw), c => c.id), ['c_named', 'c_auto']);
+});
+
 const ids = raw => Array.from(parseConvIndex(raw), c => c.id);
 const dropped = (...args) => Array.from(evictOrder(...args));
 

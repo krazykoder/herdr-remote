@@ -560,16 +560,41 @@
       });
     }
 
+    // Two auto conversations filing the same pane, which is what two browsers do when they meet a
+    // fresh pane at the same moment: neither index holds the other's row yet, so each mints one,
+    // and the state merge appends the loser's because appending what a browser created is exactly
+    // what it is for. The pane then has two records in the list, both drawing the one transcript
+    // its key names.
+    //
+    // Dropped on the way in rather than repaired on the way out: the row is a duplicate wherever
+    // it is read, and array order is the same in every browser — the relay's document first, local
+    // creations appended — so every browser drops the same one. Only between two `auto` rows, and
+    // only when every member of the later one is already filed by an earlier: a named conversation
+    // was asserted by somebody, and an auto one holding a pane nothing else holds is that pane's
+    // only record.
+    function dedupeAutoConvs(items) {
+      const filed = new Set();
+      const out = [];
+      for (const c of items) {
+        const keys = (c.members || []).map(m => m && m.key).filter(Boolean);
+        if (c.auto && keys.length && keys.every(k => filed.has(k))) continue;
+        if (c.auto) for (const k of keys) filed.add(k);
+        out.push(c);
+      }
+      return out;
+    }
+
     function parseConvIndex(raw) {
       try {
         const d = JSON.parse(raw || '');
         if (!d || d.version !== 1 || !Array.isArray(d.items)) return [];
-        return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
+        return dedupeAutoConvs(
+          d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
           // The roster, not the recording cap: an ended member is the record of a session that
           // happened, and truncating it here would delete history on the next read of the index.
           .map(c => Object.assign({}, c, {
             members: dedupeMembers(c.members).slice(-CONV_ROSTER_MAX),
-          }));
+          })));
       } catch (e) { return []; }
     }
 
