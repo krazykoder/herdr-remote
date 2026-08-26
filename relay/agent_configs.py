@@ -18,11 +18,12 @@ adding one cannot widen what the relay will do. That asymmetry is the whole desi
 Secret *values* never appear here, and they never appear in the relay at all. `secrets` maps the
 variable the agent wants to the *key ids* the keystore holds it under, and the line typed at the
 pane fetches it there and then — `ANTHROPIC_API_KEY="$(secret AGENTROUTER_API_KEY)"`. The value is
-read by the pane's own shell, so it is never in this process's memory, its environment, its logs,
-or anything an agent can echo back into a transcript. All this module ever handles is the id.
+read by the pane's own shell, so it is never in this process's memory, environment, or logs. All
+this module ever handles is the id.
 
 `secret` is a shell function, not a binary, so it exists only in an interactive shell — which is
-exactly where this line is typed. The relay cannot call it, and that is the point.
+exactly where this line is typed. The started agent inherits the exported value and must still be
+trusted with it; the boundary here is that the relay cannot read, log, or relay it.
 
 Pure by design — reading two files is the only I/O, and the keystore one is read for its key
 *names* alone.
@@ -383,7 +384,7 @@ def _statements(alias: Alias, provider: Provider) -> list[str]:
 
     One list, not two: the line typed at the pane and the line shown on screen are now the same
     text, because a secret is a `$(secret <id>)` call in both. There is nothing left to redact —
-    the value only ever exists inside the pane's own shell, after this line has been sent.
+    the value is resolved only by the pane's shell, after this line has been sent.
     """
     out: list[str] = []
     if provider.unset:
@@ -397,9 +398,9 @@ def _statements(alias: Alias, provider: Provider) -> list[str]:
         if not name:
             continue
         # Fetched by the pane, not by the relay. `secret` reads the keystore at the moment this
-        # line runs, so the value never reaches this process — which is the whole point: a key
-        # that is not in anyone's environment cannot be echoed out of one by an agent. The id is
-        # ENV_NAME-shaped by parse_providers, so it is a bare word inside the expansion.
+        # line runs, so the value never reaches this process. The started agent inherits it, as it
+        # must to authenticate; the id is ENV_NAME-shaped by parse_providers, so it is a bare word
+        # inside the expansion.
         assignments.append(f'{wants}="$(secret {name})"')
     if provider.model_var and alias.model:
         assignments.append(f"{provider.model_var}={shlex.quote(alias.model)}")
