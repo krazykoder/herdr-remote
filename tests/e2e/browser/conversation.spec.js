@@ -821,11 +821,13 @@ const endMember = page => page.evaluate(async () => {
   await renderConvStandalone(false);
 });
 
-// Two taps either way: opening the menu is the first, and the item is the second. What used to
-// be an arm is the menu itself — see restartMenuHtml.
+// Open the menu, then the item, then the item again: every one of these starts or ends a real
+// session, so the item is armed like every other control on the row — see menuItemHtml.
 async function tapRestart(page) {
   await page.locator('#convView .conv-roster-row .conv-restart-open').click();
-  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
+  const item = page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart');
+  await item.click();
+  await item.click();
 }
 
 test('an ended session restarts under its name and continues its member thread', async ({page}) => {
@@ -841,7 +843,11 @@ test('an ended session restarts under its name and continues its member thread',
     .toContainText('new claude session in herdr-remote');
   expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
 
-  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
+  const item = page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart');
+  await item.click();
+  await expect(item).toHaveText('Restart?');
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
+  await item.click();
   await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
     .toHaveLength(1);
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
@@ -901,6 +907,14 @@ test('the Restart menu survives the redraws that arrive while it is open', async
   await expect(page.locator('#convView .conv-roster-row .conv-menu')).toHaveAttribute('open', '');
   await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
     .toBeVisible();
+  // And the item's own arm survives the same redraw, for the same reason: the node holding it is
+  // replaced between the taps, so the arm is keyed rather than kept on the element.
+  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
+  await page.evaluate(() => renderConvStandalone(false));
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
+    .toHaveText('Restart?');
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
+
   // And a tap that lands anywhere else gives it up, the way an arm does.
   await page.locator('#convView .conv-roster-row .who').click();
   await expect(page.locator('#convView .conv-roster-row .conv-menu'))

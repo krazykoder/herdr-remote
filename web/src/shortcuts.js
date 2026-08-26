@@ -1046,6 +1046,18 @@
       closeRestartMenu();
     }, true);
 
+    // Every item here starts or ends a session, so every one of them is asked twice — the menu
+    // being open is not the question, it is only how the two ways of restarting are reached. Keyed
+    // like endBtnHtml's, so the arm survives the redraw that arrives between the taps.
+    function menuItemHtml(o) {
+      const armed = typeof armButtonArmed === 'function' && armButtonArmed(o.arm);
+      return `<button class="${o.cls} arm-btn" data-key="${escapeHtml(o.key)}"` +
+        ` data-arm-key="${escapeHtml(o.arm)}"` +
+        (armed ? ` data-armed="1" data-arm-label="${escapeHtml(o.rest)}"` : '') +
+        ` onclick="armButton(this, '${o.ask}', () => ${o.fire}, this.dataset.armKey)">` +
+        `${escapeHtml(armed ? o.ask : o.rest)}</button>`;
+    }
+
     function restartMenuHtml(key, rec, on) {
       const again = canRespawn(rec.spawn);
       const other = canStartFromConv();
@@ -1059,11 +1071,12 @@
         `Restart \u25be</summary>` +
         `<div class="conv-menu-items">` +
         (note ? `<p class="conv-menu-note">${escapeHtml(note)}</p>` : '') +
-        (again ? `<button class="conv-restart" data-key="${k}"` +
-          ` onclick="convRestart(this.dataset.key)">` +
-          `${on ? 'Restart \u2014 ends this session first' : 'Restart'}</button>` : '') +
-        (other ? `<button class="conv-swap" data-key="${k}"` +
-          ` onclick="convStartAs(this.dataset.key)">Restart as\u2026</button>` : '') +
+        (again ? menuItemHtml({cls: 'conv-restart', key: key, arm: 'restart-member:' + key,
+          rest: on ? 'Restart \u2014 ends this session first' : 'Restart', ask: 'Restart?',
+          fire: 'convRestart(this.dataset.key)'}) : '') +
+        (other ? menuItemHtml({cls: 'conv-swap', key: key, arm: 'restart-as:' + key,
+          rest: 'Restart as\u2026', ask: 'Restart as?',
+          fire: 'convStartAs(this.dataset.key)'}) : '') +
         `</div></details>`;
     }
 
