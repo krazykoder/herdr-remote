@@ -15,7 +15,7 @@ const SRC = ['pane_picker.js', 'landing_search.js']
   .map(f => fs.readFileSync(path.join(__dirname, '..', 'web', 'src', f), 'utf8')).join('\n');
 
 function boot({agents = [], shells = [], convs = [], tiles = [], pairs = [],
-               stored = null, landing = true} = {}) {
+               lastSeen = {}, stored = null, landing = true} = {}) {
   const fields = {};
   const el = id => (fields[id] = fields[id] || {id, value: '', style: {}, innerHTML: '', hidden: false,
                                                 classList: {add: n => frameClasses.add(n),
@@ -33,7 +33,8 @@ function boot({agents = [], shells = [], convs = [], tiles = [], pairs = [],
                querySelector: () => ({getBoundingClientRect: () => ({height: 56})})},
     localStorage: {getItem: () => stored, setItem() {}},
     escapeHtml: s => String(s),
-    agents, shells,
+    agents, shells, lastSeen,
+    convSeenAt: c => c.seen || 0,
     convLandingList: () => ({all: convs}),
     convGlyph: () => '#',
     // pickPaneRow is the picker's own, so the fields a row is searched on are the real ones.
@@ -144,4 +145,27 @@ test('on, but only where there is a landing page under it', () => {
   e.el('agentListView').style.display = '';
   e.run('syncLandingSearch()');
   assert.equal(e.el('landingSearch').hidden, false);
+});
+
+test('the best match is first, and among equals the pane last looked at', () => {
+  const e = boot({
+    agents: [{pane_id: 'p1', label: 'watcher', agent: 'codex'},
+             {pane_id: 'p2', label: 'build watch', agent: 'codex'},
+             {pane_id: 'p3', label: 'watch me', agent: 'codex'}],
+    lastSeen: {p1: 10, p2: 30, p3: 20},
+  });
+  const names = search(e, 'watch').match(/class="name">[^<]+/g)
+    .map(s => s.replace('class="name">', ''));
+  assert.deepStrictEqual(names, ['watch me', 'watcher', 'build watch'],
+    'a name that starts with the word beats one that only contains it, newest first');
+});
+
+test('a row matched on its section keyword ranks under one matched on its name', () => {
+  const e = boot({
+    agents: [{pane_id: 'p1', label: 'session notes', agent: 'codex'},
+             {pane_id: 'p2', label: 'zzz', agent: 'codex'}],
+  });
+  const names = search(e, 'session').match(/class="name">[^<]+/g)
+    .map(s => s.replace('class="name">', ''));
+  assert.deepStrictEqual(names, ['session notes', 'zzz']);
 });

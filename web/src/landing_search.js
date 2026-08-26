@@ -94,11 +94,17 @@
       const groups = [];
       const add = (head, words, rows, go) => { if (rows.length) groups.push({head, words, rows, go}); };
 
+      // `seen` on every row that has a clock: two rows that answer the query equally well are
+      // ordered by which one was last looked at, which is the same question the cards above are
+      // sorted by. A row without one sorts last among its equals rather than being special-cased.
+      const seenOf = a => lastSeen[a.pane_id] || 0;
+      const paneRow = a => Object.assign(pickPaneRow(a), {seen: seenOf(a)});
+
       add('Agents', 'agent agents pane panes session sessions',
-        agents.map(a => pickPaneRow(a)), id => jumpToPane(id));
+        agents.map(paneRow), id => jumpToPane(id));
 
       add('Terminals', 'terminal terminals shell shells console command line',
-        shells.map(a => pickPaneRow(a)), id => jumpToPane(id));
+        shells.map(paneRow), id => jumpToPane(id));
 
       // A pair is not a pane, so it opens the first half of itself — the two are side by side in
       // the strip from there, which is the whole point of having paired them.
@@ -108,6 +114,9 @@
         const live = (p.members || []).map(m => agents.find(a => memberMatches(m, a))).filter(Boolean);
         return {id: p.id || p.name, name: p.name || 'Pair', glyph: '⇄',
           meta: live.map(a => escapeHtml(paneLabel(a))).join(' ⇄ '),
+          // A pair is as recent as its liveliest half — the pane last read is the one the reader
+          // was in, and the pair is how they get back to it.
+          seen: live.reduce((n, a) => Math.max(n, seenOf(a)), 0),
           color: live.length ? statusColor(live[0]) : ''};
       }), id => {
         const pair = healthy.find(p => (p.id || p.name) === id);
@@ -134,6 +143,7 @@
           name: c.name || 'Conversation',
           glyph: typeof convGlyph === 'function' ? convGlyph(c) : '#',
           note: c.archived ? 'Archived' : (c.auto ? 'Auto' : ''),
+          seen: typeof convSeenAt === 'function' ? convSeenAt(c) : 0,
           meta: (c.members || []).map(m => escapeHtml(m.label || '')).filter(Boolean).join(', '),
         })), id => openConversation(id));
 
@@ -146,6 +156,19 @@
     // everything. "terminal build" therefore means the terminal called build, not either.
     function landingHay(row, group) {
       return pickHay(row).concat(group.words || []);
+    }
+
+    // How well a row answers what was typed, so the order is the answer's and not the section's.
+    // Per typed word, the strongest thing that word did anywhere in the row: the start of a name
+    // beats the middle of one, both beat a hit in the meta or in the section's own keywords, and
+    // last is a subsequence — which is a match the reader did not ask for so much as allow.
+    function landingScore(row, group, q) {
+      const name = String(row.name || '').toLowerCase();
+      const fields = landingHay(row, group);
+      return q.split(/\s+/).filter(Boolean).reduce((n, w) => n + (
+        name.startsWith(w) ? 8 : name.includes(w) ? 6
+          : fields.some(f => f.includes(w)) ? 4
+            : subsequence(name, w) ? 2 : 1), 0);
     }
 
     function landingRowHtml(group, row) {
@@ -166,8 +189,14 @@
       if (!q) { out.innerHTML = ''; out.hidden = true; return; }
       let shown = 0, html = '';
       landingSearchGroups().forEach(g => {
+        // Best match first, and among equals the one last looked at — a name typed halfway is
+        // usually the pane the reader has been in all morning, and the section it happens to sit
+        // in is no reason for it to be third.
         const rows = g.rows.filter(r => pickMatch(landingHay(r, g), q))
-          .slice(0, LANDING_SEARCH_MAX - shown);
+          .map(r => ({row: r, score: landingScore(r, g, q)}))
+          .sort((a, b) => b.score - a.score || (b.row.seen || 0) - (a.row.seen || 0))
+          .slice(0, LANDING_SEARCH_MAX - shown)
+          .map(x => x.row);
         if (!rows.length) return;
         shown += rows.length;
         html += `<div class="pair-head">${escapeHtml(g.head)}</div>` +

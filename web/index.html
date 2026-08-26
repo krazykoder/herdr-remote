@@ -2819,13 +2819,14 @@
     /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
        through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
        still reads as a raised control. */
-    /* Closed it is the left half of the bar — the same pill, the same height, the same border and
-       the same glyph in the same place, cut short. A list of panes is what the landing page
-       already is, and a permanent full-width box over it is a control competing with the thing it
-       searches. Open is the same element grown, not a second one swapped in: one field, so the
-       text, the focus and the caret are never handed over mid-gesture. */
+    /* Closed it is the glyph and the pill around it and nothing more — the same height, border,
+       radius and left padding as the open bar, cut to the width of what it is showing. A list of
+       panes is what the landing page already is, and a box over it any wider than its own icon is
+       a control competing with the thing it searches. Open is the same element grown, not a second
+       one swapped in: one field, so the text, the focus and the caret are never handed over
+       mid-gesture. */
     #landingSearch input {
-      width: 50%;
+      width: 44px;
       box-sizing: border-box;
       padding: 11px 16px 11px 38px;
       transition: width 180ms ease;
