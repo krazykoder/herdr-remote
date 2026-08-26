@@ -1199,6 +1199,85 @@
       align-items: stretch;
     }
 
+    /* Compact: two lines a tile — the name, and under it the badges that say what pressing it
+       makes. The line that goes is the payload as *prose*: a command in monospace is what makes a
+       tile tall, and a reader of their own launcher already knows what their own tiles run. A
+       roster is badges, so it stays, shrunk to the size of the marks beside it.
+
+       Wider columns, because a name with nowhere to wrap needs the room; and no per-tile Edit,
+       since the corner it reserves is most of a compact tile. Editing is still one press away in
+       the section's own Edit. */
+    .launcher.compact {
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+
+    /* A grid and not a wrapping flex row: what is wanted is a *shape* — glyph down the left, name
+       across the top, badges under it — and flex only ever wraps when a line runs out of room, so
+       a short name kept its badges up beside it and a long one pushed its marks onto a third line.
+       Four children, four cells, the same two lines whatever is in them. */
+    .launcher.compact .launcher-tile,
+    .launcher.compact .launcher-tile-wrap .launcher-tile {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1px 6px;
+      min-height: 0;
+      padding: 6px 9px;
+    }
+
+    .launcher.compact .launcher-kind { grid-area: 1 / 1 / 3 / 2; }
+    .launcher.compact .launcher-name { grid-area: 1 / 2 / 2 / 4; }
+    .launcher.compact .launcher-tile .launcher-payload { grid-area: 2 / 2 / 3 / 3; }
+    .launcher.compact .launcher-badges { grid-area: 2 / 3 / 3 / 4; }
+
+    .launcher.compact .launcher-edit { display: none; }
+
+    /* The glyph stays, the word beside it goes: "SESSION" over every tile is the column heading of
+       a table nobody asked for, and the icon says the same thing in the space of a letter. */
+    .launcher.compact .launcher-kind span { display: none; }
+
+    .launcher.compact .launcher-name {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.75rem;
+    }
+
+    /* Named through the tile, so these outweigh the rules that lay a spawn tile's roster out — as
+       specific as a plain `.launcher.compact .launcher-payload`, and later in the sheet. */
+    .launcher.compact .launcher-tile .launcher-payload {
+      min-width: 0;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      font-size: 0.5rem;
+      line-height: 1.2;
+    }
+
+    /* A command is prose, and prose is the line this mode exists to drop. A roster is badges, and
+       badges are what the second line is for. */
+    .launcher.compact .launcher-tile[data-action="run"] .launcher-payload,
+    .launcher.compact .launcher-tile[data-action="term"] .launcher-payload {
+      display: none;
+    }
+
+    /* Very small: the second line is a footnote to the name, not a second name. */
+    .launcher.compact .launcher-payload .badge {
+      font-size: 0.44rem;
+      padding: 0 3px;
+      letter-spacing: 0.01em;
+    }
+
+    .launcher.compact .launcher-plus { font-size: 0.5rem; }
+
+    /* The marks are never dropped, whatever the mode: `insecure` and `skip approvals` are facts
+       about what the press does, and a compact view that hid them would be a smaller tile that is
+       also a more dangerous one. */
+    .launcher.compact .launcher-badges {
+      margin-top: 0;
+      flex-wrap: nowrap;
+    }
+
     /* The header spans the grid at every width. The shared rule that does this only exists inside
        the desktop media query, because the sections it was written for are single-column until
        then and this one never is. */
@@ -1987,6 +2066,18 @@
       letter-spacing: inherit;
       text-transform: none;
       cursor: pointer;
+    }
+
+    /* A section control that is a state rather than an action says so where it is, the way the tab
+       strip and the arbitration filters do. */
+    .section-header .section-action[aria-pressed="true"] {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* An icon in one of these is a glyph on a line of text: it needs centring, not a baseline. */
+    .section-header .section-action svg {
+      display: block;
     }
 
     .agent {

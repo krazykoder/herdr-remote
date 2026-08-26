@@ -96,10 +96,12 @@ test('the section leads the page and carries its own way in', async ({page}) => 
     .map(el => el.id));
   expect(order).toEqual(['launcher', 'agents']);
   // Drawn whether or not there is anything under it — an entry point that only appears once you
-  // already have a tile cannot be how the first one is made. Two of them once there is a tile,
-  // and + is always the right-hand one: an add button that moves as soon as it has been used is
-  // the shape of a button people stop finding.
-  await expect(page.locator('#launcher > .section-header:first-child button')).toHaveText(['Edit', '+ New']);
+  // already have a tile cannot be how the first one is made. Three of them once there is a tile —
+  // the compact toggle, which is a glyph and so has no text, then Edit — and + is always the
+  // right-hand one: an add button that moves as soon as it has been used is the shape of a button people stop
+  // finding.
+  await expect(page.locator('#launcher > .section-header:first-child button'))
+    .toHaveText(['', 'Edit', '+ New']);
 });
 
 test('an empty launcher still offers the one thing there is to do', async ({page}) => {
@@ -213,7 +215,7 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
 test('tiles are reordered from the list, and the order is what was written down', async ({page}) => {
   await open(page);
   await seed(page, [RUN, Object.assign({}, RUN, {id: 'ql_two', label: 'Second'})]);
-  await page.click('#launcher > .section-header:first-child button');
+  await page.click('#launcher .section-header button[aria-label="Edit the launcher"]');
   await dlg(page).getByRole('button', {name: 'Move Second up'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await page.reload();
@@ -229,7 +231,7 @@ test('deleting asks first, and takes the tile off the page', async ({page}) => {
   await open(page);
   await seed(page, [RUN]);
   page.on('dialog', d => d.accept());
-  await page.click('#launcher > .section-header:first-child button');
+  await page.click('#launcher .section-header button[aria-label="Edit the launcher"]');
   await dlg(page).getByRole('button', {name: 'Delete Run the tests'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
@@ -366,4 +368,40 @@ test('one tap only arms the Start, it does not press it', async ({page}) => {
   await expect(dlg(page).getByRole('button', {name: 'Start?', exact: true})).toBeVisible();
   await page.waitForTimeout(500);
   expect(sent.filter(m => m.type === 'open_terminal')).toHaveLength(0);
+});
+
+test('compact makes a tile two lines, keeps its marks, and is remembered', async ({page}) => {
+  await open(page);
+  await seed(page, [RUN, {id: 'ql_solo', label: 'Unattended', action: 'spawn',
+                          project_id: 'charts',
+                          members: [{name: 'claude', unattended: true}]}]);
+  const tile = page.locator('.launcher-tile[data-tile="ql_run"]');
+  const tall = (await tile.boundingBox()).height;
+
+  await page.locator('#launcher .section-header')
+    .getByRole('button', {name: 'Compact tiles'}).click();
+
+  await expect(page.locator('#launcher')).toHaveClass(/compact/);
+  // The command goes. Not removed from the markup — one document, two ways of drawing it, and
+  // nothing to rebuild when the mode is turned off again.
+  await expect(tile.locator('.launcher-payload')).toBeHidden();
+  expect((await tile.boundingBox()).height).toBeLessThan(tall);
+  await expect(tile.locator('.launcher-name')).toContainText('Run the tests');
+
+  // A roster is badges rather than a line of monospace, so it is what the second line is for — and
+  // it is laid out by a rule as specific as the one hiding a command, which is why it is checked.
+  const solo = page.locator('.launcher-tile[data-tile="ql_solo"]');
+  await expect(solo.locator('.launcher-payload')).toBeVisible();
+  // Two lines, and never a third: the marks sit beside the roster rather than under it.
+  const line = (await tile.boundingBox()).height;
+  const two = (await solo.boundingBox()).height;
+  expect(two, 'the marks were pushed onto a line of their own').toBeLessThan(line * 2);
+  // Never dropped by a view mode: what the press does is not a detail of how the tile is drawn.
+  await expect(solo.locator('.launcher-badge.solo')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('#launcher')).toHaveClass(/compact/);
+  await page.locator('#launcher .section-header')
+    .getByRole('button', {name: 'Compact tiles'}).click();
+  await expect(page.locator('#launcher')).not.toHaveClass(/compact/);
 });
