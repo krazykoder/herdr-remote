@@ -414,6 +414,18 @@
 
     // A start can outlive its sheet (Duplicate has none), so its result also has one global card.
     // Success and warnings clear shortly; errors stay long enough to be read and retried.
+    //
+    // Busy has a ceiling of its own, and it is the one state that needs one. Every other state
+    // ends by timing out; busy ends only when the pane it is waiting for turns up in a snapshot
+    // and openPendingStart says how it went. A start whose pane never arrives — one refused
+    // between the relay's answer and the poll, one on a host that stopped answering, a batch
+    // abandoned mid-sequence — leaves nothing to clear it, and a spinner that runs for ever reads
+    // as a start that failed silently when the session is in fact up and working.
+    //
+    // Long enough not to talk over a slow one: the relay waits AGENT_START_TIMEOUT_MS (30s) for
+    // herdr alone, and each member of a launcher batch resets this on its own way out. Worded as
+    // a report and not an error, because that is all this knows — the pane has not been seen.
+    const SPAWN_BUSY_MS = 90000;
     let spawnStatusTimer = null;
     function showSpawnStatus(text, state) {
       const el = document.getElementById('spawnStatus');
@@ -425,7 +437,13 @@
       el.style.borderColor = color;
       spinner.hidden = state !== 'busy';
       clearTimeout(spawnStatusTimer);
-      if (state !== 'busy') spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
+      if (state === 'busy') {
+        spawnStatusTimer = setTimeout(
+          () => showSpawnStatus(`${text} no pane has appeared yet — it may still be coming up.`,
+                                'warning'), SPAWN_BUSY_MS);
+        return;
+      }
+      spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
         state === 'error' ? 10000 : 5000);
     }
 

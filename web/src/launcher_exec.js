@@ -216,8 +216,15 @@
       }
       const batch = ql.batch;
       // A batch cancelled or superseded while this start was in flight. The pane is real and stays;
-      // it is simply not adopted into a grouping that no longer exists.
-      if (!batch || batch !== launcherLive) { openTerminal(a.pane_id); return; }
+      // it is simply not adopted into a grouping that no longer exists. Said out loud rather than
+      // returned from quietly: the card at the foot is still spinning on this start, and nothing
+      // else is coming to stop it.
+      if (!batch || batch !== launcherLive) {
+        openTerminal(a.pane_id);
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started — on its own, the launch it `
+                        + 'belonged to is over.', 'warning');
+        return;
+      }
       batch.panes.push(a);
       // Its first prompt, as soon as it is up. `agent start` has already blocked until herdr saw
       // the pane interactively ready, so there is nothing here to wait for — and waiting until the
@@ -233,7 +240,13 @@
         return;
       }
       const conv = launcherMakeConv(batch);
-      if (!conv) { openTerminal(a.pane_id); return; }
+      // At the conversation ceiling. launcherMakeConv has already said why in a toast; this is the
+      // other half of it, because the card is still spinning on a start that has in fact landed.
+      if (!conv) {
+        openTerminal(a.pane_id);
+        showSpawnStatus(`${batch.tile.label} started — ungrouped.`, 'warning');
+        return;
+      }
       renderConversations();
       openConversation(conv.id);
       if (launcherWantsArb(batch.tile)) return launcherAppoint(batch, conv);

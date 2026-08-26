@@ -45,7 +45,10 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
       setItem: (k, v) => { store[k] = String(v); },
     },
     window: {}, console,
-    clearTimeout() {}, setTimeout: () => 1,
+    // Captured rather than dropped: the status card's busy state ends on a timer, and a test
+    // that cannot fire it cannot see the one state that has no other way out.
+    clearTimeout() { g.timer = null; },
+    setTimeout: (fn) => { g.timer = fn; return 1; },
     ws: {send: s => sent.push(JSON.parse(s))},
     agents: live,
     shells: [],
@@ -270,4 +273,30 @@ test('the box is offered only where the relay has a flag for the harness', () =>
   const {run: run2} = startCtx({options: OCLAUDE});
   assert.equal(run2("startUnattendedOffered('claude')"), true);
   assert.equal(run2("startUnattendedOffered('pi')"), false);
+});
+
+test('a busy status card gives up waiting rather than spinning for ever', () => {
+  // Every other state on this card ends by timing out. Busy ends only when the pane it is waiting
+  // for turns up in a snapshot — so a start whose pane never arrives left a spinner running until
+  // the page was reloaded, over a session that had in fact come up and was working.
+  const {el, g, run} = startCtx();
+  run('showSpawnStatus("Session started — opening…", "busy")');
+  assert.equal(el('spawnSpinner').hidden, false);
+  assert.equal(el('spawnStatus').style.display, 'flex');
+  assert.ok(g.timer, 'busy arms a timer of its own');
+  g.timer();
+  assert.equal(el('spawnSpinner').hidden, true, 'and stops spinning when it fires');
+  assert.match(el('spawnStatusText').textContent, /no pane has appeared yet/);
+  // Which is an ordinary transient state from there: the next timer is the one that hides it.
+  g.timer();
+  assert.equal(el('spawnStatus').style.display, 'none');
+});
+
+test('a card that resolves normally never fires the give-up timer', () => {
+  const {el, g, run} = startCtx();
+  run('showSpawnStatus("Starting claude…", "busy")');
+  run('showSpawnStatus("Solo started.", "success")');
+  assert.equal(el('spawnSpinner').hidden, true);
+  g.timer();
+  assert.equal(el('spawnStatus').style.display, 'none', 'success times out to hidden, not to a warning');
 });

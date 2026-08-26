@@ -130,6 +130,11 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     // after the poll has seen it.
     land: pane => vm.runInContext('(async () => { const i = startIntent; startIntent = null;'
       + ' await launcherLanded(' + JSON.stringify(pane) + ', i.ql); })()', ctx),
+    // The same landing, for an intent read *before* something else cleared it — which is what a
+    // start still in flight when its batch ends looks like from here.
+    landIntent: (pane, intent) => vm.runInContext(
+      `(async () => { await launcherLanded(${JSON.stringify(pane)}, `
+      + `${JSON.stringify(intent.ql)}); })()`, ctx),
     fail: () => vm.runInContext('launcherFailed()', ctx),
     pressIn: (id, projectId, name) => vm.runInContext(
       `launcherPressIn(${JSON.stringify(id)}, ${JSON.stringify(projectId)}, `
@@ -475,6 +480,26 @@ test('a conversation ceiling leaves the panes started rather than losing them', 
   assert.equal(p.convs.length, 20, 'nothing was pushed past the ceiling');
   assert.ok(p.log.some(l => l[0] === 'toast' && /ungrouped/.test(l[1])));
   assert.ok(p.log.some(l => l[0] === 'openTerminal'), 'and the user still lands somewhere real');
+  // And the card at the foot stops spinning. It is still on this press's busy line, and the only
+  // thing that ever clears it is a landing saying how it went — so a path that returned quietly
+  // left a spinner running over a start that had worked.
+  const last = p.log.filter(l => l[0] === 'status').pop();
+  assert.equal(last[2], 'warning');
+  assert.match(last[1], /started — ungrouped\.$/);
+});
+
+test('a pane landing for a batch that is over lands on its own, and says so', async () => {
+  // A press cancelled or superseded while one of its starts was in flight. The pane is real and
+  // stays; what must not stay is the busy card the press left behind, because nothing else is
+  // coming to clear it.
+  const p = press({tiles: [THREE]});
+  p.press('ql_c');
+  const intent = p.intent();
+  p.fail();                       // the batch ends while this start is still out
+  await p.landIntent(pane('w1:p1'), intent);
+  assert.ok(p.log.some(l => l[0] === 'openTerminal'), 'the pane is real and is opened');
+  assert.deepEqual(p.log.filter(l => l[0] === 'status').pop().slice(1),
+    ['w1:p1 started — on its own, the launch it belonged to is over.', 'warning']);
 });
 
 // --- spawn, with an arbitrator ---------------------------------------------------------------

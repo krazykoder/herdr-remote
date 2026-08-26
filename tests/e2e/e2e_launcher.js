@@ -126,7 +126,9 @@ async function main() {
     // --- a run tile, built through the editor and pressed ---------------------------------
     // Through the form rather than into storage, because "a tile a person made works" is the
     // whole claim and a seeded one skips the half where the form has to produce a legal tile.
-    await page.click('#launcher .section-header button');
+    await page.click('#launcher .section-header button[aria-label="Add a launcher tile"]');
+    // The form opens on Start agents, so a command tile says which kind it is first.
+    await page.locator('#launcherModal').getByRole('button', {name: 'Run a command'}).click();
     await page.fill('#qlName', 'Charts tests');
     await page.fill('#qlCommand', 'pytest -q tests/charts');
     // Scoped to the dialog: the Project strip in the form and the filter chips in the Agents
@@ -191,9 +193,21 @@ async function main() {
     // The press ends on that conversation rather than on the pane — they were started together,
     // even when "they" is one.
     await page.waitForFunction(id => convViewId === id, soloConv.id, {timeout: 20000});
+    // And the card at the foot stops saying it is opening. It is the only sign a press gives that
+    // it is still working, so one that never clears reads as a start that never finished.
+    const card = () => page.evaluate(() => ({
+      text: document.getElementById('spawnStatusText').textContent,
+      busy: !document.getElementById('spawnSpinner').hidden,
+      shown: document.getElementById('spawnStatus').style.display !== 'none',
+    }));
+    await page.waitForFunction(() => document.getElementById('spawnSpinner').hidden,
+                               null, {timeout: 20000})
+      .then(async () => check('the status card stops spinning once the session has landed', true))
+      .catch(async e => check('the status card stops spinning once the session has landed', false,
+                              JSON.stringify(await card())));
     // Back to the list the way the app gets there. A press that lands somewhere leaves the list
     // hidden, and the next tile is then not clickable — not flaky, invisible.
-    await page.evaluate(() => closePanel());
+    await page.evaluate(() => showLanding());
     await page.waitForSelector('.launcher-tile', {state: 'visible'});
 
     // --- two agents and an arbitrator ------------------------------------------------------
