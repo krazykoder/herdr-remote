@@ -202,10 +202,13 @@
     // One pane has landed for a launcher intent. Called from openPendingStart, which owns the
     // "the poll has seen it" half; this owns what the tile asked for.
     async function launcherLanded(a, ql) {
-      // A `run`: the pane is a shell, and the command is what the tile is for. Through sendTextTo
-      // rather than the socket directly, so the arbitration guard, the chunk cap and the record of
-      // what the user sent all apply — this *is* the user typing a command, by proxy.
-      if ('command' in ql) {
+      // A `run` or a `term`: the pane is a shell, and a `run`'s command is what the tile is for.
+      // Through sendTextTo rather than the socket directly, so the arbitration guard, the chunk cap
+      // and the record of what the user sent all apply — this *is* the user typing a command, by
+      // proxy. Read off the tile's own action rather than off whether the intent carries a command:
+      // a `term` carries none by definition, and testing for the text sent it down the agent path,
+      // where it was adopted into a batch that does not exist.
+      if (launcherIsTerm(ql.tile)) {
         openTerminal(a.pane_id);
         if (ql.command) sendTextTo(a.pane_id, ql.command);
         // The same note sendText makes for anything typed at a shell, so the command shows up in
