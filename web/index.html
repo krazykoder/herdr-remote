@@ -2790,13 +2790,18 @@
 
     /* The bubble is the icon's own containing block, so the glyph is placed against the field it
        belongs to rather than against the frame — which is the full height of the screen.
-       Left-aligned, because closed this is a single round button hanging at the bottom-left and
-       the corner it grows out of has to be the corner it lives in. */
-    .landing-search-box {
+       Left-aligned, because closed this is the left part of the bar hanging at the bottom-left and
+       the corner it grows out of has to be the corner it lives in.
+       Click-through itself: closed, most of its width is empty air over the list, and a wrapper
+       that took those taps would be an invisible bar swallowing presses on the cards under it. */
+    #landingSearch .landing-search-box {
       position: relative;
       display: flex;
       justify-content: flex-start;
+      pointer-events: none;
     }
+
+    #landingSearch input { pointer-events: auto; }
 
     /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be —
        it is what says the pill is a search box before anything is typed into it. Pointer events
@@ -2814,12 +2819,13 @@
     /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
        through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
        still reads as a raised control. */
-    /* Closed it is the glyph and nothing else — a list of panes is what the landing page already
-       is, and a permanent full-width box over it is a control competing with the thing it
+    /* Closed it is the left half of the bar — the same pill, the same height, the same border and
+       the same glyph in the same place, cut short. A list of panes is what the landing page
+       already is, and a permanent full-width box over it is a control competing with the thing it
        searches. Open is the same element grown, not a second one swapped in: one field, so the
        text, the focus and the caret are never handed over mid-gesture. */
     #landingSearch input {
-      width: 42px;
+      width: 50%;
       box-sizing: border-box;
       padding: 11px 16px 11px 38px;
       transition: width 180ms ease;
@@ -2840,19 +2846,8 @@
 
     #landingSearch.open input { width: 100%; }
 
-    /* Closed, the field is a circle with the glyph in the middle of it: the left padding that
-       makes room for the icon beside text would otherwise hold the button 56px wide and oval. */
-    #landingSearch:not(.open) input {
-      padding-left: 11px;
-      padding-right: 11px;
-    }
-
-    #landingSearch:not(.open) .landing-search-icon {
-      left: 50%;
-      transform: translate(-50%, -50%);
-    }
-
-    /* Nothing to read in a 42px circle, and a placeholder in one is a row of clipped letters. */
+    /* Half a bar is not enough for the full prompt, and a clipped sentence reads as a bug rather
+       than as a hint. The glyph is what says what it is until it is opened. */
     #landingSearch:not(.open) input::placeholder { color: transparent; }
 
     @media (prefers-reduced-motion: reduce) {

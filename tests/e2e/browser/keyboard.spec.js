@@ -94,3 +94,27 @@ test('the landing search bubble is above the keyboard too, results and all', asy
   expect(results.y, 'the results run up under the header').toBeGreaterThanOrEqual(KB.top);
   expect(results.y + results.height).toBeLessThanOrEqual(bubble.y + 1);
 });
+
+// Closed, the control is the left part of the same bar — so the glyph has to be inside it. The
+// icon is positioned against the box, which is full width in both states, so a rule that placed
+// it against the *field* is the one thing that can silently put it out in the middle of the page.
+test('the closed search pill keeps its icon, and grows from it', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+
+  const shut = await page.locator('#landingSearchInput').boundingBox();
+  const icon = await page.locator('.landing-search-icon').boundingBox();
+  expect(icon.x, 'the glyph sits outside the pill').toBeGreaterThanOrEqual(shut.x);
+  expect(icon.x + icon.width).toBeLessThanOrEqual(shut.x + shut.width);
+  expect(icon.y).toBeGreaterThanOrEqual(shut.y);
+
+  await page.locator('#landingSearchInput').focus();
+  // The width is animated, so the first measurement after focus is a frame of the transition.
+  await expect.poll(async () =>
+    (await page.locator('#landingSearchInput').boundingBox()).width)
+    .toBeGreaterThan(shut.width);
+  const open = await page.locator('#landingSearchInput').boundingBox();
+  expect(open.height, 'the height changes with the state').toBe(shut.height);
+  expect(open.x, 'it grows from somewhere else').toBe(shut.x);
+});
