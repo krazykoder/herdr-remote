@@ -5210,7 +5210,11 @@
       cursor: default;
     }
 
+    /* The menu items are listed too, and not because they differ: their resting rule names an
+       element as well as two classes, so it outweighs this one on background and border and the
+       drain would never be seen. Same declarations, enough specificity to be reached. */
     .arm-btn[data-armed="1"],
+    .conv-roster .conv-menu-items button.arm-btn[data-armed="1"],
     .term-menu .menu-item.arm-btn[data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
@@ -5220,6 +5224,7 @@
 
     @media (prefers-reduced-motion: reduce) {
       .arm-btn[data-armed="1"],
+      .conv-roster .conv-menu-items button.arm-btn[data-armed="1"],
       .term-menu .menu-item.arm-btn[data-armed="1"] {
         background: var(--orange);
         animation: none;

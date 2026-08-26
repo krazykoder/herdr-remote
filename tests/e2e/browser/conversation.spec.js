@@ -913,6 +913,12 @@ test('the Restart menu survives the redraws that arrive while it is open', async
   await page.evaluate(() => renderConvStandalone(false));
   await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
     .toHaveText('Restart?');
+  // And it is armed the way CLS and QUIT are armed — the fill drains over the window the second
+  // tap has. The item's resting rule is more specific than the shared armed one, so this is what
+  // catches that rule drifting out of reach again.
+  expect(await page.evaluate(() => getComputedStyle(
+    document.querySelector('#convView .conv-menu-items .conv-restart')).animationName))
+    .toBe('arm-drain');
   expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
 
   // And a tap that lands anywhere else gives it up, the way an arm does.
