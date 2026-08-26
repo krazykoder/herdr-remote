@@ -2782,81 +2782,79 @@
     #landingSearch[hidden] { display: none; }
 
     /* Narrower than the page it floats over, so it reads as a thing on top of the list rather than
-       as the list's last row. */
-    #landingSearch > * {
-      pointer-events: auto;
-      width: min(calc(100% - 56px), 460px);
-    }
+       as the list's last row. The box sets its own width — see below, it has two. */
+    #landingSearch > * { pointer-events: auto; }
 
-    /* The bubble is the icon's own containing block, so the glyph is placed against the field it
-       belongs to rather than against the frame — which is the full height of the screen.
-       Left-aligned, because closed this is the left part of the bar hanging at the bottom-left and
-       the corner it grows out of has to be the corner it lives in.
-       Click-through itself: closed, most of its width is empty air over the list, and a wrapper
-       that took those taps would be an invisible bar swallowing presses on the cards under it. */
+    #landingSearchResults { width: min(calc(100% - 56px), 460px); }
+
+    /* The bubble itself: the pill, the glass and the glyph are the wrapper's, and the field
+       inside it is bare. The icon used to be positioned against this box while the field was the
+       visible pill — which works only while the field is flush against one edge of it, and broke
+       the moment the closed state moved. One element carries the look, one carries the text.
+
+       A <label>, so the tap that lands on the glyph or on the padding beside it focuses the field
+       anyway — the whole pill is the control, and a closed one is mostly padding. */
     #landingSearch .landing-search-box {
-      position: relative;
       display: flex;
-      justify-content: flex-start;
-      pointer-events: none;
-    }
-
-    #landingSearch input { pointer-events: auto; }
-
-    /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be —
-       it is what says the pill is a search box before anything is typed into it. Pointer events
-       off, or the tap that should land in the field lands on the picture of a magnifier. */
-    .landing-search-icon {
-      position: absolute;
-      left: 15px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
-       through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
-       still reads as a raised control. */
-    /* Closed it is the glyph and the pill around it and nothing more — the same height, border,
-       radius and left padding as the open bar, cut to the width of what it is showing. A list of
-       panes is what the landing page already is, and a box over it any wider than its own icon is
-       a control competing with the thing it searches. Open is the same element grown, not a second
-       one swapped in: one field, so the text, the focus and the caret are never handed over
-       mid-gesture. */
-    #landingSearch input {
-      width: 44px;
+      align-items: center;
+      gap: 8px;
       box-sizing: border-box;
-      padding: 11px 16px 11px 38px;
+      padding: 0 14px;
+      cursor: text;
+      /* Closed it is half a bar, centred over the page. Open it is the full width of the frame.
+         One declaration apart, and the same element throughout: the text, the focus and the caret
+         are never handed from one node to another mid-gesture. */
+      width: min(calc(50% - 28px), 230px);
       transition: width 180ms ease;
       /* The one border in the app meant to be seen from across the page: this floats over cards
          that each carry a border of their own, and at --border it read as one more of them. */
       border: 1.5px solid color-mix(in srgb, var(--blue) 60%, var(--border));
       border-radius: 999px;
+      /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
+         through it. Backdrop-filter is progressive — where it is not supported the colour-mix
+         alone still reads as a raised control. */
       background: color-mix(in srgb, var(--surface) 72%, transparent);
       backdrop-filter: blur(14px) saturate(140%);
       -webkit-backdrop-filter: blur(14px) saturate(140%);
-      color: var(--text);
-      font-family: inherit;
-      font-size: var(--input-font, 13px);
       /* Two shadows: the near one lifts it off whatever card is under it, the far one is the drop
          that says it is not part of the list at all. */
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
     }
 
-    #landingSearch.open input { width: 100%; }
-
-    /* Half a bar is not enough for the full prompt, and a clipped sentence reads as a bug rather
-       than as a hint. The glyph is what says what it is until it is opened. */
-    #landingSearch:not(.open) input::placeholder { color: transparent; }
-
-    @media (prefers-reduced-motion: reduce) {
-      #landingSearch input { transition: none; }
+    #landingSearch.open .landing-search-box {
+      width: min(calc(100% - 56px), 460px);
     }
 
-    #landingSearch input:focus {
-      outline: none;
+    /* The glyph, first in the row, where a search box's icon is expected to be. It is what says
+       the pill is a search box; the placeholder beside it says so in a word. */
+    .landing-search-icon {
+      flex: 0 0 auto;
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    /* Bare inside the pill: no border, no background, no shadow of its own. */
+    #landingSearch input {
+      flex: 1 1 auto;
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 11px 0;
+      border: 0;
+      background: none;
+      box-shadow: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: var(--input-font, 13px);
+    }
+
+    #landingSearch input:focus { outline: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #landingSearch .landing-search-box { transition: none; }
+    }
+
+    /* The focus ring belongs to the pill, since the pill is what the reader sees. */
+    #landingSearch .landing-search-box:focus-within {
       border-color: var(--blue);
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent),
                   0 14px 36px rgba(0, 0, 0, 0.45);
@@ -7590,16 +7588,16 @@
        of what it is looking for. -->
   <div class="landing-search" id="landingSearch" hidden>
     <div class="landing-search-results" id="landingSearchResults" hidden></div>
-    <div class="landing-search-box">
+    <label class="landing-search-box" for="landingSearchInput">
       <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
+      <input id="landingSearchInput" type="search" placeholder="Search"
              aria-label="Search panes and conversations" autocomplete="off"
              autocorrect="off" autocapitalize="none" spellcheck="false"
              oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)"
              onfocus="openLandingSearch()" onblur="landingSearchBlur()" />
-    </div>
+    </label>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
