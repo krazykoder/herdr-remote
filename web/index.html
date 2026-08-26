@@ -70,6 +70,10 @@
       /* kiro shared pi's green, which made the two indistinguishable in a list — and the kind is
          the whole thing a badge colour says. Magenta is what was left after purple went to agy. */
       --agent-kiro: #ff79c6;
+      /* opencode. Teal is what is left once orange, green, purple and magenta are spoken for, and
+         it has to stay clear of --shell's blue-cyan: a badge colour that reads as "terminal" is
+         worse than no badge colour. */
+      --agent-opencode: #73daca;
       /* Terminal panes. Deliberately not red/green/muted: those three mean agent status, and a
          shell has none. Named --shell rather than --term because --term-bg/--term-text already
          mean the pane's *content* — those two follow the theme, this one does not need to. */
@@ -113,6 +117,7 @@
       --agent-claude: #b74208;
       --agent-agy: #6a3ec4;
       --agent-kiro: #b0126e;
+      --agent-opencode: #116e66;
       --shell: #046fa0;
       /* Brightest surface in the theme, still a shade off white: the pane is what is being read,
          and it should sit forward of the shell around it without glaring. */
@@ -139,15 +144,18 @@
       border-radius: 4px;
     }
 
-    /* iOS Safari zooms the layout viewport whenever a focused field renders below 16px, which
-       pushes the page edges outside the visual viewport and does not spring back. 16px is a
-       platform threshold, not a design choice: no field rule below may set a smaller size.
-       The one sanctioned exception is the composer, which the user can take down to 8px from the
-       gear menu and which accepts the zoom as the price — see --input-font. */
+    /* Every field in the app reads at the pane composer's size, from the composer's own variable:
+       the sheets are where the same sentences are typed, and a field that rendered larger than the
+       box the message ends up in was the odd one out.
+
+       This is a deliberate reversal. iOS Safari zooms the layout viewport whenever a focused field
+       renders below 16px and does not spring back, which is why every field here used to be 16px
+       and only the composer opted out. The zoom is the price of one size across the app; the way
+       back is one line — set this rule to 16px and let --input-font stay on the composer alone. */
     input,
     textarea,
     select {
-      font-size: 16px;
+      font-size: var(--input-font, 13px);
     }
 
     /* The document never scrolls: overflow lives on html because the iOS rubber-band scroll
@@ -692,6 +700,13 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+      /* A view scrolls down, never sideways. `overflow-y: auto` alone computes overflow-x to `auto`
+         as well — the pair cannot be `visible` and `auto` — so anything a few pixels wider than the
+         page, a long badge or a font that measures differently on the phone than in a test, turned
+         the whole list into something that wobbles left and right under a finger. The strips that
+         genuinely scroll sideways are their own scrollers inside this one and are unaffected. */
+      overflow-x: hidden;
+      overscroll-behavior-x: none;
     }
 
     /* Activity keeps its event log readable while the local wire summary stays pinned below it. */
@@ -1151,7 +1166,7 @@
       background: var(--green);
       color: var(--bg);
       font-weight: 600;
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       cursor: pointer;
     }
 
@@ -1196,6 +1211,85 @@
       align-items: stretch;
     }
 
+    /* Compact: two lines a tile — the name, and under it the badges that say what pressing it
+       makes. The line that goes is the payload as *prose*: a command in monospace is what makes a
+       tile tall, and a reader of their own launcher already knows what their own tiles run. A
+       roster is badges, so it stays, shrunk to the size of the marks beside it.
+
+       Wider columns, because a name with nowhere to wrap needs the room; and no per-tile Edit,
+       since the corner it reserves is most of a compact tile. Editing is still one press away in
+       the section's own Edit. */
+    .launcher.compact {
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+
+    /* A grid and not a wrapping flex row: what is wanted is a *shape* — glyph down the left, name
+       across the top, badges under it — and flex only ever wraps when a line runs out of room, so
+       a short name kept its badges up beside it and a long one pushed its marks onto a third line.
+       Four children, four cells, the same two lines whatever is in them. */
+    .launcher.compact .launcher-tile,
+    .launcher.compact .launcher-tile-wrap .launcher-tile {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1px 6px;
+      min-height: 0;
+      padding: 6px 9px;
+    }
+
+    .launcher.compact .launcher-kind { grid-area: 1 / 1 / 3 / 2; }
+    .launcher.compact .launcher-name { grid-area: 1 / 2 / 2 / 4; }
+    .launcher.compact .launcher-tile .launcher-payload { grid-area: 2 / 2 / 3 / 3; }
+    .launcher.compact .launcher-badges { grid-area: 2 / 3 / 3 / 4; }
+
+    .launcher.compact .launcher-edit { display: none; }
+
+    /* The glyph stays, the word beside it goes: "SESSION" over every tile is the column heading of
+       a table nobody asked for, and the icon says the same thing in the space of a letter. */
+    .launcher.compact .launcher-kind span { display: none; }
+
+    .launcher.compact .launcher-name {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 0.75rem;
+    }
+
+    /* Named through the tile, so these outweigh the rules that lay a spawn tile's roster out — as
+       specific as a plain `.launcher.compact .launcher-payload`, and later in the sheet. */
+    .launcher.compact .launcher-tile .launcher-payload {
+      min-width: 0;
+      flex-wrap: nowrap;
+      overflow: hidden;
+      font-size: 0.5rem;
+      line-height: 1.2;
+    }
+
+    /* A command is prose, and prose is the line this mode exists to drop. A roster is badges, and
+       badges are what the second line is for. */
+    .launcher.compact .launcher-tile[data-action="run"] .launcher-payload,
+    .launcher.compact .launcher-tile[data-action="term"] .launcher-payload {
+      display: none;
+    }
+
+    /* Very small: the second line is a footnote to the name, not a second name. */
+    .launcher.compact .launcher-payload .badge {
+      font-size: 0.44rem;
+      padding: 0 3px;
+      letter-spacing: 0.01em;
+    }
+
+    .launcher.compact .launcher-plus { font-size: 0.5rem; }
+
+    /* The marks are never dropped, whatever the mode: `insecure` and `skip approvals` are facts
+       about what the press does, and a compact view that hid them would be a smaller tile that is
+       also a more dangerous one. */
+    .launcher.compact .launcher-badges {
+      margin-top: 0;
+      flex-wrap: nowrap;
+    }
+
     /* The header spans the grid at every width. The shared rule that does this only exists inside
        the desktop media query, because the sections it was written for are single-column until
        then and this one never is. */
@@ -1235,6 +1329,49 @@
     }
 
     .launcher-tile:hover:not([aria-disabled="true"]) {
+      border-color: var(--blue);
+    }
+
+    /* A tile is a button, so its Edit cannot live inside it — nesting one button in another is not
+       markup a browser will keep. The wrapper is the grid cell instead, and the two are siblings:
+       pressing Edit never reaches the tile, with no stopPropagation to remember. */
+    .launcher-tile-wrap {
+      position: relative;
+      display: flex;
+      min-width: 0;
+    }
+
+    .launcher-tile-wrap .launcher-tile {
+      flex: 1;
+      min-width: 0;
+      /* Room for the corner the button sits in, kept by every line rather than by the one that
+         happens to be longest today. */
+      padding-right: 52px;
+    }
+
+    /* Edit is an explicit action, not a glyph to hunt for. */
+    .launcher-edit {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      min-height: 28px;
+      padding: 3px 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.68rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .launcher-edit:hover, .launcher-edit:focus-visible {
+      color: var(--blue);
       border-color: var(--blue);
     }
 
@@ -1304,6 +1441,32 @@
       cursor: not-allowed;
     }
 
+    /* The tile's marks, side by side on the line the payload leaves behind. Wrapping is allowed
+       but rarely needed: at this size all three fit a phone's tile. */
+    .launcher-badges {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-top: auto;
+      min-width: 0;
+    }
+
+    /* On the tile these are footnotes, not headlines: the tile's name and payload are what is
+       read, and three full-strength marks under them turn a keypad into a warning board. Paled
+       rather than recoloured, so `insecure` keeps its red and `skip approvals` its orange — the
+       band headings above them are where either is stated at full strength. */
+    .launcher-badges .launcher-badge {
+      align-self: auto;
+      margin-top: 0;
+      padding: 0 3px;
+      font-size: 0.44rem;
+      letter-spacing: 0.02em;
+      opacity: 0.6;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .launcher-badge {
       align-self: flex-start;
       margin-top: auto;
@@ -1315,6 +1478,264 @@
       letter-spacing: 0.04em;
       color: var(--orange);
       white-space: nowrap;
+    }
+
+    /* The one badge that is not about this relay's configuration but about where the work goes.
+       Red rather than orange, and on the tile itself as well as over its band. */
+    .launcher-badge.insecure {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    /* What this tile will start, rather than what is wrong with it: a roster that runs its tools
+       without asking. Read off the members, so a tile says it without being opened. */
+    .launcher-badge.solo {
+      border-color: var(--orange);
+      color: var(--orange);
+    }
+
+    .ql-insecure {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      align-self: flex-start;
+      margin: 2px 0 0;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      color: var(--muted);
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--red) 6%, var(--bg));
+    }
+
+    .ql-insecure input {
+      margin: 2px 0 0;
+      flex: 0 0 auto;
+    }
+
+    .ql-insecure strong { color: var(--red); }
+
+    /* The control that says a session will act without being asked. A switch rather than a tick:
+       it is a mode the session runs in, not a fact being recorded about it, and the three places
+       it is offered — the tile editor, the Start sheet, the conversation's New agent — draw the
+       same one, because it is the same question.
+
+       Still an <input type="checkbox"> underneath. The switch is the appearance; the semantics,
+       the keyboard and the screen reader are the platform's. */
+    .ql-solo,
+    .start-check {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 0.7rem;
+      line-height: 1;
+      white-space: nowrap;
+      color: var(--muted);
+    }
+
+    /* `.start-field` is declared later and lays its label above its input; these rows are a switch
+       *beside* its word, so the pair has to win on specificity rather than on order. */
+    .start-field.start-check { flex-direction: row; }
+
+    .ql-solo { margin: 2px 0 0; }
+
+    .start-field .start-check { align-self: flex-start; }
+
+    .ql-solo input,
+    .start-check input {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 auto;
+      position: relative;
+      width: 26px;
+      height: 15px;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--border, var(--muted));
+      border-radius: 8px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .ql-solo input::after,
+    .start-check input::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+
+    /* Orange on, and orange is this app's word for "worth reading twice" — the same colour the
+       gate badges wear. Never green: this is not a thing going well. */
+    .ql-solo input:checked,
+    .start-check input:checked {
+      background: color-mix(in srgb, var(--orange) 30%, transparent);
+      border-color: var(--orange);
+    }
+
+    .ql-solo input:checked::after,
+    .start-check input:checked::after {
+      background: var(--orange);
+      transform: translateX(11px);
+    }
+
+    .ql-solo input:focus-visible,
+    .start-check input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+    /* On, the words beside it stop being a caption and start being the state. */
+    .ql-solo:has(input:checked),
+    .start-check:has(input:checked) { color: var(--text); }
+
+    /* --- agent configs --- */
+    /* Under the tiles, in the launcher's own grid, and spanning it: a config is one line of facts
+       about a named environment, not a tile you press to start something. Every colour on the row
+       comes from its harness — `oclaude1` is a claude and wears claude's badge — so the reader
+       learns no twelfth colour meaning "custom". */
+    .cfg-row {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .cfg-row:hover { border-color: var(--blue); }
+
+    /* The rows in a box of their own so the mode has something to be a class on — the launcher's
+       grid is shared with the tiles, and both sections have a compact of their own. */
+    .cfg-list {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 8px;
+    }
+
+    /* Compact is the same two lines, tightened, with the guarantee the full-size row does not make:
+       neither line may wrap into a third. A config is read by comparing it with the one above it,
+       and that only works while every row is the same height. */
+    .cfg-list.compact { gap: 4px; }
+
+    .cfg-list.compact .cfg-row {
+      gap: 0;
+      padding: 5px 9px;
+    }
+
+    .cfg-list.compact .cfg-line {
+      flex-wrap: nowrap;
+      overflow: hidden;
+      gap: 5px;
+    }
+
+    /* Each in turn, and the last one first: the name is the identity, so it is the one thing on
+       the row that is never the part cut off. */
+    .cfg-list.compact .cfg-line > * { flex: 0 0 auto; }
+    .cfg-list.compact .cfg-provider,
+    .cfg-list.compact .cfg-model,
+    .cfg-list.compact .cfg-key {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cfg-list.compact .cfg-provider { flex: 0 1 auto; font-size: 0.55rem; }
+    .cfg-list.compact .cfg-sub { font-size: 0.52rem; }
+    .cfg-list.compact .cfg-model { flex: 0 1 auto; }
+    .cfg-list.compact .cfg-row .badge { font-size: 0.55rem; padding: 0 4px; }
+    .cfg-list.compact .cfg-off-tag { font-size: 0.44rem; padding: 0 3px; }
+    .cfg-list.compact .launcher-band { margin: 4px 0 0; }
+
+    .cfg-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    /* The second line is evidence, not identity: what it will run and what it will run it with. */
+    .cfg-sub {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .cfg-provider {
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    /* A config's name and its model are both strings a shell will be given verbatim, so they are
+       set like one: `oclaude1` and `claude-opus-4-8[1m]` are read character by character when two
+       of them differ by one, and a proportional face is what makes that hard. The badge keeps its
+       harness colour — only the face changes. */
+    .cfg-row .badge, .cfg-model {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* Same reason, in the editor: what is typed into these is what the export line carries. */
+    #launcherEditBody input[list="cfgModels"],
+    #launcherEditBody #cfgLabel {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* A key is named, never shown. Red when the relay does not hold the variable — that is the one
+       failure this list can see coming, and it is invisible until the session starts without it. */
+    .cfg-key { color: var(--muted); }
+    .cfg-unset { color: var(--red); }
+
+    /* Switched off: dimmed, and said in a word as well. Dimming alone reads as "not loaded yet" on
+       a list the relay fills in a moment after the page draws. */
+    .cfg-row.cfg-off { opacity: 0.55; }
+
+    /* Orange is the app's amber, as .conversation-tier.idle says: a switched-off config is not
+       broken and not merely quiet — it is a state the reader put it in and can put it out of. */
+    .cfg-off-tag {
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 5px;
+      border: 1px solid var(--orange);
+      border-radius: 4px;
+      color: var(--orange);
+    }
+
+    .cfg-empty, .cfg-note {
+      grid-column: 1 / -1;
+      font-size: 0.7rem;
+      line-height: 1.4;
+      color: var(--muted);
+      margin: 2px 0;
+    }
+
+    /* The line the relay will run, with the key as a $VAR reference. Selectable and scrollable
+       rather than wrapped: it is meant to be pasted into a terminal, and a broken line is not. */
+    .cfg-command {
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.62rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      cursor: copy;
     }
 
     /* --- the tile editor --- */
@@ -1412,6 +1833,13 @@
       flex: 1 1 100%;
       min-width: 0;
     }
+
+    /* A line of its own, under the kind and its ✕. Beside them it is a switch and two words
+       competing with the name for the same row, and the name is what the reader is scanning for.
+       The card's own field rule gives it the full width; the rule below is what stops that rule
+       reaching the switch itself and stretching it into an input. */
+    .ql-member .ql-solo { flex: 1 1 100%; margin: 0; }
+    .ql-member .ql-solo input { flex: 0 0 auto; min-width: 0; width: 26px; }
 
     /* The arbitration block, borrowed whole: `arb-form` is what lays out the role picker, the
        folded clocks and the checkbox, so the launcher wears it rather than restating it. Only the
@@ -1513,6 +1941,25 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    /* The launch sheet repeats the saved setting without permitting a last-second mutation. On
+       its own line inside the chip, for the reason the editor's is: the chip is read for the name
+       and the prompt under it, and a switch on that first line is read before either. */
+    .ql-part { flex-wrap: wrap; }
+
+    .ql-part .ql-solo {
+      flex: 1 1 100%;
+      margin: 2px 0 0;
+      gap: 4px;
+      font-size: 0.62rem;
+    }
+
+    .ql-part .ql-solo input { width: 22px; height: 13px; }
+    .ql-part .ql-solo input::after { width: 7px; height: 7px; }
+    .ql-part .ql-solo input:checked::after { transform: translateX(9px); }
+
+    .ql-solo-readonly { cursor: default; }
+    .ql-solo-readonly input { cursor: default; opacity: 1; }
 
     /* Which of the two slots this is. Quieter than the name beside it — the name is what the
        reader is looking for, the slot is only what tells the two role fields apart. */
@@ -1676,6 +2123,18 @@
       cursor: pointer;
     }
 
+    /* A section control that is a state rather than an action says so where it is, the way the tab
+       strip and the arbitration filters do. */
+    .section-header .section-action[aria-pressed="true"] {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* An icon in one of these is a glyph on a line of text: it needs centring, not a baseline. */
+    .section-header .section-action svg {
+      display: block;
+    }
+
     .agent {
       background: var(--surface);
       border-radius: 12px;
@@ -1805,6 +2264,36 @@
       margin-left: auto;
     }
 
+    .conversation-title .archive-btn {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.65rem;
+      padding: 3px 6px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+
+    .conversation-title .archive-btn + .end-btn,
+    .conversation-title .archive-btn + .conv-purge {
+      margin-left: 0;
+    }
+
+    /* Red, and only in the archive. It is the one control on this page that destroys words as well
+       as the record — the roster's Delete leaves them, and wears no colour for that reason. */
+    .conversation-title .conv-purge {
+      border: 1px solid var(--red);
+      border-radius: 5px;
+      background: transparent;
+      color: var(--red);
+      font: inherit;
+      font-size: 0.65rem;
+      padding: 3px 6px;
+      cursor: pointer;
+    }
+
     /* The tier, not the name. Naming an auto conversation promotes it, so this is what goes away
        when it does — the name the user typed is never marked up. */
     .conversation-tier {
@@ -1835,8 +2324,7 @@
     }
 
     .conversation-count {
-      margin-left: auto;
-      flex: none;
+      margin-top: 4px;
       font-weight: 400;
       white-space: nowrap;
     }
@@ -1854,6 +2342,35 @@
     }
 
     .conversation-meta { margin-top: 4px; }
+
+    /* Compact: two lines a card. The name and its controls, then what is in it and how much of it
+       there is — which is what a reader of a long list is actually scanning for. What goes is the
+       prose: the newest line said, the member names, and the live roster the dot already reports.
+       A grid rather than a stack, so the count sits beside the badges instead of under them. */
+    #conversations.compact .conversation-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 2px 8px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+    }
+
+    #conversations.compact .conversation-title { grid-area: 1 / 1 / 2 / 3; }
+    #conversations.compact .conversation-meta.kinds { grid-area: 2 / 1 / 3 / 2; margin-top: 0; }
+
+    #conversations.compact .conversation-count {
+      grid-area: 2 / 2 / 3 / 3;
+      margin-top: 0;
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    #conversations.compact .conversation-last,
+    #conversations.compact .conversation-meta.names,
+    #conversations.compact .conversation-meta.live {
+      display: none;
+    }
 
     .agent:active {
       transform: scale(0.99);
@@ -1966,16 +2483,22 @@
     }
 
     /* Filter belongs on the existing agent heading, not in a second strip above the cards. */
-    .section-header .agent-kind-filter {
+    /* Its own row under the Agents header, which keeps its title and its buttons. These are tags to
+       be tapped, and a control that shares a line with two buttons and a heading is the one that
+       loses the room. Wraps rather than scrolls: a harness list is short, and a strip that scrolled
+       would hide the filter that is on. */
+    .agent-kind-filter {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 4px;
+      margin: 0 0 8px;
     }
 
-    .section-header .agent-kind-filter .badge.pick {
-      padding: 1px 5px;
-      font-size: 0.6rem;
-      line-height: 1.4;
+    .agent-kind-filter .badge.pick {
+      padding: 2px 8px;
+      font-size: 0.65rem;
+      line-height: 1.5;
     }
 
     .chip-strip {
@@ -2111,10 +2634,7 @@
     .start-field select,
     .start-field textarea,
     .start-field input {
-      /* Read at the size the rest of the app reads at. The label above is small caps because it is
-         a label; what the user typed is content, and inheriting the label's 0.65rem made every
-         field in every sheet render its own value smaller than anything around it. */
-      font-size: 0.85rem;
+      font-size: var(--input-font, 13px);
       padding: 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -2182,6 +2702,21 @@
 
     .new-agent-body .start-field input {
       padding: 8px 10px;
+    }
+
+    /* The three centred dialogs become bottom sheets on a phone. Their overlay is already the
+       visible frame — see .app-overlay — so both numbers here are of that frame and neither has
+       anything to say about the keyboard. arbModal is in the list because it has fields too; the
+       rule this replaced had never named it. */
+    @media (max-width: 767px) {
+      #newAgentModal [role="dialog"],
+      #arbModal [role="dialog"],
+      #launcherModal [role="dialog"] {
+        top: auto !important;
+        bottom: 8px;
+        transform: translateX(-50%) !important;
+        max-height: calc(100% - 16px) !important;
+      }
     }
 
     /* The Project row is the one that does not wrap: there is usually one Project in play, and the
@@ -2397,6 +2932,156 @@
       font-size: 0.75rem;
     }
 
+    /* The landing page's own search. Not a sheet: it has no way in and no way out, it is simply
+       there while the landing page is — so it is a bubble floating over the list rather than a bar
+       closing it, and the results grow upwards out of it.
+
+       What is pinned is the *frame*, not the bubble: the same trick the sheets use, see
+       .app-overlay. It is laid out against the visual viewport, so the keyboard is not over it —
+       the keyboard is outside it. A box fixed to the layout viewport with a `bottom` offset cannot
+       do that, because Safari does not shrink the layout viewport, so every offset from its foot
+       is measured from behind the keyboard. The frame itself is transparent and click-through;
+       only what is inside it takes a tap. */
+    #landingSearch {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: var(--vv-top, 0px);
+      height: var(--vv-height, 100dvh);
+      z-index: 90;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      /* At the foot of what is visible, clear of the status bar that is always there — its height
+         is measured rather than assumed, because it carries the safe-area inset itself and grows
+         with whatever it is saying. See syncLandingSearch. */
+      padding-bottom: calc(var(--status-h, 56px) + 12px);
+      pointer-events: none;
+    }
+
+    #landingSearch[hidden] { display: none; }
+
+    /* Open on a touch screen the frame stops being click-through: a tap outside the results is a
+       tap that dismisses the search, and it must not also press whatever card it landed over.
+       Touch only — with a mouse, focusing the field and then scrolling the list behind it is an
+       ordinary thing to do, and a full-screen catcher would eat the wheel with it. */
+    @media (pointer: coarse) {
+      #landingSearch.open { pointer-events: auto; }
+
+      /* 16px, and only on a phone: iOS zooms the page when a field smaller than that takes focus,
+         and the page it zooms is one whose body is `overflow: hidden` — so what the reader gets is
+         a landing page that pans sideways and will not pan back. The app's other fields are all
+         inside a sheet that is dismissed afterwards; this one is on the page itself. */
+      #landingSearch input { font-size: 16px; }
+    }
+
+    /* Narrower than the page it floats over, so it reads as a thing on top of the list rather than
+       as the list's last row. The box sets its own width — see below, it has two. */
+    #landingSearch > * { pointer-events: auto; }
+
+    #landingSearchResults { width: min(calc(100% - 56px), 460px); }
+
+    /* The bubble itself: the pill, the glass and the glyph are the wrapper's, and the field
+       inside it is bare. The icon used to be positioned against this box while the field was the
+       visible pill — which works only while the field is flush against one edge of it, and broke
+       the moment the closed state moved. One element carries the look, one carries the text.
+
+       A <label>, so the tap that lands on the glyph or on the padding beside it focuses the field
+       anyway — the whole pill is the control, and a closed one is mostly padding. */
+    #landingSearch .landing-search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-sizing: border-box;
+      padding: 0 14px;
+      cursor: text;
+      /* Closed it is half a bar, centred over the page. Open it is the full width of the frame.
+         One declaration apart, and the same element throughout: the text, the focus and the caret
+         are never handed from one node to another mid-gesture. */
+      width: min(calc(50% - 28px), 230px);
+      transition: width 180ms ease;
+      /* The one border in the app meant to be seen from across the page: this floats over cards
+         that each carry a border of their own, and at --border it read as one more of them. */
+      border: 1.5px solid color-mix(in srgb, var(--blue) 60%, var(--border));
+      border-radius: 999px;
+      /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
+         through it. Backdrop-filter is progressive — where it is not supported the colour-mix
+         alone still reads as a raised control. */
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      /* Two shadows: the near one lifts it off whatever card is under it, the far one is the drop
+         that says it is not part of the list at all. */
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    #landingSearch.open .landing-search-box {
+      width: min(calc(100% - 56px), 460px);
+    }
+
+    /* The glyph, first in the row, where a search box's icon is expected to be. It is what says
+       the pill is a search box; the placeholder beside it says so in a word. */
+    .landing-search-icon {
+      flex: 0 0 auto;
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    /* Bare inside the pill: no border, no background, no shadow of its own. */
+    #landingSearch input {
+      flex: 1 1 auto;
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 11px 0;
+      border: 0;
+      background: none;
+      box-shadow: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: var(--input-font, 13px);
+    }
+
+    #landingSearch input:focus { outline: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #landingSearch .landing-search-box { transition: none; }
+    }
+
+    /* The focus ring belongs to the pill, since the pill is what the reader sees. */
+    #landingSearch .landing-search-box:focus-within {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent),
+                  0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    /* Its own scroller above the bubble. The rows are the picker's, so a pane found here looks
+       like the same pane found anywhere else. */
+    #landingSearchResults {
+      /* Of the frame, which is what is on screen — the keyboard is outside it. Of its height,
+         for the reason the frame's own padding is: a percentage here would be of the width. */
+      max-height: calc(var(--vv-height, 100dvh) * 0.45);
+      overflow-y: auto;
+      /* The rows carry their own bottom border; the panel's radius has to clip the last one. */
+      overflow-x: hidden;
+      margin: 0 0 8px;
+      border: 1.5px solid color-mix(in srgb, var(--blue) 40%, var(--border));
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 82%, transparent);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    /* The rows sit on the panel's glass; their own surface would repaint it opaque. */
+    #landingSearchResults .pair-pick { background: none; }
+    #landingSearchResults .pair-pick:last-child { border-bottom: none; }
+
+    /* Enough that the last card does not end underneath the closed button. */
+    body.landing-search-on #agentListView {
+      padding-bottom: 72px;
+    }
+
     /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
        is a real choice, not a disabled one. */
     .pair-pick.past {
@@ -2474,8 +3159,7 @@
       border-radius: 8px;
       background: var(--bg);
       color: var(--text);
-      /* 16px, like every other field here: anything smaller and iOS zooms the page on focus. */
-      font-size: 16px;
+      font-size: var(--input-font, 13px);
     }
 
     #pickList {
@@ -3091,9 +3775,9 @@
       box-sizing: border-box;
       /* The pane composer's face and size, from the same setting: this is the same act — writing a
          message to an agent — and a monospace box is also what makes the block cursor exactly one
-         character wide. 16px by default keeps iOS from zooming on focus. */
+         character wide. */
       font-family: monospace;
-      font-size: var(--input-font, 16px);
+      font-size: var(--input-font, 13px);
       line-height: 1.4;
       padding: 6px 0;
       white-space: pre-wrap;
@@ -3663,7 +4347,7 @@
     .arb-form input,
     .arb-form select {
       font: inherit;
-      font-size: 0.72rem;
+      font-size: var(--input-font, 13px);
       color: var(--text);
       background: var(--bg);
       border: 1px solid var(--border);
@@ -3989,7 +4673,7 @@
 
     .arb-bud-stepper input {
       font: inherit;
-      font-size: 0.78rem;
+      font-size: var(--input-font, 13px);
       font-variant-numeric: tabular-nums;
       text-align: center;
       /* Both steppers the same width whatever is in them, so the two rows are one shape. */
@@ -4123,7 +4807,7 @@
     .arb-setup textarea,
     .arb-setup input,
     .arb-setup select {
-      font-size: 0.78rem;
+      font-size: var(--input-font, 13px);
       padding: 8px 10px;
     }
 
@@ -4322,25 +5006,55 @@
       min-width: 0;
       font-size: 0.68rem;
       color: var(--text);
-      padding: 3px 0;
+      padding: 3px 6px;
+      background: color-mix(in srgb, var(--surface) 70%, var(--border));
+      border-radius: 6px;
     }
 
-    .conv-roster-row.gone {
+    /* The identity fades, the actions do not: a paused row is where a member is brought back, so
+       its controls are the one part of it that must not look switched off. Not opacity on the row
+       — that is a stacking context, and it dimmed the Restart menu that opens out of it. */
+    .conv-roster-row.gone > :not(.conv-roster-acts) {
       opacity: 0.65;
     }
 
-    /* The name gives up the width, and Remove keeps its place at the end of every row. */
+    /* The name gives up the width first, and the state after it: what a row must never lose is
+       the actions at its end. */
     .conv-roster-row .who {
+      flex: 0 1 auto;
+      min-width: 3ch;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .conv-roster-row .tag {
-      flex: 1;
+      flex: 1 1 auto;
+      min-width: 0;
       font-size: 0.6rem;
       color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* Six buttons on a live row is more than a phone has width for, and a button pushed off the
+       edge is a button that does not exist. Grouped, so the overflow wraps the whole group onto a
+       second line rather than orphaning the last one — the name, the badge and the state keep
+       their row either way, which is the row a reader scans. */
+    .conv-roster-acts {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 4px;
+      flex: 0 1 auto;
+    }
+
+    /* Keep the pane identity readable on a phone; its controls get their own compact line. */
+    @media (max-width: 767px) {
+      .conv-roster-row { flex-wrap: wrap; }
+      .conv-roster-acts { flex-basis: 100%; justify-content: flex-start; }
     }
 
     .conv-roster-row.gone .tag {
@@ -4348,16 +5062,19 @@
     }
 
     .conv-roster .conv-drop,
-    .conv-roster .conv-again,
+    .conv-roster .conv-restart-open,
+    .conv-roster .conv-reset,
+    .conv-roster .conv-restart,
     .conv-roster .conv-open,
     .conv-roster .conv-end,
     .conv-roster-actions button {
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       /* Not the menu's 44px floor — a roster of eight members at 44px a row is a screen of
-         buttons and no thread. 32px is a thumb, and every one of these is either reversible or
+         buttons and no thread. 30px is a thumb, and every one of these is either reversible or
          asked twice. */
-      min-height: 32px;
-      padding: 4px 10px;
+      min-height: 30px;
+      padding: 4px 7px;
+      flex-shrink: 0;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: none;
@@ -4382,8 +5099,8 @@
       border-color: var(--red);
     }
 
-    /* Orange, not the red Delete wears. Delete destroys a record and cannot be undone; End stops a
-       session that Start again brings back on the very same row. Two different promises, so not
+    /* Orange, not the red Delete wears. Delete destroys a record and cannot be undone; Pause stops
+       a session that Restart brings back on the very same row. Two different promises, so not
        the same colour — and orange is already what this app paints a pane that has stopped. */
     .conv-roster .conv-end,
     .conv-roster-actions .conv-end {
@@ -4397,7 +5114,79 @@
     }
 
     .conv-roster .conv-open,
-    .conv-roster .conv-again {
+    .conv-roster .conv-restart-open,
+    .conv-roster-actions .conv-restart {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* Reset neither ends a session nor brings one back — it leaves the pane exactly where it is
+       and empties it. Muted, because it is the third thing. */
+    .conv-roster .conv-reset,
+    .conv-roster-actions .conv-reset {
+      color: var(--muted);
+      border-color: var(--border);
+    }
+
+    /* One word on the row, both ways of restarting under it. The panel is positioned rather than
+       laid out: a menu that pushed the row apart as it opened would move every control beneath it
+       out from under the thumb that opened this one. */
+    .conv-roster .conv-menu {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .conv-roster .conv-restart-open {
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .conv-roster .conv-restart-open::-webkit-details-marker { display: none; }
+
+    .conv-roster .conv-menu-items {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 30;
+      min-width: 220px;
+      max-width: min(78vw, 320px);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      /* Opaque, and darker than the row it covers rather than the same colour as it. A panel that
+         matches its background reads as transparent however solid it is. */
+      background: var(--bg);
+      border: 1px solid var(--blue);
+      border-radius: 8px;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+    }
+
+    /* What the tap will start, and where. It was a toast, which is gone by the time the second
+       tap is decided on — here it is beside the item it describes for as long as the menu is up. */
+    .conv-roster .conv-menu-note {
+      margin: 0 0 2px;
+      font-size: 0.6rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .conv-roster .conv-menu-items button {
+      width: 100%;
+      text-align: left;
+      white-space: normal;
+      font-size: 0.66rem;
+      min-height: 34px;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .conv-roster .conv-menu-items .conv-restart {
       color: var(--blue);
       border-color: var(--blue);
     }
@@ -4406,7 +5195,7 @@
        one that lives in the markup. Longer drain — see ARM_MS: these are aimed at off a panel,
        not pressed by a thumb already resting on them. */
     /* The send is out. Grey and inert, and the same shape as the button it replaces so the row
-       does not move under the thumb that just pressed it. It goes back to End by the entry leaving
+       does not move under the thumb that just pressed it. It goes back to Pause by the entry leaving
        endWatch — the pane gone, or the deadline passed — so a failure needs no state of its own. */
     .end-going,
     .conv-roster .end-going,
@@ -4421,7 +5210,11 @@
       cursor: default;
     }
 
+    /* The menu items are listed too, and not because they differ: their resting rule names an
+       element as well as two classes, so it outweighs this one on background and border and the
+       drain would never be seen. Same declarations, enough specificity to be reached. */
     .arm-btn[data-armed="1"],
+    .conv-roster .conv-menu-items button.arm-btn[data-armed="1"],
     .term-menu .menu-item.arm-btn[data-armed="1"] {
       color: var(--bg);
       border-color: transparent;
@@ -4431,6 +5224,7 @@
 
     @media (prefers-reduced-motion: reduce) {
       .arm-btn[data-armed="1"],
+      .conv-roster .conv-menu-items button.arm-btn[data-armed="1"],
       .term-menu .menu-item.arm-btn[data-armed="1"] {
         background: var(--orange);
         animation: none;
@@ -4446,6 +5240,22 @@
        hid under it.
        A class and not six inline styles, because an inline `bottom` outranks every rule here and
        the next sheet would be copied from the same line. */
+    /* Every sheet and dialog opens inside one of these, and this is the one place the keyboard is
+       dealt with. `inset: 0` — what all twelve used to carry inline — pins a box to the *layout*
+       viewport, which iOS Safari neither shrinks for the keyboard nor moves when it scrolls the
+       page to reveal a focused field. The frame the user can actually see is the visual viewport,
+       and utils.js publishes exactly that: where it starts and how tall it is. Pinned to it, a
+       sheet's `bottom: 0` means the bottom of the screen on every platform, with no per-sheet
+       arithmetic to get wrong — and a field low in a form stays above the keyboard because the
+       whole overlay ends where the keyboard begins. */
+    .app-overlay {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: var(--vv-top, 0px);
+      height: var(--vv-height, 100dvh);
+    }
+
     .sheet {
       position: absolute;
       left: 50%;
@@ -4459,19 +5269,11 @@
       border-top-left-radius: 16px;
       border-top-right-radius: 16px;
       padding-bottom: env(safe-area-inset-bottom, 8px);
-      /* The keyboard's height on Safari, 0 everywhere the layout viewport already shrank. */
-      bottom: var(--kb-inset, 0px);
-      /* And never taller than what is left above it. The sheet's own share of the screen is the
-         first term; the second is the hard ceiling once a keyboard has taken most of it. */
-      max-height: min(var(--sheet-max, 80dvh),
-                      calc(var(--vv-height, 100dvh) - 56px));
+      /* The foot of the overlay, which is the foot of what is visible. */
+      bottom: 0;
+      /* And never taller than the frame it is in, less room for whatever is above it. */
+      max-height: min(var(--sheet-max, 80dvh), calc(100% - 56px));
       overflow-y: auto;
-      /* A keyboard appearing moves this; without a transition it jumps. */
-      transition: bottom 120ms ease-out;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .sheet { transition: none; }
     }
 
     /* A class rather than the inline styles it used to carry: an inline background outranks every
@@ -5113,7 +5915,7 @@
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       line-height: 1;
     }
 
@@ -5409,7 +6211,7 @@
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       line-height: 1;
       cursor: pointer;
     }
@@ -6313,6 +7115,17 @@
       color: var(--bg);
     }
 
+    /* An option carrying the pane's own words rather than Yes/No. They are as long as whoever
+       wrote that TUI made them, and a row of three cannot be allowed to push the nav off the
+       screen — so each takes its share and cuts, with the whole line in the title. */
+    .btn-choice {
+      flex: 1 1 0;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .term-input {
       padding: 8px 12px;
       display: flex;
@@ -6330,9 +7143,7 @@
       background: var(--bg);
       color: var(--text);
       font-family: monospace;
-      /* Default 16px keeps iOS from zooming on focus; the gear menu can take it to 8px, which
-         re-enables that zoom deliberately. See the base input rule. */
-      font-size: var(--input-font, 16px);
+      font-size: var(--input-font, 13px);
       min-width: 0;
     }
 
@@ -6535,7 +7346,7 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       font-weight: 500;
       cursor: pointer;
       min-height: 44px;
@@ -6869,6 +7680,9 @@
       <div class="hint">Each section keeps its own separator on the main page. They are shown in the
         order you switch them on, so turning one off and on again moves it to the bottom. One has
         to stay on.</div>
+      <label class="toggle-option"><input type="checkbox" id="landingSearchOn" onchange="setLandingSearch(this.checked)"> Search bar at the foot of the page</label>
+      <div class="hint">Searches every pane and every conversation by name, including the ones
+        behind the Auto and Archive modes.</div>
       <!-- The launcher's own tiles are reachable from its section header too. Here as well because
            an install whose stored order predates the launcher has that section switched off — and
            the first tile saved is what switches it back on, so there has to be somewhere to save
@@ -7023,6 +7837,23 @@
     <!-- Up to five recently opened panes, rendered with the same cards. -->
     <div class="recents" id="recents" style="display:none"></div>
     <div class="conversations" id="conversations" style="display:none"></div>
+  </div>
+
+  <!-- Fixed to the foot of the landing page, hidden everywhere else — see syncLandingSearch. The
+       results sit above the box rather than below it, so the finger that is typing is not on top
+       of what it is looking for. -->
+  <div class="landing-search" id="landingSearch" hidden onclick="landingSearchBackdrop(event)">
+    <div class="landing-search-results" id="landingSearchResults" hidden></div>
+    <label class="landing-search-box" for="landingSearchInput">
+      <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="landingSearchInput" type="search" placeholder="Search"
+             aria-label="Search panes and conversations" autocomplete="off"
+             autocorrect="off" autocapitalize="none" spellcheck="false"
+             oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)"
+             onfocus="openLandingSearch()" onblur="landingSearchBlur()" />
+    </label>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
@@ -7592,7 +8423,7 @@
   </div>
 
   <!-- Command palette -->
-  <div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="cmdPalette" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closePalette()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet" style="--sheet-max:50dvh;overflow:hidden">
@@ -7610,7 +8441,7 @@
 
   <!-- Start session, and New terminal — one sheet, because the questions are the same ones
      minus the agent. Rendered only when the relay advertises start_options. -->
-  <div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="startSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -7640,7 +8471,16 @@
           </div>
           <div class="start-field">Agent
             <div id="startAgents" class="badge-strip"></div>
+            <label class="start-check" id="startUnattendedRow" style="display:none">
+              <input type="checkbox" id="startUnattended" onchange="pickStartUnattended(this.checked)" />
+              <span>Skip approvals</span>
+            </label>
           </div>
+          <!-- Under the agent, because it is a fact about the agent and not about the session:
+               claude and codex each have a flag for it and nothing else does, so the row is drawn
+               only where the relay says the kind takes one. On by default under an agent config,
+               off on a stock harness — the endpoint a user configured is the one they mean to leave
+               running. -->
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
         <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"
@@ -7654,29 +8494,35 @@
     </div>
   </div>
 
-  <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
-  <div id="spawnStatus" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:201;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
-    <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
-    <span id="spawnStatusText"></span>
-  </div>
+  <!-- Both notices the app draws over itself, in one column at the top of the viewport, over the
+       header rather than under it. It used to hang below the header, which put it inside whichever
+       view was open — and in the conversation it read as part of the thread, one more bubble among
+       the messages it was warning about. A notice about the app belongs to the app.
 
-  <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
-     so a rejected send_text or rename looked identical to one that worked.
+       They are stacked rather than each pinned to the same point because both can be up at once:
+       a relay error during a spawn is exactly when the two have the most to say. -->
+  <div id="topNotices"
+    style="position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:201;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none">
 
-     At the very top of the viewport, over the header rather than under it. It used to hang below
-     the header, which put it inside whichever view was open — and in the conversation it read as
-     part of the thread, one more bubble among the messages it was warning about. A notice about
-     the app belongs to the app. -->
-  <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
+       so a rejected send_text or rename looked identical to one that worked. -->
+    <div id="toast" role="status" aria-live="polite"
+      style="display:none;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    </div>
+
+    <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
+    <div id="spawnStatus" role="status" aria-live="polite"
+      style="display:none;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
+      <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
+      <span id="spawnStatusText"></span>
+    </div>
   </div>
 
   <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
        question — which other pane — so they are one sheet, and only the words on the button at the
        bottom and what it does with the answer differ. Frontend only; the relay knows nothing of
        pairs or of conversations. -->
-  <div id="pickSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="pickSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closePicker()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div class="pick-panel">
       <div class="pick-head">
@@ -7710,7 +8556,7 @@
   <!-- Conversation editor — membership is the user's list, so one sheet does both jobs: join or
        leave the conversations that exist, and name a new one. Frontend only; the relay knows
        nothing of conversations, and nothing here goes on the wire. -->
-  <div id="convSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="convSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeConvDialog()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -7744,7 +8590,7 @@
        sheet rather than a banner on the log: the log is a reading of everything the session did
        and keeps growing, and this is the one question asked at the one moment somebody is stood
        at a stopped session with a finger over a button. -->
-  <div id="arbResumeSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="arbResumeSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeArbResume()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
@@ -7757,7 +8603,7 @@
     </div>
   </div>
 
-  <div id="arbSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="arbSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeArbDetail()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
@@ -7775,7 +8621,7 @@
        a harness, the Project it is spawned beside, and the first thing to say to it. Centred rather
        than raised from the bottom, because it is opened from a menu in the middle of the screen and
        a sheet sliding up under the composer would land under the keyboard. -->
-  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:121;">
+  <div id="newAgentModal" class="app-overlay" style="display:none;z-index:121;">
     <div onclick="closeNewAgent()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="New agent"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -7790,12 +8636,18 @@
       <div class="new-agent-body">
         <div class="start-field">Agent
           <div id="newAgentKinds" class="badge-strip"></div>
+          <label class="start-check" id="newAgentUnattendedRow" style="display:none">
+            <input type="checkbox" id="newAgentUnattended" onchange="pickNewAgentUnattended(this.checked)" />
+            <span>Skip approvals</span>
+          </label>
         </div>
         <!-- What it is started as. The badge carries both halves: the role the relay names the pane
              for, and the @ prompt that opens the session — see START_ROLES. -->
         <div class="start-field">Prompt
           <div id="newAgentRoles" class="badge-strip"></div>
         </div>
+        <!-- The same row the Start sheet carries, under the agent for the same reason: it is a
+             fact about the agent, and only claude and codex have a flag for it. -->
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>
         <!-- One line, because there is usually one Project in play and the rest are a tap away. -->
@@ -7823,7 +8675,7 @@
 
        Three sections because there are three decisions, and they were previously interleaved: who
        decides, and the two it is deciding between. -->
-  <div id="arbModal" style="display:none;position:fixed;inset:0;z-index:120;">
+  <div id="arbModal" class="app-overlay" style="display:none;z-index:120;">
     <div onclick="closeArbSetup()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Arbitrate this conversation"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -7843,7 +8695,7 @@
        One dialog and two views: the list of tiles, where they are reordered and deleted, and the
        form for one of them. Reordering a handful of tiles is two arrows, not a drag layer, and a
        second dialog to hold them would be a second thing to close. -->
-  <div id="launcherModal" style="display:none;position:fixed;inset:0;z-index:121;">
+  <div id="launcherModal" class="app-overlay" style="display:none;z-index:121;">
     <div onclick="closeLauncherEdit()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Launcher"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -7857,7 +8709,7 @@
   </div>
 
   <!-- Recent — every live pane, agents and terminals, in the order this device opened them. -->
-  <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="recentSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Recent panes"
       class="sheet">
@@ -7880,7 +8732,7 @@
   </div>
 
   <!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
-  <div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="transferSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -7908,7 +8760,7 @@
   <!-- Tab order — drag the rows. A sheet and not the list itself, because the list's innerHTML
        is rewritten on every poll and would take a live drag with it. This is built once on open
        and left alone until it closes, so the only thing that can move a row is a finger. -->
-  <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="orderSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeOrder()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div id="orderPanel"
       class="sheet">
@@ -7945,6 +8797,7 @@
   <script src="src/pairs_ui.js"></script>
   <!-- After status_bar.js, which owns `projects`, `startOptions` and escapeHtml's callers, and
        after sections.js, whose applySections it calls to take an empty section off screen. -->
+  <script src="src/agent_configs.js"></script>
   <script src="src/launcher_ui.js"></script>
   <script src="src/launcher_exec.js"></script>
   <script src="src/launcher_edit.js"></script>
@@ -7958,6 +8811,7 @@
   <script src="src/pane_picker.js"></script>
   <script src="src/transfer.js"></script>
   <script src="src/shortcuts.js"></script>
+  <script src="src/landing_search.js"></script>
   <script src="src/conv_dock.js"></script>
   <script src="src/history.js"></script>
   <script src="src/arbitration.js"></script>

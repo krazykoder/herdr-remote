@@ -10,8 +10,15 @@
         // Pinch-zoom shrinks the visual viewport too, and that is the user looking closer rather
         // than a widget taking space. Resizing the page to the zoomed frame would reflow it under
         // their fingers; zooming back out fires this again and restores the fit.
-        if (vv.scale > 1.01) return;
-        document.body.style.height = vv.height + 'px';
+        //
+        // The *measurements* below are published either way, and that is the whole of this fix:
+        // they used to be skipped along with the reflow, so anything that had zoomed the page kept
+        // whatever numbers were current before it. iOS zooms of its own accord whenever a focused
+        // field renders under 16px — which is every field in this app since they were set to the
+        // composer's size — so the one moment the sheets most need these numbers was the one
+        // moment they stopped being written, and every sheet stayed where the keyboard now is.
+        const zoomed = vv.scale > 1.01;
+        if (!zoomed) document.body.style.height = vv.height + 'px';
         // The same measurement, published for anything that *cannot* be sized by shrinking the
         // body: a `position: fixed` element is laid out against the layout viewport, which the
         // keyboard does not shrink on Safari, so `bottom: 0` puts it behind the keyboard however
@@ -22,14 +29,41 @@
         root.setProperty('--kb-inset',
                          Math.max(0, window.innerHeight - vv.height - vv.offsetTop) + 'px');
         root.setProperty('--vv-height', vv.height + 'px');
+        // Where the visible frame starts. Safari scrolls the *layout* viewport to reveal a focused
+        // field, which moves the visual frame down the page; an overlay pinned with `inset: 0` is
+        // pinned to the layout viewport and does not follow. With this, the overlays are laid out
+        // against the frame the user can actually see — see .app-overlay — and no sheet inside one
+        // has to do keyboard arithmetic of its own.
+        root.setProperty('--vv-top', vv.offsetTop + 'px');
         // Safari also scrolls the layout viewport up to reveal the focused field, taking the
-        // header off screen. With the body already short enough to fit, there is nothing to reveal.
-        if (vv.offsetTop) window.scrollTo(0, 0);
+        // header off screen. With the body already short enough to fit, there is nothing to reveal
+        // — but while zoomed the body was left alone, and scrolling back would fight the reveal.
+        if (vv.offsetTop && !zoomed) window.scrollTo(0, 0);
       };
       vv.addEventListener('resize', fit);
       vv.addEventListener('scroll', fit);
       fit();
     })();
+
+    // A sheet raised above the keyboard is still only as tall as what is left, and the field that
+    // was tapped can be below the fold of its own scroller. This nudges that scroller and nothing
+    // else: never scrollIntoView, which walks every scrollable ancestor and takes the page with it
+    // — the same trap renderAgentTabs documents.
+    //
+    // Deferred a frame and then some: on Safari the keyboard is still animating when focusin
+    // fires, so the box measured immediately is the one from before it appeared.
+    document.addEventListener('focusin', e => {
+      const field = e.target && e.target.closest && e.target.closest('input, textarea, select');
+      if (!field) return;
+      const box = field.closest('.sheet, [role="dialog"]');
+      if (!box) return;
+      setTimeout(() => {
+        const f = field.getBoundingClientRect(), b = box.getBoundingClientRect();
+        const pad = 12;
+        if (f.bottom > b.bottom - pad) box.scrollTop += f.bottom - b.bottom + pad;
+        else if (f.top < b.top + pad) box.scrollTop -= b.top + pad - f.top;
+      }, 200);
+    });
 
     // How recently a pane moved, in the three bands the colours are drawn from. One function so
     // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
@@ -74,3 +108,40 @@
     let startOptions = null, startProjectId = null, startMode = 'agent';
     // Pairs live only in this browser. The relay has no pair message and stores no pair data.
     let pairs = [], pairSource = null, pairPartner = null, transferSelection = '';
+
+    // --- Compact sections ---
+    //
+    // Three sections draw a list of things the reader mostly recognises by name: the launcher's
+    // tiles, the agent configs under them, and the conversation cards. Each is worth its full
+    // height the first week and a page of scrolling by the second, so each carries a toggle that
+    // drops it to two lines a row. One switch, one icon and one place to store the answer, because
+    // three copies of a two-line preference is how the three of them end up behaving differently.
+    //
+    // In localStorage rather than in the shared documents: this is about the screen it is drawn on,
+    // not about the tiles, the configs or the conversations.
+    const COMPACT_ICON =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" stroke-linecap="round" aria-hidden="true">'
+      + '<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/>'
+      + '<line x1="4" y1="17" x2="20" y2="17"/></svg>';
+
+    function compactOn(key) {
+      try { return localStorage.getItem(key) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleCompact(key, render) {
+      try { localStorage.setItem(key, compactOn(key) ? 'off' : 'on'); }
+      catch (e) { /* private mode: session-only */ }
+      if (typeof render === 'function') render();
+    }
+
+    // aria-pressed rather than two icons: the button is a state, and swapping the glyph under the
+    // reader's finger is how a toggle stops reading as one thing. The redraw is named rather than
+    // captured, so this stays a string a section header can concatenate.
+    function compactButton(key, render, label) {
+      return `<button class="section-action" onclick="toggleCompact('${key}', ${render})"`
+        + ` aria-pressed="${compactOn(key) ? 'true' : 'false'}"`
+        + ' title="Two lines a row: the name, and the badges under it"'
+        + ` aria-label="${label}">${COMPACT_ICON}</button>`;
+    }

@@ -19,6 +19,7 @@
     setConvTidy(convTidyOn());
     setDockMru(dockMruOn());
     setAutocorrect(autocorrectOn());
+    setLandingSearch(landingSearchOn());
     setBandwidthOn(bandwidthOn());
     syncBandwidthRange();
     setConvSweep(localStorage.getItem('herdr_conv_sweep') || '1h');

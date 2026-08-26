@@ -548,6 +548,45 @@ test('a pane fingerprint is all four fields, so a recycled id cannot inherit a t
 
 const index = items => JSON.stringify({version: 1, items: items});
 // Same realm caveat as above: what is asserted is the contents, not which Array built them.
+
+test('an index carrying one pane twice reads it once, keeping the row with the history', () => {
+  // What a landing wrote when its replace intent no longer matched: a second member for a key the
+  // conversation already held. Both rows draw the same transcript, so the roster showed one pane
+  // twice. The first is kept — it is the row `was` is on.
+  const raw = JSON.stringify({version: 1, items: [{
+    id: 'c1', name: 'twice', members: [
+      {key: 'k1', label: 'Architect 1', was: ['w1:p9']},
+      {key: 'k2', label: 'Someone else'},
+      {key: 'k1', label: 'Architect 1', agent: 'kiro'},
+    ],
+  }]});
+  const members = parseConvIndex(raw)[0].members;
+  assert.deepEqual(members.map(m => m.key), ['k1', 'k2']);
+  assert.deepEqual(members[0].was, ['w1:p9'], 'and it is the one that knows where it has been');
+});
+
+test('two browsers filing one fresh pane leave one auto conversation, not two', () => {
+  // Both mint a conversation for the same pane before either has seen the other's, and the state
+  // merge appends the second because appending what a browser created is what it is for. The
+  // relay's row comes first in the merged list, so that is the one every browser keeps.
+  const raw = JSON.stringify({version: 1, items: [
+    {id: 'c_first', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+    {id: 'c_second', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+    {id: 'c_other', name: 'herdr · claude', auto: true, members: [{key: 'k2'}]},
+  ]});
+  assert.deepEqual(Array.from(parseConvIndex(raw), c => c.id), ['c_first', 'c_other']);
+});
+
+test('a named conversation sharing a pane with an auto one keeps both', () => {
+  // A pane added to a conversation somebody named is still filed under the auto record it has been
+  // recording into. Dropping that one on the strength of the named row deletes the pane's history.
+  const raw = JSON.stringify({version: 1, items: [
+    {id: 'c_named', name: 'the review', members: [{key: 'k1'}, {key: 'k2'}]},
+    {id: 'c_auto', name: 'herdr · kiro', auto: true, members: [{key: 'k1'}]},
+  ]});
+  assert.deepEqual(Array.from(parseConvIndex(raw), c => c.id), ['c_named', 'c_auto']);
+});
+
 const ids = raw => Array.from(parseConvIndex(raw), c => c.id);
 const dropped = (...args) => Array.from(evictOrder(...args));
 
@@ -562,6 +601,15 @@ test('a corrupt index loads as no conversations, never as half of one', () => {
 test('a named conversation may be empty, but malformed entries are dropped', () => {
   const items = [{id: 'c1', name: 'auth', members: []}, {id: 'c2', members: []}, {name: 'x'}];
   assert.deepStrictEqual(ids(index(items)), ['c1']);
+});
+
+test('archive is optional synced index metadata, so old rows stay active', () => {
+  const rows = parseConvIndex(index([
+    {id: 'active', name: 'Active', members: []},
+    {id: 'archived', name: 'Archived', members: [], archived: true},
+  ]));
+  assert.equal(rows[0].archived, undefined);
+  assert.equal(rows[1].archived, true);
 });
 
 test('the roster is capped far above the recording cap, and keeps ended members', () => {

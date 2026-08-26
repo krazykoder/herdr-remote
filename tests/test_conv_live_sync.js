@@ -187,6 +187,30 @@ test('the cadence holds the question back, and invalidating lets it through', ()
   assert.equal(sent.length, 2);
 });
 
+test('a snapshot saying the record moved gets the question through inside the cadence', () => {
+  // The late-turn case. A pane that painted nothing when its turn ended has that turn held back by
+  // the relay for up to HERDR_LATE_TURN_MS and written with no status change behind it, so the
+  // invalidate that fires on a turn ending has already come and gone. Without the snapshot's own
+  // watermark the thread sits on stale rows until the cadence comes round.
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a', turn: 9}]);
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(4, FP_A, 1000, 'a')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 2, 'the pane holds row 9 and this bucket is answered through 4');
+  assert.equal(asked().since_id, 4, 'and it asks for the difference, not the window');
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(9, FP_A, 2000, 'b')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 2, 'caught up, the cadence holds the next one back again');
+});
+
+test('a relay too old to send a watermark leaves the cadence alone', () => {
+  reset([{host: 'local', pane_id: '%1', agent: 'claude', cwd: '/work/a'}]);
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(4, FP_A, 1000, 'a')]});
+  convLiveFetch([KEY_A]);
+  assert.equal(sent.length, 1);
+});
+
 test('a forced ask is for the record, not the difference', () => {
   reset();
   convLiveFetch([KEY_A]);
@@ -290,6 +314,68 @@ test('a respawned member inherits the pane it recorded itself as continuing', ()
     paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
   assert.deepEqual(convLiveEntries([KEY_A2]).map(e => e.text),
                    ['before the restart', 'after it']);
+});
+
+test('an inherited row is keyed to the member that claimed it, not to the pane it came from', () => {
+  // What every filter that works by member key depends on — solo, the roster's hide list, the
+  // column a bubble is drawn in. A row left behind by the pane a member was restarted out of is
+  // that member's row; keyed to the dead pane instead, it matches no roster entry and a solo on
+  // some other member leaves it on screen.
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A2, was: ['%1']}]}];
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
+  const entries = convLiveEntries([KEY_A2]);
+  assert.deepEqual(entries.map(e => e.key), [KEY_A2, KEY_A2]);
+  assert.deepEqual(entries.map(e => e.member), [0, 0]);
+});
+
+// --- A member that changed harness ---------------------------------------------------------
+//
+// The record is bucketed by fingerprint — host, agent, cwd — so a Restart as… onto another harness
+// moves a member to a bucket holding none of what it said before. The pane ids on `was` cannot
+// reach those rows on their own: a pane id is only ever looked up inside a bucket. `wasFp` is the
+// buckets themselves, written where `was` is.
+
+const KEY_A_CODEX = JSON.stringify(['local', '%9', 'codex', '/work/a']);
+const FP_A_CODEX = ['local', 'codex', '/work/a'];
+
+test('a member restarted onto another harness asks for the bucket it used to be in', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [
+    {key: KEY_A_CODEX, was: ['%1'], wasFp: [FP_A]}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  const asked = sent.filter(m => m.type === 'conv_log').pop();
+  assert.deepEqual(asked.fingerprints, [FP_A_CODEX, FP_A],
+    'the bucket it is in now, and the one its words are in');
+});
+
+test('and reads what it said before the swap as its own', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [
+    {key: KEY_A_CODEX, was: ['%1'], wasFp: [FP_A]}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  convLiveReceive({fingerprints: [FP_A_CODEX, FP_A], turns: [
+    Object.assign(turn(1, FP_A, 1000, 'said as a claude'), {pane_id: '%1'}),
+    Object.assign(turn(2, FP_A_CODEX, 1100, 'said as a codex'), {pane_id: '%9'})]});
+  const entries = convLiveEntries([KEY_A_CODEX]);
+  assert.deepEqual(entries.map(e => e.text), ['said as a claude', 'said as a codex']);
+  // Both under the member that claimed them, which is what every filter by member key needs.
+  assert.deepEqual(entries.map(e => e.key), [KEY_A_CODEX, KEY_A_CODEX]);
+});
+
+test('a bucket it never recorded itself as leaving is not its own', () => {
+  // wasFp is written by the one place a member's key moves, and only where the fingerprint
+  // actually changed. Without it, a member is its own bucket and nothing else — the same rule
+  // that keeps a quit pane's words out of a conversation that never held it.
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A_CODEX, was: ['%1']}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  convLiveReceive({fingerprints: [FP_A_CODEX, FP_A], turns: [
+    Object.assign(turn(1, FP_A, 1000, 'somebody else, same checkout'), {pane_id: '%1'}),
+    Object.assign(turn(2, FP_A_CODEX, 1100, 'said as a codex'), {pane_id: '%9'})]});
+  assert.deepEqual(convLiveEntries([KEY_A_CODEX]).map(e => e.text), ['said as a codex']);
 });
 
 test('a quit pane does not leak into a conversation that never held it', () => {

@@ -1,0 +1,79 @@
+
+     ▣  Build · GPT OSS 20B · 9.1s
+
+  ┃
+  ┃  explin the last 2 commits
+  ┃
+
+     Show last 2 commits. We have two: 0dd0c38 and 31a7ff4. Let's inspect git show for 31a7ff4.
+
+  ┃
+  ┃  $ git show --oneline 31a7ff4
+  ┃  31a7ff4 fix(landing): the closed search is a centred pill that says Search
+  ┃  diff --git a/tests/e2e/browser/keyboard.spec.js b/tests/e2e/browser/keyboard.spec.js
+  ┃  index d8a29fc..dac2c4a 100644
+  ┃  --- a/tests/e2e/browser/keyboard.spec.js
+  ┃  +++ b/tests/e2e/browser/keyboard.spec.js
+  ┃  @@ -95,26 +95,27 @@ test('the landing search bubble is above the keyboard too, results and all', asy
+  ┃     expect(results.y + results.height).toBeLessThanOrEqual(bubble.y + 1);
+  ┃   });
+  ┃
+  ┃  -// Closed, the control is the left part of the same bar — so the glyph has to be inside it. The
+  ┃  …
+  ┃
+  ┃  Click to expand
+  ┃
+
+     Now craft explanation of two commits. Use markdown; summarise changes, purpose, tests.Last two commits
+
+     ┌───────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+     │Commit         │Summary                                                                                                       │
+     ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+     │31a7ff4 – fix( │Re‑architect the closed‑state landing‑search pill. Previously the pill’s glyph and input resided in the same  │
+     │landing)       │element, so the border, width, and even focus state could change mid‑gesture, causing flicker and             │
+     │               │inconsistent focus.<br><br>Key changes<br><ul><li>Re‑work the search field layout: the pill is now a <label>  │
+     │               │that contains <svg> (the glyph) and the <input>. The glyph is placed before the input and is not part of the  │
+     │               │interactive element, so the glyph never receives a click; only the pill (the <label>) does. <li>All layout    │
+     │               │and styling of the pill (border, radius, width) is applied to the <label>, not the input. The input gets no   │
+     │               │border or background, only padding and text styles. <li>Close‑state sizing is handled by the pill width,      │
+     │               │while open‑state sizing applies via the same element, avoiding a DOM element switch. <li>Updated the CSS to   │
+     │               │center the closed pill over the page and to keep it a pill rather than a half‑bar. <li>Added comments to      │
+     │               │explain why the component is split this way. <li>Test simplification: the test no longer needs to know the    │
+     │               │exact placeholder string, and it validates that the bar grows from the center (instead of the left).          │
+     │               │<li>Fixed a minor typo in the test (.landing-search-box selector) and clarified the placeholder text.         │
+     ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+     │0dd0c38 – fix( │Add touch‑screen handling for dismissing the search overlay when tapping outside of the results. Previously a │
+     │landing)       │tap on a touch‑screen would fall through the floating overlay and trigger a pane underneath. <br><br>Key      │
+     │               │changes<br><ul><li>Added a new test (tests/e2e/browser/keyboard.spec.js for touch screens + tests/            │
+     │               │test_landing_search.js) that verifies tapping outside the open search closes it and does not activate the     │
+     │               │underlying pane.<li>In web/index.html, added a media query for pointer: coarse that turns the search          │
+     │               │overlay's pointer-events on; added an onclick="landingSearchBackdrop(event)" handler to detect a tap on just  │
+     │               │the overlay frame.<li>In web/src/landing_search.js, rewrote the ranking logic to gather all hits first, then  │
+     │               │slice to the maximum and finally group them by section. This guarantees sections requested by name (e.g.,     │
+     │               │Terminals) are not drowned out by weak subsequence matches elsewhere.<li>Created landingSearchBackdrop(e) to  │
+     │               │clear the search when a tap lands on the overlay itself.</ul>                                                 │
+     └───────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+     Why both commits came together
+
+     - 31a7ff4 fixed the closed‑state UI: a centered pill with an appropriate glyph and placeholder, ensuring a clean visual and
+       focus behaviour.
+     - 0dd0c38 extended touch‑screen UX: when the pill is open, a tap that is not on a search result should close the search. The
+       overlay now stops click‑through on touch devices, allowing that tap to be captured by landingSearchBackdrop. This test covers
+       the new behaviour and ensures the UI no longer accidentally opens a pane behind the overlay.
+
+     These changes collectively improve the search component’s visual correctness, focus behaviour, and touch‑screen usability.
+
+     ▣  Build · GPT OSS 20B · 9.5s
+
+  ┃
+  ┃  1 message reverted
+  ┃  ctrl+x r or /redo to restore
+  ┃
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GPT OSS 20B Nvidia
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /Users/towshif/code/python/herdr-remote                              2026-08-25_one_lane_per_pane.md  26.6K (20%)  ctrl+p commands

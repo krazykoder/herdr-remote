@@ -16,7 +16,7 @@ const path = require('node:path');
 const HISTORY = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'history.js'), 'utf8');
 
 // A fresh context per test: both switches are localStorage-backed module state.
-function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {}) {
+function dockCtx({status = 'idle', store = {}, convs = [], threaded = false, options = []} = {}) {
   const els = {};
   // The thread is a sibling of the pane rows, and `hidden` is what says which of the two is on
   // screen — Last and Summary both branch on it.
@@ -37,7 +37,7 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false} = {
     paneTextPrimed: false,
     finalAt: null,               // no closing message found, so no Summary button in the row
 
-    agents: [{pane_id: 'p1', status}],
+    agents: [{pane_id: 'p1', status, options}],
     navTarget: () => 0,          // both arrows enabled, so the row renders in full
     navStep: () => 0,
     paneOf: () => true,
@@ -166,7 +166,10 @@ test('no open pane means no pill, however the flag was left', () => {
 });
 
 test('an approval outranks the switch, folded or not', () => {
-  const {el, run} = dockCtx({status: 'blocked'});
+  // With the options the relay saw, and not without them: the fallback list is gone — a pane whose
+  // choices the relay could not read gets no buttons at all rather than another harness's.
+  const {el, run} = dockCtx({status: 'blocked',
+                             options: ['Yes', 'No, tell Claude what to do differently']});
   run("localStorage.setItem('herdr_quick_actions', 'off'); renderQuickActions()");
   assert.match(el('quickActions').innerHTML, /btn-yes/);
 });

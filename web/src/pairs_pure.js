@@ -67,6 +67,7 @@
       { at: 'review-fix', label: 'Review, edit & fix', text: 'Review, edit, fix; then propose next steps.' },
       { at: 'review-only', label: 'Review only', text: 'Review only. Dont edit/ change code; then propose next steps.' },
       { at: 'implement', label: 'Implement', text: 'Proceed to implement.' },
+      { at: 'continue', label: 'Continue', text: 'Continue.' },
       { at: 'test', label: 'Test',
         text: 'Write /update tests this needs, run them, and report what actually failed.' },
       { at: 'test-min', label: 'Test, minimally',
@@ -85,7 +86,8 @@
       // so a session can be started as a Reviewer today, and the day someone writes the text every
       // tile and every record naming it opens with it, with no migration. `promptChips` is what
       // keeps them out of the composer until then — a chip that types nothing is a dead control.
-      { at: 'architect-prompt', label: 'Architect prompt', text: '/ponytail\n/caveman\n@.agent/prompts/System_Prompt_2_Architect.md\n' },
+      { at: 'architect-prompt', label: 'Architect prompt',
+        text: '/ponytail\n/caveman\n\nRead Instructions here: @.agent/prompts/System_Prompt_2_Architect.md\nThen wait for tasks to work on.' },
       { at: 'reviewer-prompt', label: 'Reviewer prompt', text: '' },
       { at: 'implementer-prompt', label: 'Implementer prompt', text: '' },
       { at: 'arbitrator-prompt', label: 'Arbitrator prompt', text: '' },
@@ -145,8 +147,14 @@
     const NO_STARTER = 'none';
 
     // The opening text a role badge carries, or '' while its prompt is still to be written.
-    function roleStarter(r) {
-      return ((SHORTCUTS.find(s => s.at === canonAt((r || {}).at)) || {}).text || '').trim();
+    // `agent` is the harness it is about to be typed into. Every chip in the composer already goes
+    // through agentSlash on its way to a pane; an opening prompt is the same text typed by the same
+    // hand, and skipping it meant every codex session started as an Architect opened with
+    // `/ponytail` — which codex reads as an unknown command rather than as the prompt it is.
+    // Optional, because two callers ask only whether a starter has any text at all.
+    function roleStarter(r, agent) {
+      const text = ((SHORTCUTS.find(s => s.at === canonAt((r || {}).at)) || {}).text || '').trim();
+      return agent ? agentSlash(text, agent) : text;
     }
 
     // `at` is the badge's name on disk as well as in SHORTCUTS: a conversation records which role a
@@ -237,8 +245,19 @@
     // codex invokes its prompts with $; every other agent uses /. Only a line-leading slash is
     // rewritten, so a path or URL inside the shortcut text is left alone. Keyed off the pane the
     // text is going into, not the one it came from.
+    // `agent` may be an alias rather than a harness — `ocodex--1-` runs codex and has to be
+    // written for codex. Resolved here rather than at each caller: a caller that has to remember
+    // to resolve first is a caller that will forget, and this one already cost a session an
+    // opening prompt codex answered with `Unrecognized command '/ponytail'`.
     function agentSlash(text, agent) {
-      return agent === 'codex' ? text.replace(/^\//gm, '$') : text;
+      return agentHarness(agent) === 'codex' ? text.replace(/^\//gm, '$') : text;
+    }
+
+    // The harness under a name that may be either. An unknown name is its own answer, which is
+    // what keeps this working in a page where the configs section is not loaded.
+    function agentHarness(agent) {
+      const name = String(agent || '');
+      return (typeof agentConfigKind === 'function' && agentConfigKind(name)) || name;
     }
 
     // A corrupt blob must not brick the terminal view — it loads as no pairs at all.

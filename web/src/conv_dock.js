@@ -707,7 +707,7 @@
           `title="Talk to ${name}. Double-click to read only ${name}" ` +
           `aria-label="Talk to ${name}">` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-          `${name}${agentBadge(a.agent)}</button>`;
+          `${name}${paneBadge(a)}</button>`;
       }).join('');
       // Numbered by the order they were chosen, because that order is what will be written and two
       // lit chips otherwise say nothing about which comes first. In fill mode nothing is lit at
@@ -798,7 +798,7 @@
           `onclick="pickDockTarget('${a.pane_id}')" aria-label="Talk to ${name}">` +
           `<span class="tick">${on ? '✓' : ''}</span>` +
           `<span class="dot" style="background:${statusColor(a)}" aria-hidden="true"></span>` +
-          `${name}${agentBadge(a.agent)}</button>`;
+          `${name}${paneBadge(a)}</button>`;
       }).join('') +
         // Last, under the membership: another agent in this conversation is one more of the same
         // list, and the place that answers "who is in this" is the place to add to it.
@@ -819,6 +819,14 @@
     // is already answered — beside what this conversation is running — and what is left is four
     // choices, three of them made by tapping a badge: harness, role, name, Project.
     let newAgentKind = '';
+    // The agent config this start runs under, when one was picked. See startConfigPick — the kind
+    // and the environment are two answers, and the relay is told both.
+    let newAgentConfig = '';
+    let newAgentCustom = false;
+    // null until the box is touched, then this dialog's own answer. Same rule as the Start sheet's:
+    // on under an agent config, off on a stock harness, and whatever was said last wins until the
+    // dialog closes. See startUnattendedOn.
+    let newAgentUnattended = null;
     let newAgentRole = 0;
     let newAgentProject = '';
     // Which arbitration slot asked for this one, or '' for the ordinary route in. A slot's start
@@ -842,6 +850,8 @@
       // work is what this is usually for. Falls back to the first the relay will start.
       const kinds = startOptions.agents || [];
       newAgentKind = from && kinds.includes(from.agent) ? from.agent : kinds[0];
+      newAgentConfig = '';
+      newAgentCustom = false;
       newAgentRole = 0;
       // Spawned where the conversation lives. Not a rule — the row is right there — but a Project
       // chosen for you is one fewer question in a dialog that exists to be quick.
@@ -856,6 +866,9 @@
 
     function closeNewAgent() {
       newAgentFor = '';
+      // A fresh dialog asks it fresh: an answer given about claude says nothing about the codex
+      // the next one might pick.
+      newAgentUnattended = null;
       document.getElementById('newAgentModal').style.display = 'none';
       closeDockMenu('newAgentProjMenu');
     }
@@ -869,8 +882,22 @@
     // Three rows of badges, in the order the decision is made. The Project row is one line that
     // scrolls: there is usually one Project in play, and the rest are behind @+ beside it.
     function renderNewAgent() {
+      // The same strip the Start sheet draws, for the same reason: stock kinds, then one
+      // `+custom` that opens the agent configs rather than a badge per alias.
+      const configs = typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
       document.getElementById('newAgentKinds').innerHTML = (startOptions.agents || [])
-        .map(k => badgeHtml(k, k === newAgentKind, `pickNewAgentKind('${k}')`, {agent: k})).join('');
+        .map(k => badgeHtml(k, !newAgentConfig && k === newAgentKind, `pickNewAgentKind('${k}')`,
+                            {agent: k})).join('')
+        + (configs.length
+          ? badgeHtml('+custom', newAgentCustom || !!newAgentConfig, 'toggleNewAgentCustom()',
+              {proj: true, title: 'Start under one of your agent configs'})
+            + (newAgentCustom || newAgentConfig
+              ? configs.map(c => badgeHtml(c.label, c.id === newAgentConfig,
+                  `pickNewAgentConfig('${escapeHtml(c.id)}')`,
+                  {agent: c.kind, title: c.command || c.provider_label || ''})).join('')
+              : '')
+          : '');
+      renderNewAgentUnattended();
       document.getElementById('newAgentRoles').innerHTML =
         badgeHtml('@none', newAgentRole < 0, 'pickNewAgentRole(-1)',
           {proj: true, title: 'Starts with nothing typed at it'})
@@ -889,6 +916,24 @@
 
     function pickNewAgentKind(kind) {
       newAgentKind = kind;
+      newAgentConfig = '';
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function toggleNewAgentCustom() {
+      newAgentCustom = !newAgentCustom;
+      if (!newAgentCustom) newAgentConfig = '';
+      renderNewAgent();
+      if (window.cue) cue('tick');
+    }
+
+    function pickNewAgentConfig(id) {
+      const rows = typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
+      const row = rows.find(c => c.id === id);
+      if (!row) return;
+      newAgentConfig = id;
+      newAgentKind = row.kind;
       renderNewAgent();
       if (window.cue) cue('tick');
     }
@@ -904,6 +949,27 @@
       closeDockMenu('newAgentProjMenu');
       renderNewAgent();
       if (window.cue) cue('tick');
+    }
+
+    // The same question the Start sheet asks, in the other dialog that starts an agent. Drawn only
+    // for a harness this relay has a flag for — startUnattendedOffered reads what it advertised.
+    function newAgentUnattendedOn() {
+      if (typeof startUnattendedOffered !== 'function'
+        || !startUnattendedOffered(newAgentKind)) return false;
+      return newAgentUnattended === null ? !!newAgentConfig : newAgentUnattended;
+    }
+
+    function renderNewAgentUnattended() {
+      const row = document.getElementById('newAgentUnattendedRow');
+      const box = document.getElementById('newAgentUnattended');
+      if (!row || !box) return;
+      row.style.display = typeof startUnattendedOffered === 'function'
+        && startUnattendedOffered(newAgentKind) ? 'flex' : 'none';
+      box.checked = newAgentUnattendedOn();
+    }
+
+    function pickNewAgentUnattended(on) {
+      newAgentUnattended = !!on;
     }
 
     // Every Project as a list, for the ones the line could not hold — the same @+ the instruction
@@ -931,6 +997,8 @@
         type: 'start_agent', name: newAgentKind,
         project_id: newAgentProject, slot: slotFor(),
       }, startRoleFields(role, typed));
+      if (newAgentConfig) msg.config = newAgentConfig;
+      if (newAgentUnattendedOn()) msg.unattended = true;
       // Where is not asked: beside what this Project is already running, which is what a new member
       // of an ongoing conversation wants. A Project with nothing live has nowhere to be beside, and
       // gets a workspace of its own.
@@ -943,7 +1011,7 @@
         ? {arb: {slot: newAgentFor, conv: convViewId}} : {conv: convViewId};
       // The arbitrator is briefed by the session, and that brief is the only thing that tells it
       // what it is. A role's opening prompt would have it doing the work it is there to referee.
-      startPrompt = newAgentFor === 'arbWho' ? '' : roleStarter(role);
+      startPrompt = newAgentFor === 'arbWho' ? '' : roleStarter(role, newAgentKind);
       startStarter = newAgentFor === 'arbWho' ? NO_STARTER : ((role || {}).at || NO_STARTER);
       showSpawnStatus(`Starting ${msg.label || newAgentKind}…`, 'busy');
       ws.send(JSON.stringify(msg));
@@ -990,7 +1058,7 @@
       let parsed = null;
       try { parsed = JSON.parse(key); } catch (e) {}
       // The key first. Failing that, the same key with the local host spelled the one way — a live
-      // row is keyed under whichever spelling its record carried (see `convLiveKey`), and the two
+      // row is keyed under whichever spelling its record carried (see `convLiveEntries`), and the two
       // must land on the same member. The host is part of that comparison and never dropped from
       // it: pane ids are unique per host and collide across them, so matching on a bare pane id
       // would address a stranger on another machine.

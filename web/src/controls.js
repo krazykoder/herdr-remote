@@ -81,9 +81,12 @@
       // The element that was armed, and — for a keyed arm — whatever is standing in its place now.
       // A poll redraw replaces the node between the two taps, so by the time the arm expires the
       // one on screen is not the one this holds, and clearing only `armedEl` leaves a detached
-      // node tidied and a live button still saying "End all?" with nothing behind it.
-      const live = key && typeof document !== 'undefined' && document.querySelector
-        ? document.querySelector(`[data-arm-key="${key}"]`) : null;
+      // node tidied and a live button still saying "Pause all?" with nothing behind it.
+      // Member keys are JSON fingerprints, so quoting one into a CSS selector makes the second
+      // tap throw before it can run. Compare the dataset instead.
+      const live = key && typeof document !== 'undefined' && document.querySelectorAll
+        ? Array.from(document.querySelectorAll('[data-arm-key]'))
+          .find(el => el.dataset.armKey === key) : null;
       for (const el of new Set([btn, live])) {
         if (!el || !el.dataset || !el.dataset.armLabel) continue;
         el.textContent = el.dataset.armLabel;
@@ -254,8 +257,49 @@
     //
     // A socket that is not open is a refusal, not a send: this returns false so the caller keeps the
     // message in the box rather than clearing it over a message the relay never saw.
+    // pane_id -> the text the relay refused because the pane was at a menu. Nothing was typed, so
+    // this is the whole of the message and it is still the client's to send: a start into a codex
+    // asking whether it may trust the directory is the case this exists for, and losing its opening
+    // prompt to the trust prompt is what made a spawn look like it had failed.
+    const menuHeld = new Map();
+
+    function holdForMenu(paneId, text) {
+      if (paneId && text) menuHeld.set(paneId, {text: text, sawBlocked: false, at: Date.now()});
+    }
+
+    // How long a held message waits for the poll to report the menu the relay has already seen.
+    // Giving up is safe because the relay refuses again at a pane still showing one: a late try
+    // costs one pane read and the message is held afresh. Waiting for ever is not safe — a relay
+    // too old to publish the state would hold the text for the life of the page.
+    const MENU_HOLD_WAIT_MS = 10000;
+
+    // Sent again the moment the pane is no longer at the question. Called from the snapshot, which
+    // is the only thing that knows a pane has moved.
+    function sendHeldAfterMenu(list) {
+      if (!menuHeld.size) return;
+      const seen = new Set();
+      for (const a of list || []) {
+        seen.add(a.pane_id);
+        const held = menuHeld.get(a.pane_id);
+        if (!held) continue;
+        // A trust prompt can be reported idle. The relay turns it into blocked on the next spawn
+        // snapshot; wait for that state before treating a later non-blocked snapshot as its answer.
+        if (a.status === 'blocked') { held.sawBlocked = true; continue; }
+        if (!held.sawBlocked && Date.now() - held.at < MENU_HOLD_WAIT_MS) continue;
+        const text = held.text;
+        // Dropped before the send: a second refusal puts it straight back, and holding it in two
+        // places at once is how a message gets sent twice.
+        menuHeld.delete(a.pane_id);
+        submitText(a.pane_id, text);
+      }
+      // A pane that is no longer in the snapshot has ended, and text held for one is not going
+      // anywhere. Dropped here rather than left to accumulate for the life of the page.
+      for (const id of Array.from(menuHeld.keys())) if (!seen.has(id)) menuHeld.delete(id);
+    }
+
     function submitText(paneId, text) {
       if (!text || !paneId || !ws || ws.readyState !== 1) return false;
+      lastSubmitted.set(paneId, text);
       // One message per chunk. Nothing before the last one submits, so they land in the agent's
       // composer as one text; the relay handles a connection's messages in order.
       const parts = chunkText(text);
@@ -271,10 +315,16 @@
       return true;
     }
 
+    // What was last handed to a pane, so a refusal can carry it: `command_result` names the pane and
+    // not the text, and the chunks it was split into are not what anyone would want re-sent.
+    const lastSubmitted = new Map();
+
     // One text into one pane, from whichever composer had it. The pane's own composer is one
     // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
     // open — which is why this takes the pane rather than reading `activePane`.
-    function sendTextTo(paneId, text) {
+    // `via` is for a send this app composed on the reader's behalf — see noteSent. Left off, the
+    // send is classified the way every typed one is.
+    function sendTextTo(paneId, text, via) {
       // Both composers land here, which is why the arbitration guard is here and not in each of
       // them. It arms rather than refuses — see arbGuardSend.
       if (typeof arbGuardSend === 'function' && !arbGuardSend(paneId)) return false;
@@ -283,7 +333,7 @@
       // claims the user said what another agent said, and one that records a send the socket
       // dropped claims they said it at all. The whole text, not a chunk of it — what was sent is
       // one message, however many the wire took.
-      noteSent(text, paneId);
+      noteSent(text, paneId, via);
       lastSentText[paneId] = text;
       syncResend();
       return true;

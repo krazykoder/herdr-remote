@@ -113,7 +113,13 @@
       startIntent = null;
       // Read once here for the same reason: a start that never came up must not leave its opening
       // words to be said to whatever is started next.
-      const prompt = startPrompt;
+      //
+      // Written for the pane that actually landed, not for the harness the caller had in mind when
+      // it resolved the text. Those two disagree more often than they look: a member swapped from
+      // one harness to another, a start whose kind came off a stale record, an alias resolved
+      // somewhere that only knew its id. The pane is the one place the answer is a fact, and
+      // agentSlash is idempotent, so a prompt already in the right form passes through untouched.
+      const prompt = startPrompt ? agentSlash(startPrompt, a.agent) : '';
       const starterAt = startStarter;
       startPrompt = '';
       startStarter = '';
@@ -177,9 +183,16 @@
         const conv = items.find(c => c.id === intent.conv);
         if (conv) {
           const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
+          // Whether this pane is already one of this conversation's members. The fallback below
+          // joins as a new member, which is right for a pane the conversation has never held and
+          // wrong for one it already names: herdr recycles pane ids, and a replace intent that no
+          // longer matches — a second landing, a member moved by the restart before it — would
+          // otherwise append a second row for a key that is already in the list. Two members, one
+          // pane, both drawing the same transcript.
+          const already = (conv.members || []).some(m => m.key === next);
           conv.members = continued && prior
             ? conv.members.map(m => m.key === prior.key
-              ? Object.assign({}, m, {
+              ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
                   key: next, label: prior.label || paneLabel(a),
                   // The pane this member continues. This is the only place a member's key moves
                   // from one pane to another, so it is the only place succession is a fact rather
@@ -187,9 +200,13 @@
                   // conversation running the same harness in the same directory.
                   was: (m.was || []).concat(convKeyPaneId(prior.key))
                     .filter(Boolean).slice(-CONV_WAS_MAX),
+                  // convWasFpPatch above names the bucket the record kept this member in, where
+                  // the restart moved it to a different one — another harness, or another
+                  // checkout. The pane ids here cannot find those rows on their own: a pane id is
+                  // only ever looked up inside a fingerprint's bucket.
                 })
               : m)
-            : (conv.members || []).concat(convMemberOf(a));
+            : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
           saveConvIndex(items);
           // This conversation and not merely "on": the new pane is a member of exactly one so far,
           // but a respawn into a grouping the user chose must open on that grouping.
@@ -235,6 +252,17 @@
     function duplicatePane() {
       const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
       if (!ws || !canDuplicate(a)) return;
+      // Same agent means the same agent config — and an alias the relay no longer offers is not a
+      // reason to quietly bring the copy up on the stock endpoint under the same name. The dialog
+      // is opened on that Project instead and the reader picks, which is the same answer Start
+      // again gives to the same question.
+      if (a.config && !(typeof agentConfigLive === 'function' && agentConfigLive(a.config, a.agent))) {
+        openStartDialog(a.project_id);
+        if (typeof showToast === 'function') {
+          showToast(`Agent config "${a.config}" is gone. Pick what to start instead.`);
+        }
+        return;
+      }
       const tab = !!a.workspace_id;
       const msg = {
         type: 'start_agent', name: a.agent, role: roleOf(a), project_id: a.project_id,
@@ -243,11 +271,16 @@
         placement: tab ? 'new_tab' : 'new_workspace', slot: slotFor(),
       };
       if (tab) msg.workspace_id = a.workspace_id;
+      if (a.config) msg.config = a.config;
+      // A duplicate comes up the way the pane it came from did, and the same default decides it:
+      // the snapshot does not say how that one was started, so a config is the whole of what is
+      // known about it.
+      if (a.config && startUnattendedOffered(a.agent)) msg.unattended = true;
       // A duplicate opens the way the pane it came from opened. The wire role alone cannot say
       // that — Arbitrator and Orchestrator both go out as `agent` — so the starter is resolved the
       // same way a conversation resolves it: what this browser watched, then the pane's name.
       const dupAt = canonAt(typeof convStarterOf === 'function' ? convStarterOf(a) : '');
-      startPrompt = roleStarter({at: dupAt});
+      startPrompt = roleStarter({at: dupAt}, a.agent);
       startStarter = dupAt;
       // No label: the relay names it for the role, so a duplicate of "Architect 1" arrives as
       // "Architect 2" rather than as a second pane with the same name.
@@ -284,15 +317,92 @@
     // three questions about what a session *is*, and one of them reading as a form control while
     // the other two read as badges was the whole inconsistency.
     let startAgentPick = '';
+    // An agent config, when one was picked instead of the stock harness. Held apart from the kind
+    // rather than folded into it: a config *is* a kind plus an environment, and the relay is told
+    // both — `name` is what it starts, `config` is what it starts it under.
+    let startConfigPick = '';
+    let startCustomOpen = false;
+    // null until the checkbox is touched, and then the user's own answer for the rest of this
+    // dialog. Held apart from the default so that picking a different agent moves the box with the
+    // pick right up until someone disagrees with it, and never after.
+    let startUnattendedPick = null;
 
+    // Which harnesses this relay can start with their own approval prompts off. Empty against a
+    // relay too old to say, and then the row is not drawn at all rather than drawn and refused.
+    function startUnattendedOffered(kind) {
+      return ((startOptions || {}).unattended || []).indexOf(kind) >= 0;
+    }
+
+    // On under an agent config, off on a stock harness. A config is an endpoint the user set up for
+    // work that runs without them; a stock start is the one they are sitting in front of.
+    function startUnattendedOn() {
+      if (!startUnattendedOffered(startAgentPick)) return false;
+      return startUnattendedPick === null ? !!startConfigPick : startUnattendedPick;
+    }
+
+    function renderStartUnattended() {
+      const row = document.getElementById('startUnattendedRow');
+      const box = document.getElementById('startUnattended');
+      if (!row || !box) return;
+      row.style.display = startUnattendedOffered(startAgentPick) ? 'flex' : 'none';
+      box.checked = startUnattendedOn();
+    }
+
+    function pickStartUnattended(on) {
+      startUnattendedPick = !!on;
+    }
+
+    function startConfigs() {
+      // Offered, not merely known: a config the user switched off is refused by the relay, so it
+      // must not be on a strip that starts something.
+      return typeof agentConfigOffered === 'function' ? agentConfigOffered() : [];
+    }
+
+    // Stock kinds, then one `+custom`. One badge and not a badge per alias: there will be more
+    // aliases than harnesses before long, and a strip that grows with them is a strip nobody can
+    // read. Open, the aliases appear after it wearing their own harness's colour.
     function renderStartAgents() {
-      document.getElementById('startAgents').innerHTML = ((startOptions || {}).agents || []).map(k =>
-        badgeHtml(k, k === startAgentPick, `pickStartAgent('${k}')`, {agent: k})).join('');
+      const configs = startConfigs();
+      document.getElementById('startAgents').innerHTML =
+        ((startOptions || {}).agents || []).map(k =>
+          badgeHtml(k, !startConfigPick && k === startAgentPick, `pickStartAgent('${k}')`,
+                    {agent: k})).join('')
+        + (configs.length
+          ? badgeHtml('+custom', startCustomOpen || !!startConfigPick, 'toggleStartCustom()',
+              {proj: true, title: 'Start under one of your agent configs'})
+            + (startCustomOpen || startConfigPick
+              ? configs.map(c => badgeHtml(c.label, c.id === startConfigPick,
+                  `pickStartConfig('${escapeHtml(c.id)}')`,
+                  {agent: c.kind, title: c.command || c.provider_label || ''})).join('')
+              : '')
+          : '');
+    }
+
+    function toggleStartCustom() {
+      startCustomOpen = !startCustomOpen;
+      // Closing it also drops the choice: the row would otherwise say a stock kind is picked while
+      // the start still carried a config nobody can see.
+      if (!startCustomOpen) startConfigPick = '';
+      renderStartAgents();
+      renderStartUnattended();
+      if (window.cue) cue('tick');
+    }
+
+    function pickStartConfig(id) {
+      const row = startConfigs().find(c => c.id === id);
+      if (!row) return;
+      startConfigPick = id;
+      startAgentPick = row.kind;
+      renderStartAgents();
+      renderStartUnattended();
+      if (window.cue) cue('tick');
     }
 
     function pickStartAgent(kind) {
       startAgentPick = kind;
+      startConfigPick = '';
       renderStartAgents();
+      renderStartUnattended();
       if (window.cue) cue('tick');
     }
 
@@ -315,6 +425,18 @@
 
     // A start can outlive its sheet (Duplicate has none), so its result also has one global card.
     // Success and warnings clear shortly; errors stay long enough to be read and retried.
+    //
+    // Busy has a ceiling of its own, and it is the one state that needs one. Every other state
+    // ends by timing out; busy ends only when the pane it is waiting for turns up in a snapshot
+    // and openPendingStart says how it went. A start whose pane never arrives — one refused
+    // between the relay's answer and the poll, one on a host that stopped answering, a batch
+    // abandoned mid-sequence — leaves nothing to clear it, and a spinner that runs for ever reads
+    // as a start that failed silently when the session is in fact up and working.
+    //
+    // Long enough not to talk over a slow one: the relay waits AGENT_START_TIMEOUT_MS (30s) for
+    // herdr alone, and each member of a launcher batch resets this on its own way out. Worded as
+    // a report and not an error, because that is all this knows — the pane has not been seen.
+    const SPAWN_BUSY_MS = 90000;
     let spawnStatusTimer = null;
     function showSpawnStatus(text, state) {
       const el = document.getElementById('spawnStatus');
@@ -326,7 +448,13 @@
       el.style.borderColor = color;
       spinner.hidden = state !== 'busy';
       clearTimeout(spawnStatusTimer);
-      if (state !== 'busy') spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
+      if (state === 'busy') {
+        spawnStatusTimer = setTimeout(
+          () => showSpawnStatus(`${text} no pane has appeared yet — it may still be coming up.`,
+                                'warning'), SPAWN_BUSY_MS);
+        return;
+      }
+      spawnStatusTimer = setTimeout(() => { el.style.display = 'none'; },
         state === 'error' ? 10000 : 5000);
     }
 
@@ -430,7 +558,13 @@
       const kinds = startOptions.agents || [];
       const remembered = localStorage.getItem(START_AGENT_KEY);
       startAgentPick = kinds.includes(remembered) ? remembered : (kinds[0] || '');
+      startConfigPick = '';
+      startCustomOpen = false;
+      // A fresh dialog asks the question fresh: an answer given to the last start says nothing
+      // about this one, which may be a different harness entirely.
+      startUnattendedPick = null;
       renderStartAgents();
+      renderStartUnattended();
       fillSelect('startPlacement', [['new_tab', 'New tab'], ['new_workspace', 'New workspace'], ['split', 'Split']]);
       restoreStartChoice('startPlacement', START_PLACE_KEY, 'new_tab');
       document.getElementById('startName').value = '';  // blank means "let the relay name it"
@@ -519,6 +653,10 @@
       // readable on it without a second round trip. Not for a split: "beside that pane" is already
       // a statement about width, and a desktop asking for "wide" would move the new session
       // straight back out of the split the user picked.
+      if (!terminal && startConfigPick) msg.config = startConfigPick;
+      // Only when it is on. The relay's default is a session that asks before it acts, and saying
+      // so on the wire would be a longer way of saying nothing.
+      if (!terminal && startUnattendedOn()) msg.unattended = true;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields
       // answered that for an agent, this answers it for the other message. Omitted, not empty — the
@@ -543,8 +681,16 @@
       // rather than waiting to be told. Set here and not above the target check: a submit that
       // refused must leave nothing behind for the next start to open with. Nothing to say for a
       // terminal, or for a role whose prompt is still to be written.
-      startPrompt = terminal ? '' : roleStarter(role);
+      startPrompt = terminal ? '' : roleStarter(role, startAgentPick);
       startStarter = terminal ? '' : ((role || {}).at || NO_STARTER);
+      // The session this one replaces, ended here and not when the dialog was opened: a pane runs
+      // one CLI, so the swap has to spend it — but only now that there is something to spend it
+      // on. Cleared as it is used, so a second submit into a dialog left open cannot quit a pane
+      // that is already gone or, worse, one herdr has since recycled the id of.
+      if (startIntent && startIntent.endFirst) {
+        endPane(startIntent.endFirst);
+        startIntent = Object.assign({}, startIntent, {endFirst: ''});
+      }
       ws.send(JSON.stringify(msg));
     }
 
@@ -654,7 +800,7 @@
         `onclick="closeRecentSheet(); jumpToPane('${escapeHtml(p.pane_id)}')">` +
         `<span class="kind" aria-hidden="true">${shell ? '⬛' : agentGlyph()}</span>` +
         `<span class="info"><span class="name">${escapeHtml(paneLabel(p))}` +
-        `${shell ? '' : agentBadge(p.agent)}</span>` +
+        `${shell ? '' : paneBadge(p)}</span>` +
         `<span class="meta">${escapeHtml(meta)}</span></span>` +
         `<span class="dot" style="background:${statusColor(p)}" aria-hidden="true"></span>` +
         `</button>`;

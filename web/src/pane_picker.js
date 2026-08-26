@@ -146,7 +146,7 @@
         name: paneLabel(a),
         agent: a.agent || '',
         project: a.project || a.project_id || '',
-        meta: a.agent ? `${agentBadge(a.agent)} ${cwd}` : cwd,
+        meta: a.agent ? `${paneBadge(a)} ${cwd}` : cwd,
         color: a.agent ? statusColor(a) : shellColor(a.pane_id),
         glyph: a.agent ? agentGlyph() : '⬛',
       }, extra || {});

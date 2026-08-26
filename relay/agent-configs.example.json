@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Copy to ~/.config/herdr-remote/agent-configs.json, or point HERDR_AGENT_CONFIGS at it.",
+    "This file names the endpoints a session may be started against and which of the relay's own",
+    "environment variables may supply a credential. It is the security boundary: the app can name",
+    "an alias, a model and which of these key variables to use, and nothing else. No key VALUE",
+    "belongs in this file — export the variables in the relay's own environment.",
+    "'unset' runs first. 'env' is exported verbatim. 'secrets' binds the variable the CLI wants to",
+    "the relay variables that may fill it, in offer order. 'model_var' is where an alias's model",
+    "string goes. 'kind' must be a herdr agent kind — it is checked against the start."
+  ],
+  "version": 1,
+  "providers": [
+    {
+      "id": "agentrouter",
+      "label": "AgentRouter",
+      "kind": "claude",
+      "env": {
+        "CLAUDE_CONFIG_DIR": "~/.claude-agentrouter",
+        "ANTHROPIC_BASE_URL": "https://agentrouter.org"
+      },
+      "secrets": {"ANTHROPIC_API_KEY": ["AGENTROUTER_API_KEY"]},
+      "unset": ["ANTHROPIC_API_TOKEN"],
+      "model_var": "ANTHROPIC_MODEL",
+      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION",
+      "models": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8[1m]", "claude-opus-4-6[1m]"]
+    },
+    {
+      "id": "freemodel",
+      "label": "FreeModel",
+      "kind": "claude",
+      "env": {
+        "CLAUDE_CONFIG_DIR": "~/.claude-freemodel",
+        "ANTHROPIC_BASE_URL": "https://cc.freemodel.dev"
+      },
+      "secrets": {"ANTHROPIC_API_KEY": ["FREEMODEL_API_KEY", "FREEMODEL_API_KEY2"]},
+      "unset": ["ANTHROPIC_API_TOKEN"],
+      "model_var": "ANTHROPIC_MODEL",
+      "model_option_var": "ANTHROPIC_CUSTOM_MODEL_OPTION",
+      "models": ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8[1m]", "claude-opus-4-6[1m]"]
+    },
+    {
+      "id": "agentrouter-codex",
+      "label": "AgentRouter (codex)",
+      "kind": "codex",
+      "env": {"CODEX_HOME": "~/.codex-personal"},
+      "secrets": {"AGENTROUTER_API_KEY": ["AGENTROUTER_API_KEY", "AGENTROUTER_API_KEY2"]},
+      "_note": [
+        "codex reads AGENTROUTER_API_KEY under its own name, so the binding is a rotation",
+        "between two variables rather than a rename. No base URL and no model_var: codex takes",
+        "its endpoint and its model from CODEX_HOME/config.toml, so an alias here sets the",
+        "account and the key, and the model field on its row stays empty."
+      ]
+    }
+  ]
+}

@@ -460,7 +460,7 @@ test('a conversation with nothing running says inactive, on the card and in the 
   await expect(page.locator('.conv-view-head #convViewIdle')).toHaveText('inactive');
 });
 
-test('a conversation with nothing running is drawn hollow, and offers no End', async ({page}) => {
+test('a conversation with nothing running is drawn hollow, and offers no Pause', async ({page}) => {
   await openCard(page);
   await page.locator('#convView .back').click();
   const card = page.locator('#conversations .conversation-card').first();
@@ -483,7 +483,7 @@ test('a conversation with nothing running is drawn hollow, and offers no End', a
   await expect(card.locator('.end-btn')).toHaveCount(0);
 });
 
-test('End on a conversation card takes two taps and quits every live member', async ({page}) => {
+test('Pause on a conversation card takes two taps and quits every live member', async ({page}) => {
   const sent = [];
   await openCard(page);
   await page.locator('#convView .back').click();
@@ -495,29 +495,45 @@ test('End on a conversation card takes two taps and quits every live member', as
   const end = page.locator('#conversations .conversation-card .end-btn').first();
   // One tap arms it and sends nothing — the same two-tap the agent cards and QUIT use.
   await end.click();
-  await expect(end).toHaveText('End all?');
+  await expect(end).toHaveText('Pause all?');
   expect(sent.filter(m => m.type === 'send_text')).toHaveLength(0);
   // Landing cards redraw every snapshot. The replacement button must retain this arm, or the poll
-  // turns a two-tap End into an action nobody can complete.
+  // turns a two-tap Pause into an action nobody can complete.
   await page.evaluate(() => renderConversations());
   const redrawn = page.locator('#conversations .conversation-card .end-btn').first();
-  await expect(redrawn).toHaveText('End all?');
+  await expect(redrawn).toHaveText('Pause all?');
   // Both halves of the arm, not only the word: the drain is drawn from `data-armed`, and a button
-  // saying "End all?" without it reads as one that has changed its mind.
+  // saying "Pause all?" without it reads as one that has changed its mind.
   await expect(redrawn).toHaveAttribute('data-armed', '1');
   await redrawn.click();
   await expect.poll(() => sent.filter(m => m.type === 'send_text' && m.text === '/quit'))
     .not.toHaveLength(0);
-  // The send is out, so the button says so and takes no more taps. It goes back to End only by
+  // The send is out, so the button says so and takes no more taps. It goes back to Pause only by
   // the send being given up on — see endWatch.
   const going = page.locator('#conversations .conversation-card .end-btn');
-  await expect(going).toHaveText('Ending…');
+  await expect(going).toHaveText('Pausing…');
   await expect(going).toBeDisabled();
   // And it survives the redraws that arrive while the pane is on its way out.
   await page.evaluate(() => renderConversations());
-  await expect(page.locator('#conversations .conversation-card .end-btn')).toHaveText('Ending…');
-  // The record is untouched: End stops the sessions, Delete is what destroys the transcripts.
+  await expect(page.locator('#conversations .conversation-card .end-btn')).toHaveText('Pausing…');
+  // The record is untouched: Pause stops the sessions, Delete is what destroys the transcripts.
   expect(await page.evaluate(() => loadConvIndex().length)).toBe(1);
+});
+
+test('Pause on a conversation member takes two taps and quits that member', async ({page}) => {
+  const sent = [];
+  await openCard(page);
+  await page.exposeFunction('__noteMemberEnd', m => sent.push(m));
+  await page.evaluate(() => {
+    const real = ws.send.bind(ws);
+    ws.send = data => { try { __noteMemberEnd(JSON.parse(data)); } catch (e) {} return real(data); };
+  });
+  const end = page.locator('#convViewRoster .conv-roster-row .conv-end');
+  await end.click();
+  await expect(end).toHaveText('Pause?');
+  await end.click();
+  await expect.poll(() => sent.filter(m => m.type === 'send_text' && m.text === '/quit'))
+    .not.toHaveLength(0);
 });
 
 test('an arm that expires puts the word back on the button that is on screen', async ({page}) => {
@@ -525,19 +541,19 @@ test('an arm that expires puts the word back on the button that is on screen', a
   await page.locator('#convView .back').click();
   const end = page.locator('#conversations .conversation-card .end-btn').first();
   await end.click();
-  await expect(end).toHaveText('End all?');
+  await expect(end).toHaveText('Pause all?');
   // Redrawn between the tap and the deadline, so the node holding the arm is not the node the
   // deadline finds. Both are put back, or a live button keeps offering a second tap that is gone.
   await page.evaluate(() => renderConversations());
   const redrawn = page.locator('#conversations .conversation-card .end-btn').first();
-  await expect(redrawn).toHaveText('End');
+  await expect(redrawn).toHaveText('Pause');
   await expect(redrawn).not.toHaveAttribute('data-armed', '1');
 });
 
 test('conversation management actions keep their intended order', async ({page}) => {
   await openCard(page);
   await expect(page.locator('#convView .conv-roster-actions button')).toHaveText([
-    'Delete', 'End all', 'Copy', 'Duplicate', 'Rename', 'Add pane',
+    'Delete', 'Pause all', 'Reset all', 'Restart all', 'Copy', 'Duplicate', 'Rename', 'Add pane',
   ]);
 });
 
@@ -748,19 +764,26 @@ test('landing keeps auto conversations optional and bounded', async ({page}) => 
     renderConversations();
   });
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
-  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Show auto (12)');
+  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Auto (12)');
+
+  // A mode rather than a second list: it swaps what the section shows, and the one control left in
+  // the header is the way back out of it. Still bounded in the mode — the count on the button is
+  // the whole tier, and CONV_LANDING_AUTO_MAX of them are drawn.
   await page.locator('#conversations .conv-auto-toggle').click();
-  await expect(page.locator('#conversations .conversation-card')).toHaveCount(11);
-  await expect(page.locator('#conversations .conv-auto-toggle')).toHaveText('Hide auto (12)');
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(10);
+  await expect(page.locator('#conversations .conv-back')).toHaveText('← Back');
+
+  // The same bound on the list every other reader of it draws from — the tab strip above the
+  // conversation view among them, where twelve auto tabs would bury the named one.
+  expect(await page.evaluate(() => convLandingList().shown.length)).toBe(11);
 });
 
 test('landing lists the named ones first, newest activity at the top of each tier',
   async ({page}) => {
   await page.goto('/');
-  await page.evaluate(() => {
+  const seed = () => page.evaluate(() => {
     const conv = (id, seen, auto) => ({id: id, name: id, created: 1, auto: auto,
       members: [{key: id + ':m', added: 1, label: id, seen: seen, messages: 2}]});
-    localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on');
     // Written in the order that is wrong on both counts: quietest named one first, and an auto
     // record livelier than either of them.
     saveConvIndex([conv('quiet', 1000), conv('busy-auto', 9000, true), conv('loud', 5000),
@@ -768,9 +791,20 @@ test('landing lists the named ones first, newest activity at the top of each tie
     toggleSection('conversations', true);
     renderConversations();
   });
-  expect(await page.evaluate(() => Array.from(
-    document.querySelectorAll('#conversations .conversation-card'))
-    .map(el => el.dataset.convId))).toEqual(['loud', 'quiet', 'busy-auto', 'old-auto']);
+  const shown = () => page.evaluate(() => Array.from(
+    document.querySelectorAll('#conversations .conversation-card')).map(el => el.dataset.convId));
+
+  await page.evaluate(() => localStorage.setItem(CONV_LANDING_AUTO_KEY, 'off'));
+  await seed();
+  expect(await shown()).toEqual(['loud', 'quiet']);
+  // Each tier is sorted the same way, and the auto one is a mode of its own rather than a tail on
+  // the named list — so the same rule is checked where those records are actually drawn.
+  await page.evaluate(() => localStorage.setItem(CONV_LANDING_AUTO_KEY, 'on'));
+  await seed();
+  expect(await shown()).toEqual(['busy-auto', 'old-auto']);
+  // And the list every other reader draws from still carries both tiers, named first.
+  expect(await page.evaluate(() => convLandingList().shown.map(c => c.id)))
+    .toEqual(['loud', 'quiet', 'busy-auto', 'old-auto']);
 });
 
 test('a conversation copies out as Markdown, roster included', async ({page, context}) => {
@@ -805,21 +839,33 @@ const endMember = page => page.evaluate(async () => {
   await renderConvStandalone(false);
 });
 
+// Open the menu, then the item, then the item again: every one of these starts or ends a real
+// session, so the item is armed like every other control on the row — see menuItemHtml.
+async function tapRestart(page) {
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  const item = page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart');
+  await item.click();
+  await item.click();
+}
+
 test('an ended session restarts under its name and continues its member thread', async ({page}) => {
   await openCard(page);
   await endMember(page);
   await tapWire(page);
   await expect(page.locator('#convView .conv-roster-row.gone')).toHaveCount(1);
 
-  // Two taps, because the second one starts a real session on a real host. The first says where
-  // it will land — the drain cannot carry a sentence, so the toast does.
-  const again = page.locator('#convView .conv-again');
-  await again.click();
-  await expect(again).toHaveText('Start again?');
-  await expect(page.locator('#toast')).toContainText('new claude session in herdr-remote');
+  // Two taps, because the second one starts a real session on a real host. The first opens the
+  // menu, which says where it will land for as long as it is up.
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-note'))
+    .toContainText('new claude session in herdr-remote');
   expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
 
-  await again.click();
+  const item = page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart');
+  await item.click();
+  await expect(item).toHaveText('Restart?');
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
+  await item.click();
   await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
     .toHaveLength(1);
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
@@ -866,6 +912,66 @@ test('an ended session restarts under its name and continues its member thread',
   await expect(page.locator('#convThread')).toBeVisible();
 });
 
+test('the Restart menu survives the redraws that arrive while it is open', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await tapWire(page);
+  const menu = page.locator('#convView .conv-roster-row .conv-menu');
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  await expect(menu).toHaveAttribute('open', '');
+  // The roster is redrawn on every snapshot. The replacement node must come back open, or the
+  // poll shuts the menu under the thumb on its way to the second tap.
+  await page.evaluate(() => renderConvStandalone(false));
+  await expect(page.locator('#convView .conv-roster-row .conv-menu')).toHaveAttribute('open', '');
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
+    .toBeVisible();
+  // And the item's own arm survives the same redraw, for the same reason: the node holding it is
+  // replaced between the taps, so the arm is keyed rather than kept on the element.
+  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
+  await page.evaluate(() => renderConvStandalone(false));
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
+    .toHaveText('Restart?');
+  // And it is armed the way CLS and QUIT are armed — the fill drains over the window the second
+  // tap has. The item's resting rule is more specific than the shared armed one, so this is what
+  // catches that rule drifting out of reach again.
+  expect(await page.evaluate(() => getComputedStyle(
+    document.querySelector('#convView .conv-menu-items .conv-restart')).animationName))
+    .toBe('arm-drain');
+  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
+
+  // And a tap that lands anywhere else gives it up, the way an arm does.
+  await page.locator('#convView .conv-roster-row .who').click();
+  await expect(page.locator('#convView .conv-roster-row .conv-menu'))
+    .not.toHaveAttribute('open', '');
+});
+
+test('a renamed pane is called its new name everywhere it is drawn', async ({page}) => {
+  // A rename is a correction — the reader retitled the pane because the old name was wrong — so a
+  // thread still drawing the old one is showing them the mistake they came to fix. Labels are
+  // stamped into the index and into every entry as they are written, which is why this needs the
+  // live pane to win over the stamp.
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await page.evaluate(() => handleMessage({type: 'command_result', command: 'rename_pane',
+                                           ok: true, pane_id: 'w1:p1', label: 'Reviewer 9'}));
+  // Recorded again under the new name, which is what carries it past the pane's own life: the
+  // record's label is written on every read that writes something, and the index is kept in step
+  // with it. A read that finds nothing new writes nothing, so the pane says something first.
+  await read(page, PANE + '\n⏺ And one more thing.\n\n❯\n');
+  expect(await page.evaluate(k => loadConvIndex()[0].members.find(m => m.key === k).label, key))
+    .toBe('Reviewer 9');
+
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await openRoster(page);
+  await expect(page.locator('#convView .conv-roster-row .who')).toHaveText('Reviewer 9');
+  // Including the bubbles recorded before the rename: they were stamped with the old name.
+  await expect(page.locator('#convViewThread .conv-msg .conv-who').first())
+    .toContainText('Reviewer 9');
+});
+
 test('a session started as something opens as it again, whatever the pane was called',
   async ({page}) => {
     await openCard(page);
@@ -888,9 +994,7 @@ test('a session started as something opens as it again, whatever the pane was ca
     });
     await tapWire(page);
 
-    const again = page.locator('#convView .conv-again');
-    await again.click();
-    await again.click();
+    await tapRestart(page);
     await expect.poll(() => page.evaluate(() =>
       window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
 
@@ -930,9 +1034,7 @@ async function respawnWithStarter(page, starter) {
     await renderConvStandalone(false);
   }, starter);
   await tapWire(page);
-  const again = page.locator('#convView .conv-again');
-  await again.click();
-  await again.click();
+  await tapRestart(page);
   await expect.poll(() => page.evaluate(() =>
     window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
   await page.evaluate(async () => {
@@ -961,6 +1063,30 @@ test('a session that asked for no starter is started again without one', async (
     (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('none');
 });
 
+// The second half of that fallback. Joining as a new member is right for a pane the conversation
+// has never held; for one it already names it appends a second row for the same key, and the
+// roster then draws one pane twice with one transcript behind both. A replace intent that no
+// longer matches any member is exactly how that happens — a landing that arrives after the member
+// has already been moved by the restart before it.
+test('a landing whose member has already moved does not add the pane twice', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await tapWire(page);
+  await page.evaluate(() => {
+    const conv = loadConvIndex()[0];
+    // The member is already on the pane the landing is about to arrive for, and the intent names
+    // a key nothing in this conversation holds any more.
+    const items = loadConvIndex();
+    items[0].members = [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Architect 1'}];
+    saveConvIndex(items);
+    startIntent = {conv: conv.id, replace: 'gone:pane'};
+    pendingStart = 'w1:p1';
+  });
+  await page.evaluate(() => openPendingStart());
+  expect(await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key)))
+    .toHaveLength(1);
+});
+
 // herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
 // can come up on a key another ended session already recorded under. Continuing by copying over it
 // would delete a transcript some other conversation still names, which is the one thing a restart
@@ -978,9 +1104,7 @@ test('a restart that would land on another conversation\'s record leaves it alon
         members: [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Someone else'}]});
       saveConvIndex(items);
     });
-    const again = page.locator('#convView .conv-again');
-    await again.click();
-    await again.click();
+    await tapRestart(page);
     await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
       .toHaveLength(1);
     await page.evaluate(async () => {
@@ -1005,14 +1129,14 @@ test('a restart that would land on another conversation\'s record leaves it alon
 test('an ended session with no Project the relay knows is offered no button', async ({page}) => {
   await openCard(page);
   await endMember(page);
-  await expect(page.locator('#convView .conv-again')).toHaveCount(1);
+  await expect(page.locator('#convView .conv-roster-row .conv-restart')).toHaveCount(1);
   // Every one of canRespawn's three gates, one at a time: an unstartable session gets no button
   // rather than a refusal after the tap.
   for (const kill of ['projects = []',
                       'startOptions = {agents: ["codex"], roles: ["architect"]}',
                       'startOptions = null']) {
     await page.evaluate(k => { eval(k); renderConvStandalone(false); }, kill);
-    await expect(page.locator('#convView .conv-again')).toHaveCount(0);
+    await expect(page.locator('#convView .conv-roster-row .conv-restart')).toHaveCount(0);
     await endMember(page);
   }
 });
@@ -2401,12 +2525,12 @@ test('the conversation view carries the conversations as tabs', async ({page}) =
     localStorage.setItem('herdr_conv_landing_auto', 'on');
   });
   // No read: recording would stamp all three with the same `seen`, and the order under test is
-  // the one the landing list sorts by.
-  await page.locator('.term-header .back').click();
-  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  // the one the landing list sorts by. Opened by id rather than by clicking a card — with auto
+  // switched on the landing page is showing that tier and this one is not on it.
+  await page.evaluate(() => openConversation('c2'));
   const tabs = page.locator('#convStrip .conv-tab');
-  // Same list and same order as the landing page it was opened from — the named ones first,
-  // newest message at the top of each tier.
+  // Same list and same order as the landing page sorts by — the named ones first, newest message
+  // at the top of each tier.
   await expect(tabs).toHaveCount(3);
   await expect(tabs.locator('.name')).toHaveText(
     ['the release', 'new authentication feature', 'relay · Architect 1']);
@@ -2430,7 +2554,7 @@ test('conversation tabs appear before its transcript finishes loading', async ({
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
 });
 
-test('the strip hides the auto conversations exactly when the landing list does', async ({page}) => {
+test('the strip carries the auto conversations exactly when they are switched on', async ({page}) => {
   await open(page);
   await page.evaluate(() => {
     const key = convMemberKey(paneOf(activePane));
@@ -2446,10 +2570,12 @@ test('the strip hides the auto conversations exactly when the landing list does'
   await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
   await page.locator('#conversations .conversation-card').click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(1);
+  // Switched on, the landing page shows that tier instead of the named one — and the strip, which
+  // is one list for both, now carries both.
   await page.locator('#convView .back').click();
   await page.locator('#conversations .conv-auto-toggle').click();
-  await expect(page.locator('#conversations .conversation-card')).toHaveCount(2);
-  await page.locator('#conversations .conversation-card', {hasText: 'the release'}).click();
+  await expect(page.locator('#conversations .conversation-card')).toHaveCount(1);
+  await page.locator('#conversations .conversation-card', {hasText: 'relay'}).click();
   await expect(page.locator('#convStrip .conv-tab')).toHaveCount(2);
 });
 
@@ -4071,8 +4197,10 @@ test('@+ lists every instruction, and picking there is the same pick', async ({p
   await pickBubble(page, 'the other pane spoke first');
   await page.locator('#xferRow .xfer-chip.more').click();
   const menu = page.locator('#chipMenu');
+  // promptChips and not SHORTCUTS: three of the starter chips have no text written under them
+  // yet, and a chip that types nothing is a dead control — the list draws what the row draws.
   await expect(menu.locator('[role=menuitemcheckbox]')).toHaveCount(
-    await page.evaluate(() => SHORTCUTS.length));
+    await page.evaluate(() => promptChips().length));
   await menu.locator('[role=menuitemcheckbox]', {hasText: 'Architect prompt'}).click();
   await expect(page.locator('#xferRow .xfer-chip[aria-pressed=true]')).toHaveText(/^@architect/);
   // The list is the same picks drawn twice, so it has to show the tap it just took.
@@ -4475,8 +4603,10 @@ test('a new agent is started from the membership list, into this conversation', 
   expect(sent.workspace_id).toBe('w1');
 
   // It joins as a new member when the poll catches up, and is opened with the role's own prompt.
+  // A pane the conversation does not already hold: a start returns a pane of its own, and landing
+  // on one of the two members' panes is not a third member, it is that member again.
   await page.evaluate(() => {
-    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p2'});
     openPendingStart();
   });
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);
@@ -4984,6 +5114,34 @@ test('a double-click on a target chip reads that agent alone', async ({page}) =>
   await expect(soloBanner(page)).toContainText('scratch');
 });
 
+test('a solo hides an ended member as well as a live one', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  // A member whose pane is gone: a record with words in it, and a roster row nothing is running
+  // behind. Its bubbles are in the thread like anybody else's, so a solo has to take them out.
+  await page.evaluate(async () => {
+    await convPut({key: 'dead:pane', label: 'Retired 3', first: 1, touched: 3,
+      spawn: {agent: 'claude', role: 'agent'},
+      entries: [{who: 'agent', text: 'the ended pane spoke here', seen: 5, label: 'Retired 3',
+                 agent: 'claude'}]});
+    const items = loadConvIndex();
+    items[0].members = (items[0].members || []).concat({key: 'dead:pane', added: 1,
+      label: 'Retired 3', messages: 1});
+    saveConvIndex(items);
+  });
+  await openWindow(page);
+  await expect(page.locator('#convViewThread .conv-msg')).not.toHaveCount(0);
+
+  await whoRow(page).filter({hasText: 'scratch'}).dblclick();
+
+  const scratchKey = await page.evaluate(() =>
+    convMemberKey(agents.find(a => a.label === 'scratch')));
+  expect(await page.evaluate(() =>
+    [...new Set([...document.querySelectorAll('#convViewThread .conv-msg')]
+      .map(m => m.dataset.key))])).toEqual([scratchKey]);
+});
+
 test("the banner's X puts the whole conversation back", async ({page}) => {
   await open(page);
   await joinBoth(page);
@@ -5014,6 +5172,24 @@ test('solo is a switch in the composer settings, and it names the addressed agen
   // The list stays open on the switch it was opened for, and now reads back what it did.
   await expect(page.locator('#optMenu .menu-item', {hasText: 'Solo mode'}))
     .toHaveAttribute('aria-checked', 'true');
+});
+
+test('a key nobody here holds solos nobody, rather than hiding everybody', async ({page}) => {
+  // The composer can be addressing a pane this conversation has never heard of, and the solo
+  // switch used to hand that key straight through: every member matched "not this one", so every
+  // member was hidden and the view came up saying so with nothing named to bring back.
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  await openWindow(page);
+
+  const hidden = await page.evaluate(() => {
+    convSetSolo(convViewId, '["local","nope:p9","claude","/nowhere"]');
+    return convHiddenAll()[convViewId] || [];
+  });
+  expect(hidden).toEqual([]);
+  await expect(soloBanner(page)).toBeHidden();
+  await expect(page.locator('.conv-empty')).toHaveCount(0);
 });
 
 test('a conversation of one is never offered a solo to be in', async ({page}) => {

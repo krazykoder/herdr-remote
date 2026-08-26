@@ -54,9 +54,15 @@ HISTORY_KEEP = 200
 # `launcher` is here for the same reason the first four are. A launcher tile says "these three
 # agents are the ones I start together" — an assertion about the work, not about this screen — and
 # a phone that does not know it is offering a different toolkit than the desktop beside it.
-DOC_NAMES = ("pairs", "conversations", "conv_view", "conv_hidden", "launcher")
+#
+# `agent_configs` is here because it is the same kind of fact: which model an alias runs and which
+# of the relay's key variables it draws from is an answer about the work, not about this screen —
+# and a phone that starts `oclaude1` against a different provider than the desktop did is exactly
+# the confusion the store exists to prevent. It holds no secret: the relay reads its own
+# environment for that, and this document only ever names a variable.
+DOC_NAMES = ("pairs", "conversations", "conv_view", "conv_hidden", "launcher", "agent_configs")
 
-# Per document, so the ceiling on this store is five of these. The app's own caps — MAX_PAIRS is
+# Per document, so the ceiling on this store is six of these. The app's own caps — MAX_PAIRS is
 # 32, and convFit trims the conversation index — keep real documents orders of magnitude under it,
 # so this is a bound on a client that has gone wrong rather than a limit anyone will meet.
 MAX_BODY = 256 * 1024
@@ -295,8 +301,8 @@ def _demo():
         assert set(s.get()) == set(DOC_NAMES)
         # The newest name, round-tripped explicitly: `get()` above proves it is served, and this
         # proves `put` accepts it — the half a client actually depends on.
-        assert s.put("launcher", 0, '{"items":[]}') == 1
-        assert s.get(["launcher"])["launcher"] == {"rev": 1, "body": '{"items":[]}'}
+        assert s.put("agent_configs", 0, '{"aliases":[]}') == 1
+        assert s.get(["agent_configs"])["agent_configs"] == {"rev": 1, "body": '{"aliases":[]}'}
 
         # The history is what makes an overwrite recoverable, so the overwrite is what tests it.
         s.put("conversations", 0, '{"items":["named"]}')

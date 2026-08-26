@@ -43,12 +43,18 @@ test('shared state is wired into the socket by the time it is open', async ({pag
   await expect.poll(() => page.evaluate(() => stateMode)).toBe('live');
 });
 
-test('agent filters live on the existing card separator', async ({page}) => {
+test('agent filters sit under the card separator, on a row of their own', async ({page}) => {
   await expect.poll(() => page.evaluate(() => agents.length)).toBeGreaterThan(0);
   const kinds = await page.evaluate(() => [...new Set(agents.map(a => a.agent).filter(Boolean))]);
   expect(kinds.length).toBeGreaterThan(1);
-  const filter = page.locator('#agents .section-header .agent-kind-filter');
+  // Under the header, not inside it: the header keeps its title and its right-hand buttons, and
+  // the tags get the width they need to be tapped.
+  const filter = page.locator('#agents .agent-kind-filter');
   await expect(filter).toBeVisible();
+  await expect(page.locator('#agents .section-header .agent-kind-filter')).toHaveCount(0);
+  const head = await page.locator('#agents .section-header').first().boundingBox();
+  const tags = await filter.boundingBox();
+  expect(tags.y, 'the tags are still on the header row').toBeGreaterThanOrEqual(head.y + head.height - 1);
   await expect(filter.locator('.badge.pick')).toHaveCount(kinds.length);
   const kind = kinds[0];
   await filter.locator('.badge.pick', {hasText: kind}).click();

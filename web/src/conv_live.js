@@ -265,6 +265,37 @@
       } catch (e) { return null; }
     }
 
+    // Every fingerprint one member's record can be under: the one its key names now, and the ones
+    // it carried before. A restart onto another harness — or into another checkout — moves the
+    // member to a bucket holding none of what it said before, and the pane ids on `was` cannot
+    // find those rows, because a pane id is only ever looked up inside a bucket.
+    function convKeyFingerprints(key, wasFp) {
+      const now = convKeyFingerprint(key);
+      const out = now ? [now] : [];
+      const seen = new Set(out.map(convFpKey));
+      for (const fp of wasFp || []) {
+        // Written by other browsers and by older builds, so it is checked rather than trusted.
+        if (!Array.isArray(fp) || fp.length < 3) continue;
+        const norm = [convNormHost(fp[0]), fp[1] || '', fp[2] || ''];
+        if (seen.has(convFpKey(norm))) continue;
+        seen.add(convFpKey(norm));
+        out.push(norm);
+      }
+      return out;
+    }
+
+    // What a member's `wasFp` becomes when its key moves, as a patch rather than a value: an empty
+    // list is not worth a field on every member of every conversation, and the ordinary restart —
+    // same harness, same directory, same bucket — produces exactly that.
+    function convWasFpPatch(member, oldKey, newKey) {
+      const before = convKeyFingerprint(oldKey), now = convKeyFingerprint(newKey);
+      const kept = ((member || {}).wasFp || []).filter(fp => Array.isArray(fp) && fp.length >= 3);
+      const same = !before || (now && convFpKey(before) === convFpKey(now))
+        || kept.some(fp => convFpKey(fp) === convFpKey(before));
+      const out = same ? kept : kept.concat([before]).slice(-CONV_WAS_MAX);
+      return out.length ? { wasFp: out } : {};
+    }
+
     // The member keys the last roster ask was made for. A fingerprint is `[host, agent, cwd]` and
     // several panes can share one — four claude panes in one repository do — so an answer that came
     // back truncated has to be refilled pane by pane, and this is what says which panes those are.
@@ -283,12 +314,34 @@
       for (const bucket of buckets) bucket.lastFetch = 0;
     }
 
+    // Does any live pane under this fingerprint hold a turn past what this bucket has been answered
+    // through? `turn` is the relay's own row id, from its own writes, so the two are comparable —
+    // and a relay too old to send it says nothing here, leaving the cadence to do the work.
+    function convLiveNewer(fp, bucket) {
+      if (typeof agents === 'undefined' || !Array.isArray(agents)) return false;
+      const key = convFpKey(fp);
+      return agents.some(a => Number(a.turn) > (bucket.syncedTo || 0)
+        && convFpKey([a.host, a.agent, a.cwd]) === key);
+    }
+
     // One query for the whole roster. Sent only when the answer on hand cannot serve: a member with
     // no bucket yet, or a bucket old enough to be worth asking again. `force` is a turn ending or
     // the ⟳, both of which are someone saying "now".
     function convLiveFetch(keys, force, background) {
       if (!background && !convLiveOn()) return;
-      const fps = (keys || []).map(convKeyFingerprint).filter(Boolean);
+      // Every bucket these members' words can be in, not only the ones they are in now: a member
+      // restarted onto another harness keeps its thread, and a thread missing everything said
+      // before the swap is the record disagreeing with the roster about who was talking.
+      const pastFps = convWasFpMap(keys);
+      const fps = [];
+      const asked = new Set();
+      for (const key of (keys || [])) {
+        for (const fp of convKeyFingerprints(key, pastFps.get(key))) {
+          if (asked.has(convFpKey(fp))) continue;
+          asked.add(convFpKey(fp));
+          fps.push(fp);
+        }
+      }
       if (!fps.length) return;
       // Whatever is on disk, before deciding anything: the watermark that says what to ask for
       // lives there now, and asking without it would re-fetch a window this browser already holds.
@@ -325,6 +378,12 @@
         if (!bucket) { syncedTo = 0; needsFetch = true; continue; }
         if (bucket.syncedTo < syncedTo) syncedTo = bucket.syncedTo;
         if (now - bucket.lastFetch >= CONV_LIVE_EVERY) needsFetch = true;
+        // The relay says on every snapshot which row this pane's record ends at, so a thread that
+        // is behind asks now rather than at the next cadence. That gap is not theoretical: a turn
+        // whose pane painted nothing yet is held back by the relay for up to HERDR_LATE_TURN_MS
+        // and lands with no status change behind it — the invalidate convReadTurnEnd sent when the
+        // turn ended fetched a record that had not been written yet, and nothing said so.
+        if (convLiveNewer(fp, bucket)) needsFetch = true;
       }
       if (!needsFetch) return;
 
@@ -399,7 +458,13 @@
     // `was` is written by exactly one call — the respawn in openPendingStart that moves a member's
     // key from a dead pane to the new one. Nothing else may add to it, because nothing else knows
     // that two panes were the same session.
-    function convWasMap(keys) {
+    function convWasMap(keys) { return convMemberField(keys, 'was'); }
+
+    // The same walk for the fingerprints a member used to be under. Separate field, same rule: it
+    // is written where `was` is, by the one place a member's key moves.
+    function convWasFpMap(keys) { return convMemberField(keys, 'wasFp'); }
+
+    function convMemberField(keys, field) {
       const want = new Set(keys || []);
       const out = new Map();
       if (typeof loadConvIndex !== 'function') return out;
@@ -420,7 +485,7 @@
         for (const m of (c && c.members) || []) {
           // Array-checked: this document is written by other browsers and by older builds, and a
           // member carrying a string here would make `.includes` match on a substring.
-          if (m && want.has(m.key) && Array.isArray(m.was)) out.set(m.key, m.was);
+          if (m && want.has(m.key) && Array.isArray(m[field])) out.set(m.key, m[field]);
         }
       }
       return out;
@@ -758,23 +823,6 @@
     // which would draw every captured turn with the `~` that means "this time is a guess".
     const CONV_LIVE_AT_SRC = { poll: 'state', state: 'state', sent: 'sent', backfill: 'backfill' };
 
-    // A live row's key, in the spelling the roster uses. The rest of the view reads the key for
-    // colour, for which side of a pair a bubble goes on, and for the roster panel's hide-a-member
-    // filter, so a key that is right but spelled differently is a bubble drawn as a stranger.
-    //
-    // Two spellings exist for one host — see `convNormHost`. The relay's snapshot names the local
-    // host `local` and so does the record, and that ordinary case matches outright. But the
-    // browser's own key builder folds a missing host to '', so a pane that reached this app with no
-    // host at all is stored under a name its member key does not carry. Both are tried against the
-    // roster before either is believed.
-    function convLiveKey(t, roster) {
-      const pane = { pane_id: t.pane_id || '', agent: t.agent || '', cwd: t.cwd || '' };
-      const mine = convMemberKey(Object.assign({ host: t.host || '' }, pane));
-      if (!roster || roster.has(mine) || t.host !== 'local') return mine;
-      const bare = convMemberKey(Object.assign({ host: '' }, pane));
-      return roster.has(bare) ? bare : mine;
-    }
-
     // The record, in the shape the thread already renders. `keys` is the roster, so a row's member
     // index — which is what the standalone view picks a column from — is the position of its own
     // member rather than the order rows came back in. The buckets are per pane and each is already
@@ -793,26 +841,34 @@
       // keeps a respawned pane's history attached to it. Recorded, not inferred: a dead pane
       // sharing the fingerprint is not evidence of anything.
       const was = convWasMap(keys);
+      const pastFps = convWasFpMap(keys);
       for (const k of (keys || [])) {
-        const fp = convKeyFingerprint(k);
-        if (!fp) continue;
-        const bucket = convLiveCache.get(convFpKey(fp));
-        if (!bucket) continue;
         const mine = convPaneOfKey(k);
         const mineWas = was.get(k);
-        for (const t of bucket.turns) {
-          if (!convLiveRowIsMine(t, mine, mineWas)) continue;
-          // Two roster members can fold to one fingerprint — a pane respawned under a new id is the
-          // same pane to the record — and the bucket must not be drawn twice for them.
-          if (t.seq && seen.has(t.seq)) continue;
-          if (t.seq) seen.add(t.seq);
-          turns.push(t);
+        // The buckets this member's words can be in — its own, and the ones it was under before a
+        // restart moved it to another harness or another checkout.
+        for (const fp of convKeyFingerprints(k, pastFps.get(k))) {
+          const bucket = convLiveCache.get(convFpKey(fp));
+          if (!bucket) continue;
+          for (const t of bucket.turns) {
+            if (!convLiveRowIsMine(t, mine, mineWas)) continue;
+            // Two roster members can fold to one fingerprint — a pane respawned under a new id is
+            // the same pane to the record — and the bucket must not be drawn twice for them.
+            if (t.seq && seen.has(t.seq)) continue;
+            if (t.seq) seen.add(t.seq);
+            // Filed under the member that claimed it, not under the pane id the row carries. Those
+            // two differ for every row a restarted member left behind: the roster key moved to the
+            // new pane and the old one lives in `was`, so a key derived from the row is a key no
+            // roster holds — and every filter that works by member key, solo among them, then has
+            // nothing to match those bubbles against and leaves them on screen.
+            turns.push({turn: t, key: k});
+          }
         }
       }
-      turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || 0) - (b.seq || 0));
+      turns.sort((a, b) => (a.turn.at || 0) - (b.turn.at || 0) ||
+        (a.turn.seq || 0) - (b.turn.seq || 0));
 
-      return turns.map(t => {
-        const key = convLiveKey(t, at);
+      return turns.map(({turn: t, key}) => {
         return {
           who: CONV_LIVE_USER_KINDS.includes(t.kind) ? 'user' : 'agent',
           // `text` is the closing message the relay detected. `tail` is the last few lines it kept

@@ -20,7 +20,7 @@ SUFFIX_LEN = 5
 # "must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'".
 # Pane labels are not bound by this — "Architect 1" is a fine label and an illegal agent name.
 HERDR_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-DEFAULT_START_AGENTS = ["codex", "claude", "pi", "agy", "kiro"]
+DEFAULT_START_AGENTS = ["codex", "claude", "pi", "agy", "kiro", "opencode"]
 # Extra argv a kind needs to come up usable, passed through herdr's `-- [AGENT_ARG]...`. Server
 # side and per kind, never from a client — a client that could name argv could name any argv.
 #
@@ -36,6 +36,31 @@ AGENT_ARGS = {"agy": ("--dangerously-skip-permissions",)}
 # side and per kind for the same reason AGENT_ARGS is: a client that could name the first prompt
 # could name any first prompt.
 AGENT_INIT = {"kiro": ("/tools trust-all",)}
+# What a cold agent is asked before it is asked to work, and which kinds are asked it at start.
+#
+# A first prompt into an agent that has been sitting idle — and a pane that has just come up is as
+# cold as an agent gets — is often answered with nothing at all: the harness wakes, redraws, and
+# the turn ends with no reply. agy does that reliably enough to have been arbitration's default
+# since it existed; this is the same line, sent at every agy start rather than only inside a
+# session. Its own message, before whatever the pane is opened with, so the reply that is nothing
+# belongs to a question that was asking for nothing.
+WARMUP_TEXT = ("Hi — are you ready for work? I will send you instructions shortly. "
+               "Reply with one short line and do nothing else.")
+AGENT_WAKE = {"agy": (WARMUP_TEXT,)}
+# Argv that turns a harness's own approval prompts off, asked for per start rather than baked into
+# the kind the way AGENT_ARGS is. The flag differs per harness and both are the vendor's own; what
+# the client sends is `unattended`, and which argv that becomes is decided here — a client that
+# could name argv could name any argv.
+#
+# This is a real grant: an agent started this way runs tools without asking. It is the same trade
+# the operator makes typing the flag themselves, and it is available only where starting agents is
+# already allowed (HERDR_ENABLE_WRITE_EXT). Asked for at a kind with no entry here, the start is
+# refused rather than quietly started interactive — a session that ignored it would sit on its
+# first tool call with nobody to answer it.
+UNATTENDED_ARGS = {
+    "claude": ("--dangerously-skip-permissions",),
+    "codex": ("--dangerously-bypass-approvals-and-sandbox",),
+}
 AGENT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 # herdr waits this long for the agent to reach interactive readiness. Explicit rather than
 # left to herdr's 30s default because the relay's own subprocess timeout must exceed it —
@@ -69,7 +94,15 @@ NARROW_SLOT_COLS = (69, 70)
 # herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
 # only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
 SIDEBAR_BOUNDS = (18, 36)
-BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot"}
+# `ref` is the client's own id for a start — validated in the relay by validate_start_ref, and
+# named here because this is the set a message is checked against: an unlisted key is not ignored,
+# it rejects the whole message. Leaving it out refused every start that named itself, which is
+# every "Start again" a conversation makes.
+BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config",
+               "unattended", "ref"}
+# An agent config's id. Checked for shape here and for existence in the relay, which is the only
+# place that knows what the provider file authorised — this module stays free of files.
+CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 # open_terminal carries neither: there is no agent to name and no role for it to play.
 OPEN_TERMINAL_FIELDS = {"type", "project_id", "placement", "label", "slot"}
 
@@ -180,6 +213,19 @@ def validate_start_request(msg, projects, agents, allowed):
         return None, err
     plan["name"] = name
     plan["role"] = role
+    # Optional, and absent means the stock CLI on this machine — which is every start made before
+    # agent configs existed. Only the shape is settled here; whether this id names a config the
+    # provider file backs is the relay's question, and refusing it is its answer.
+    config = msg.get("config") or ""
+    if config and not CONFIG_ID_RE.match(config):
+        return None, "bad config id"
+    plan["config"] = config
+    # Off unless asked for, and refused rather than dropped where the kind has no flag for it: the
+    # client's checkbox and the session that comes up must agree about whether anyone is going to
+    # be asked before a tool runs.
+    plan["unattended"] = bool(msg.get("unattended"))
+    if plan["unattended"] and name not in UNATTENDED_ARGS:
+        return None, "that agent has no unattended flag"
     return plan, None
 
 
@@ -456,7 +502,8 @@ def slot_advice(area, sidebar, band=NARROW_SLOT_COLS):
             f"(terminal {area + sidebar} cols, sidebar {sidebar})")
 
 
-def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
+def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS, unattended=False,
+                     extra_args=()):
     """herdr attaches an agent to an existing pane sitting at its shell prompt.
 
     The positional is herdr's *agent name*, which is unique per host — passing the agent kind
@@ -465,16 +512,34 @@ def agent_start_args(kind, label, pane_id, timeout_ms=AGENT_START_TIMEOUT_MS):
 
     pane_id is always a pane the relay just created or one that passed
     validate_start_request — never a raw client value.
+
+    `extra_args` is argv the agent config asked for — today the `--model` of a stock provider. It
+    comes from agent_configs, which is the only thing on this machine allowed to name argv on a
+    client's behalf, and it goes last so a config can never displace AGENT_ARGS or the unattended
+    flag.
     """
     args = ("agent", "start", label, "--kind", kind, "--pane", pane_id,
             "--timeout", str(timeout_ms))
-    extra = AGENT_ARGS.get(kind)
+    extra = tuple(AGENT_ARGS.get(kind) or ())
+    if unattended:
+        extra += UNATTENDED_ARGS.get(kind, ())
+    extra += tuple(extra_args)
     return args + ("--",) + extra if extra else args
+
+
+def unattended_kinds():
+    """The kinds that can be started without their approval prompts, for the client's Start gate."""
+    return sorted(UNATTENDED_ARGS)
 
 
 def agent_init_prompts(kind):
     """The lines this kind needs typed at it once it is up. Empty for every kind that needs none."""
     return list(AGENT_INIT.get(kind) or ())
+
+
+def agent_wake_prompts(kind):
+    """The lines this kind is woken with, before whatever it is opened with. Usually none."""
+    return list(AGENT_WAKE.get(kind) or ())
 
 
 def pane_rename_args(pane_id, label):
@@ -501,6 +566,30 @@ def validate_pane_label(raw):
     if label.startswith("-"):
         return "", "label cannot start with '-'"
     return label, ""
+
+
+def validate_start_ref(raw):
+    """Return (ref, error) for the client's own id for a start.
+
+    A start's answer names the pane it made, and that answer only exists on the socket that asked
+    — reload the tab and the browser has no way to say which pane it was waiting for. So a client
+    may name the start itself, and the relay carries that name on the pane for as long as it lives.
+
+    Bounded and narrow because it is client text that ends up on every other client's snapshot:
+    an opaque token, never parsed here, never shown to a user, and never passed to a shell.
+    """
+    if raw is None:
+        return "", ""
+    if not isinstance(raw, str):
+        return "", "ref must be a string"
+    ref = raw.strip()
+    if not ref:
+        return "", ""
+    if len(ref) > 64:
+        return "", "ref is longer than 64 characters"
+    if not all(c.isalnum() or c in "-_" for c in ref):
+        return "", "ref may only hold letters, digits, '-' and '_'"
+    return ref, ""
 
 
 def dig(data, *path):

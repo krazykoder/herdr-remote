@@ -96,10 +96,12 @@ test('the section leads the page and carries its own way in', async ({page}) => 
     .map(el => el.id));
   expect(order).toEqual(['launcher', 'agents']);
   // Drawn whether or not there is anything under it — an entry point that only appears once you
-  // already have a tile cannot be how the first one is made. Two of them once there is a tile,
-  // and + is always the right-hand one: an add button that moves as soon as it has been used is
-  // the shape of a button people stop finding.
-  await expect(page.locator('#launcher .section-header button')).toHaveText(['Edit', '+ New']);
+  // already have a tile cannot be how the first one is made. Three of them once there is a tile —
+  // the compact toggle, which is a glyph and so has no text, then Edit — and + is always the
+  // right-hand one: an add button that moves as soon as it has been used is the shape of a button people stop
+  // finding.
+  await expect(page.locator('#launcher > .section-header:first-child button'))
+    .toHaveText(['', 'Edit', '+ New']);
 });
 
 test('an empty launcher still offers the one thing there is to do', async ({page}) => {
@@ -109,11 +111,11 @@ test('an empty launcher still offers the one thing there is to do', async ({page
   // reach it, and the launcher another test here wrote is still on the relay when this page
   // connects. Every test below that starts from nothing says so.
   await seed(page, []);
-  await expect(page.locator('#launcher .section-header button')).toHaveText(['+ New']);
+  await expect(page.locator('#launcher > .section-header:first-child button')).toHaveText(['+ New']);
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
   // And it opens the form rather than the list: that button says Add, and a list is not what
   // adding looks like.
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await expect(page.locator('#launcherEditTitle')).toHaveText('New tile');
   await page.click('#launcherModal button[aria-label="Close"]');
 });
@@ -123,7 +125,7 @@ test('an empty launcher still offers the one thing there is to do', async ({page
 test('a tile written through the form is on the page, and survives a reload', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await expect(page.locator('#launcherModal')).toBeVisible();
   // The form opens on Start agents now, so a command tile says so first.
   await dlg(page).getByRole('button', {name: 'Run a command'}).click();
@@ -148,7 +150,7 @@ test('a tile written through the form is on the page, and survives a reload', as
 test('the form refuses a tile the presser could not run, and says which field', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await dlg(page).getByRole('button', {name: 'Run a command'}).click();
   await page.fill('#qlCommand', 'pytest');
   await page.click('#qlSave');
@@ -156,10 +158,27 @@ test('the form refuses a tile the presser could not run, and says which field', 
   await expect(page.locator('#launcherEditTitle')).toHaveText('New tile', 'still on the form');
 });
 
+test('custom configs are available for both tile roster and arbitrator', async ({page}) => {
+  await open(page);
+  await seed(page, []);
+  await page.evaluate(() => {
+    startOptions.configs = [{id: 'oclaude', label: 'oClaude', kind: 'claude'}];
+    openLauncherEdit();
+    launcherNewTile();
+  });
+  await dlg(page).getByRole('button', {name: '+custom', exact: true}).first().click();
+  await dlg(page).getByRole('button', {name: 'oClaude', exact: true}).first().click();
+  await dlg(page).getByRole('button', {name: '+ codex', exact: true}).click();
+  const arb = dlg(page).locator('.start-field').filter({hasText: /^Arbitrator/});
+  await arb.getByRole('button', {name: '+custom', exact: true}).click();
+  await arb.getByRole('button', {name: 'oClaude', exact: true}).click();
+  await expect(page.locator('#qlRole0')).toBeVisible();
+});
+
 test('an arbitrated tile is built from the form and reads as one', async ({page}) => {
   await open(page);
   await seed(page, []);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher > .section-header:first-child button');
   await page.fill('#qlName', 'Review pair');
   await dlg(page).getByRole('button', {name: 'Start agents'}).click();
   await dlg(page).getByRole('button', {name: '+ claude'}).click();
@@ -196,7 +215,7 @@ test('an arbitrated tile is built from the form and reads as one', async ({page}
 test('tiles are reordered from the list, and the order is what was written down', async ({page}) => {
   await open(page);
   await seed(page, [RUN, Object.assign({}, RUN, {id: 'ql_two', label: 'Second'})]);
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher .section-header button[aria-label="Edit the launcher"]');
   await dlg(page).getByRole('button', {name: 'Move Second up'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await page.reload();
@@ -212,7 +231,7 @@ test('deleting asks first, and takes the tile off the page', async ({page}) => {
   await open(page);
   await seed(page, [RUN]);
   page.on('dialog', d => d.accept());
-  await page.click('#launcher .section-header button');
+  await page.click('#launcher .section-header button[aria-label="Edit the launcher"]');
   await dlg(page).getByRole('button', {name: 'Delete Run the tests'}).click();
   await page.click('#launcherModal button[aria-label="Close"]');
   await expect(page.locator('.launcher-tile')).toHaveCount(0);
@@ -349,4 +368,40 @@ test('one tap only arms the Start, it does not press it', async ({page}) => {
   await expect(dlg(page).getByRole('button', {name: 'Start?', exact: true})).toBeVisible();
   await page.waitForTimeout(500);
   expect(sent.filter(m => m.type === 'open_terminal')).toHaveLength(0);
+});
+
+test('compact makes a tile two lines, keeps its marks, and is remembered', async ({page}) => {
+  await open(page);
+  await seed(page, [RUN, {id: 'ql_solo', label: 'Unattended', action: 'spawn',
+                          project_id: 'charts',
+                          members: [{name: 'claude', unattended: true}]}]);
+  const tile = page.locator('.launcher-tile[data-tile="ql_run"]');
+  const tall = (await tile.boundingBox()).height;
+
+  await page.locator('#launcher .section-header')
+    .getByRole('button', {name: 'Compact tiles'}).click();
+
+  await expect(page.locator('#launcher')).toHaveClass(/compact/);
+  // The command goes. Not removed from the markup — one document, two ways of drawing it, and
+  // nothing to rebuild when the mode is turned off again.
+  await expect(tile.locator('.launcher-payload')).toBeHidden();
+  expect((await tile.boundingBox()).height).toBeLessThan(tall);
+  await expect(tile.locator('.launcher-name')).toContainText('Run the tests');
+
+  // A roster is badges rather than a line of monospace, so it is what the second line is for — and
+  // it is laid out by a rule as specific as the one hiding a command, which is why it is checked.
+  const solo = page.locator('.launcher-tile[data-tile="ql_solo"]');
+  await expect(solo.locator('.launcher-payload')).toBeVisible();
+  // Two lines, and never a third: the marks sit beside the roster rather than under it.
+  const line = (await tile.boundingBox()).height;
+  const two = (await solo.boundingBox()).height;
+  expect(two, 'the marks were pushed onto a line of their own').toBeLessThan(line * 2);
+  // Never dropped by a view mode: what the press does is not a detail of how the tile is drawn.
+  await expect(solo.locator('.launcher-badge.solo')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('#launcher')).toHaveClass(/compact/);
+  await page.locator('#launcher .section-header')
+    .getByRole('button', {name: 'Compact tiles'}).click();
+  await expect(page.locator('#launcher')).not.toHaveClass(/compact/);
 });

@@ -36,8 +36,79 @@
     // between them is one field and everything else about them is the same.
     // ponytail: `term` is a `run` with an optional command today. If it grows its own fields —
     // a shell to open, a directory under the Project — this is where they part.
+    // A tile whose providers the user has told us not to trust with their work. It is a claim
+    // about the endpoints behind the agents, which nothing here can verify — so it is answered by
+    // the person who set the providers up, kept on the tile, and repeated everywhere the tile is:
+    // its own band, its own badge, and a line in the confirm that presses it.
+    function launcherInsecure(tile) {
+      return !!(tile && tile.insecure);
+    }
+
+    // Does pressing this tile start anything that will run tools without asking? Read off the
+    // members rather than stored on the tile: the answer is per member, and a tile whose one custom
+    // agent was swapped for a stock one must stop saying it without anybody editing a second field.
+    function launcherSolo(tile) {
+      return (tile && Array.isArray(tile.members) ? tile.members : []).some(launcherUnattended)
+        || launcherUnattended(tile && tile.arbitrator);
+    }
+
     function launcherIsTerm(tile) {
       return !!tile && (tile.action === 'run' || tile.action === 'term');
+    }
+
+    // --- Bots ---
+    // A bot is a tile that is always the same session rather than another one like it: one agent,
+    // one conversation, one thread that outlives every pane it has ever run in. Pressing it opens
+    // what is already there, or starts the harness the tile now names *into the thread the last
+    // one left* — the succession a member restart already performs.
+    //
+    // Not a permanent pane id, because there is no such thing to ask for: herdr assigns pane ids
+    // and recycles them, so a client naming one would be naming whatever is in that slot today.
+    // What is permanent is the conversation — a fixed id, a member key that moves from pane to
+    // pane, and the transcript copied across each seam.
+    //
+    // Seeded rather than made: the row exists before anyone has pressed anything, which is the
+    // difference between a bot and a tile that happens to be about one agent.
+    const LAUNCHER_BOTS = [
+      {slug: 'jarvis', label: 'Jarvis', kind: 'claude'},
+    ];
+
+    function launcherIsBot(tile) {
+      return !!(tile && tile.bot);
+    }
+
+    // The one conversation a bot always lands in. Derived from the slug rather than stored, so a
+    // browser that has never seen this bot before still finds the thread the others are writing.
+    function launcherBotConvId(slug) {
+      return 'c_bot_' + String(slug || '');
+    }
+
+    function launcherBotSeed(bot) {
+      return {id: 'ql_bot_' + bot.slug, bot: bot.slug, label: bot.label, action: 'spawn',
+              project_id: '', members: [{name: bot.kind}]};
+    }
+
+    // Every bot, present whether or not the document has heard of it. A bot the user has edited is
+    // in the document and is left exactly as it is; one that is not is added at the end, where the
+    // Bots band picks it up — the band is what puts it at the top of the section, not its index.
+    //
+    // ponytail: a document already at LAUNCHER_MAX loses the seed to saveLauncher's slice. Sixty
+    // tiles is a bound on a client gone wrong rather than a shelf anyone fills.
+    function launcherWithBots(items) {
+      const have = new Set((items || []).map(t => t && t.bot).filter(Boolean));
+      const add = LAUNCHER_BOTS.filter(b => !have.has(b.slug)).map(launcherBotSeed);
+      return add.length ? (items || []).concat(add) : (items || []);
+    }
+
+    // A bot's name is not a launch's name. An ordinary tile tags every press so two of them are
+    // never mistaken for each other; a bot has only ever one, and the tag would rename the one
+    // pane this whole feature exists to keep recognisable.
+    function launcherBotNamed(tile) {
+      const label = launcherClean(tile.label);
+      return Object.assign({}, tile, {
+        label: label,
+        members: (tile.members || []).map(m => Object.assign({}, m, {label: label})),
+      });
     }
 
     // Exactly what relay/start_agent.py accepts, restated because the relay does not offer it.
@@ -45,7 +116,8 @@
     // it is the whole message rejected. launcherStrict is what makes that a test failure here
     // instead of a spawn that mysteriously does nothing.
     const OPEN_TERMINAL_FIELDS = ['type', 'project_id', 'placement', 'label', 'slot'];
-    const START_AGENT_FIELDS = ['type', 'name', 'role', 'project_id', 'placement', 'label', 'slot'];
+    const START_AGENT_FIELDS = ['type', 'name', 'role', 'project_id', 'placement', 'label', 'slot',
+                                'config', 'unattended', 'ref'];
 
     // Always. The other two placements name a live pane — `workspace_id` for a tab, `split_from`
     // for a split — and a tile saved last week cannot: the pane it would have named is gone, and
@@ -146,6 +218,7 @@
     // name was typed for one launch, and a tile that renamed itself on every press would be a
     // button labelled with whatever it last did.
     function launcherNamed(tile, name) {
+      if (launcherIsBot(tile)) return launcherBotNamed(tile);
       const tag = launcherTag();
       // The tag goes on the launch's own name too, not only on the panes under it. One press is
       // one tag: the conversation, every member and the arbitrator all wear it, which is what makes
@@ -216,6 +289,14 @@
       // the same roster pressed into whichever tree wants it. The Project is then asked for at the
       // press, where it is mandatory — see launcherAskProject.
       if (LAUNCHER_ACTIONS.indexOf(tile.action) < 0) return 'Unknown action';
+      // A bot is one agent in one thread. Two would be two panes writing into one transcript, and
+      // a terminal has no conversation to be permanent in.
+      if (launcherIsBot(tile)) {
+        if (tile.action !== 'spawn') return 'A bot starts an agent';
+        if ((Array.isArray(tile.members) ? tile.members.length : 0) !== 1) {
+          return 'A bot has exactly one agent';
+        }
+      }
       if (launcherIsTerm(tile)) {
         const command = typeof tile.command === 'string' ? tile.command.trim() : '';
         // A `term` with nothing to type is the whole point of it — an empty prompt in the right
@@ -292,6 +373,15 @@
         return { ok: false, reason: `This relay does not start ${missing.join(', ')}`,
                  badge: 'Unknown agent' };
       }
+      // A config is the provider-backed half of a custom agent. The harness alone is not enough:
+      // starting an alias after its provider was removed would silently fall back to the stock CLI.
+      const configs = opts.configs || [];
+      const stale = launcherRoster(tile).find(m => m.config
+        && !configs.some(c => c.id === m.config && c.kind === m.name));
+      if (stale) {
+        return { ok: false, reason: `Agent config ${stale.config} is not available on this relay`,
+                 badge: 'Missing config' };
+      }
       // `arb` is arbOn — whether this relay sent arb_sessions on this connection, which is the
       // app's gate for arbitration everywhere else. A tile is refused rather than quietly
       // downgraded to a plain conversation: what was asked for was the third agent.
@@ -347,14 +437,27 @@
       }, OPEN_TERMINAL_FIELDS);
     }
 
+    // Whether this member is started with its harness's own approval prompts off. Unanswered means
+    // the default rather than off: a member on an agent config is one the user set up an endpoint
+    // for and expects to work unattended, and a stock harness is one they are sitting in front of.
+    // Every tile saved before the checkbox existed reads through here, which is why the default
+    // lives in one function rather than in each caller.
+    function launcherUnattended(m) {
+      return m && m.unattended === undefined ? !!(m && m.config) : !!(m && m.unattended);
+    }
+
     // One member's start_agent. Called once per member and never in a loop that does not wait:
     // next_role_label reads the live agent list to pick "Architect 2", so two starts in flight at
     // once can choose the same name and the relay renames around the collision — leaving a roster
     // the user did not pick.
-    function launcherSpawnMsg(tile, member) {
+    // `ref` is the client's own id for this start, carried on the pane the relay makes for as long
+    // as it lives. Only a bot names one: it is what a reloaded browser has left to find the pane by
+    // once the answer to the start has gone down with the tab.
+    function launcherSpawnMsg(tile, member, ref) {
       return launcherFields({
         type: 'start_agent',
         name: member.name,
+        ref: ref,
         role: LAUNCHER_ROLE,
         project_id: tile.project_id,
         placement: LAUNCHER_PLACEMENT,
@@ -368,6 +471,10 @@
         // behind it.
         label: member.label,
         slot: tile.slot,
+        config: member.config,
+        // Only ever sent when it is on: the relay's default is an interactive session, and `false`
+        // on the wire would say the same thing at more length.
+        unattended: launcherUnattended(member) || undefined,
       }, START_AGENT_FIELDS);
     }
 

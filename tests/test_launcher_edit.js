@@ -23,7 +23,11 @@ const EDIT = src('launcher_edit.js');
 
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
-const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
+const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true,
+                 // The kinds this relay can start with their own approval prompts off. The tile
+                 // editor draws the checkbox against these and against nothing else.
+                 unattended: ['claude', 'codex'],
+                 configs: [{id: 'oclaude', label: 'oClaude', kind: 'claude'}]};
 
 // Every element the editor writes into or reads back, invented on demand. `innerHTML` is recorded
 // rather than parsed: what is drawn is checked by looking for the call it wired up, which is what
@@ -87,6 +91,13 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
                     {tag: 'test-min', text: 'minimal focused test'},
                     {tag: 'next', text: 'proposes the next steps'}],
     agentBadge: kind => ` <span class="badge">${kind}</span>`,
+    // terminal.js's alias-aware badge: the tile carries the config, so a member started
+    // under one is named by it rather than by its harness.
+    configBadge: (kind, config) => ` <span class="badge">${config || kind}</span>`,
+    agentConfigRows: () => startOptions.configs || [],
+    // What every picker reads: the configs a session may actually start under. A switched-off
+    // one is listed by agentConfigRows and offered by neither.
+    agentConfigOffered: () => (startOptions.configs || []).filter(c => !c.off),
     // The launch sheet's two-tap Start. Recorded rather than armed: what this suite checks is
     // that the second tap is what reaches launcherPressIn.
     armButton: (btn, label, run) => { log.push(['arm', label]); run(); },
@@ -105,13 +116,18 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
   run(`saveLauncher(${JSON.stringify(tiles)})`);
   return {
     run, log, store, dom: d,
-    tiles: () => run('loadLauncher()'),
+    // The user's own tiles. The bots are on every read of the document — they are seeded rather
+    // than saved — and every assertion in this file is about what the form wrote.
+    tiles: () => run('loadLauncher().filter(t => !t.bot)'),
+    // The seeded ones, for the tests that are about them.
+    bots: () => run('loadLauncher().filter(t => !!t.bot)'),
     body: () => d.nodes.launcherEditBody.innerHTML,
     title: () => d.nodes.launcherEditTitle.textContent,
     // Typing into a field the form has drawn. The stub invents it, which is the same thing the
     // browser does when the markup naming it is written.
     field: (id, value) => { d.get(id).value = value; },
     draft: () => run('launcherDraft'),
+    error: () => d.get('qlError').textContent || '',
   };
 }
 
@@ -122,6 +138,26 @@ const spawnTile = (over = {}) => Object.assign(
    members: [{name: 'claude'}, {name: 'codex'}]}, over);
 
 // --- add ---
+
+test('the insecure box is kept on the tile, and absent rather than false when unticked', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('run')");
+  e.field('qlName', 'Free model');
+  e.field('qlCommand', 'pytest -q');
+  assert.match(e.body(), /id="qlInsecure"/, 'the form offers it');
+  e.dom.get('qlInsecure').checked = true;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const [tile] = e.tiles();
+  assert.equal(tile.insecure, true);
+  assert.equal(e.run(`launcherInsecure(${JSON.stringify({insecure: true})})`), true);
+  // Unticked writes nothing: a tile that never made the claim should not carry a field saying so.
+  e.run(`launcherEditTile('${tile.id}')`);
+  assert.match(e.body(), /id="qlInsecure" checked/, 'and reopens ticked');
+  e.dom.get('qlInsecure').checked = false;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.equal('insecure' in e.tiles()[0], false);
+});
 
 test('a new tile opens on no Project, because a template is the more useful tile', () => {
   const e = editor();
@@ -275,6 +311,61 @@ test('agents are added one tap at a time and each keeps its own role', () => {
   assert.deepEqual(e.tiles()[0].members,
     [{name: 'claude', role: 'proposer', at: 'architect-prompt'},
      {name: 'codex', role: 'critic', at: 'architect-prompt'}]);
+});
+
+test('a member on a config starts unattended, a stock one does not, and either can be told otherwise', () => {
+  const e = editor();
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.field('qlName', 'Pair');
+  e.run("launcherAddMember('claude', 'oclaude')");
+  e.run("launcherAddMember('codex')");
+  assert.match(e.body(), /id="qlSolo0" checked/, 'on under a config');
+  assert.match(e.body(), /id="qlSolo1"(?! checked)/, 'off on the stock harness');
+  // Both answered against their default, which is the pair worth storing.
+  e.dom.get('qlSolo0').checked = false;
+  e.dom.get('qlSolo1').checked = true;
+  assert.equal(e.run('launcherSaveTile()'), true);
+  assert.deepEqual(e.tiles()[0].members, [
+    {name: 'claude', config: 'oclaude', at: 'architect-prompt', unattended: false},
+    {name: 'codex', at: 'architect-prompt', unattended: true},
+  ]);
+});
+
+test('the launch sheet repeats each eligible member’s saved approval setting', () => {
+  const e = editor({tiles: [spawnTile({members: [
+    {name: 'claude', config: 'oclaude'}, {name: 'codex'},
+  ]})]});
+  e.run('launcherLaunchSheet(loadLauncher()[0])');
+  assert.match(e.body(), /class="ql-solo ql-solo-readonly"><input type="checkbox" checked disabled/);
+  assert.match(e.body(), /class="ql-solo ql-solo-readonly"><input type="checkbox" disabled/);
+});
+
+test('no checkbox is drawn for a harness the relay has no flag for', () => {
+  // pi and kiro have none. A box drawn there would be a start refused on arrival.
+  const e = editor({startOptions: Object.assign({}, OPTIONS, {agents: ['pi'], unattended: []})});
+  e.run('launcherNewTile()');
+  e.run("launcherPickAction('spawn')");
+  e.run("launcherAddMember('pi')");
+  assert.doesNotMatch(e.body(), /qlSolo0/);
+});
+
+test('custom aliases are offered in both tile pickers and retain their config id', () => {
+  const e = editor();
+  e.run('openLauncherEdit()');
+  e.run('launcherNewTile()');
+  assert.match(e.body(), /\+custom/);
+  e.run("launcherToggleCustom('members')");
+  assert.match(e.body(), /oClaude/);
+  e.run("launcherAddMember('claude', 'oclaude')");
+  e.run("launcherAddMember('codex')");
+  e.run("launcherPickArb('claude', 'oclaude')");
+  e.field('qlName', 'Custom pair');
+  e.field('qlScope', 'Review it');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const tile = e.tiles()[0];
+  assert.equal(tile.members[0].config, 'oclaude');
+  assert.equal(tile.arbitrator.config, 'oclaude');
 });
 
 test('a member can be named and given a first prompt, and both are stored', () => {
@@ -475,8 +566,42 @@ test('the first and last rows do not offer the arrow that would do nothing', () 
   const rows = e.body().split('class="ql-row"').slice(1);
   assert.match(rows[0], /Move A up"[^>]*disabled/);
   assert.ok(!/Move A down"[^>]*disabled/.test(rows[0]), 'the first row can still go down');
-  assert.match(rows[1], /Move B down"[^>]*disabled/);
-  assert.ok(!/Move B up"[^>]*disabled/.test(rows[1]), 'and the last can still go up');
+  // The last row is the seeded bot, which is drawn in this list like anything else — it is
+  // reordered and edited here, and only Delete is missing from it.
+  const last = rows[rows.length - 1];
+  assert.match(last, /up"[^>]*>↑/, 'the last can still go up');
+  assert.match(last, / down"[^>]*disabled/);
+  assert.ok(!/Move B down"[^>]*disabled/.test(rows[1]), 'so B is no longer the end of the list');
+});
+
+test('a bot is edited from the list like anything else, but never deleted', () => {
+  const e = editor({tiles: [runTile()]});
+  e.run('openLauncherEdit()');
+  const rows = e.body().split('class="ql-row"').slice(1);
+  const bot = rows.find(r => /Jarvis/.test(r));
+  assert.ok(bot, 'the row is there before anything has been pressed');
+  assert.ok(!/ql-del/.test(bot), 'and it carries no ✕');
+  assert.match(bot, /launcherEditTile\('ql_bot_jarvis'\)/);
+  // Nor on the form it opens, where Delete is what that button would otherwise be.
+  e.run("launcherEditTile('ql_bot_jarvis')");
+  assert.ok(!/launcherDelete/.test(e.body()));
+  assert.match(e.body(), /A bot is one agent in one conversation/,
+               'what it is, said where the action strip would have been');
+});
+
+test('a bot can be moved to another harness, and stays a bot', () => {
+  const e = editor({tiles: []});
+  e.run("launcherEditTile('ql_bot_jarvis')");
+  e.run("launcherAddMember('codex')");
+  // The seed's own member first, then the one just added: a bot is one agent, so the save refuses
+  // until the roster is one again.
+  assert.equal(e.run('launcherSaveTile()'), false);
+  assert.match(e.error(), /exactly one agent/);
+  e.run('launcherDropMember(0)');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const [bot] = e.bots();
+  assert.equal(bot.bot, 'jarvis', 'the mark survives the edit that changed everything else');
+  assert.equal(bot.members[0].name, 'codex');
 });
 
 test('delete asks first, and a refusal keeps the tile', () => {
@@ -599,4 +724,14 @@ test('the name survives picking a Project, and both reach the press', () => {
   assert.ok(e.log.some(l => l[0] === 'arm' && l[1] === 'Start?'));
   // The tile is what it was — the Project chosen for one press is never written back.
   assert.equal(e.tiles()[0].project_id, '');
+});
+
+test('the launch sheet badges a member by the config it pinned, not by its harness', () => {
+  // The sheet is the last thing read before the press, and a roster that says `claude` for a
+  // member that will come up on someone else's endpoint is the one line that must not be wrong.
+  const e = editor({tiles: [spawnTile({members: [{name: 'claude', config: 'oclaude'},
+                                                 {name: 'codex'}]})]});
+  e.run('launcherLaunchSheet(loadLauncher()[0])');
+  assert.match(e.body(), /badge">oclaude</, 'the alias, where the tile pinned one');
+  assert.match(e.body(), /badge">codex</, 'and the harness where it did not');
 });

@@ -542,14 +542,59 @@
     // A corrupt blob is no conversations, never a half-index — the contract parsePairs already
     // holds to, and for the same reason: a store that outlives the panes it describes will one day
     // be read by a version that did not write it.
+    // One member per pane. A key is [host, pane_id, agent, cwd], so two rows carrying the same one
+    // are the same pane drawn twice with one transcript behind both — a landing that joined as a
+    // new member when its replace intent no longer matched anything. Fixed at the source in
+    // start_dialog; read here so an index already carrying the duplicate reads clean, and is
+    // written clean by the next save rather than needing anyone to notice it.
+    //
+    // The first wins: it is the row the thread has been read under, and the one holding `was`.
+    function dedupeMembers(members) {
+      const seen = new Set();
+      return (members || []).filter(m => {
+        if (!m) return false;
+        if (!m.key) return true;
+        if (seen.has(m.key)) return false;
+        seen.add(m.key);
+        return true;
+      });
+    }
+
+    // Two auto conversations filing the same pane, which is what two browsers do when they meet a
+    // fresh pane at the same moment: neither index holds the other's row yet, so each mints one,
+    // and the state merge appends the loser's because appending what a browser created is exactly
+    // what it is for. The pane then has two records in the list, both drawing the one transcript
+    // its key names.
+    //
+    // Dropped on the way in rather than repaired on the way out: the row is a duplicate wherever
+    // it is read, and array order is the same in every browser — the relay's document first, local
+    // creations appended — so every browser drops the same one. Only between two `auto` rows, and
+    // only when every member of the later one is already filed by an earlier: a named conversation
+    // was asserted by somebody, and an auto one holding a pane nothing else holds is that pane's
+    // only record.
+    function dedupeAutoConvs(items) {
+      const filed = new Set();
+      const out = [];
+      for (const c of items) {
+        const keys = (c.members || []).map(m => m && m.key).filter(Boolean);
+        if (c.auto && keys.length && keys.every(k => filed.has(k))) continue;
+        if (c.auto) for (const k of keys) filed.add(k);
+        out.push(c);
+      }
+      return out;
+    }
+
     function parseConvIndex(raw) {
       try {
         const d = JSON.parse(raw || '');
         if (!d || d.version !== 1 || !Array.isArray(d.items)) return [];
-        return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
+        return dedupeAutoConvs(
+          d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
           // The roster, not the recording cap: an ended member is the record of a session that
           // happened, and truncating it here would delete history on the next read of the index.
-          .map(c => Object.assign({}, c, { members: c.members.slice(-CONV_ROSTER_MAX) }));
+          .map(c => Object.assign({}, c, {
+            members: dedupeMembers(c.members).slice(-CONV_ROSTER_MAX),
+          })));
       } catch (e) { return []; }
     }
 
@@ -807,9 +852,12 @@
 
     // Called on the way out of every composer send. A prefill answers for one send: whether it was
     // used, edited or deleted, the next send starts from nothing.
-    function noteSent(text, paneId) {
+    // `via` names a send this app made rather than one the user typed — a Reset's `/clear` and the
+    // opening words replayed behind it. Nobody said those, and a thread that shows them as the
+    // reader's own prompts is a record of a conversation that did not happen.
+    function noteSent(text, paneId, via) {
       const now = Date.now();
-      const note = classifyVia(pendingTransfer, text, now);
+      const note = via ? { via: via } : classifyVia(pendingTransfer, text, now);
       pendingTransfer = null;
       // The prompt itself, straight into the transcript. Exact text, exact time, no reading back.
       convRecordSend(paneId, text, note.via === 'typed' ? null : note, now);

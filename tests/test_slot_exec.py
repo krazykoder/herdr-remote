@@ -10,6 +10,7 @@ Blocking herdr calls are faked. What is being tested is the order and content of
 sends, and that a failure anywhere stops the rest — not herdr's behaviour, which the E2E probe
 covers against the real binary.
 """
+import asyncio
 import json
 import sys
 import unittest
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 import herdr_relay  # noqa: E402
+import start_agent  # noqa: E402
 from start_agent import SPACER_LABEL  # noqa: E402
 
 
@@ -250,17 +252,96 @@ class PaneNotAtItsPromptYetTests(unittest.TestCase):
 
 
 class AgentInitTests(unittest.TestCase):
-    def test_kiro_init_uses_the_confirmed_send_path(self):
-        sent = object()
-        def paste(*args, **kwargs):
-            self.assertEqual(args, ("w1:p1", "/tools trust-all"))
-            self.assertEqual(kwargs, {"remote": None})
-            return sent
+    """A kind's own opening lines wait for the pane's first prompt and then follow it.
 
-        with patch.object(herdr_relay, "submit_paste", new=paste), \
-             patch.object(herdr_relay, "on_loop", return_value=True) as on_loop:
-            herdr_relay.agent_init_exec("w1:p1", "kiro", None)
-        on_loop.assert_called_once_with(sent, wait=True)
+    In front of the prompt they were a turn of their own: kiro answered `/tools trust-all` and the
+    opening prompt landed on top of that answer. Behind it, the pane answers what it was asked and
+    takes the grant on the way.
+    """
+
+    def setUp(self):
+        herdr_relay.init_pending.clear()
+        self.addCleanup(herdr_relay.init_pending.clear)
+
+    def drain(self, pane_id, **kw):
+        sent = []
+        async def send(pane, line, remote=None):
+            sent.append((pane, line, remote))
+            return True
+        with patch.object(herdr_relay, "submit_init_line", new=send):
+            asyncio.run(herdr_relay.drain_init(pane_id, **kw))
+        return sent
+
+    def test_a_starting_pane_is_waited_for_before_anything_is_typed(self):
+        # `agent start` returns on herdr's readiness and antigravity spends seconds after that
+        # painting its first frame. Everything typed into it in the meantime is dropped, which is
+        # how agy came up having been sent two messages and holding neither.
+        seen = ["", "unknown", "idle"]
+        with patch.object(herdr_relay, "pane_agent_status", side_effect=lambda *a, **k: seen.pop(0)), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0), \
+             patch.object(herdr_relay, "INIT_SETTLE_S", 0):
+            self.assertTrue(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+        self.assertEqual(seen, [])
+
+    def test_a_pane_that_never_reports_one_is_given_up_on_rather_than_waited_on_for_ever(self):
+        with patch.object(herdr_relay, "pane_agent_status", return_value=""), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0), \
+             patch.object(herdr_relay, "INIT_READY_WAIT_S", 0.01):
+            self.assertFalse(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+
+    def test_a_pane_that_has_exited_is_not_waited_on_at_all(self):
+        # A pane herdr no longer lists is never going to report a status, so the full
+        # INIT_READY_WAIT_S is spent watching nothing — with the client's next message queued
+        # behind it, since one connection is handled a message at a time.
+        calls = []
+
+        def status(pane_id, remote=None):
+            calls.append(pane_id)
+            return herdr_relay.PANE_GONE
+
+        with patch.object(herdr_relay, "pane_agent_status", status), \
+             patch.object(herdr_relay, "INIT_READY_POLL", 0):
+            self.assertFalse(asyncio.run(herdr_relay.pane_ready("w1:p1")))
+        self.assertEqual(calls, ["w1:p1"], "one look is enough — the pane is gone")
+
+    def test_agy_is_woken_at_the_start_rather_than_queued_behind_a_prompt(self):
+        # The opposite order to kiro's, and for the opposite reason: kiro's line is a grant that
+        # follows the work, agy's is the question the empty first answer belongs to.
+        sent = []
+        async def send(pane, line, remote=None):
+            sent.append((pane, line))
+            return True
+        with patch.object(herdr_relay, "submit_init_line", new=send), \
+             patch.object(herdr_relay, "on_loop", new=lambda coro, wait=False: asyncio.run(coro)):
+            herdr_relay.agent_wake_exec("w1:p1", "agy", None)
+        self.assertEqual(sent, [("w1:p1", start_agent.WARMUP_TEXT)])
+        self.assertEqual(herdr_relay.init_pending, {})
+
+    def test_a_kind_with_no_wake_up_is_sent_nothing(self):
+        with patch.object(herdr_relay, "submit_init_line",
+                          side_effect=AssertionError("nothing to send")):
+            herdr_relay.agent_wake_exec("w1:p1", "kiro", None)
+
+    def test_a_start_queues_the_line_rather_than_typing_it(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        self.assertEqual(herdr_relay.init_pending["w1:p1"][1], ["/tools trust-all"])
+
+    def test_a_kind_with_no_opening_line_queues_nothing(self):
+        herdr_relay.agent_init_queue("w1:p1", "claude", None)
+        self.assertEqual(herdr_relay.init_pending, {})
+
+    def test_the_first_prompt_takes_the_queue_with_it(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        self.assertEqual(self.drain("w1:p1"), [("w1:p1", "/tools trust-all", None)])
+        # Once. A second prompt is not a second grant.
+        self.assertEqual(self.drain("w1:p1"), [])
+
+    def test_a_pane_nobody_prompts_is_drained_when_its_deadline_passes(self):
+        herdr_relay.agent_init_queue("w1:p1", "kiro", None)
+        deadline = herdr_relay.init_pending["w1:p1"][0]
+        self.assertEqual(self.drain("w1:p1", now=deadline - 1), [])
+        self.assertEqual(self.drain("w1:p1", now=deadline),
+                         [("w1:p1", "/tools trust-all", None)])
 
 
 if __name__ == "__main__":

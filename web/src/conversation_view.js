@@ -194,6 +194,7 @@
     const CONV_AUTO_KEY = 'herdr_conv_auto', CONV_AUTO_SEEN_KEY = 'herdr_conv_auto_seen';
     const CONV_AUTO_SEEN_MAX = 500;
     const CONV_LANDING_AUTO_KEY = 'herdr_conv_landing_auto', CONV_LANDING_AUTO_MAX = 10;
+    const CONV_LANDING_ARCHIVE_KEY = 'herdr_conv_landing_archive';
 
     // The toggle exists so auto conversations cannot bury the named ones, which is a question
     // about this reader's screen and not about the agents — so it is not one of the four synced
@@ -210,8 +211,29 @@
       catch (e) { return false; }
     }
 
+    // Auto and Archive are the same shape: each swaps what the section is showing rather than
+    // adding a second list under it, so at most one can be on. Switching into one leaves the other.
     function toggleConvLandingAuto() {
-      try { localStorage.setItem(CONV_LANDING_AUTO_KEY, convLandingAutoOn() ? 'off' : 'on'); }
+      const on = convLandingAutoOn();
+      try {
+        localStorage.setItem(CONV_LANDING_AUTO_KEY, on ? 'off' : 'on');
+        if (!on) localStorage.setItem(CONV_LANDING_ARCHIVE_KEY, 'off');
+      }
+      catch (e) { /* private mode: this session only */ }
+      renderConversations();
+    }
+
+    function convLandingArchiveOn() {
+      try { return localStorage.getItem(CONV_LANDING_ARCHIVE_KEY) === 'on'; }
+      catch (e) { return false; }
+    }
+
+    function toggleConvLandingArchive() {
+      const on = convLandingArchiveOn();
+      try {
+        localStorage.setItem(CONV_LANDING_ARCHIVE_KEY, on ? 'off' : 'on');
+        if (!on) localStorage.setItem(CONV_LANDING_AUTO_KEY, 'off');
+      }
       catch (e) { /* private mode: this session only */ }
       renderConversations();
     }
@@ -265,8 +287,13 @@
       for (const c of items) for (const m of (c && c.members) || []) if (m && m.key) had.add(m.key);
       // Only a pane an agent is running in has messages to record — the same gate the menu item
       // uses, so a harness the app cannot read is not filed under a record it can never write to.
+      // A pane a restart in flight is about to continue a thread onto is not a fresh pane. Filing
+      // it here would put its key in a conversation of its own, and a key some conversation names
+      // is one convContinueTranscript refuses to write over — so the thread it was started to
+      // continue would gain a second member instead of carrying on.
       const fresh = agents.filter(a => convMemberKey(a) && !had.has(convMemberKey(a))
-        && profileFor(a.agent));
+        && profileFor(a.agent)
+        && !(typeof convStartClaimed === 'function' && convStartClaimed(a)));
       if (!fresh.length) return;
       const added = fresh.map(a => {
         const conv = {
@@ -353,6 +380,19 @@
       // the roster must not also swap which side each pane is drawn on.
       const both = members.filter(m => m.key === convMemberKey(a) || m.key === key);
       return both.some(m => m.key === key) ? both : both.concat({key, label: paneLabel(partner)});
+    }
+
+    // What a member is called *now*. Labels are stamped into the index and into every entry as they
+    // are written, which is right for a member whose pane has gone — that stamp is all there is
+    // left of what it was called. It is wrong for one still running: a rename is a correction, and
+    // a thread that keeps drawing the name the reader has just replaced is showing them the mistake
+    // they came to fix. So a live pane's own label wins wherever there is one.
+    function convMemberName(key) {
+      const live = key ? agents.find(x => convMemberKey(x) === key) : null;
+      const now = live ? paneLabel(live) : '';
+      if (now) return now;
+      for (let i = 1; i < arguments.length; i++) if (arguments[i]) return arguments[i];
+      return '';
     }
 
     // A member is recording or it has ended, and that is derived rather than stored: a live pane
@@ -512,7 +552,8 @@
         (joint ? convMembersHtml(thread, recs) : '') +
         // Above the oldest bubble, which is where the reader is by the time they want it.
         (typeof convOlderHtml === 'function' ? convOlderHtml(want) : '') + (entries.length
-        ? convEntriesHtml(entries, { key: key, agent: a.agent, label: paneLabel(a) }, paired)
+        ? convEntriesHtml(entries, { key: key, agent: a.agent, config: a.config,
+                                     label: paneLabel(a) }, paired)
         : (all.length
           ? '<p class="conv-empty">Everything recorded here is still provisional — a live draft, or ' +
             'backfill off the scrollback. Turn "final messages only" off in the pane menu to see it.</p>'
@@ -556,7 +597,7 @@
       if (!workingList || !workingList.length) return '';
       return workingList.map(a => {
         const name = escapeHtml(paneLabel(a) || a.pane_id || 'Agent');
-        const badge = a.agent ? agentBadge(a.agent) : '';
+        const badge = a.agent ? paneBadge(a) : '';
         const key = convMemberKey(a);
         const accent = agentColor(a.agent) || 'var(--text)';
         // A button, because it does something: the badge says who is working and pressing it goes
@@ -626,7 +667,7 @@
       const color = agentColor(a.agent) || 'var(--muted)';
       const dot = statusColor(live);
       const who = `<span class="dot pulse" style="background:${dot}"></span>` +
-        `${escapeHtml(paneLabel(a) || '')}${agentBadge(a.agent)}`;
+        `${escapeHtml(paneLabel(a) || '')}${paneBadge(a)}`;
       const text = (draft && draft.text || '').trim();
       // `conv-slot` and not `conv-msg`: it looks like a bubble but it is not a message, and the
       // pick handler, Summary, Last and the badge writer all find messages by that class.
@@ -764,9 +805,10 @@
         const on = live.has(m.key);
         const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
-          `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
-          agentBadge(spawn.agent || (live.get(m.key) || {}).agent || '') +
-          `${on ? '' : '<span class="tag">no longer live</span>'}` +
+          `<span class="who">${escapeHtml(convMemberName(m.key, rec && rec.label, m.label))}</span>` +
+          kindBadge(spawn.agent || (live.get(m.key) || {}).agent || '', live.get(m.key),
+                    spawn.config) +
+          `${on ? '' : '<span class="tag">paused</span>'}` +
           `<span class="spawn">${escapeHtml(facts.join(' · '))}</span></span>`;
       }).join('') + '</button>';
     }
@@ -866,8 +908,13 @@
         // "rewrote it" are different facts about the same bubble.
         // An arbitrated send has no `from` pane: it was composed by the arbitrator out of what two
         // members said, so what the badge names is the arbitrator itself.
+        // `system` is this app's own send — a Reset's clear and the opening words replayed behind
+        // it. It goes on the user's side because that is the side prompts go on, and it says so
+        // for the same reason an arbitrated one does: nobody typed it.
         const from = user && e.via === 'arbitrator'
           ? `<span class="via" aria-hidden="true">${arbSign(12)}</span> arbitrator`
+          : user && e.via === 'system'
+          ? `<span class="via" aria-hidden="true">\u2699</span> app`
           : user && e.via && e.via !== 'typed' && e.from
           ? `<span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
             `${e.via === 'mixed' ? ' · edited' : ''}`
@@ -879,12 +926,20 @@
         // The harness the entry was recorded under, not the one running in that pane today: a
         // conversation outlives its panes, and a member that has exited still gets its own badge.
         const agent = e.agent || (live && live.agent) || me.agent || '';
+        // The alias it was started under, where there is one. An entry never carries it — it is a
+        // fact about the session, not about a message — so it is read off the live pane first and
+        // off the spawn record after, which is the only source left once the pane has ended.
+        const spawn = (typeof convViewRecs !== 'undefined'
+          ? (convViewRecs.find(r => r.key === key) || {}).spawn : null) || {};
+        const config = (live && live.config) || spawn.config || me.config || '';
         const color = agentColor(agent) || 'var(--muted)';
-        const name = escapeHtml(e.label || me.label || '');
+        // The name it goes by now, not the one stamped when the words were recorded — see
+        // convMemberName. An ended member has no live pane and keeps its stamp.
+        const name = escapeHtml(convMemberName(key, e.label, me.label));
         // The same badge the pane list and the pair sheet use, beside the name: colour says which
         // member, and the badge says what it is — a thread of claude and codex reads as two
         // colleagues rather than as two colours.
-        const badge = agentBadge(agent);
+        const badge = configBadge(agent, config);
         // A user bubble names the pane it was sent *to*, on the same terms as an agent bubble names
         // the one that spoke — in a joint thread "which colleague was this said to" is the question
         // the view exists to answer, and in a single-pane thread it is what keeps a prompt and the

@@ -262,7 +262,7 @@
             }).join('')}</div></div>`).join('') +
           panes.map(a => `<div class="bandwidth-row pane-bandwidth-row" data-pane="${escapeHtml(a.pane_id)}">` +
             `<span class="bandwidth-label pane-bandwidth-name"><span class="dot"></span>` +
-            `${escapeHtml(paneLabel(a))}${agentBadge(a.agent)}<small class="pane-bandwidth-ping"></small></span>` +
+            `${escapeHtml(paneLabel(a))}${paneBadge(a)}<small class="pane-bandwidth-ping"></small></span>` +
             `<span class="bandwidth-chip bandwidth-hist" title="Historical total of completed intervals for ${escapeHtml(paneLabel(a))}"></span>` +
             `<div class="bandwidth-chips">${buckets.map(b => { const t = at(b);
               return `<span class="bandwidth-chip${t.live ? ' now' : ''}" ` +
@@ -722,6 +722,19 @@
         // took a minute to be confirmed is not a different outcome from one that took none, and
         // wording it differently made the slow path read as a warning.
         else if (msg.ok) showToast(`✓ Sent to ${where}`, 'ok');
+        // A pane at a menu took nothing, which is not the same as a pane that took it and said
+        // nothing: the text is held here and goes out again as soon as the question is answered.
+        else if (msg.reason === 'menu') {
+          holdForMenu(msg.pane_id, lastSubmitted.get(msg.pane_id));
+          showToast(`${where} is waiting on a prompt — answer it and this goes in behind it.`,
+                    'info');
+        }
+        // Gone, not silent. The relay watched the pane vanish under this text, so there is nobody
+        // left to check with and nothing was delivered — "check the pane" would send the reader to
+        // a pane that is not there.
+        else if (msg.reason === 'pane_gone') {
+          showToast(`${where} closed before it took that — nothing was delivered.`);
+        }
         else showToast(`That pane did not confirm the send — check ${where}.`);
       }
       else if (msg.type === 'command_result' &&
@@ -781,6 +794,9 @@
         }
       }
       else if (msg.type === 'agents') {
+        // Before the timeline: a message held back by a menu belongs in the pane the moment the
+        // pane can take it, and the rest of this branch is bookkeeping.
+        sendHeldAfterMenu(msg.agents);
         // Track timeline on status changes
         let ring = false;
         for (const a of msg.agents) {
@@ -846,6 +862,13 @@
           }
         }
         openPendingStart();
+        // A restart whose answer was lost with the tab that asked for it, picked up by the id that
+        // start named itself with. After openPendingStart, so a start this tab is still holding
+        // the answer for lands the ordinary way.
+        if (typeof convResumeRespawn === 'function') convResumeRespawn();
+        // Restart all, one member per landing. After the two above, which are what clear the way
+        // for the next one — see convRestartStep.
+        if (typeof convRestartStep === 'function') convRestartStep();
         openNotificationPane();
       }
       else if (msg.type === 'agent_update') {
@@ -853,8 +876,19 @@
         if (!update || !update.pane_id) return;
         const existing = agents.find(a => a.pane_id === update.pane_id);
         const previousStatus = existing?.status || prevStatuses[update.pane_id];
+        const previousTurn = existing?.turn;
         if (existing) Object.assign(existing, update);
         else agents.push({ ...update });
+        // The relay's record grew a row for this pane. It is not a status change — the snapshot
+        // carrying the status went out before the turn was read and written — so nothing else here
+        // would notice, and a thread showing this pane would stay a turn behind until some other
+        // pane moved. The fetch itself is gated on the watermark (conv_live.js): a redraw for a
+        // pane no open thread contains asks for nothing.
+        if (update.turn && update.turn !== previousTurn
+            && typeof convLiveOn === 'function' && convLiveOn()) {
+          renderConvView();
+          if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+        }
         if (previousStatus && previousStatus !== update.status) {
           timeline.unshift({ project: update.project, agent: update.agent, status: update.status, time: new Date() });
           if (timeline.length > 100) timeline.pop();

@@ -38,11 +38,24 @@
       // and together they are what tells two otherwise identical tiles apart.
       const where = `${project.label || tile.project_id}`
         + (project.host && project.host !== 'local' ? ` on ${project.host}` : '');
+      // First line, above the payload: a tile the user marked insecure is one whose providers
+      // they told us not to trust with their work, and the press is the last moment that is
+      // still worth knowing.
+      const warn = launcherInsecure(tile)
+        ? ['Insecure: the providers behind this tile do not protect what is sent to them.', '']
+        : [];
       if (launcherIsTerm(tile)) {
         const command = String(tile.command || '').trim();
-        return command
+        return warn.concat(command
           ? [`Run this in a new terminal on ${where}?`, '', command]
-          : [`Open a terminal on ${where}?`];
+          : [`Open a terminal on ${where}?`]);
+      }
+      // A bot says what it is instead of how many it starts: one, always, and the same one.
+      if (launcherIsBot(tile)) {
+        return warn.concat([`Start ${tile.label} on ${where}?`, '',
+                            ((tile.members || [])[0] || {}).name || '',
+                            '', 'It keeps its conversation — the thread carries on where it left '
+                            + 'off.']);
       }
       // The arbitrator counts. It is a third pane started on the same relay in the same Project,
       // and a confirm that said "2 sessions" before starting three would be the one number on
@@ -50,7 +63,7 @@
       const roster = launcherRoster(tile);
       const many = roster.length > 1;
       const arb = launcherWantsArb(tile);
-      return [`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
+      return warn.concat([`Start ${many ? roster.length + ' sessions' : 'a session'} on ${where}?`,
               '', roster.map(m => m.name).join(', '),
               '',
               arb ? `${tile.arbitrator.name} will decide between `
@@ -62,7 +75,7 @@
                 // first decision for it.
                 + 'It starts paused — arm it from the conversation.'
                 : many ? 'They are started one at a time and grouped into a conversation.'
-                : 'It gets a conversation of its own, under the name you give it.']
+                : 'It gets a conversation of its own, under the name you give it.'])
         .filter(l => l !== null);
     }
 
@@ -106,7 +119,81 @@
       // `label` — the pane's name, the conversation's, the status line's — so naming it once here
       // is what keeps the launch's name and the tile's name from having to be the same thing.
       const named = launcherNamed(tile, typed);
+      if (launcherIsBot(named)) return launcherBotGo(named);
       return launcherIsTerm(named) ? launcherRunTile(named) : launcherSpawnTile(named);
+    }
+
+    // A bot press is "open this again", never "start another one like it". Three cases, and only
+    // the last two send anything:
+    //
+    //   the pane is up on the harness the tile names  — open it, and nothing else happens
+    //   the pane is gone                              — start it into the thread it left
+    //   the tile names a different harness            — end that pane and do the same
+    //
+    // The third is what "change the agent whenever you like" means in a terminal: a pane runs one
+    // CLI, so swapping the harness is Pause followed by Restart, which is exactly the succession
+    // a member swap already performs — same conversation, same name, the transcript carried across
+    // the seam by convContinueTranscript.
+    //
+    // ponytail: the harness alone decides whether the running pane is the one the tile asks for.
+    // An agent config swapped for another on the same harness is not restarted, and `config` falls
+    // off the snapshot on a relay restart — reading it here would end a live pane over a field
+    // that had merely gone quiet.
+    function launcherBotGo(tile) {
+      const member = (tile.members || [])[0] || {};
+      launcherBotHome(tile);
+      const conv = loadConvIndex().find(c => c.id === launcherBotConvId(tile.bot));
+      const held = conv && (conv.members || [])[0];
+      // Nothing has ever been started for this bot. The ordinary spawn path makes the pane and the
+      // conversation, and launcherMakeConv gives that conversation the bot's own fixed id — which
+      // is what every press after this one finds.
+      if (!held) return launcherSpawnTile(tile);
+      const live = agents.find(x => convMemberKey(x) === held.key);
+      if (live && live.agent === member.name) {
+        openConversation(conv.id);
+        openTerminal(live.pane_id);
+        showSpawnStatus(`${tile.label} is already running.`, 'success');
+        return true;
+      }
+      if (live && !endPane(live.pane_id)) {
+        showToast(`${tile.label} could not be ended — nothing was started.`);
+        return false;
+      }
+      return launcherBotContinue(tile, conv, held.key);
+    }
+
+    // Where a bot lives, written back onto the tile. The one place a press edits the tile it was
+    // made from, and the exception is the whole point of a bot: an ordinary tile is a template —
+    // the same roster pressed into whichever tree wants it, asked for every time — and a bot is a
+    // room, which is somewhere rather than anywhere. Asking again on every press would be asking
+    // the reader to re-answer a question that has one right answer already on screen.
+    function launcherBotHome(tile) {
+      const stored = loadLauncher().find(t => t.id === tile.id);
+      if (!stored || !tile.project_id || stored.project_id === tile.project_id) return;
+      putLauncherTile(Object.assign({}, stored, {project_id: tile.project_id}));
+      if (typeof renderLauncher === 'function') renderLauncher();
+    }
+
+    // The start that continues a bot's thread. Not a batch and not launcherLanded: what lands here
+    // is a *replacement* for a member of a conversation that already exists, which is the intent
+    // start_dialog's respawn branch is written for — it copies the transcript, moves the member's
+    // key onto the new pane, and opens the thread.
+    function launcherBotContinue(tile, conv, key) {
+      const member = (tile.members || [])[0] || {};
+      // Named before the send and written down before that: the answer to a start is what a reload
+      // loses, and the note is what a tab coming back finds the pane by. Same mechanism, same
+      // two-minute window, as Restart in a conversation.
+      const ref = typeof convRespawnRef === 'function' ? convRespawnRef() : '';
+      const msg = launcherSpawnMsg(tile, member, ref);
+      startIntent = {conv: conv.id, replace: key};
+      // Nothing is said to it. A bot is a room the user comes back to, and an opening prompt typed
+      // at every press would be the one line in the thread nobody wrote.
+      startPrompt = '';
+      startStarter = member.at || NO_STARTER;
+      if (ref && typeof rememberConvRespawn === 'function') rememberConvRespawn(conv.id, key, ref);
+      showSpawnStatus(`Continuing ${tile.label}…`, 'busy');
+      ws.send(JSON.stringify(msg));
+      return true;
     }
 
     // What the sheet calls back into: the tile as stored, run in the Project just chosen. The
@@ -164,8 +251,14 @@
         if (typeof notePaneStarter === 'function') notePaneStarter(paneId, NO_STARTER);
         return false;
       }
-      if (typeof SHORTCUTS === 'undefined') return false;
-      const text = ((SHORTCUTS.find(s => s.at === canonAt(at)) || {}).text || '').trim();
+      if (typeof roleStarter !== 'function') return false;
+      // Through roleStarter and not off SHORTCUTS directly: it is the one place a starter's text is
+      // resolved, and the one place it is written in the form the harness under it understands —
+      // codex takes `$ponytail` where claude takes `/ponytail`.
+      // The pane's own harness, not the member's name: the two agree on every ordinary press, and
+      // where they do not it is the pane that is about to read this.
+      const text = roleStarter({at: at},
+                               (typeof agentOf === 'function' && agentOf(paneId)) || member.name);
       // Recorded whether or not there is text for it today. The chip is edited in one place, so a
       // starter with nothing written under it now is one a restart should still open with once
       // somebody writes it — and a tile's members are named after the tile, so the pane's own name
@@ -190,22 +283,35 @@
     // One pane has landed for a launcher intent. Called from openPendingStart, which owns the
     // "the poll has seen it" half; this owns what the tile asked for.
     async function launcherLanded(a, ql) {
-      // A `run`: the pane is a shell, and the command is what the tile is for. Through sendTextTo
-      // rather than the socket directly, so the arbitration guard, the chunk cap and the record of
-      // what the user sent all apply — this *is* the user typing a command, by proxy.
-      if (ql.command) {
+      // A `run` or a `term`: the pane is a shell, and a `run`'s command is what the tile is for.
+      // Through sendTextTo rather than the socket directly, so the arbitration guard, the chunk cap
+      // and the record of what the user sent all apply — this *is* the user typing a command, by
+      // proxy. Read off the tile's own action rather than off whether the intent carries a command:
+      // a `term` carries none by definition, and testing for the text sent it down the agent path,
+      // where it was adopted into a batch that does not exist.
+      if (launcherIsTerm(ql.tile)) {
         openTerminal(a.pane_id);
-        sendTextTo(a.pane_id, ql.command);
+        if (ql.command) sendTextTo(a.pane_id, ql.command);
         // The same note sendText makes for anything typed at a shell, so the command shows up in
         // the terminal's own history. A launcher press is still a command the user ran.
-        if (typeof noteTermCommand === 'function' && isShell(a.pane_id)) noteTermCommand(ql.command);
-        showSpawnStatus(`${ql.tile.label} — running.`, 'success');
+        if (ql.command && typeof noteTermCommand === 'function' && isShell(a.pane_id)) {
+          noteTermCommand(ql.command);
+        }
+        showSpawnStatus(ql.command ? `${ql.tile.label} — running.` : `${ql.tile.label} opened.`,
+                        'success');
         return;
       }
       const batch = ql.batch;
       // A batch cancelled or superseded while this start was in flight. The pane is real and stays;
-      // it is simply not adopted into a grouping that no longer exists.
-      if (!batch || batch !== launcherLive) { openTerminal(a.pane_id); return; }
+      // it is simply not adopted into a grouping that no longer exists. Said out loud rather than
+      // returned from quietly: the card at the foot is still spinning on this start, and nothing
+      // else is coming to stop it.
+      if (!batch || batch !== launcherLive) {
+        openTerminal(a.pane_id);
+        showSpawnStatus(`${a.label || a.agent || 'Session'} started — on its own, the launch it `
+                        + 'belonged to is over.', 'warning');
+        return;
+      }
       batch.panes.push(a);
       // Its first prompt, as soon as it is up. `agent start` has already blocked until herdr saw
       // the pane interactively ready, so there is nothing here to wait for — and waiting until the
@@ -221,7 +327,13 @@
         return;
       }
       const conv = launcherMakeConv(batch);
-      if (!conv) { openTerminal(a.pane_id); return; }
+      // At the conversation ceiling. launcherMakeConv has already said why in a toast; this is the
+      // other half of it, because the card is still spinning on a start that has in fact landed.
+      if (!conv) {
+        openTerminal(a.pane_id);
+        showSpawnStatus(`${batch.tile.label} started — ungrouped.`, 'warning');
+        return;
+      }
       renderConversations();
       openConversation(conv.id);
       if (launcherWantsArb(batch.tile)) return launcherAppoint(batch, conv);
@@ -271,7 +383,10 @@
       // conversation carrying it would show its brief as a third voice in the thread.
       const inside = batch.panes.slice(0, (batch.tile.members || []).length);
       const conv = {
-        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        // A bot's conversation is found by its id rather than looked up by name, on every browser
+        // and after every restart — so the id is the bot's own and not this press's.
+        id: batch.tile.bot ? launcherBotConvId(batch.tile.bot)
+          : 'c_' + Math.random().toString(36).slice(2, 10),
         name: name, created: Date.now(), members: inside.map(convMemberOf),
       };
       saveConvIndex([conv].concat(items));

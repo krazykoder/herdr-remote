@@ -45,7 +45,10 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
       setItem: (k, v) => { store[k] = String(v); },
     },
     window: {}, console,
-    clearTimeout() {}, setTimeout: () => 1,
+    // Captured rather than dropped: the status card's busy state ends on a timer, and a test
+    // that cannot fire it cannot see the one state that has no other way out.
+    clearTimeout() { g.timer = null; },
+    setTimeout: (fn) => { g.timer = fn; return 1; },
     ws: {send: s => sent.push(JSON.parse(s))},
     agents: live,
     shells: [],
@@ -71,6 +74,17 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     // conversation_store's, which this slice does not load. It answers what a pane was started
     // as; duplicating is meant to carry that, not drop it.
     convStarterOf: () => starter,
+    // agent_configs.js's one question, stubbed to the aliases this relay still offers.
+    agentConfigLive: (id, kind) => (options && (options.configs || [])
+      .some(c => c.id === id && c.kind === kind)),
+    showToast: t => calls.push(['toast', t]),
+    syncStartProjectBadge() {}, renderStartRoles() {}, renderStartAgents() {},
+    restoreStartChoice() {}, startRoles: () => [],
+    // What submitStart reaches for outside this module: the role row, the opening prompt that
+    // goes with it, and the pane a swap spends on the way out.
+    startRoleOf: () => ({at: 'architect', role: 'architect'}),
+    roleStarter: () => '', NO_STARTER: 'none', startMode: 'agent',
+    endPane: id => { calls.push(['end', id]); return true; },
   };
   const ctx = vm.createContext(g);
   vm.runInContext(PAIRS_PURE, ctx);
@@ -218,4 +232,114 @@ test('the dialog opens on a starter until one is deliberately taken off', () => 
     options: {roles: ['architect'], agents: ['claude']}});
   gone.run("openStartDialog('proj')");
   assert.equal(gone.run('startRolePick'), '');
+});
+
+// --- an alias carried, and an alias gone ---
+
+const OCLAUDE = {agents: ['claude', 'codex'], roles: ['architect', 'reviewer', 'agent'],
+                 unattended: ['claude', 'codex'],
+                 configs: [{id: 'oclaude1', label: 'oclaude1', kind: 'claude'}]};
+
+test('a duplicate carries the agent config the pane was started under', () => {
+  // Otherwise the copy is a second pane wearing the first one's name on a different endpoint,
+  // which is the one way this item could lie about what it did.
+  const {sent, run} = startCtx({pane: {...PANE, config: 'oclaude1'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.equal(sent[0].config, 'oclaude1');
+  assert.equal(sent[0].name, 'claude', 'and the harness is still what goes on the wire');
+});
+
+test('a duplicate of a config the relay has dropped asks rather than falls back', () => {
+  // Coming up on the stock endpoint under the same name is the one outcome worth refusing: the
+  // reader would have no way to tell the copy apart from the pane it came from.
+  const {sent, calls, run} = startCtx({pane: {...PANE, config: 'gone'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.deepEqual(sent, [], 'nothing is started');
+  assert.ok(calls.some(c => c[0] === 'toast' && /gone/.test(c[1])), 'and it says why');
+});
+
+test('a duplicate comes up as unattended when the pane it copies was on a config', () => {
+  // The snapshot does not say how the original was started, so the config is the whole of what is
+  // known about it — and it is the same thing the Start dialog defaults on.
+  const {sent, run} = startCtx({pane: {...PANE, config: 'oclaude1'}, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.equal(sent[0].unattended, true);
+});
+
+test('a duplicate of a stock pane still asks before it acts', () => {
+  const {sent, run} = startCtx({pane: PANE, options: OCLAUDE});
+  run('duplicatePane()');
+  assert.ok(!('unattended' in sent[0]));
+});
+
+test('the box is offered only where the relay has a flag for the harness', () => {
+  const {run} = startCtx({options: Object.assign({}, OCLAUDE, {unattended: []})});
+  assert.equal(run("startUnattendedOffered('claude')"), false);
+  const {run: run2} = startCtx({options: OCLAUDE});
+  assert.equal(run2("startUnattendedOffered('claude')"), true);
+  assert.equal(run2("startUnattendedOffered('pi')"), false);
+});
+
+test('a busy status card gives up waiting rather than spinning for ever', () => {
+  // Every other state on this card ends by timing out. Busy ends only when the pane it is waiting
+  // for turns up in a snapshot — so a start whose pane never arrives left a spinner running until
+  // the page was reloaded, over a session that had in fact come up and was working.
+  const {el, g, run} = startCtx();
+  run('showSpawnStatus("Session started — opening…", "busy")');
+  assert.equal(el('spawnSpinner').hidden, false);
+  assert.equal(el('spawnStatus').style.display, 'flex');
+  assert.ok(g.timer, 'busy arms a timer of its own');
+  g.timer();
+  assert.equal(el('spawnSpinner').hidden, true, 'and stops spinning when it fires');
+  assert.match(el('spawnStatusText').textContent, /no pane has appeared yet/);
+  // Which is an ordinary transient state from there: the next timer is the one that hides it.
+  g.timer();
+  assert.equal(el('spawnStatus').style.display, 'none');
+});
+
+test('a card that resolves normally never fires the give-up timer', () => {
+  const {el, g, run} = startCtx();
+  run('showSpawnStatus("Starting claude…", "busy")');
+  run('showSpawnStatus("Solo started.", "success")');
+  assert.equal(el('spawnSpinner').hidden, true);
+  g.timer();
+  assert.equal(el('spawnStatus').style.display, 'none', 'success times out to hidden, not to a warning');
+});
+
+
+// --- Restart as… ------------------------------------------------------------------------------
+//
+// A pane runs one CLI, so replacing a member's harness costs the session it is running. What is
+// under test is *when* that is spent: at the submit, not at the menu that opened the dialog.
+
+function swapCtx() {
+  const c = startCtx();
+  c.el('startPlacement').value = 'new_tab';
+  c.el('startTarget').value = 'w1';
+  c.el('startName').value = '';
+  c.run("startProjectId = 'proj'; startAgentPick = 'codex';" +
+        "startIntent = {conv: 'c1', replace: 'k1', endFirst: 'w1:p1'};");
+  return c;
+}
+
+test('a swap ends the pane it replaces when the start is submitted, not before', () => {
+  const c = swapCtx();
+  assert.deepEqual(c.calls, [], 'opening the dialog spends nothing');
+  c.run('submitStart()');
+  assert.deepEqual(c.calls, [['end', 'w1:p1']]);
+  assert.equal(c.sent.length, 1, 'and the start goes out behind it');
+  assert.equal(c.sent[0].type, 'start_agent');
+});
+
+test('a dialog closed without starting leaves the session running', () => {
+  const c = swapCtx();
+  c.run('closeStart()');
+  assert.deepEqual(c.calls, [], 'nothing was ended, so there is nothing to have paused');
+});
+
+test('a second submit does not quit a pane id herdr may have recycled', () => {
+  const c = swapCtx();
+  c.run('submitStart()');
+  c.run("document.getElementById('startSubmit').disabled = false; submitStart()");
+  assert.deepEqual(c.calls, [['end', 'w1:p1']], 'the pane is spent once');
 });

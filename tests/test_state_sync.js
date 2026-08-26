@@ -78,10 +78,11 @@ test('the module evaluates with no localStorage, no socket and no DOM', () => {
 
 // --- the allowlist is the boundary ------------------------------------------
 
-test('exactly five documents sync, and none of them is a secret', () => {
+test('exactly six documents sync, and none of them is a secret', () => {
   const {STATE_DOCS} = boot();
   assert.deepEqual(Object.keys(STATE_DOCS).sort(),
-                   ['conv_hidden', 'conv_view', 'conversations', 'launcher', 'pairs']);
+                   ['agent_configs', 'conv_hidden', 'conv_view', 'conversations',
+                    'launcher', 'pairs']);
   for (const [name, d] of Object.entries(STATE_DOCS)) {
     assert.match(d.key, /^herdr_/, `${name} should mirror a herdr_ key`);
     assert.doesNotMatch(d.key, /token|relay_url|theme|font/,

@@ -15,6 +15,7 @@ from start_agent import (
     agent_name_from_label,
     agent_init_prompts,
     agent_start_args,
+    unattended_kinds,
     claimable_spacer,
     dig,
     SPACER_LABEL,
@@ -27,6 +28,7 @@ from start_agent import (
     unique_agent_name,
     validate_pane_label,
     validate_start_request,
+    validate_start_ref,
 )
 
 PROJECTS = [
@@ -129,6 +131,22 @@ class ValidateBasicsTests(unittest.TestCase):
         _, err = validate_start_request(msg, PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "agent not in allowlist")
 
+    def test_unattended_is_off_unless_it_is_asked_for(self):
+        plan, err = validate_start_request(start(), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertFalse(plan["unattended"])
+        plan, err = validate_start_request(
+            start(unattended=True), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertTrue(plan["unattended"])
+
+    def test_a_kind_with_no_flag_for_it_is_refused_rather_than_started_interactive(self):
+        # The checkbox and the session have to agree. A start that dropped this would come up
+        # asking before every tool call, with nobody on the other end to answer.
+        _, err = validate_start_request(
+            start(name="pi", unattended=True), PROJECTS, LIVE, ALLOWED)
+        self.assertEqual(err, "that agent has no unattended flag")
+
     def test_unknown_role(self):
         _, err = validate_start_request(start(role="root"), PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "unknown role")
@@ -146,6 +164,14 @@ class ValidateBasicsTests(unittest.TestCase):
                              ("argv", ["sh"]), ("tab_id", "t1"), ("prompt", "hi")):
             _, err = validate_start_request(start(**{field: value}), PROJECTS, LIVE, ALLOWED)
             self.assertIn("unexpected field", err, field)
+
+    def test_a_start_may_name_itself(self):
+        # `ref` is the client's own id for this start, carried back on the pane it makes. An
+        # unlisted key rejects the whole message rather than being ignored, so leaving it out of
+        # BASE_FIELDS refused every "Start again" a conversation makes.
+        plan, err = validate_start_request(start(ref="r_abc"), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertIsNotNone(plan)
 
     def test_placement_field_for_the_wrong_placement(self):
         _, err = validate_start_request(start(split_from="w1:p1"), PROJECTS, LIVE, ALLOWED)
@@ -261,6 +287,28 @@ class ArgsTests(unittest.TestCase):
         self.assertEqual([], agent_init_prompts("claude"))
         self.assertEqual([], agent_init_prompts("nonesuch"))
 
+    def test_an_unattended_start_carries_the_flag_its_harness_calls_it(self):
+        # Two harnesses, two spellings, and the client names neither: it asks for the state and the
+        # argv is decided here.
+        self.assertEqual(
+            agent_start_args("claude", "Architect 1", "w3:p1", unattended=True)[-2:],
+            ("--", "--dangerously-skip-permissions"))
+        self.assertEqual(
+            agent_start_args("codex", "Architect 1", "w3:p1", unattended=True)[-2:],
+            ("--", "--dangerously-bypass-approvals-and-sandbox"))
+        self.assertEqual(sorted(unattended_kinds()), ["claude", "codex"])
+
+    def test_an_unattended_start_keeps_the_argv_its_kind_already_needed(self):
+        # agy is started this way whether or not anyone asked, because its own prompt is invisible
+        # to the relay. Asking on top of that must not lose the flag it already had.
+        args = agent_start_args("agy", "Architect 1", "w3:p1", unattended=True)
+        self.assertEqual(args[-2:], ("--", "--dangerously-skip-permissions"))
+        self.assertEqual(args.count("--dangerously-skip-permissions"), 1)
+
+    def test_a_start_nobody_asked_that_of_is_unchanged(self):
+        self.assertNotIn("--", agent_start_args("claude", "Architect 1", "w3:p1"))
+        self.assertNotIn("--", agent_start_args("codex", "Architect 1", "w3:p1"))
+
     def test_pane_split_goes_right_at_the_project_cwd(self):
         args = pane_split_args("w1:p2", "/work/charts")
         self.assertEqual(args[:3], ("pane", "split", "w1:p2"))
@@ -348,6 +396,36 @@ class ClientLabelTests(unittest.TestCase):
     def test_control_characters_are_refused(self):
         _, err = validate_start_request(start(label="a\nb"), PROJECTS, LIVE, ALLOWED)
         self.assertEqual(err, "label contains control characters")
+
+
+class StartRefTests(unittest.TestCase):
+    """The client's own id for a start, so the pane it makes can be found again by equality.
+
+    A reload throws away the relay's answer, and a browser with nothing but the pane's name and
+    directory to match on cannot tell two colleagues in one checkout apart. This is what it names
+    the start with instead — and it lands on every other client's snapshot, so it is bounded here.
+    """
+
+    def test_absent_is_not_an_error(self):
+        self.assertEqual(validate_start_ref(None), ("", ""))
+        self.assertEqual(validate_start_ref(""), ("", ""))
+        self.assertEqual(validate_start_ref("   "), ("", ""))
+
+    def test_an_ordinary_token_passes(self):
+        self.assertEqual(validate_start_ref("rm8x2k_9-a"), ("rm8x2k_9-a", ""))
+
+    def test_not_a_string(self):
+        self.assertEqual(validate_start_ref(7)[1], "ref must be a string")
+
+    def test_bounded(self):
+        self.assertEqual(validate_start_ref("r" * 65)[1], "ref is longer than 64 characters")
+
+    def test_punctuation_and_control_characters_are_refused(self):
+        # It is echoed to every client on the snapshot, so the alphabet is the guard rather than
+        # whatever each of them happens to do with the string.
+        for bad in ("a b", "a\nb", "a;b", "<script>", "a\x7f"):
+            self.assertEqual(validate_start_ref(bad)[1],
+                             "ref may only hold letters, digits, '-' and '_'", bad)
 
 
 class DigTests(unittest.TestCase):

@@ -24,6 +24,12 @@
       // reason `conversations` does: a tile built while the relay was unreachable is a row this
       // browser made and nothing else has, and the adopt on reconnect would otherwise drop it.
       launcher:      { key: 'herdr_launcher', pendingKey: 'herdr_launcher_pending' },
+      // Which model `oclaude1` runs and which of the relay's key variables it draws from is an
+      // answer about the work, not about this screen — and a phone starting it against a
+      // different provider than the desktop did is the confusion this store exists to prevent.
+      // It carries no secret: the names of variables only, and the relay reads its own
+      // environment for the rest.
+      agent_configs: { key: 'herdr_agent_configs' },
     };
 
     // One message per document per burst. Renaming a pair is one edit to the user and several
@@ -73,6 +79,7 @@
       conv_view:     { map: true },
       conv_hidden:   { map: true },
       launcher:      { list: 'items' },
+      agent_configs: { list: 'aliases' },
     };
 
     // The relay's document with locally-created rows appended — never a general union. `onlyExtras`
@@ -265,6 +272,7 @@
       conv_view:     ['renderConvBar', 'renderConvView'],
       conv_hidden:   ['renderConvManage', 'renderConvView'],
       launcher:      ['renderLauncher'],
+      agent_configs: ['renderAgentConfigs'],
     };
 
     function stateSyncRerender(name) {

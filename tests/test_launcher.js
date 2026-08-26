@@ -31,8 +31,10 @@ const NAMES = ['LAUNCHER_KEY', 'LAUNCHER_PENDING_KEY', 'LAUNCHER_MAX', 'LAUNCHER
                'launcherArbMsg',
                'launcherWantsConv', 'launcherWantsArb',
                'LAUNCHER_DEFAULT_AT', 'launcherTag', 'launcherNoun', 'launcherAutoName',
-               'launcherClean', 'launcherMemberName', 'launcherNamed',
-               'LAUNCHER_ARB_SLOTS', 'launcherArbOrder'];
+               'launcherClean', 'launcherMemberName', 'launcherNamed', 'launcherUnattended',
+               'launcherSolo',
+               'LAUNCHER_ARB_SLOTS', 'launcherArbOrder',
+               'launcherIsBot', 'launcherBotConvId', 'launcherWithBots'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
 
@@ -135,6 +137,40 @@ test('a member with its own label carries it, and nothing empty is ever sent', (
   // one from an absent it.
   const bare = launcherSpawnMsg(spawnTile({slot: ''}), {name: 'codex', role: 'reviewer'});
   assert.ok(!('slot' in bare));
+});
+
+test('a custom member carries its provider-backed config id', () => {
+  const {launcherSpawnMsg} = pure();
+  const tile = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.equal(launcherSpawnMsg(tile, tile.members[0]).config, 'oclaude');
+});
+
+test('a member on an agent config is started without approval prompts, and a stock one is not', () => {
+  // The default, and the whole of why it is a default: an alias names an endpoint the user set up
+  // for work that runs without them, and a stock harness is the one they are sitting in front of.
+  const {launcherSpawnMsg, launcherUnattended} = pure();
+  const custom = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.equal(launcherSpawnMsg(custom, custom.members[0]).unattended, true);
+  const stock = spawnTile({members: [{name: 'claude'}]});
+  assert.ok(!('unattended' in launcherSpawnMsg(stock, stock.members[0])),
+            'off is the relay default, and saying so on the wire says nothing');
+  // Answered either way, the answer wins — including a stock member somebody wants left alone.
+  assert.equal(launcherUnattended({name: 'claude', config: 'oclaude', unattended: false}), false);
+  assert.equal(launcherUnattended({name: 'claude', unattended: true}), true);
+});
+
+test('a tile says on its face that it starts something that will not ask', () => {
+  // Read off the members every time rather than stored: a roster edited from a custom agent to a
+  // stock one stops saying it, with no second field to keep in step.
+  const {launcherSolo} = pure();
+  assert.equal(launcherSolo(spawnTile({members: [{name: 'claude', config: 'oclaude'}]})), true);
+  assert.equal(launcherSolo(spawnTile()), false);
+  assert.equal(launcherSolo(spawnTile({members: [{name: 'claude', unattended: true}]})), true);
+  assert.equal(launcherSolo(
+    spawnTile({members: [{name: 'claude', config: 'oclaude', unattended: false}]})), false);
+  // The arbitrator is started by the same message as the rest of the roster, so it counts too.
+  assert.equal(launcherSolo(spawnTile({arbitrator: {name: 'claude', config: 'oclaude'}})), true);
+  assert.equal(launcherSolo(runTile()), false, 'a terminal tile starts no agent at all');
 });
 
 test('a role never becomes a pane label, however short it is', () => {
@@ -262,6 +298,15 @@ test('a spawn naming an agent this relay does not start is disabled and names it
   const gate = launcherGate(spawnTile(), env({startOptions: {agents: ['claude'], terminal: true}}));
   assert.equal(gate.ok, false);
   assert.match(gate.reason, /codex/);
+});
+
+test('a custom tile is disabled when its provider-backed config is gone', () => {
+  const {launcherGate} = pure();
+  const tile = spawnTile({members: [{name: 'claude', config: 'oclaude'}]});
+  assert.match(launcherGate(tile, env()).reason, /oclaude.*not available/);
+  const live = env({startOptions: {agents: ['claude', 'codex'], terminal: true,
+                                   configs: [{id: 'oclaude', kind: 'claude'}]}});
+  assert.equal(launcherGate(tile, live).ok, true);
 });
 
 test('a relay that advertises no start options disables every tile', () => {
@@ -530,10 +575,14 @@ test('the preview shows the payload, because the label is not evidence of it', (
 
 // --- the store and its outbox -----------------------------------------------
 
+// The bots are on every read, so every assertion about "what is in the launcher" is about what
+// the user put there. The bots have their own tests below.
+const mine = items => items.filter(t => !t.bot);
+
 test('a saved tile is marked for sync and enters the outbox', () => {
   const s = booted();
   s.putLauncherTile(runTile());
-  assert.deepEqual(s.loadLauncher().map(t => t.id), ['t1']);
+  assert.deepEqual(mine(s.loadLauncher()).map(t => t.id), ['t1']);
   assert.deepEqual(s.pending(), ['t1'], 'the relay has never seen it, so the merge must carry it');
   assert.deepEqual(s.marked, ['launcher']);
 });
@@ -542,7 +591,7 @@ test('a tile deleted before it ever synced leaves the outbox with it', () => {
   const s = booted();
   s.putLauncherTile(runTile());
   s.removeLauncherTile('t1');
-  assert.deepEqual(s.loadLauncher(), []);
+  assert.deepEqual(mine(s.loadLauncher()), []);
   assert.deepEqual(s.pending(), [], 'an outbox that only grows is a key that never stops');
 });
 
@@ -550,7 +599,7 @@ test('editing an existing tile replaces it rather than appending a second', () =
   const s = booted();
   s.putLauncherTile(runTile());
   s.putLauncherTile(runTile({label: 'Renamed'}));
-  const items = s.loadLauncher();
+  const items = mine(s.loadLauncher());
   assert.equal(items.length, 1);
   assert.equal(items[0].label, 'Renamed');
 });
@@ -558,9 +607,9 @@ test('editing an existing tile replaces it rather than appending a second', () =
 test('reordering moves one place and refuses to fall off either end', () => {
   const s = booted();
   s.saveLauncher([runTile({id: 'a'}), runTile({id: 'b'}), runTile({id: 'c'})]);
-  assert.deepEqual(s.moveLauncherTile('c', -1).map(t => t.id), ['a', 'c', 'b']);
-  assert.deepEqual(s.moveLauncherTile('a', -1).map(t => t.id), ['a', 'c', 'b']);
-  assert.deepEqual(s.moveLauncherTile('b', 1).map(t => t.id), ['a', 'c', 'b']);
+  assert.deepEqual(mine(s.moveLauncherTile('c', -1)).map(t => t.id), ['a', 'c', 'b']);
+  assert.deepEqual(mine(s.moveLauncherTile('a', -1)).map(t => t.id), ['a', 'c', 'b']);
+  assert.deepEqual(mine(s.moveLauncherTile('b', 1)).map(t => t.id), ['a', 'c', 'b']);
 });
 
 test('a store with no localStorage at all reads empty instead of throwing', () => {
@@ -568,8 +617,50 @@ test('a store with no localStorage at all reads empty instead of throwing', () =
     localStorage: {getItem() { throw new Error('private mode'); },
                    setItem() { throw new Error('private mode'); }}});
   vm.runInContext(PRELUDE + PURE + STORE + '\n;__out = {loadLauncher, saveLauncher};', ctx);
-  assert.deepEqual(ctx.__out.loadLauncher(), []);
+  // The bots still, because they are not stored anywhere to be missing from.
+  assert.deepEqual(mine(ctx.__out.loadLauncher()), []);
   assert.doesNotThrow(() => ctx.__out.saveLauncher([runTile()]));
+});
+
+// --- bots -------------------------------------------------------------------
+
+test('a bot is there before anything has been saved, and it is one agent', () => {
+  const s = booted();
+  const bot = s.loadLauncher().find(t => t.bot === 'jarvis');
+  assert.ok(bot, 'seeded rather than made: the row exists before anyone presses anything');
+  assert.equal(bot.label, 'Jarvis');
+  assert.equal(bot.action, 'spawn');
+  assert.equal(bot.members.length, 1);
+  const {launcherValid} = pure();
+  assert.equal(launcherValid(bot), '');
+  assert.equal(launcherValid(Object.assign({}, bot, {members: []})), 'A bot has exactly one agent');
+  assert.equal(launcherValid(Object.assign({}, bot, {action: 'run', command: 'ls'})),
+               'A bot starts an agent');
+});
+
+test('a bot cannot be deleted, and what was chosen for it survives the refusal', () => {
+  const s = booted();
+  const bot = s.loadLauncher().find(t => t.bot === 'jarvis');
+  s.putLauncherTile(Object.assign({}, bot, {members: [{name: 'codex'}], project_id: 'p1'}));
+  s.removeLauncherTile(bot.id);
+  const back = s.loadLauncher().find(t => t.bot === 'jarvis');
+  assert.ok(back, 'the row is the only way into a thread that may have months in it');
+  assert.equal(back.members[0].name, 'codex',
+               'and it is the edited one, not the seed put back over it');
+  assert.equal(back.project_id, 'p1');
+});
+
+test('a bot keeps its name where an ordinary tile is tagged per press', () => {
+  const {launcherNamed, launcherBotConvId} = pure();
+  const bot = {id: 'ql_bot_jarvis', bot: 'jarvis', label: 'Jarvis', action: 'spawn',
+               project_id: 'p1', members: [{name: 'claude'}]};
+  const named = launcherNamed(bot, 'ignored');
+  assert.equal(named.label, 'Jarvis', 'one of it, so nothing to tell two presses apart');
+  assert.equal(named.members[0].label, 'Jarvis');
+  // The ordinary tile, for contrast: the tag is what stops two launches wearing one name.
+  assert.match(launcherNamed(spawnTile(), 'Nightly').label, /^Nightly [a-z0-9]{5}$/);
+  assert.equal(launcherBotConvId('jarvis'), 'c_bot_jarvis',
+               'derived, so a browser that has never seen this bot finds the same thread');
 });
 
 test('a terminal tile is a run without the command, and is pressable with none', () => {

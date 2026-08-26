@@ -32,6 +32,7 @@ import threading
 import time
 
 from arbitrator import MAX_INSTRUCTION, validate
+from start_agent import WARMUP_TEXT
 from pane_summary import ends_turn
 
 log = logging.getLogger("herdr-relay")
@@ -235,13 +236,14 @@ def fingerprint(pane):
 # Added to `sessions` after the first release — see the ALTER in `__init__`.
 ADDED_COLUMNS = (("warmup", "INTEGER NOT NULL DEFAULT 0"),)
 
-# What a cold agent is asked before it is asked to work, and which harnesses get it whether or not
-# anybody asked. A first prompt into an agent that has been sitting idle for a long time is often
-# answered with nothing at all — the harness wakes up, redraws, and the turn ends without a reply —
-# and the arbitrator then reports, correctly and uselessly, that the member said nothing. agy does
-# this reliably enough to be the default; every other harness is a checkbox, off.
-WARMUP_TEXT = ("Hi — are you ready for work? I will send you instructions shortly. "
-               "Reply with one short line and do nothing else.")
+# Which harnesses are warmed whether or not anybody asked. A first prompt into an agent that has
+# been sitting idle for a long time is often answered with nothing at all — the harness wakes up,
+# redraws, and the turn ends without a reply — and the arbitrator then reports, correctly and
+# uselessly, that the member said nothing. agy does this reliably enough to be the default; every
+# other harness is a checkbox, off.
+#
+# The line itself lives in start_agent, which is also where an agy start sends it: one wording, so
+# an agent woken at start and an agent woken on resume are being asked the same question.
 WARM_ALWAYS = ("agy",)
 # How long a session has to have been stopped before resuming warms its members again. A pause over
 # lunch is a cold agent by the time it is picked up, which is the same problem as a cold start.

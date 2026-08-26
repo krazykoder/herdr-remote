@@ -38,7 +38,10 @@
     // What the tile calls the thing it will make.
     function launcherKindLine(tile) {
       const many = (tile.members || []).length > 1;
-      const kind = launcherIsTerm(tile) ? 'Terminal'
+      // A bot before anything else it might also be. What matters about this row is not that it
+      // starts one session — every one-agent tile does — it is that it starts *the same* one.
+      const kind = launcherIsBot(tile) ? 'Bot'
+        : launcherIsTerm(tile) ? 'Terminal'
         : launcherWantsArb(tile) ? 'Arbitrated' : many ? 'Conversation' : 'Session';
       // The bubbles rather than the robot as soon as there is more than one agent on the tile:
       // what this press makes is a room with them in it, and that is what the reader wants to
@@ -69,15 +72,17 @@
       if (!tile || launcherIsTerm(tile)) {
         return escapeHtml(launcherPreview(tile));
       }
-      const members = (tile.members || []).map(m => (m && m.name) || '?');
-      const badges = members.map(k => typeof agentBadge === 'function'
-        ? agentBadge(k) : ` <span class="badge">${escapeHtml(k)}</span>`);
+      const members = (tile.members || []).map(m => m || {});
+      const badges = members.map(m => typeof configBadge === 'function'
+        ? configBadge(m.name || '?', m.config)
+        : ` <span class="badge">${escapeHtml(m.name || '?')}</span>`);
       // The arbitrator is named apart from the two rather than joined into them: it is not a third
       // participant, it is the one deciding between the other two.
       return badges.join(' <span class="launcher-plus">+</span>')
         + (launcherWantsArb(tile)
           ? ` <span class="launcher-plus">\u2696</span>`
-            + (typeof agentBadge === 'function' ? agentBadge(tile.arbitrator.name)
+            + (typeof configBadge === 'function'
+               ? configBadge(tile.arbitrator.name, tile.arbitrator.config)
                : ` <span class="badge">${escapeHtml(tile.arbitrator.name)}</span>`)
           : '');
     }
@@ -92,11 +97,26 @@
       // in step 4 shows the whole of it; two lines here is what fits without the grid going ragged.
       const payload = launcherPreview(tile);
       const badge = gate.badge ? `<span class="launcher-badge">${escapeHtml(gate.badge)}</span>` : '';
+      // On the tile as well as over the band. A tile is dragged between bands by editing it, and
+      // the one thing that must never be true of this mark is that it can be missed.
+      const insecure = launcherInsecure(tile)
+        ? '<span class="launcher-badge insecure" title="The providers behind this tile do not'
+          + ' protect what is sent to them">insecure</span>'
+        : '';
+      // The other thing a tile can be that its name does not say. Beside the insecure mark and in
+      // the same shape: both are facts about what pressing it does, and neither is a gate.
+      const solo = launcherSolo(tile)
+        ? '<span class="launcher-badge solo" title="Starts without approval prompts — it runs'
+          + ' tools without asking">skip approvals</span>'
+        : '';
       // aria-disabled and not the `disabled` attribute: a disabled button is skipped by the
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
       // pressed is the one thing its reader most needs. It is still not pressable — nothing is
       // wired to it yet, and step 4's handler returns on a closed gate.
-      return `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
+      // The tile and its Edit are siblings inside one grid cell — see .launcher-tile-wrap for why
+      // Edit cannot be inside the button it edits.
+      return `<div class="launcher-tile-wrap">`
+        + `<button class="launcher-tile" data-action="${escapeHtml(tile.action)}"`
         + ` data-tile="${escapeHtml(tile.id)}" aria-disabled="${gate.ok ? 'false' : 'true'}"`
         // A gone Project is the one closed gate the presser can fix, so this tile is still worth
         // a pointer: the press opens it on that field rather than reporting a dead end.
@@ -109,8 +129,19 @@
         + `<span class="launcher-name">${escapeHtml(tile.label)}`
         + `${launcherProjectBadge(tile)}</span>`
         + (payload ? `<span class="launcher-payload">${launcherPayloadHtml(tile)}</span>` : '')
-        + badge
-        + '</button>';
+        // One row, and never a column: a tile can carry all three at once, and stacked they push
+        // the payload out of the tile. The row is what makes them small enough to sit together.
+        + (insecure || solo || badge
+          ? `<span class="launcher-badges">${insecure}${solo}${badge}</span>` : '')
+        + '</button>'
+        // Straight to this tile's form, without going through the Edit sheet to find it again.
+        // Drawn on every tile including a gated one: a tile that cannot be pressed is exactly the
+        // one somebody has come to fix.
+        + `<button class="launcher-edit" data-tile="${escapeHtml(tile.id)}"`
+        + ` onclick="launcherEditFromTile(this.dataset.tile)"`
+        + ` title="Edit ${escapeHtml(tile.label)}"`
+        + ` aria-label="Edit the tile ${escapeHtml(tile.label)}">Edit</button>`
+        + '</div>';
     }
 
     // The tiles, in bands. Manual order inside a band, Project order between them: the user
@@ -123,15 +154,30 @@
     function launcherGroups(tiles) {
       const out = [];
       const band = (label, list) => { if (list.length) out.push({label: label, tiles: list}); };
-      band('Templates', tiles.filter(t => !t.project_id));
-      projects.forEach(p => band(p.label || p.id, tiles.filter(t => t.project_id === p.id)));
+      // Insecure first, and out of every other band: the whole point of the mark is that it is
+      // read before the tile is pressed, and a warning mixed in among the Project it happens to
+      // belong to is one more badge in a grid of badges.
+      const safe = tiles.filter(t => !launcherInsecure(t));
+      band('[insecure]', tiles.filter(launcherInsecure));
+      // Bots above the rest, and out of the Project bands: a bot is not one of the things the
+      // reader is choosing between — it is the one row that is always the same room, and it is
+      // read past rather than read through.
+      band('Bots', safe.filter(launcherIsBot));
+      const rest = safe.filter(t => !launcherIsBot(t));
+      band('Templates', rest.filter(t => !t.project_id));
+      projects.forEach(p => band(p.label || p.id, rest.filter(t => t.project_id === p.id)));
       // Tiles pointing at a Project this relay does not have. Last, and still drawn: they are the
       // broken ones, each already wearing its own badge, and a band that hid them would be the one
       // place the problem is fixable and the last place it is mentioned.
       const known = new Set(projects.map(p => p.id));
-      band('Missing Project', tiles.filter(t => t.project_id && !known.has(t.project_id)));
+      band('Missing Project', rest.filter(t => t.project_id && !known.has(t.project_id)));
       return out;
     }
+
+    // Compact is two lines a tile: the kind's glyph and the name, and the badges under them. The
+    // payload as prose goes — a keypad of twenty tiles is a page of scrolling at full size, and the
+    // reader of one already knows what their own tiles run. See compactButton in utils.js.
+    const LAUNCHER_COMPACT_KEY = 'herdr_launcher_compact';
 
     function renderLauncher() {
       const el = document.getElementById('launcher');
@@ -146,9 +192,14 @@
       // Two controls, and + is always the right-hand one. Adding a tile used to be reachable only
       // through Edit once the first tile existed — an entry point that moves as soon as it has
       // been used once, which is the shape of a button people stop finding.
+      const compact = compactOn(LAUNCHER_COMPACT_KEY);
+      // The class is set from the document every draw, and not toggled where the button is: a
+      // repaint from another browser's tile arriving would otherwise drop it.
+      el.classList.toggle('compact', compact);
       el.innerHTML = '<div class="section-header">Launcher'
         + (tiles.length
-          ? '<button class="section-action" onclick="openLauncherEdit()"'
+          ? compactButton(LAUNCHER_COMPACT_KEY, 'renderLauncher', 'Compact tiles')
+            + '<button class="section-action" onclick="openLauncherEdit()"'
             + ' title="Edit, reorder and delete tiles" aria-label="Edit the launcher">Edit</button>'
           : '')
         + '<button class="section-action" onclick="openLauncherNew()"'
@@ -158,6 +209,9 @@
         + (groups.length > 1
           ? groups.map(g => `<div class="launcher-band">${escapeHtml(g.label)}</div>`
             + g.tiles.map(launcherTileHtml).join('')).join('')
-          : tiles.map(launcherTileHtml).join(''));
+          : tiles.map(launcherTileHtml).join(''))
+        // Under the tiles and inside the same section, because it is the launcher's own answer to
+        // "what can this press start" — not a seventh section with a tab of its own.
+        + (typeof agentConfigsHtml === 'function' ? agentConfigsHtml() : '');
       applySections();
     }

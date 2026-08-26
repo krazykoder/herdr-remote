@@ -27,6 +27,13 @@ const EXEC = src('launcher_exec.js');
 const NAMES = ['launcherPress', 'launcherConfirmLines', 'launcherFailed', 'launcherLanded',
                'saveLauncher', 'launcherGate'];
 
+// pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
+// enough to tell "the named one" from "some other one"; the third carries a slash, which is what
+// a codex member has to be handed as `$`.
+const CHIPS = [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
+               {at: 'implement', label: 'Implement', text: 'Proceed to implement.'},
+               {at: 'ponytail', label: 'Ponytail', text: '/ponytail\n/caveman'}];
+
 const PROJECTS = [{id: 'p1', label: 'herdr', host: 'local'},
                   {id: 'p2', label: 'mini', host: 'box'}];
 const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
@@ -37,7 +44,7 @@ const OPTIONS = {agents: ['claude', 'codex'], roles: ['agent'], terminal: true};
 // `answer` is what the person at the prompt does: false cancels, true accepts without typing a
 // name — which is a real answer, not a refusal — and a string is a name typed in.
 function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTIONS,
-                open = true, convs = [], arb = true} = {}) {
+                open = true, convs = [], arb = true, agents = []} = {}) {
   const sent = [];
   const log = [];
   const store = {};
@@ -63,8 +70,13 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     // pairs_pure's chip list, which is where a member's first prompt comes from. Two entries is
     // enough to tell "the named one" from "some other one".
     canonAt: at => at || '',
-    SHORTCUTS: [{at: 'architect', label: 'Architect prompt', text: '@architect-brief\n'},
-                {at: 'implement', label: 'Implement', text: 'Proceed to implement.'}],
+    // pairs_pure's, which resolves a chip's text *and* writes it the way the harness under it
+    // reads: codex takes `$ponytail` where claude takes `/ponytail`. Covered in tests/test_pairs.js.
+    roleStarter: (r, agent) => {
+      const text = ((CHIPS.find(x => x.at === (r || {}).at) || {}).text || '').trim();
+      return agent === 'codex' ? text.replace(/^\//gm, '$') : text;
+    },
+    SHORTCUTS: CHIPS,
     showToast: t => log.push(['toast', t]),
     showSpawnStatus: (t, s) => log.push(['status', t, s]),
     openTerminal: id => log.push(['openTerminal', id]),
@@ -77,8 +89,21 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     noteTermCommand: t => log.push(['noteTermCommand', t]),
     isShell: () => true,
     renderConversations: () => log.push(['renderConversations']),
+    renderLauncher: () => log.push(['renderLauncher']),
     convSetView: (a, id) => log.push(['convSetView', a.pane_id, id]),
     convMemberOf: a => ({key: 'k_' + a.pane_id, label: a.label}),
+    // conversation_pure's, in the shape the stub member keys above are made in. A bot finds the
+    // pane its thread is currently on by this and by nothing else.
+    convMemberKey: a => 'k_' + a.pane_id,
+    // The live board. Only a bot press reads it: every other path here starts something and waits
+    // for the pane to be handed back.
+    agents,
+    endPane: id => { log.push(['endPane', id]); return true; },
+    // shortcuts.js's note for a start that names itself, so a reload can find the pane again.
+    convRespawnRef: () => 'r_test',
+    rememberConvRespawn: (conv, key, ref) => log.push(['rememberConvRespawn', conv, key, ref]),
+    startPrompt: '',
+    startStarter: '',
     loadConvIndex: () => convs.slice(),
     saveConvIndex: items => { convs.length = 0; convs.push(...items); },
     stateSyncMark: () => {},
@@ -118,6 +143,11 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     // after the poll has seen it.
     land: pane => vm.runInContext('(async () => { const i = startIntent; startIntent = null;'
       + ' await launcherLanded(' + JSON.stringify(pane) + ', i.ql); })()', ctx),
+    // The same landing, for an intent read *before* something else cleared it — which is what a
+    // start still in flight when its batch ends looks like from here.
+    landIntent: (pane, intent) => vm.runInContext(
+      `(async () => { await launcherLanded(${JSON.stringify(pane)}, `
+      + `${JSON.stringify(intent.ql)}); })()`, ctx),
     fail: () => vm.runInContext('launcherFailed()', ctx),
     pressIn: (id, projectId, name) => vm.runInContext(
       `launcherPressIn(${JSON.stringify(id)}, ${JSON.stringify(projectId)}, `
@@ -128,12 +158,19 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
 
 const RUN = {id: 'ql_a', label: 'Tests', action: 'run', project_id: 'p1',
              command: 'npm test'};
+const TERM = {id: 'ql_term', label: 'Terminal', action: 'term', project_id: 'p1'};
 const ONE = {id: 'ql_b', label: 'Solo', action: 'spawn', project_id: 'p1',
              members: [{name: 'claude', role: 'agent'}]};
 const THREE = {id: 'ql_c', label: 'Trio', action: 'spawn', project_id: 'p2',
                members: [{name: 'claude', role: 'agent', label: 'A'},
                          {name: 'codex', role: 'agent', label: 'B'},
                          {name: 'claude', role: 'agent', label: 'C'}]};
+
+// The seeded bot, as loadLauncher hands it over. Read out of the module rather than restated, so
+// a change to the seed is a change to these tests too.
+const BOT = {id: 'ql_bot_jarvis', bot: 'jarvis', label: 'Jarvis', action: 'spawn',
+             project_id: 'p1', members: [{name: 'claude'}]};
+const BOT_CONV = 'c_bot_jarvis';
 
 const pane = (id, label) => ({pane_id: id, label: label || id, agent: 'claude'});
 const kinds = sent => sent.map(m => m.type);
@@ -162,6 +199,28 @@ test('the confirm never carries a path, because the relay never sent one', () =>
   p.press('ql_a');
   assert.deepEqual(p.out.launcherConfirmLines(RUN, {projects: PROJECTS}),
     ['Run this in a new terminal on herdr?', '', 'npm test']);
+});
+
+test('an insecure tile says so first, above what it is about to run', () => {
+  // The mark is the user's own claim about the endpoints behind the tile — nothing here can
+  // verify it — so the one place it must survive to is the press.
+  const p = press({tiles: [RUN]});
+  assert.deepEqual(p.out.launcherConfirmLines(Object.assign({}, RUN, {insecure: true}),
+    {projects: PROJECTS}),
+    ['Insecure: the providers behind this tile do not protect what is sent to them.', '',
+     'Run this in a new terminal on herdr?', '', 'npm test']);
+});
+
+test('a codex member is opened with the prompt in codex\'s own form', async () => {
+  // A tile names harnesses and chips separately, so this is the one place the two meet before
+  // anything is typed. `/ponytail` into codex is an unknown command, not a prompt.
+  const tile = {id: 'ql_c', label: 'Pair', action: 'spawn', project_id: 'p1',
+                members: [{name: 'codex', at: 'ponytail'}]};
+  const p = press({tiles: [tile]});
+  p.press('ql_c');
+  await p.land({pane_id: 'w1:p9', agent: 'codex', label: 'Pair', project_id: 'p1'});
+  const typed = p.log.filter(l => l[0] === 'sendTextTo').map(l => l[2]);
+  assert.deepEqual(typed, ['$ponytail\n$caveman']);
 });
 
 test('saying no sends nothing at all', () => {
@@ -222,6 +281,16 @@ test('a run opens a terminal, then types the command into the pane it got back',
     assert.ok(p.log.some(l => l[0] === 'noteTermCommand'),
       'recorded in the terminal history, because it is a command the user ran');
   });
+});
+
+test('an empty terminal tile lands as a terminal, not a cancelled agent batch', async () => {
+  const p = press({tiles: [TERM]});
+  p.press('ql_term');
+  await p.land(pane('w1:p1'));
+  assert.ok(p.log.some(l => l[0] === 'openTerminal' && l[1] === 'w1:p1'));
+  assert.ok(p.log.some(l => l[0] === 'status' && l[2] === 'success'));
+  assert.ok(!p.log.some(l => l[0] === 'status' && l[2] === 'warning'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'), []);
 });
 
 test('a member is recorded as what it was started as, not left to its name', async () => {
@@ -441,6 +510,26 @@ test('a conversation ceiling leaves the panes started rather than losing them', 
   assert.equal(p.convs.length, 20, 'nothing was pushed past the ceiling');
   assert.ok(p.log.some(l => l[0] === 'toast' && /ungrouped/.test(l[1])));
   assert.ok(p.log.some(l => l[0] === 'openTerminal'), 'and the user still lands somewhere real');
+  // And the card at the foot stops spinning. It is still on this press's busy line, and the only
+  // thing that ever clears it is a landing saying how it went — so a path that returned quietly
+  // left a spinner running over a start that had worked.
+  const last = p.log.filter(l => l[0] === 'status').pop();
+  assert.equal(last[2], 'warning');
+  assert.match(last[1], /started — ungrouped\.$/);
+});
+
+test('a pane landing for a batch that is over lands on its own, and says so', async () => {
+  // A press cancelled or superseded while one of its starts was in flight. The pane is real and
+  // stays; what must not stay is the busy card the press left behind, because nothing else is
+  // coming to clear it.
+  const p = press({tiles: [THREE]});
+  p.press('ql_c');
+  const intent = p.intent();
+  p.fail();                       // the batch ends while this start is still out
+  await p.landIntent(pane('w1:p1'), intent);
+  assert.ok(p.log.some(l => l[0] === 'openTerminal'), 'the pane is real and is opened');
+  assert.deepEqual(p.log.filter(l => l[0] === 'status').pop().slice(1),
+    ['w1:p1 started — on its own, the launch it belonged to is over.', 'warning']);
 });
 
 // --- spawn, with an arbitrator ---------------------------------------------------------------
@@ -580,4 +669,70 @@ test('a refusal partway through an arbitrated roster appoints nothing', async ()
   p.fail();
   assert.equal(p.sent.filter(m => m.type === 'arb_start').length, 0);
   assert.deepEqual(p.convs, [], 'and files no conversation to appoint against');
+});
+
+
+// --- bots -------------------------------------------------------------------
+// A bot is the same session every time. herdr assigns pane ids and recycles them, so what is
+// permanent is the conversation: a fixed id, and a member key that moves onto each new pane.
+
+test('the first press of a bot makes the one conversation it will always come back to', async () => {
+  const p = press({tiles: [BOT]});
+  p.press('ql_bot_jarvis');
+  assert.deepEqual(kinds(p.sent), ['start_agent']);
+  assert.equal(p.sent[0].label, 'Jarvis', 'no launch tag: there is only ever one of it');
+  await p.land(pane('w1:p1'));
+  assert.deepEqual(p.convs.map(c => c.id), [BOT_CONV],
+    'found by id on every browser, rather than by a name two of them could disagree about');
+  assert.equal(p.convs[0].name, 'Jarvis');
+});
+
+test('pressing a bot that is already running opens it and starts nothing', () => {
+  const live = pane('w1:p1', 'Jarvis');
+  const p = press({tiles: [BOT], agents: [live],
+                   convs: [{id: BOT_CONV, name: 'Jarvis', members: [{key: 'k_w1:p1'}]}]});
+  p.press('ql_bot_jarvis');
+  assert.deepEqual(p.sent, [], 'a second pane would be a second Jarvis, which is the whole point');
+  assert.ok(p.log.some(l => l[0] === 'openConversation' && l[1] === BOT_CONV));
+  assert.ok(p.log.some(l => l[0] === 'openTerminal' && l[1] === 'w1:p1'));
+});
+
+test('a bot whose pane has gone starts again into the thread it left', () => {
+  const p = press({tiles: [BOT],
+                   convs: [{id: BOT_CONV, name: 'Jarvis', members: [{key: 'k_w1:p1'}]}]});
+  p.press('ql_bot_jarvis');
+  assert.deepEqual(kinds(p.sent), ['start_agent']);
+  assert.equal(p.sent[0].ref, 'r_test', 'named, so a reload can find the pane it makes');
+  // The respawn intent and not the launcher's own: what lands is a replacement for a member of a
+  // conversation that already exists, which is the path that copies the transcript across.
+  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1'});
+  assert.ok(p.log.some(l => l[0] === 'rememberConvRespawn' && l[3] === 'r_test'));
+  assert.equal(p.convs.length, 1, 'and no second conversation is made for it');
+});
+
+test('changing the harness ends the pane and carries the thread onto the new one', () => {
+  const live = pane('w1:p1', 'Jarvis');            // claude
+  const p = press({tiles: [Object.assign({}, BOT, {members: [{name: 'codex'}]})], agents: [live],
+                   convs: [{id: BOT_CONV, name: 'Jarvis', members: [{key: 'k_w1:p1'}]}]});
+  p.press('ql_bot_jarvis');
+  assert.ok(p.log.some(l => l[0] === 'endPane' && l[1] === 'w1:p1'),
+    'a pane runs one CLI, so a swap is Pause followed by Restart');
+  assert.equal(p.sent[0].name, 'codex');
+  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1'});
+});
+
+test('the confirm says the thread is kept, because that is what makes it a bot', () => {
+  const p = press({tiles: [BOT]});
+  const text = p.confirm('ql_bot_jarvis');
+  assert.match(text, /Start Jarvis on herdr\?/);
+  assert.match(text, /keeps its conversation/);
+});
+
+test('a bot remembers where it was started, so it is asked once and not every time', () => {
+  // The one place a press writes back to the tile it was made from. An ordinary tile is a
+  // template — asked for a Project every press — and a bot is a room, which is somewhere.
+  const p = press({tiles: [Object.assign({}, BOT, {project_id: ''})]});
+  p.pressIn('ql_bot_jarvis', 'p2', '');
+  assert.equal(p.tiles().find(t => t.bot === 'jarvis').project_id, 'p2');
+  assert.equal(p.sent[0].project_id, 'p2');
 });

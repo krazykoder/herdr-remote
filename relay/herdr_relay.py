@@ -29,8 +29,10 @@ from start_agent import (
     SPACER_LABEL,
     StartAgentConfigError,
     agent_init_prompts,
+    agent_wake_prompts,
     agent_name_from_label,
     agent_start_args,
+    unattended_kinds,
     claimable_spacer,
     dig,
     is_spacer,
@@ -41,10 +43,22 @@ from start_agent import (
     plan_slot,
     slot_advice,
     validate_pane_label,
+    validate_start_ref,
     tab_create_args,
     validate_open_terminal,
     validate_start_request,
     workspace_create_args,
+)
+
+from agent_configs import (
+    ConfigError as AgentConfigError,
+    export_line,
+    load_providers,
+    model_args,
+    parse_aliases,
+    public_configs,
+    public_providers,
+    resolve as resolve_config,
 )
 
 try:
@@ -153,6 +167,21 @@ SEND_SETTLE_MAX = 0.9
 # blocked agent is showing is a permission prompt and Enter accepts its default. That is the whole
 # reason this verifies rather than simply pressing twice and hoping.
 SUBMIT_READY = ("idle", "done")     # a composer that is waiting for something to submit
+# A pane herdr can say anything at all about: the agent is up, whatever it is doing. What a line
+# typed at a starting TUI needs to wait for — see pane_ready.
+SUBMIT_STARTED = ("idle", "done", "working", "blocked")
+# herdr listed its panes and this one was not there — it has exited. Distinct from "" (the call
+# failed) and from `unknown` (listed, no agent yet), because those two mean wait and this one means
+# stop: whatever this pane was going to do with the text, it is not going to do it now.
+PANE_GONE = "gone"
+# The two lines whose whole purpose is to close the pane, so a pane that has gone is the proof they
+# landed. Everything else that arrives at a vanished pane is a send that failed: an agent that
+# crashed on the prompt looks identical from here, and reporting that as delivered would put a turn
+# in the record that no agent ever read.
+CLOSING_LINES = ("/quit", "exit")
+INIT_READY_WAIT_S = 30              # how long a starting TUI is given to report a status
+INIT_READY_POLL = 0.5
+INIT_SETTLE_S = 2.0                 # ...and to finish painting once it has
 SUBMIT_TOOK = ("working", "blocked")  # it is acting on what it was handed — never press Enter now
 SUBMIT_TRIES = 4                    # Enter presses, at most, however long the wait runs
 SUBMIT_POLL = 0.4                   # between a press and looking to see whether it took
@@ -411,6 +440,41 @@ except (sqlite3.Error, OSError) as e:
     # a worse failure than one that says so and leaves every browser on its own state.
     print(f"herdr-remote: shared state disabled: {e}", file=sys.stderr)
 
+
+def start_options_message():
+    """The client's Start gate, and now its agent configs too. Blocking — it reads the store.
+
+    Sent once on connect, and again to everyone whenever the configs document changes: half of a
+    config is this relay's answer about it — the harness, whether this machine holds the key
+    variable it names, the command line the spawn will run — and no browser can compute that.
+
+    Names, never values. `key` is a variable's name and `key_set` says whether the relay holds it,
+    which is the most that can be said about a credential in a message a client receives.
+    """
+    return {
+        "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
+        "terminal": TERMINAL,
+        "configs": public_configs(agent_aliases(), AGENT_PROVIDERS),
+        "providers": public_providers(AGENT_PROVIDERS),
+        # Which kinds can be started with their own approval prompts off. The flag is the vendor's
+        # and differs per harness, so the client asks for the *state* and is told here which kinds
+        # can be in it — a checkbox drawn against a kind that cannot is a start refused later.
+        "unattended": unattended_kinds(),
+    }
+
+
+def agent_aliases():
+    """The user's agent configs, as the shared store currently holds them.
+
+    Read per request rather than cached: the document is edited from the app, and a spawn that
+    used a provider binding the user changed a minute ago is the one failure this feature must
+    not have. It is a single-row SQLite read.
+    """
+    if user_state is None:
+        return []
+    body = user_state.get(["agent_configs"])["agent_configs"]["body"]
+    return parse_aliases(body, AGENT_PROVIDERS)
+
 # The web app, served from disk on every request so an edit needs only a browser reload.
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 # Name -> (Content-Type, extra headers). The manifest and the icons are not decoration: iOS only
@@ -517,7 +581,30 @@ except StartAgentConfigError as e:
     print(f"herdr-remote: bad start agent allowlist: {e}", file=sys.stderr)
     sys.exit(1)
 
+# Providers are file-only, and a malformed file is fatal for the same reason a malformed ops
+# registry is: this names the endpoints credentials may be sent to, and a relay that started
+# having half-understood it would be a relay nobody can reason about. Absent is not malformed —
+# it means no custom providers exist, which is the default state.
+try:
+    AGENT_PROVIDERS = load_providers(os.environ.get("HERDR_AGENT_CONFIGS", ""))
+except AgentConfigError as e:
+    print(f"herdr-remote: bad agent config file: {e}", file=sys.stderr)
+    sys.exit(1)
+
 TOOL_OPTIONS = ["yes, single permission", "trust, always allow", "no (tab to edit)"]
+# `› 1. Yes, continue` — the marker is whichever glyph the TUI puts against the *selected* row, and
+# the line is the whole of the option. Captured rather than skipped: one row of a real menu always
+# carries one, and it is the only thing that separates a menu from prose. See detect_choices.
+#
+# Only the pointing glyphs count. A bullet is not a selection: `•` is codex's own speaker gutter,
+# so `• 1. 1d973b3 — mods` — the first line of an answer that happens to be a numbered list — read
+# as a selected menu row, and the pane flickered between blocked and idle every poll. Still
+# stepped over, so a menu drawn with bullets on its rows still parses; it just cannot prove itself
+# with one.
+CHOICE_RE = re.compile(r"^\s*(?:([\u203a>\u276f])|[*\u2022])?\s*([1-9])[.)]\s+(\S.*)$")
+CHOICE_ANSWER_RE = re.compile(r"^([1-9])(?:[.)]\s.*)?$")
+CHOICE_TAIL = 25       # lines from the bottom a menu can be in
+CHOICE_MAX = 6         # options offered on; a longer list is prose that happens to be numbered
 SUBAGENT_OPTIONS = ["approve all pending", "configure individually", "exit (cancel subagents)"]
 CHROME_RE = re.compile(
     r"^[\s─━═_—│|◔◑◕●\s]+$"
@@ -730,7 +817,7 @@ START_EXEC_TIMEOUT = AGENT_START_TIMEOUT_MS / 1000 + 15
 # stderr. Matching either survives that, and neither is a substring of any other refusal.
 PANE_NOT_READY = ("agent_pane_busy", "not an available shell")
 PANE_READY_WAIT = 20     # seconds to keep offering the pane before giving up
-PANE_READY_POLL = 1.0
+PANE_READY_POLL = 0.25   # measured: herdr's refusal clears in well under half a second
 
 
 # %r@%h:%p — one socket per user@host:port, in the user's own runtime dir. Not LOG_DIR: the path
@@ -843,6 +930,53 @@ def get_all_panes():
     return annotate_agents(agents, PROJECTS), annotate_agents(shells, PROJECTS)
 
 
+# pane_id -> the agent config it was started under. Memory only, and deliberately: a pane
+# outlives this process, so a relay restart forgets which alias started one that is still
+# running and the badge falls back to the harness. The alternative is a durable record of
+# something herdr does not model, keyed on ids that mean nothing after a herdr restart.
+# ponytail: in-memory, one entry per started pane. If it needs to survive a relay restart it
+# belongs in the state store keyed by [host, cwd, label], not by pane id.
+pane_config = {}
+# pane_id -> the client's own id for the start that made it, when it named one. The answer to a
+# start is a single message on the socket that asked, so a browser reloaded while herdr is bringing
+# the agent up loses the only record of which pane it was waiting for — and then has nothing to
+# match on but the pane's name and directory, which two colleagues in one checkout share. Carried
+# on the snapshot so that match is an equality instead of a guess. Opaque here: never parsed, never
+# logged, never passed to a shell. In memory, like pane_config beside it — a relay restart drops it,
+# and by then no client is still waiting on that start.
+pane_ref = {}
+
+
+# Panes this relay started, watched briefly for a menu herdr does not call blocked. A codex opened
+# in a directory it has not been trusted in shows its trust prompt while herdr still reports the
+# pane `idle` — there is no transition, so nothing is broadcast, and the app shows a pane sitting
+# quiet at a question nobody can answer from it. Watched only for a short window after the start and
+# only while the pane is idle: one extra pane read per poll, on one pane, over the minute a first
+# prompt can appear in.
+# ponytail: spawn only. A mid-session menu arrives at a pane herdr does call blocked (verified
+# against codex 0.145.0), so this does not become a read of every idle pane.
+SPAWN_WATCH_S = 90
+spawn_watch = {}  # pane_id -> monotonic deadline
+
+# A kind's own opening lines wait this long for a first prompt to follow before they are sent on
+# their own. Long enough for a client to start a pane and then type into it, short enough that a
+# pane nobody prompts is still trusted while the person who started it is still looking at it.
+INIT_AFTER_WAIT_S = 45
+init_pending = {}  # pane_id -> (monotonic deadline, [line], remote)
+
+
+def spawn_menu_pending(pane_id, now):
+    """Is this pane still inside its post-start window? Expired entries are dropped as they are
+    found, which is the whole of this map's cleanup."""
+    deadline = spawn_watch.get(pane_id)
+    if deadline is None:
+        return False
+    if deadline <= now:
+        del spawn_watch[pane_id]
+        return False
+    return True
+
+
 def snapshot_message():
     """The full-state broadcast. `shells` is present whenever terminal mode is on, including as an
     empty list — its presence is the client's feature gate, as start_options is for Start."""
@@ -941,6 +1075,30 @@ def read_pane(pane_id, remote=None):
 LATE_TURN_MS = int(os.environ.get("HERDR_LATE_TURN_MS", "45000"))
 # pane_id -> {"was", "status", "until"} for panes whose turn end had nothing to record yet.
 late_turns = {}
+# pane_id -> the newest conversation-log row id written for it. Carried on the snapshot as `turn`,
+# so a client can tell its cached thread is behind without asking. A turn ending used to be enough
+# of a signal on its own — the row went in inside the poll that produced the status — but a turn
+# held back by LATE_TURN_MS lands with no transition behind it, and the client that already asked
+# heard nothing more until its own cadence came round. In memory, like everything else keyed by
+# pane id: ids are only ever compared against what this relay answered.
+pane_turn_ids = {}
+
+
+async def note_turn_ids(pane_id, ids, agent=None):
+    """Remember the newest row this pane's last turn wrote, and say so. Nothing written, nothing
+    to say.
+
+    The snapshot carries this as well, but it goes out *before* the turn is read and recorded —
+    so a client that asked for the record on the transition asked a moment early, heard nothing,
+    and then had to wait for some other pane to move before it looked again. This is the message
+    that says the row exists, sent the moment it does.
+    """
+    if not ids:
+        return
+    pane_turn_ids[pane_id] = max(ids)
+    if agent is not None:
+        await broadcast({"type": "agent_update",
+                         "agent": {**agent, "turn": pane_turn_ids[pane_id]}})
 
 # pane_id -> {"ws", "until", "idled"} for a send the relay could not prove landed. A send is
 # unconfirmed for one of two reasons and both resolve themselves in time: a pane that was already
@@ -1003,7 +1161,14 @@ async def confirm_pending_sends(agents):
         status = (a or {}).get("status") or ""
         if a is None:
             pending_sends.pop(pid, None)
-            continue        # the pane is gone; there is nothing left to confirm or to tell anyone
+            # The pane is gone. For `/quit` and `exit` that is what was asked for, so it is the
+            # confirmation — the handler hands off before the pane has finished going. For anything
+            # else there is nothing left to confirm and nothing a person could do about it.
+            if wait.get("closing"):
+                await tell_sender(wait["ws"], {
+                    "type": "command_result", "command": "send_text", "ok": True, "pending": False,
+                    "pane_id": pid, "message": "the pane took it"})
+            continue
         if not wait["idled"]:
             wait["idled"] = ends_turn(status)
         elif status in SUBMIT_TOOK:
@@ -1062,8 +1227,8 @@ async def collect_late_turns(agents):
                 continue
             late_turns.pop(pid, None)
             git = await probe_git(a)
-            await asyncio.to_thread(
-                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git)
+            await note_turn_ids(pid, await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git), a)
             log.info("late turn at %s: %s", pid,
                      f"{said} message(s) after the status changed" if said
                      else "nothing said before the deadline")
@@ -1081,6 +1246,57 @@ def detect_options(text):
     if "approve all pending" in lower:
         return SUBAGENT_OPTIONS
     return None
+
+
+def detect_choices(text):
+    """A numbered menu at the bottom of a pane, as its own lines.
+
+    codex asks everything this way — the trust prompt it opens with, every approval after it — and
+    none of it matches the two claude shapes above, so a codex pane arrived at the client wearing
+    claude's three buttons and pressing one sent it a sentence it has no idea what to do with.
+
+    The labels are read out of the pane rather than kept in a table here: they are somebody else's
+    TUI and they change with its version, and the option a person is being asked to pick is the one
+    thing this must not paraphrase.
+
+    Only the tail is scanned, the numbers must run 1, 2, 3 from the last line up, and one of those
+    rows must carry the TUI's selection marker. The marker is what makes this safe on a pane herdr
+    has *not* called blocked — which is every pane now, since a start reads its own pane for a
+    trust prompt and a send refuses to type at a menu. Without it, an agent that ends its answer
+    with a numbered list of questions is read as a menu: kiro does exactly that, and the pane
+    flickered between blocked and idle while the client drew buttons for prose.
+    """
+    found, marked = {}, False
+    for line in text.splitlines()[-CHOICE_TAIL:]:
+        m = CHOICE_RE.match(line)
+        if m:
+            marked = marked or bool(m.group(1))
+            # First writing wins: a redrawn frame lists every option twice and the cursor marker
+            # moves between the two copies.
+            found.setdefault(int(m.group(2)), m.group(3).strip())
+    if not marked:
+        return None
+    picked = [f"{n}. {found[n]}" for n in range(1, len(found) + 1) if n in found]
+    return picked[:CHOICE_MAX] if len(picked) >= 2 else None
+
+
+def blocked_options(content, agent):
+    """What to offer for a pane herdr says is blocked.
+
+    The claude shapes first, because they are matched on their own wording and are what the client
+    has always been sent. Then whatever numbered menu the pane is actually showing. And nothing at
+    all if neither is there and the pane is not a claude — claude's three strings were the fallback
+    for every harness, so a blocked codex arrived offering `yes, single permission`, which is not
+    one of its choices and does nothing when it is typed at it.
+    """
+    return (detect_options(content) or detect_choices(content)
+            or (TOOL_OPTIONS if agent == "claude" else []))
+
+
+def choice_digit(text):
+    """The number an option carries, for a response that names one. `2. No, quit` -> `2`."""
+    m = CHOICE_ANSWER_RE.match(text.strip())
+    return m.group(1) if m else None
 
 
 async def broadcast(msg, except_ws=None):
@@ -1268,8 +1484,13 @@ def pane_agent_status(pane_id, remote=None):
 
     Two spellings mean "herdr does not know", and the caller must treat them alike: `unknown`,
     which is what a real `pane list` returns for a pane carrying no agent — including the case that
-    matters, an agent that has not finished starting — and an empty string, for a pane herdr did not
-    list at all or a call that failed. Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
+    matters, an agent that has not finished starting — and an empty string, for a call that failed.
+    Neither is in SUBMIT_READY or SUBMIT_TOOK, so both wait.
+
+    PANE_GONE is the third answer, and it is not a kind of "does not know": herdr listed its panes
+    and this one was not among them. That is a pane that has exited, which is what `/quit` and
+    `exit` are for — so a caller waiting for the pane to take them can stop rather than watch a
+    closed pane for the rest of its window.
     """
     data, err = _herdr_json("pane", "list", remote=remote)
     if err:
@@ -1277,7 +1498,7 @@ def pane_agent_status(pane_id, remote=None):
     for p in dig_panes(data):
         if p.get("pane_id") == pane_id:
             return p.get("agent_status") or ""
-    return ""
+    return PANE_GONE
 
 
 def live_panes():
@@ -1315,7 +1536,126 @@ def submit_window(pane_id):
     return SUBMIT_SLOW.get(agent, SUBMIT_TIMEOUT)
 
 
-async def submit_paste(pane_id, text, remote=None, out=None):
+async def pane_menu_options(pane_id, remote=None):
+    """The menu this pane is showing, if it is showing one — and every client told about it.
+
+    A pane at a numbered menu takes no text. The characters go into a modal that ignores them and
+    the Enter behind them accepts whatever row the cursor is on, so a prompt typed at a codex asking
+    whether it may trust the directory was lost *and* answered the question for the user. That is
+    how a start came up trusted, silent, and with its opening prompt nowhere: the block a person saw
+    for a moment was dismissed by the very message that was supposed to follow it.
+
+    Read rather than inferred from status, because herdr reports a pane at its trust prompt as
+    `idle` — there is no status to consult. Broadcast on the way past: whoever is looking at this
+    pane is one tap from answering it, and the poll would not say so for another interval.
+
+    Shells are exempt. Every rule here is about a TUI, and a shell has no modal to protect.
+
+    And only a pane that could plausibly be at one is read at all: one inside its post-start window,
+    where herdr calls a trust prompt `idle`, or one herdr has already called blocked. An ordinary
+    idle pane is never read here, so nothing it happens to have printed can flip it — reading every
+    pane is what let a codex answer written as a numbered list be taken for a menu.
+    """
+    if pane_id in shell_panes:
+        return None
+    if not (spawn_menu_pending(pane_id, time.monotonic())
+            or (agent_cache.get(pane_id) or {}).get("status") == "blocked"):
+        return None
+    text = await asyncio.to_thread(read_pane, pane_id, remote=remote)
+    options = detect_choices(text)
+    if options:
+        # Watched from here on, so the poll reads it too. Without that the snapshot that follows
+        # this message says `idle` — herdr does not call a pane at a menu blocked — and the client
+        # is told the pane is waiting and then, a second later, that it is not.
+        spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
+        a = agent_cache.get(pane_id) or {}
+        await broadcast({
+            "type": "blocked", "pane_id": pane_id,
+            "agent": a.get("agent", ""), "project": a.get("project", ""),
+            "host": a.get("host", "local"),
+            "prompt": text[:500], "options": options,
+        })
+    return options
+
+
+async def submit_init_line(pane_id, line, remote=None):
+    """Type one of a kind's own init lines and press Enter once. Returns whether it went out.
+
+    Not submit_paste, because these are slash commands the TUI runs itself: kiro prints nothing for
+    `/tools trust-all` and never leaves `idle`, so the watch loop spends its whole window waiting
+    for a status change that cannot come and then reports a line that landed as unsent — eight
+    seconds of every kiro start, and a warning in the log saying the opposite of what happened.
+
+    What it does keep from submit_paste is the wait in front: `agent start` returns when herdr says
+    the agent is interactively ready, and a TUI that is ready is not necessarily listening —
+    antigravity spends seconds after that painting its first frame, and everything typed into it
+    goes nowhere. So the pane is watched until herdr gives it a status at all, and then left a beat
+    longer. Without it agy's wake-up was typed into a screen that was still drawing itself.
+
+    The one thing still worth checking is the one submit_paste checks first: a menu on screen eats
+    the text and the Enter behind it answers the menu.
+    """
+    if not await pane_ready(pane_id, remote=remote):
+        # Two ways to fail that wait, and only one of them is worth typing into. A pane that is
+        # simply slow gets the line anyway — it is the one it was started for. A pane herdr no
+        # longer lists has exited, and there is nothing there to read it.
+        if await asyncio.to_thread(pane_agent_status, pane_id, remote=remote) == PANE_GONE:
+            log.warning("Pane %s is gone; %r was not sent", pane_id, line)
+            return False
+        log.warning("Pane %s never reported a status; %r goes out anyway", pane_id, line)
+    if await pane_menu_options(pane_id, remote=remote):
+        return False
+    await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, line, remote=remote)
+    await asyncio.sleep(submit_settle(line))
+    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+    # Only the client's own sends were logged, so a line this relay typed for itself left no trace
+    # at all — "did the wake-up go in" was a question only a pane read could answer.
+    log.info("Typed at %s: %r", pane_id, line)
+    return True
+
+
+async def pane_ready(pane_id, remote=None):
+    """Wait for a just-started TUI to be listening. Returns whether it said so before the deadline.
+
+    Two waits, because they answer different questions. herdr's status is the pane's own answer to
+    "is there an agent here yet" — `unknown` and `` both mean not yet, exactly as submit_paste
+    reads them. INIT_SETTLE_S is the part herdr cannot answer: a harness that has reported itself
+    is still painting, and antigravity in particular drops whatever arrives while it does.
+    """
+    deadline = time.monotonic() + INIT_READY_WAIT_S
+    while time.monotonic() < deadline:
+        status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
+        if status == PANE_GONE:
+            return False
+        if status in SUBMIT_STARTED:
+            await asyncio.sleep(INIT_SETTLE_S)
+            return True
+        await asyncio.sleep(INIT_READY_POLL)
+    return False
+
+
+# How many of one client's messages the relay answers at once. Past it the read loop stops reading,
+# which is the backpressure: every handler can spawn a herdr subprocess, and a client is not owed an
+# unbounded number of them.
+HANDLER_INFLIGHT = 8
+
+
+async def run_in_lane(lanes, key, coro):
+    """Run `coro` after everything already queued under `key`, and before anything queued after it.
+
+    The unit is the pane, because that is the unit of dependence — a paste split into chunks, the
+    Enter behind it, the read that checks what landed. `asyncio.Lock` hands itself to waiters in the
+    order they asked, and acquiring it is each task's first await, so a lane preserves the order the
+    messages arrived in. Two lanes have nothing to say to each other and run at the same time.
+    """
+    lock = lanes.get(key)
+    if lock is None:
+        lock = lanes[key] = asyncio.Lock()
+    async with lock:
+        return await coro
+
+
+async def submit_paste(pane_id, text, remote=None, out=None, window=None):
     """Press Enter until the pane says it took what it was handed. Returns whether it did.
 
     The two ways this used to be done are described at SUBMIT_READY above; both picked a duration
@@ -1345,6 +1685,22 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     either: `pane list` reports `unknown` for a pane carrying no agent, which this loop reads as
     "still starting" and waits out to the timeout, leaving the command unentered at the prompt.
     """
+    # A pane this relay started a moment ago gets the same wait its own opening lines get: `agent
+    # start` returns on herdr's readiness, and a TUI that is ready is not always listening yet.
+    # Only inside that window — an ordinary send must not pay a status call and two seconds.
+    if spawn_menu_pending(pane_id, time.monotonic()):
+        await pane_ready(pane_id, remote=remote)
+    # Whether there was an agent here when this went out. `unknown` below means "no agent on this
+    # pane", which is the proof a closing line landed only if one was there to leave: at a pane
+    # whose TUI has not come up yet it is the ordinary starting state, and reading it as success
+    # would confirm a `/quit` that nothing ever received.
+    had_agent = bool((agent_cache.get(pane_id) or {}).get("agent"))
+    # Nothing is typed at a pane showing a menu. See pane_menu_options: the text would be eaten by
+    # the modal and the Enter would answer it.
+    if await pane_menu_options(pane_id, remote=remote):
+        if out is not None:
+            out["reason"] = "menu"
+        return False
     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
     await asyncio.sleep(submit_settle(text))
     # A shell is none of the cases below. It has no TUI to be mid-boot, no composer to be mid-paste
@@ -1356,7 +1712,11 @@ async def submit_paste(pane_id, text, remote=None, out=None):
         await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
         return True
     start = time.monotonic()
-    deadline = start + submit_window(pane_id)
+    # `window` is how long the caller is prepared to hold. Unset means the harness's own full
+    # window, which is what a caller that needs the answer — arbitration — asks for. The websocket
+    # handler asks for a short one instead: see SUBMIT_FAST.
+    watch = window or submit_window(pane_id)
+    deadline = start + watch
     presses, first = 0, True
     while time.monotonic() < deadline:
         status = await asyncio.to_thread(pane_agent_status, pane_id, remote=remote)
@@ -1369,6 +1729,27 @@ async def submit_paste(pane_id, text, remote=None, out=None):
                 out["reason"] = "queued"
             return False
         first = False
+        # The agent is gone. For the two lines that close one — `/quit` and `exit` — that is the
+        # proof itself, and watching further is watching a pane that has already done what it was
+        # asked: the loop read it as a TUI still starting, and every End cost the full window while
+        # the client's next message waited behind it.
+        #
+        # Two spellings, because the two lines end differently. `exit` closes the pane, so herdr
+        # stops listing it — PANE_GONE. `/quit` only ends the *agent*: herdr keeps the pane and
+        # reports `unknown` for it, which is the same word it uses for a TUI that has not started
+        # yet. Read against a closing line the ambiguity is gone — nothing else is being waited for.
+        #
+        # For any other text a vanished pane is the opposite news: a harness that died holding the
+        # prompt, with nobody left to have read it. That is a failure with its own reason rather
+        # than a send to keep watching or to record. `unknown` under ordinary text stays what it
+        # always was — a pane still starting — and falls through to the wait below.
+        closing = text.strip() in CLOSING_LINES
+        if status == PANE_GONE or (status == "unknown" and closing and had_agent):
+            if closing:
+                return True
+            if out is not None:
+                out["reason"] = "pane_gone"
+            return False
         if status in SUBMIT_TOOK:
             return True
         # Out of presses is not out of patience. The presses are spent in under two seconds, and
@@ -1387,7 +1768,7 @@ async def submit_paste(pane_id, text, remote=None, out=None):
     # in the composer and a person has to press Enter. Silence here is what made this bug take
     # three attempts to find.
     log.warning("submit: pane=%s never left %s after %d Enter press(es) in %.0fs — text may be "
-                "unsent", pane_id, SUBMIT_READY, presses, submit_window(pane_id))
+                "unsent", pane_id, SUBMIT_READY, presses, watch)
     if out is not None:
         out["reason"] = "unconfirmed"
     return False
@@ -1495,7 +1876,19 @@ def start_agent_exec(plan):
     if err:
         return None, err
 
-    args = agent_start_args(plan["name"], plan["agent_name"], target_pane)
+    # Before `agent start`, because this is the only moment there is a shell to type it at: after
+    # it, the pane belongs to the agent's TUI. Fatal, unlike the init prompts below — a session
+    # that failed to take its provider would come up on the stock endpoint wearing the alias's
+    # name, which is worse than no session.
+    if plan.get("env_line"):
+        env_err = shell_line_exec(target_pane, plan["env_line"], remote)
+        if env_err:
+            _rollback_layout(rollback, remote)
+            return None, env_err
+
+    args = agent_start_args(plan["name"], plan["agent_name"], target_pane,
+                            unattended=bool(plan.get("unattended")),
+                            extra_args=plan.get("config_args") or ())
     deadline = time.monotonic() + PANE_READY_WAIT
     while True:
         data, err = _herdr_json(*args, remote=remote, timeout=START_EXEC_TIMEOUT)
@@ -1518,10 +1911,16 @@ def start_agent_exec(plan):
     if rename.returncode != 0:
         return None, f"agent started as {pane_id} but pane rename exited {rename.returncode}"
 
-    # Before the width, because it is what makes the agent usable at all — and never fatal for the
-    # same reason the width is not: an agent that is up and asking for permission is worth more
-    # than no agent, and a person can type the line themselves.
-    agent_init_exec(pane_id, plan["name"], remote)
+    # The wake-up, for a kind that needs one. Typed here, so it is in front of whatever the client
+    # opens the pane with — that is the whole point of it: a first prompt into a cold agy is
+    # answered with nothing, and this is the message that answer belongs to.
+    agent_wake_exec(pane_id, plan["name"], remote)
+
+    # Queued, not typed: these lines follow the pane's first prompt rather than leading it. See
+    # agent_init_queue. Never fatal for the same reason the width below is not — an agent that is
+    # up and asking for permission is worth more than no agent, and a person can type the line
+    # themselves.
+    agent_init_queue(pane_id, plan["name"], remote)
 
     # Width last, and never fatal. The session is up and usable at whatever width the placement
     # gave it; failing the start here would roll back a working agent over a layout preference.
@@ -1533,24 +1932,65 @@ def start_agent_exec(plan):
     return pane_id, None
 
 
-def agent_init_exec(pane_id, kind, remote):
-    """Type this kind's first prompts into the agent this relay just started. Never fatal.
+def agent_wake_exec(pane_id, kind, remote):
+    """Wake this kind's agent before anyone asks it for anything. Never fatal.
 
-    `terminal_init_exec`'s opposite number, and it needs none of the waiting that one does:
-    `agent start` has already blocked until herdr saw the agent interactively ready, which is the
-    precondition the shell version has to discover for itself.
+    agy is the only kind with one today, and it is the same line arbitration warms a member with —
+    one wording, so an agent woken at start and an agent woken on resume are asked the same
+    question. Sent through the same one-press path a kind's init lines use: what matters is that
+    the pane has been spoken to before the prompt lands, not that it has answered.
+    """
+    for line in agent_wake_prompts(kind):
+        try:
+            if not on_loop(submit_init_line(pane_id, line, remote=remote), wait=True):
+                log.warning("Agent started as %s but its wake-up was not sent: a menu was on "
+                            "screen", pane_id)
+        except Exception as e:
+            log.warning("Agent started as %s but its wake-up was not delivered: %r", pane_id, e)
+            return
+
+
+def agent_init_queue(pane_id, kind, remote):
+    """Queue this kind's own first lines behind the first prompt the pane is given.
 
     The lines come from AGENT_INIT, which is server-side and keyed by kind — never from the client
     and never from the label. Most kinds have none.
+
+    Behind the prompt rather than in front of it, which is what kiro wants: a `/tools trust-all`
+    typed into a freshly started kiro is answered by the pane and then the opening prompt lands on
+    top of it, so what the reader sees first is a turn about a slash command. Sent as its own
+    message after the prompt goes in, the pane answers the prompt and takes the grant on the way.
+
+    Nobody has to send that prompt, though — a pane started from the app with nothing to say is a
+    pane that would never be trusted at all. So the queue has a deadline, and the poll drains it
+    when the deadline passes. See init_pending.
     """
-    for line in agent_init_prompts(kind):
+    lines = agent_init_prompts(kind)
+    if lines:
+        init_pending[pane_id] = (time.monotonic() + INIT_AFTER_WAIT_S, lines, remote)
+
+
+async def drain_init(pane_id, now=None):
+    """Type whatever is queued for this pane. Never fatal, and never tried twice.
+
+    Called from two places: the first prompt this relay delivers to the pane, which is what these
+    lines are meant to follow, and the poll once the deadline has passed with no prompt in sight.
+    """
+    queued = init_pending.get(pane_id)
+    if not queued:
+        return
+    deadline, lines, remote = queued
+    if now is not None and now < deadline:
+        return
+    del init_pending[pane_id]
+    for line in lines:
         try:
-            if not on_loop(submit_paste(pane_id, line, remote=remote), wait=True):
-                log.warning("Agent started as %s but %r was not confirmed", pane_id, line)
+            if not await submit_init_line(pane_id, line, remote=remote):
+                log.warning("Pane %s was not sent %r: a menu was on screen", pane_id, line)
         except Exception as e:
             # Said out loud rather than raised: this is the difference between an agent that
             # answers and one that sits on a permission prompt nobody can see.
-            log.warning("Agent started as %s but %r was not delivered: %r", pane_id, line, e)
+            log.warning("Pane %s was not sent %r: %r", pane_id, line, e)
             return
 
 
@@ -1560,24 +2000,37 @@ def terminal_init_exec(pane_id, remote):
     Only ever called from open_terminal_exec, so the pane is one the app created a moment ago and
     the shell in it has run nothing. An agent pane never comes through here: `agent start` gets a
     TUI that owns its own screen, and typing a shell command at it would be typing into a prompt.
+    """
+    if TERMINAL_INIT:
+        shell_line_exec(pane_id, TERMINAL_INIT, remote)
+
+
+def shell_line_exec(pane_id, line, remote):
+    """Type one line at a pane that still holds a shell. Returns an error string, or None.
 
     A login shell that sources a real profile takes a second or several to reach its prompt, and
     characters sent before then are dropped. That is the same precondition `agent start` waits out
-    at PANE_NOT_READY above, asked the only way a shell answers it: `pane list` reports `unknown`
-    for a pane carrying no agent, so there is no status to watch — the prompt appearing in the pane
-    is the signal. A pane that never draws one is sent to anyway at the deadline, which is no worse
+    at PANE_NOT_READY, asked the only way a shell answers it: `pane list` reports `unknown` for a
+    pane carrying no agent, so there is no status to watch — the prompt appearing in the pane is
+    the signal. A pane that never draws one is sent to anyway at the deadline, which is no worse
     than not having tried.
+
+    ponytail: send-then-Enter with no confirmation, the same as it has always been here. The
+    callers are a fresh shell the relay created a moment ago; if that ever stops being true, this
+    wants submit_paste's watch instead.
     """
-    if not TERMINAL_INIT:
-        return
     deadline = time.monotonic() + TERMINAL_INIT_WAIT
     while time.monotonic() < deadline:
         if run_herdr("pane", "read", pane_id, "--lines", "5",
                      "--source", "visible", remote=remote).strip():
             break
         time.sleep(TERMINAL_INIT_POLL)
-    run_herdr("pane", "send-text", pane_id, TERMINAL_INIT, remote=remote)
-    run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+    try:
+        run_herdr("pane", "send-text", pane_id, line, remote=remote)
+        run_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+    except Exception as e:
+        return f"could not prepare the pane's shell: {e}"
+    return None
 
 
 def open_terminal_exec(plan):
@@ -1645,6 +2098,34 @@ async def _poll_once():
             branch = pane_branch.get(branch_key(a))
             if branch:
                 a["branch"] = branch
+            # Which agent config this pane was started under, so the app can call it `oclaude1`
+            # rather than `claude` — herdr knows nothing about aliases, and the kind stays the
+            # kind, because everything else keys off it.
+            config = pane_config.get(a["pane_id"])
+            if config:
+                a["config"] = config
+            # The id the client that started this pane gave it, so the browser that asked can find
+            # it again after a reload has thrown away the answer it was given.
+            ref = pane_ref.get(a["pane_id"])
+            if ref:
+                a["ref"] = ref
+            # The newest row this pane's record holds, so a thread on screen can tell it is behind.
+            # Only ever set by this relay's own writes, which is all a client compares it against.
+            turn = pane_turn_ids.get(a["pane_id"])
+            if turn:
+                a["turn"] = turn
+            # A first prompt at a pane herdr still calls idle. Read before the snapshot goes out,
+            # so the status the client is given is the one the pane is really in and the blocked
+            # branch below announces it like any other.
+            if a["status"] == "idle" and spawn_menu_pending(a["pane_id"], time.monotonic()):
+                first = await asyncio.to_thread(read_pane, a["pane_id"], remote=a.get("remote"))
+                if detect_choices(first):
+                    a["status"] = "blocked"
+            # A pane nobody ever prompted. Its kind's opening lines are still owed to it.
+            await drain_init(a["pane_id"], now=time.monotonic())
+        # A pane that closed inside its window is never coming back to be drained.
+        for pid in set(init_pending) - {a["pane_id"] for a in agents}:
+            del init_pending[pid]
         await broadcast(snapshot_message())
         for a in agents:
             pid, status = a["pane_id"], a["status"]
@@ -1652,13 +2133,12 @@ async def _poll_once():
             content = None
             if status == "blocked" and was != "blocked":
                 content = await asyncio.to_thread(read_pane, pid, remote=a.get("remote"))
-                options = detect_options(content)
                 await broadcast({
                     "type": "blocked", "pane_id": pid,
                     "agent": a["agent"], "project": a["project"],
                     "host": a.get("host", "local"),
                     "prompt": content[:500],
-                    "options": options or TOOL_OPTIONS
+                    "options": blocked_options(content, a["agent"])
                 })
                 # Web Push notification
                 await send_web_push(
@@ -1718,8 +2198,8 @@ async def _poll_once():
                         continue
                     late_turns.pop(pid, None)
                     git = await probe_git(a)
-                    await asyncio.to_thread(
-                        conv_log.record_turn_end, a, captured, was, status, git=git)
+                    await note_turn_ids(pid, await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git), a)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
                 # A pane ending a turn means one of two opposite things, and arbitration decides
@@ -2049,14 +2529,13 @@ async def event_push():
                 content = read_pane(pane_id, remote=remote)
             else:
                 content = event.get("prompt", "Agent is blocked")
-            options = detect_options(content)
             await broadcast({
                 "type": "blocked", "pane_id": pane_id,
                 "agent": agent_data.get("agent", ""),
                 "project": agent_data.get("project", ""),
                 "host": host,
                 "prompt": content[:500],
-                "options": options or TOOL_OPTIONS
+                "options": blocked_options(content, agent_data.get("agent", ""))
             })
 
         if update:
@@ -2263,6 +2742,9 @@ async def handle_client(ws, listener="lan"):
     log.info("Client connected: ip=%s device=%s origin=%s", ip, device, origin or "-")
     clients.add(ws)
     connected_at = time.monotonic()
+    # Declared out here because the `finally` waits on them, and a socket can close before the read
+    # loop that fills this is ever reached.
+    inflight = set()
     try:
         # What this client is talking to, before anything it might have to explain. The page is
         # deployed apart from the relay and can be months older than it, so "which versions"
@@ -2280,10 +2762,8 @@ async def handle_client(ws, listener="lan"):
                 # `terminal` gates + New terminal the same way this message gates Start. It is
                 # only ever sent under WRITE_EXT, so a true here means both of open_terminal's
                 # gates are open — the client never has to reason about them separately.
-                await ws.send(json.dumps({
-                    "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
-                    "terminal": TERMINAL,
-                }))
+                await ws.send(json.dumps(
+                    await asyncio.to_thread(start_options_message)))
         # The cached snapshot is what carries `shells`, and its presence is the client's terminal
         # feature gate — so a terminal-mode relay sends it even without Projects, or a client
         # connecting between polls would see no terminals and no gate. With both off this is the
@@ -2300,28 +2780,30 @@ async def handle_client(ws, listener="lan"):
                 "sessions": [(await asyncio.to_thread(arb_session_message, session))["session"]
                              for session in open_sessions],
             }))
-        async for raw in ws:
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            msg_type = msg.get("type")
+        # One message, handled. Lifted out of the read loop so it can be dispatched rather than
+        # awaited — see the decision log for one lane per pane. Everything it closes over, from the
+        # socket to which listener the client came through, is what it closed over inline.
+        async def handle_message(msg, msg_type):
             if msg_type == "respond":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 # Permanent, not a phase gate: SAFE_RESPONSES is a list of agent approval strings,
                 # and sending "yes, single permission" to a shell is meaningless at best.
                 if pane_id in shell_panes:
                     await ws.send(json.dumps({
                         "type": "error", "message": "respond is not available on a terminal pane"}))
-                    continue
+                    return
                 text = msg.get("text", "")
-                if text.strip().lower() not in SAFE_RESPONSES:
+                # A numbered choice off a pane's own menu — see detect_choices. What goes to the
+                # pane is the digit alone: the label came out of that pane and typing it back is
+                # not how the menu is answered.
+                digit = choice_digit(text)
+                if digit is None and text.strip().lower() not in SAFE_RESPONSES:
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 # The allowlist name, not free text: a response is one of SAFE_RESPONSES by the
                 # check above, so this says everything the console needs without echoing input.
@@ -2330,9 +2812,16 @@ async def handle_client(ws, listener="lan"):
                 # Not text + "\n": herdr sends a bracketed paste, so a trailing newline is
                 # inserted as literal text and the approval never submits. Paste, let the TUI
                 # settle, then press Enter.
-                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text, remote=remote)
-                await asyncio.sleep(SEND_SETTLE)
-                await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter", remote=remote)
+                #
+                # A numbered menu takes the digit and acts on it there and then — no Enter, which
+                # would land in whatever the pane shows next. Verified against codex 0.24 at its
+                # trust prompt: the digit alone answered it.
+                await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, digit or text,
+                                        remote=remote)
+                if digit is None:
+                    await asyncio.sleep(SEND_SETTLE)
+                    await asyncio.to_thread(run_herdr, "pane", "send-keys", pane_id, "Enter",
+                                            remote=remote)
                 await record_sent(pane_id, text)
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
@@ -2344,12 +2833,12 @@ async def handle_client(ws, listener="lan"):
                 if not GIT_TRACK:
                     await ws.send(json.dumps({
                         "type": "error", "message": "git_commits: git tracking is off"}))
-                    continue
+                    return
                 try:
                     cwd, remote, first, last = git_range_target(msg)
                 except ValueError as e:
                     await ws.send(json.dumps({"type": "error", "message": f"git_commits: {e}"}))
-                    continue
+                    return
                 found = await asyncio.to_thread(git_probe.commits, cwd, first, last, remote)
                 await ws.send(json.dumps({
                     "type": "git_commits", "cwd": cwd, "host": msg.get("host") or "local",
@@ -2361,7 +2850,7 @@ async def handle_client(ws, listener="lan"):
                 if conv_log is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "conversation log is off"}))
-                    continue
+                    return
                 try:
                     # Off the event loop: resolving a commit is a subprocess, and an ssh round trip
                     # for a directory on another host.
@@ -2376,7 +2865,7 @@ async def handle_client(ws, listener="lan"):
                         last=msg.get("last") or CONV_LOG_ROWS_DEFAULT)
                 except (sqlite3.Error, OSError, ValueError, TypeError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"conv_log: {e}"}))
-                    continue
+                    return
                 out_msg = {
                     "type": "conv_log", "truncated": truncated,
                     "turns": [conv_as_wire(r) for r in rows],
@@ -2409,7 +2898,7 @@ async def handle_client(ws, listener="lan"):
                 if arbitration is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "arbitration is off"}))
-                    continue
+                    return
                 if msg_type == "arb_detail":
                     # Answered to the asking client and never broadcast: this is the one
                     # arbitration message that carries prose — an arbitrator's prompt, its
@@ -2430,11 +2919,11 @@ async def handle_client(ws, listener="lan"):
                     except ArbiterError as e:
                         await ws.send(json.dumps({
                             "type": "error", "code": e.code, "message": str(e)}))
-                        continue
+                        return
                     except (KeyError, sqlite3.Error, OSError) as e:
                         await ws.send(json.dumps({"type": "error",
                                                   "message": f"{msg_type}: {e}"}))
-                        continue
+                        return
                     await ws.send(json.dumps({
                         "type": "arb_detail", "session": msg.get("session") or "",
                         # Echoed, so a client can tell a copy with no prose in it from a session
@@ -2445,7 +2934,7 @@ async def handle_client(ws, listener="lan"):
                         # sheet is somebody looking *now*, and what Resume would do is exactly
                         # the thing that changes while a session sits stopped.
                         "plan": {k: v for k, v in plan.items() if k != "prompt_id"}}))
-                    continue
+                    return
                 try:
                     if msg_type == "arb_start":
                         # The relay assigns the id; a client never names one, because every path
@@ -2502,15 +2991,15 @@ async def handle_client(ws, listener="lan"):
                     else:
                         await ws.send(json.dumps({
                             "type": "error", "message": f"unknown message type: {msg_type}"}))
-                        continue
+                        return
                 except ArbiterError as e:
                     log.info("Arbitration %s from %s refused: %s", msg_type, ip, e.code)
                     await ws.send(json.dumps({
                         "type": "error", "code": e.code, "message": str(e)}))
-                    continue
+                    return
                 except (KeyError, sqlite3.Error, OSError) as e:
                     await ws.send(json.dumps({"type": "error", "message": f"{msg_type}: {e}"}))
-                    continue
+                    return
                 audit(msg_type, ip, device, session["id"], f"state={session['state']}")
                 await broadcast(await asyncio.to_thread(arb_session_message, session))
             elif msg_type == "read_pane":
@@ -2518,7 +3007,7 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 lines = read_pane_lines(msg.get("lines"))
                 remote = pane_remote_map.get(pane_id)
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
@@ -2544,11 +3033,11 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 keys = msg.get("keys", [])
                 if not all(k in SAFE_KEYS for k in keys):
                     await ws.send(json.dumps({"type": "error", "message": "keys contain disallowed values"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 log.info("Keys from %s (%s): pane=%s keys=%s", ip, device, pane_id, keys)
                 audit("send_keys", ip, device, pane_id, f"keys={keys}")
@@ -2558,23 +3047,23 @@ async def handle_client(ws, listener="lan"):
                 except Exception as e:
                     log.warning("send_keys command failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "send_keys command failed"}))
-                    continue
+                    return
                 if result.returncode != 0:
                     log.warning("send_keys command failed for pane %s with exit %s", pane_id, result.returncode)
                     await ws.send(json.dumps({"type": "error", "message": "send_keys command failed"}))
-                    continue
+                    return
                 await ws.send(json.dumps({"type": "command_result", "command": "send_keys", "ok": True}))
             elif msg_type == "send_text":
                 pane_id = msg["pane_id"]
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 text = msg.get("text", "")
                 # The bound stays — an unbounded write is a real abuse vector.
                 if not text or len(text) > SEND_TEXT_MAX:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 # `submit` asks the relay to submit the text, rather than the client sending its own
                 # `send_keys ["Enter"]` behind this message. Two separate reasons, and both of them
@@ -2588,6 +3077,7 @@ async def handle_client(ws, listener="lan"):
                 # Optional, because the other clients still send their own Enter and must keep
                 # working; those get the old fixed settle below and nothing more.
                 submit = bool(msg.get("submit"))
+                refused = False  # a pane at a menu takes nothing, and records nothing
                 # Length, not the text: this line goes to the console the relay was started from,
                 # and a person watching their own terminal has not asked to be shown every message
                 # they send from their phone. The audit log below keeps the text itself.
@@ -2601,7 +3091,14 @@ async def handle_client(ws, listener="lan"):
                     # same empty composer either way. The text is still recorded as sent, because
                     # it very likely was; what the client is told is that nobody confirmed it.
                     out = {}
-                    if await submit_paste(pane_id, text, remote=remote, out=out):
+                    # Held only while there is something left to do. The presses are spent inside
+                    # SUBMIT_FAST and everything after it is watching — which `confirm_pending_sends`
+                    # already does, on the poll, and tells this same client about. Waiting the full
+                    # harness window here blocked every later message from this browser instead:
+                    # one connection is handled a message at a time, so a 45s watch at an agy pane
+                    # was 45s of an unresponsive app.
+                    if await submit_paste(pane_id, text, remote=remote, out=out,
+                                          window=SUBMIT_FAST):
                         # Said out loud when it *did* land, too. It used to be silence, and a client
                         # with nothing to show for a send drew its own tick the moment the socket
                         # took the text — which is a claim about this end of the wire, not about the
@@ -2611,6 +3108,25 @@ async def handle_client(ws, listener="lan"):
                             "type": "command_result", "command": "send_text", "ok": True,
                             "pending": False, "pane_id": pane_id,
                             "message": "the pane took it"}))
+                    elif out.get("reason") == "pane_gone":
+                        # No pending watcher and no record: the pane closed under this text, so
+                        # there is nothing left to confirm it and nobody who read it. Told plainly,
+                        # because the client's own composer still holds the words.
+                        refused = True
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": False,
+                            "pending": False, "pane_id": pane_id, "reason": "pane_gone",
+                            "message": "the pane closed before it took this"}))
+                    elif out.get("reason") == "menu":
+                        # Never sent, so never recorded and never watched: the text is still in the
+                        # client's hands and the pane is at a question that has to be answered
+                        # first. The options went out with the broadcast above.
+                        refused = True
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "send_text", "ok": False,
+                            "pending": False, "pane_id": pane_id, "reason": "menu",
+                            "message": "the pane is waiting on a prompt — answer it, "
+                                       "then send this again"}))
                     else:
                         queued = out.get("reason") == "queued"
                         # Not the end of the story any more: the pane is watched until it goes to
@@ -2618,6 +3134,10 @@ async def handle_client(ws, listener="lan"):
                         # so — a client too old to read it sees the same failure it always saw.
                         pending_sends[pane_id] = {
                             "ws": ws, "until": int(time.time() * 1000) + CONFIRM_MS,
+                            # A pane that ends is the proof a closing line landed, and the poll is
+                            # where that is noticed now — the handler no longer waits long enough
+                            # to see it itself.
+                            "closing": text.strip() in CLOSING_LINES,
                             # A queued message is behind a turn that has to end first; a pane that
                             # never moved has already ended one, so its next move is the answer.
                             "idled": not queued}
@@ -2626,6 +3146,19 @@ async def handle_client(ws, listener="lan"):
                             "pending": True, "pane_id": pane_id, "reason": out.get("reason"),
                             "message": "queued behind what the pane is doing"
                                        if queued else "the pane has not confirmed it yet"}))
+                elif await pane_menu_options(pane_id, remote=remote):
+                    # The same refusal for a client that presses Enter for itself. It keeps the text
+                    # out of the modal; the `send_keys ["Enter"]` behind it is still that client's
+                    # to send, and it still answers the menu.
+                    # ponytail: send_keys is left open on purpose — it is also how a person answers
+                    # a menu. If a client is ever seen dismissing prompts with a bare Enter, the
+                    # guard belongs there and needs a way to say "this Enter is an answer".
+                    refused = True
+                    await ws.send(json.dumps({
+                        "type": "command_result", "command": "send_text", "ok": False,
+                        "pending": False, "pane_id": pane_id, "reason": "menu",
+                        "message": "the pane is waiting on a prompt — answer it, "
+                                   "then send this again"}))
                 else:
                     await asyncio.to_thread(run_herdr, "pane", "send-text", pane_id, text,
                                             remote=remote)
@@ -2633,7 +3166,11 @@ async def handle_client(ws, listener="lan"):
                     # arriving right behind this — which is what a client that submits for itself
                     # does — lands late enough. One choke point, rather than a delay in each client.
                     await asyncio.sleep(SEND_SETTLE)
-                await record_sent(pane_id, text)
+                if not refused:
+                    await record_sent(pane_id, text)
+                    # What a kind's own opening lines were waiting for: the pane has been given
+                    # something to work on, and the grant goes in behind it as its own message.
+                    await drain_init(pane_id)
             elif msg_type == "rename_pane":
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
@@ -2642,11 +3179,11 @@ async def handle_client(ws, listener="lan"):
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
-                    continue
+                    return
                 label, label_err = validate_pane_label(msg.get("label", ""))
                 if label_err:
                     await ws.send(json.dumps({"type": "error", "message": label_err}))
-                    continue
+                    return
                 remote = pane_remote_map.get(pane_id)
                 audit("rename_pane", ip, device, pane_id, f"label={label!r}")
                 try:
@@ -2655,11 +3192,11 @@ async def handle_client(ws, listener="lan"):
                 except Exception as e:
                     log.warning("rename failed for pane %s: %s", pane_id, e)
                     await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
-                    continue
+                    return
                 if result.returncode != 0:
                     log.warning("rename failed for pane %s with exit %s", pane_id, result.returncode)
                     await ws.send(json.dumps({"type": "error", "message": "rename failed"}))
-                    continue
+                    return
                 await ws.send(json.dumps({"type": "command_result", "command": "rename_pane",
                                           "ok": True, "pane_id": pane_id, "label": label}))
             elif msg_type == "set_slot":
@@ -2669,13 +3206,13 @@ async def handle_client(ws, listener="lan"):
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
                 pane_id = msg.get("pane_id", "")
                 pane_err = pane_guard(pane_id)
                 if pane_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": pane_err}))
-                    continue
+                    return
                 slot = msg.get("slot")
                 remote = pane_remote_map.get(pane_id)
                 log.info("Set slot from %s (%s): pane=%s slot=%s", ip, device, pane_id, slot)
@@ -2690,13 +3227,13 @@ async def handle_client(ws, listener="lan"):
                 workspace_id = msg.get("workspace_id", "")
                 if not workspace_id:
                     await ws.send(json.dumps({"type": "error", "message": "workspace_id required"}))
-                    continue
+                    return
                 # workspace_id is its own ID space and collides like pane_id does, so it
                 # gets its own guard — the pane ambiguity set says nothing about it (D6).
                 remote, ws_err = resolve_workspace_remote(latest_agents, workspace_id)
                 if ws_err:
                     await ws.send(json.dumps({"type": "error", "message": ws_err}))
-                    continue
+                    return
                 log.info("Create tab from %s (%s): workspace=%s host=%s", ip, device, workspace_id, remote or "local")
                 audit("create_tab", ip, device, "", f"workspace={workspace_id} host={remote or 'local'}")
                 await asyncio.to_thread(
@@ -2712,14 +3249,44 @@ async def handle_client(ws, listener="lan"):
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
+                # Refused rather than dropped, like the config beside it: a client that named its
+                # start and was quietly given a pane carrying no name would wait out its whole
+                # window and then decide the start had failed.
+                ref, ref_err = validate_start_ref(msg.get("ref"))
+                if ref_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": ref_err}))
+                    return
                 plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
                 if start_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": start_err}))
-                    continue
+                    return
+                # The config's id has a shape by now; this is where it gets a meaning. Refused
+                # rather than dropped: a start that quietly ignored the config the user picked
+                # would come up on the stock provider under the alias's name.
+                if plan.get("config"):
+                    pair, config_err = resolve_config(
+                        plan["config"], plan["name"],
+                        await asyncio.to_thread(agent_aliases), AGENT_PROVIDERS)
+                    if config_err:
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "start_agent",
+                            "ok": False, "error": config_err}))
+                        return
+                    # The only place a secret value is ever read, and it goes straight into the
+                    # plan the worker thread types. Never logged, never sent, never stored.
+                    plan["env_line"] = export_line(*pair)
+                    # The other half of a config: a stock provider has no environment to export
+                    # and says which model it wants on the harness's own argv instead.
+                    plan["config_args"] = model_args(*pair)
                 detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
-                          f"placement={plan['placement']} host={plan['remote'] or 'local'}")
+                          f"placement={plan['placement']} host={plan['remote'] or 'local'} "
+                          f"config={plan.get('config') or '-'} "
+                          # Worth a line of its own in the audit log: this is the start that will
+                          # run tools without asking anyone.
+                          f"unattended={'yes' if plan.get('unattended') else 'no'}")
                 log.info("Start agent from %s (%s): %s", ip, device, detail)
                 audit("start_agent", ip, device, "", detail)
                 # Several herdr calls, one of them waiting out the agent's startup — off the loop.
@@ -2728,7 +3295,12 @@ async def handle_client(ws, listener="lan"):
                     log.warning("Start agent failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": exec_err}))
-                    continue
+                    return
+                if plan.get("config"):
+                    pane_config[pane_id] = plan["config"]
+                if ref:
+                    pane_ref[pane_id] = ref
+                spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S
                 log.info("Start agent ok: pane=%s label=%r name=%r",
                          pane_id, plan["label"], plan["agent_name"])
                 await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
@@ -2740,17 +3312,17 @@ async def handle_client(ws, listener="lan"):
                 if not TERMINAL:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": "terminal mode disabled"}))
-                    continue
+                    return
                 if not WRITE_EXT:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": "write extensions disabled"}))
-                    continue
+                    return
                 plan, open_err = validate_open_terminal(
                     msg, PROJECTS, latest_agents + latest_shells)
                 if open_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": open_err}))
-                    continue
+                    return
                 detail = (f"project={plan['project_id']} placement={plan['placement']} "
                           f"host={plan['remote'] or 'local'} label={plan['label']!r}")
                 log.info("Open terminal from %s (%s): %s", ip, device, detail)
@@ -2760,7 +3332,7 @@ async def handle_client(ws, listener="lan"):
                     log.warning("Open terminal failed (%s): %s", detail, exec_err)
                     await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                               "ok": False, "error": exec_err}))
-                    continue
+                    return
                 log.info("Open terminal ok: pane=%s label=%r", pane_id, plan["label"])
                 await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
@@ -2783,7 +3355,7 @@ async def handle_client(ws, listener="lan"):
                 # reason localStorage is still the working copy.
                 if user_state is None:
                     await ws.send(json.dumps({"type": "state", "docs": {}}))
-                    continue
+                    return
                 names = msg.get("names") or list(STATE_DOCS)
                 docs = await asyncio.to_thread(user_state.get, names)
                 await ws.send(json.dumps({"type": "state", "docs": docs}))
@@ -2794,7 +3366,7 @@ async def handle_client(ws, listener="lan"):
                 if user_state is None:
                     await ws.send(json.dumps({
                         "type": "error", "message": "state store unavailable"}))
-                    continue
+                    return
                 name, body = msg.get("name", ""), msg.get("body")
                 try:
                     new_rev = await asyncio.to_thread(
@@ -2804,15 +3376,22 @@ async def handle_client(ws, listener="lan"):
                     # round trip to find out what it lost to.
                     await ws.send(json.dumps({"type": "state_conflict", "name": name,
                                               "rev": c.rev, "body": c.body}))
-                    continue
+                    return
                 except ValueError as e:
                     await ws.send(json.dumps({"type": "error", "message": f"state_put: {e}"}))
-                    continue
+                    return
                 audit("state_put", ip, device, "", f"doc={name} rev={new_rev} bytes={len(body)}")
                 await ws.send(json.dumps({"type": "state_ack", "name": name, "rev": new_rev}))
                 await broadcast({"type": "state",
                                  "docs": {name: {"rev": new_rev, "body": body}}},
                                 except_ws=ws)
+                # Half of an agent config is the relay's answer about it — its harness, whether
+                # this machine holds the key variable it named, and the command line the spawn
+                # will run. None of that can be computed by a browser, so the document landing is
+                # what makes it stale, and every client gets the new one. The writer included:
+                # it is the client most likely to be looking at the row it just changed.
+                if name == "agent_configs" and PROJECTS and WRITE_EXT:
+                    await broadcast(await asyncio.to_thread(start_options_message))
             else:
                 # Say so instead of dropping it. A client newer than the relay used to get
                 # silence here, which reads as a bug in the feature rather than a stale relay.
@@ -2821,9 +3400,46 @@ async def handle_client(ws, listener="lan"):
                     "type": "error",
                     "message": f"unknown message type {msg_type!r} — the relay may be older than this client",
                 }))
+
+        # The lanes. One per pane, so two messages about one pane keep their order and two about
+        # different panes do not wait for each other; one shared lane for everything that names no
+        # pane, which keeps a roster's starts sequential without depending on the client to send
+        # them one at a time.
+        lanes = {}
+
+        async def dispatch(msg, msg_type):
+            try:
+                await run_in_lane(lanes, msg.get("pane_id") or "", handle_message(msg, msg_type))
+            except (ConnectionClosedError, ConnectionClosedOK):
+                pass    # the client hung up while its own message was still being answered
+            except Exception:
+                # Inline, this closed the connection. As a task it would be swallowed instead, so
+                # it is logged with its traceback and the socket is left up — one bad message is
+                # not a reason to drop a client mid-session.
+                log.exception("Handling %r from %s (%s) failed", msg_type, ip, device)
+
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            msg_type = msg.get("type")
+            # At the ceiling this stops reading the socket, which is what pushes back on a client
+            # that would otherwise have the relay spawning herdr subprocesses without limit.
+            if len(inflight) >= HANDLER_INFLIGHT:
+                await dispatch(msg, msg_type)
+                continue
+            task = asyncio.create_task(dispatch(msg, msg_type))
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
     except (ConnectionClosedError, ConnectionClosedOK):
         pass
     finally:
+        # Not cancelled: a cancelled submit_paste is a pane that was handed text and never given
+        # its Enter. They finish against a closed socket, which their own handler catches, and
+        # awaiting them here is also what keeps the tasks referenced until they are done.
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
         duration = int(time.monotonic() - connected_at)
         log.info("Client disconnected: ip=%s device=%s duration=%ds", ip, device, duration)
         clients.discard(ws)

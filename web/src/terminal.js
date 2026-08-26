@@ -317,11 +317,8 @@
 
     function bumpFont(d) { setFont(currentFont() + d); }
 
-    // Floor is 8, below iOS Safari's 16px focus-zoom threshold, at the user's explicit direction.
-    // Under 16 the composer will zoom the layout viewport when focused on iPhone; that is the
-    // documented cost of the setting (S5.9), not an oversight. Default stays at 16, so the zoom
-    // is opt-in rather than something a fresh install walks into.
-    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 16;
+    // Under 16 iOS may zoom a focused composer. The compact 13px default is intentional.
+    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 13;
 
     function currentInputFont() {
       const v = parseInt(localStorage.getItem(INPUT_FONT_KEY), 10);
@@ -591,25 +588,65 @@
     // "claude" have to colour alike or the colour stops meaning the kind. Anything unrecognised
     // keeps the muted default rather than borrowing a colour that already means something.
     function agentColor(agent) {
-      const k = (agent || '').toLowerCase();
+      // Coerced, not assumed: this is called from a dozen render paths, and one of them handing it
+      // a number instead of a name threw inside the render rather than losing one badge's colour.
+      const k = String(agent || '').toLowerCase();
       if (k.startsWith('claude')) return 'var(--agent-claude)';
       if (k.startsWith('codex')) return 'var(--blue)';
       // kiro before pi: `startsWith('pi')` does not match it, but the two shared --green until
       // kiro got a badge of its own, and a reader cannot tell two kinds apart by one colour.
       if (k.startsWith('kiro')) return 'var(--agent-kiro)';
+      if (k.startsWith('opencode')) return 'var(--agent-opencode)';
       if (k.startsWith('pi')) return 'var(--green)';
       if (k.startsWith('agy')) return 'var(--agent-agy)';
       return '';
     }
 
-    function agentBadge(agent) {
+    // `kind` is for the names that are not their own harness: an agent config called `oclaude1`
+    // runs claude and has to read as one, and agentColor matches on the text. Optional, so every
+    // existing caller — where the text *is* the kind — is unchanged.
+    function agentBadge(agent, kind) {
       if (!agent) return '';
-      const c = agentColor(agent);
+      const c = agentColor(kind || agent);
       // Text and border carry the colour; the fill stays the neutral one every badge shares.
       // A 16% wash of the accent under its own text cost ~0.8 of contrast ratio and was what
       // made the light theme's badges unreadable at this size.
       const tint = c ? `color:${c};border-color:color-mix(in srgb, ${c} 55%, transparent)` : '';
       return ` <span class="badge" style="${tint}">${escapeHtml(agent)}</span>`;
+    }
+
+    // A pane's own badge. The same badge as `agentBadge(a.agent)` for every session ever started
+    // before agent configs existed — and for one started under `oclaude1`, that name instead,
+    // still wearing claude's colour, because that is what it is. The kind underneath never
+    // changes: everything else in the app keys off it, from the colour to the start allowlist to
+    // the fingerprint a conversation remembers a member by.
+    //
+    // The relay carries `config` on the pane and this reads the label out of the configs it
+    // advertised. A config deleted since the pane started leaves the harness's own name, which is
+    // the true thing to say when the alias is gone.
+    function paneBadge(a) {
+      const pane = a || {};
+      const row = pane.config && typeof agentConfigRow === 'function'
+        ? agentConfigRow(pane.config) : null;
+      return agentBadge((row && row.label) || pane.agent, pane.agent);
+    }
+
+    // A recorded kind, upgraded to the alias when the pane it names is live and was started under
+    // one. The lists that read a conversation's own record — the roster, the recent sheet — know
+    // only what a member was started as; this is how they say `oclaude1` where the pane views do,
+    // without giving up the recorded name for a member whose pane has gone.
+    // `config` is the recorded one, for a member whose pane has ended — and for one running past
+    // a relay restart, which drops the alias off the snapshot while the pane lives on. The live
+    // pane wins where there is one: it is the only source that cannot be out of date.
+    function kindBadge(name, pane, config) {
+      return configBadge(name, (pane && pane.config) || config || '');
+    }
+
+    // The same badge for something that has not started yet: a launcher tile's roster, and the
+    // form building it. There is no pane to read the alias off, so the tile carries it — which is
+    // the whole point of pinning a config to a tile.
+    function configBadge(name, config) {
+      return config ? paneBadge({agent: name, config: config}) : agentBadge(name);
     }
 
     // One nomenclature wherever a pane is named — card, terminal header, both kinds of pane:
@@ -632,7 +669,7 @@
       // who will type into it from there.
       const arb = typeof arbMark === 'function' ? arbMark(a.pane_id) : '';
       return `<span aria-hidden="true">${a.agent ? agentGlyph() : '⬛'}</span> ` +
-        escapeHtml(name) + proj + (withAgent ? agentBadge(a.agent) : '') + arb;
+        escapeHtml(name) + proj + (withAgent ? paneBadge(a) : '') + arb;
     }
 
     // From the live snapshot, never a pinned record: a pane's agent is what herdr reports now.
