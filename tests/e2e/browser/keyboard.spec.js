@@ -1,0 +1,80 @@
+// Every field in every sheet, above the on-screen keyboard.
+//
+//   npx playwright test keyboard
+//
+// A headless browser has no keyboard to summon, so this sets by hand the three numbers utils.js
+// publishes when one appears — and sets them the way iOS Safari reports them, with the layout
+// viewport scrolled down to reveal the field (`--vv-top`). That offset is the half a naive
+// simulation misses: an overlay pinned with `inset: 0` is pinned to the layout viewport and does
+// not follow the frame the user can see.
+//
+// The check is not "the sheet is short enough" but "focus each field in turn and it is visible
+// after", which is what a person tapping down a form actually does.
+const {test, expect} = require('./fixtures');
+
+// A 390×844 phone with a 336px keyboard up, and Safari having scrolled 60px to reveal the field.
+const KB = {top: 60, height: 508};
+
+const summon = kb => {
+  const r = document.documentElement.style;
+  r.setProperty('--kb-inset', String(844 - kb.height - kb.top) + 'px');
+  r.setProperty('--vv-height', kb.height + 'px');
+  r.setProperty('--vv-top', kb.top + 'px');
+};
+
+// Each sheet, and what opens it with something in it. Anything that will not open is reported
+// rather than skipped silently — a sheet that stopped opening is a worse bug than a low field.
+const SHEETS = {
+  pickSheet: () => openPanePicker({title: 'Pick', multi: true,
+    groups: () => [{head: 'Panes', rows: agents.concat(shells).map(a => pickPaneRow(a))}],
+    submit: () => {}}),
+  convSheet: () => openConvDialog(agents[0].pane_id),
+  cmdPalette: () => openPalette('prompts'),
+  recentSheet: () => openRecentSheet(),
+  orderSheet: () => openOrder(),
+  launcherModal: () => {
+    toggleSection('launcher', true);
+    saveLauncher([{id: 'kb_x', label: 'Pair', action: 'spawn',
+                   members: [{name: 'claude', at: 'architect-prompt'}, {name: 'codex'}]}]);
+    renderLauncher();
+    openLauncherEdit();
+    launcherEditTile('kb_x');
+  },
+};
+
+test('a field tapped in any sheet is visible after the keyboard takes half the screen', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await page.evaluate(summon, KB);
+
+  for (const [id, open] of Object.entries(SHEETS)) {
+    const out = await page.evaluate(async ([id, src, kb]) => {
+      try { await eval(`(${src})()`); } catch (e) { return {id, err: String(e)}; }
+      await new Promise(r => setTimeout(r, 100));
+      const root = document.getElementById(id);
+      if (!root || root.style.display === 'none') return {id, err: 'did not open'};
+      const fields = [...root.querySelectorAll('input, textarea, select')]
+        .filter(f => f.offsetParent !== null);
+      const low = [];
+      for (const f of fields) {
+        f.focus();
+        // The nudge in utils.js waits for the keyboard to finish animating before it measures.
+        await new Promise(r => setTimeout(r, 260));
+        const r = f.getBoundingClientRect();
+        if (r.bottom > kb.top + kb.height || r.top < kb.top) {
+          low.push((f.id || f.tagName) + ' at ' + Math.round(r.top) + '–' + Math.round(r.bottom));
+        }
+      }
+      return {id, fields: fields.length, low};
+    }, [id, open.toString(), KB]);
+
+    expect(out.err, `${id} did not open`).toBeUndefined();
+    expect(out.low, `${id}: fields behind the keyboard`).toEqual([]);
+    await page.evaluate(id => {
+      const n = document.getElementById(id);
+      if (n) n.style.display = 'none';
+      if (typeof picker !== 'undefined') picker = null;
+    }, id);
+  }
+});

@@ -2523,27 +2523,18 @@
       padding: 8px 10px;
     }
 
-    /* The three centred dialogs become bottom sheets on a phone, and then obey the same two
-       numbers .sheet does: a dialog is `position: absolute` inside a `position: fixed` overlay, so
-       it is laid out against the layout viewport, which Safari does not shrink for the keyboard.
-       `bottom: 8px` alone put every field in the tile editor and the New agent form behind it.
-       arbModal is in the list too — it was the one this rule missed, and it has fields as well. */
+    /* The three centred dialogs become bottom sheets on a phone. Their overlay is already the
+       visible frame — see .app-overlay — so both numbers here are of that frame and neither has
+       anything to say about the keyboard. arbModal is in the list because it has fields too; the
+       rule this replaced had never named it. */
     @media (max-width: 767px) {
       #newAgentModal [role="dialog"],
       #arbModal [role="dialog"],
       #launcherModal [role="dialog"] {
         top: auto !important;
-        bottom: calc(8px + var(--kb-inset, 0px));
+        bottom: 8px;
         transform: translateX(-50%) !important;
-        max-height: min(calc(100dvh - 16px),
-                        calc(var(--vv-height, 100dvh) - 16px)) !important;
-        transition: bottom 120ms ease-out;
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        #newAgentModal [role="dialog"],
-        #arbModal [role="dialog"],
-        #launcherModal [role="dialog"] { transition: none; }
+        max-height: calc(100% - 16px) !important;
       }
     }
 
@@ -4944,6 +4935,22 @@
        hid under it.
        A class and not six inline styles, because an inline `bottom` outranks every rule here and
        the next sheet would be copied from the same line. */
+    /* Every sheet and dialog opens inside one of these, and this is the one place the keyboard is
+       dealt with. `inset: 0` — what all twelve used to carry inline — pins a box to the *layout*
+       viewport, which iOS Safari neither shrinks for the keyboard nor moves when it scrolls the
+       page to reveal a focused field. The frame the user can actually see is the visual viewport,
+       and utils.js publishes exactly that: where it starts and how tall it is. Pinned to it, a
+       sheet's `bottom: 0` means the bottom of the screen on every platform, with no per-sheet
+       arithmetic to get wrong — and a field low in a form stays above the keyboard because the
+       whole overlay ends where the keyboard begins. */
+    .app-overlay {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: var(--vv-top, 0px);
+      height: var(--vv-height, 100dvh);
+    }
+
     .sheet {
       position: absolute;
       left: 50%;
@@ -4957,19 +4964,11 @@
       border-top-left-radius: 16px;
       border-top-right-radius: 16px;
       padding-bottom: env(safe-area-inset-bottom, 8px);
-      /* The keyboard's height on Safari, 0 everywhere the layout viewport already shrank. */
-      bottom: var(--kb-inset, 0px);
-      /* And never taller than what is left above it. The sheet's own share of the screen is the
-         first term; the second is the hard ceiling once a keyboard has taken most of it. */
-      max-height: min(var(--sheet-max, 80dvh),
-                      calc(var(--vv-height, 100dvh) - 56px));
+      /* The foot of the overlay, which is the foot of what is visible. */
+      bottom: 0;
+      /* And never taller than the frame it is in, less room for whatever is above it. */
+      max-height: min(var(--sheet-max, 80dvh), calc(100% - 56px));
       overflow-y: auto;
-      /* A keyboard appearing moves this; without a transition it jumps. */
-      transition: bottom 120ms ease-out;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .sheet { transition: none; }
     }
 
     /* A class rather than the inline styles it used to carry: an inline background outranks every
@@ -8116,7 +8115,7 @@
   </div>
 
   <!-- Command palette -->
-  <div id="cmdPalette" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="cmdPalette" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closePalette()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet" style="--sheet-max:50dvh;overflow:hidden">
@@ -8134,7 +8133,7 @@
 
   <!-- Start session, and New terminal — one sheet, because the questions are the same ones
      minus the agent. Rendered only when the relay advertises start_options. -->
-  <div id="startSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="startSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -8209,7 +8208,7 @@
        question — which other pane — so they are one sheet, and only the words on the button at the
        bottom and what it does with the answer differ. Frontend only; the relay knows nothing of
        pairs or of conversations. -->
-  <div id="pickSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="pickSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closePicker()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div class="pick-panel">
       <div class="pick-head">
@@ -8243,7 +8242,7 @@
   <!-- Conversation editor — membership is the user's list, so one sheet does both jobs: join or
        leave the conversations that exist, and name a new one. Frontend only; the relay knows
        nothing of conversations, and nothing here goes on the wire. -->
-  <div id="convSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="convSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeConvDialog()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -8277,7 +8276,7 @@
        sheet rather than a banner on the log: the log is a reading of everything the session did
        and keeps growing, and this is the one question asked at the one moment somebody is stood
        at a stopped session with a finger over a button. -->
-  <div id="arbResumeSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="arbResumeSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeArbResume()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
@@ -8290,7 +8289,7 @@
     </div>
   </div>
 
-  <div id="arbSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="arbSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeArbDetail()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
@@ -8308,7 +8307,7 @@
        a harness, the Project it is spawned beside, and the first thing to say to it. Centred rather
        than raised from the bottom, because it is opened from a menu in the middle of the screen and
        a sheet sliding up under the composer would land under the keyboard. -->
-  <div id="newAgentModal" style="display:none;position:fixed;inset:0;z-index:121;">
+  <div id="newAgentModal" class="app-overlay" style="display:none;z-index:121;">
     <div onclick="closeNewAgent()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="New agent"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -8362,7 +8361,7 @@
 
        Three sections because there are three decisions, and they were previously interleaved: who
        decides, and the two it is deciding between. -->
-  <div id="arbModal" style="display:none;position:fixed;inset:0;z-index:120;">
+  <div id="arbModal" class="app-overlay" style="display:none;z-index:120;">
     <div onclick="closeArbSetup()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Arbitrate this conversation"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -8382,7 +8381,7 @@
        One dialog and two views: the list of tiles, where they are reordered and deleted, and the
        form for one of them. Reordering a handful of tiles is two arrows, not a drag layer, and a
        second dialog to hold them would be a second thing to close. -->
-  <div id="launcherModal" style="display:none;position:fixed;inset:0;z-index:121;">
+  <div id="launcherModal" class="app-overlay" style="display:none;z-index:121;">
     <div onclick="closeLauncherEdit()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Launcher"
       style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:420px;max-height:85dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column">
@@ -8396,7 +8395,7 @@
   </div>
 
   <!-- Recent — every live pane, agents and terminals, in the order this device opened them. -->
-  <div id="recentSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="recentSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeRecentSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div role="dialog" aria-label="Recent panes"
       class="sheet">
@@ -8419,7 +8418,7 @@
   </div>
 
   <!-- Transfer — picks the instruction, then prefills the partner's composer. Never sends. -->
-  <div id="transferSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="transferSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeTransfer()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div
       class="sheet">
@@ -8447,7 +8446,7 @@
   <!-- Tab order — drag the rows. A sheet and not the list itself, because the list's innerHTML
        is rewritten on every poll and would take a live drag with it. This is built once on open
        and left alone until it closes, so the only thing that can move a row is a finger. -->
-  <div id="orderSheet" style="display:none;position:fixed;inset:0;z-index:100;">
+  <div id="orderSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeOrder()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div id="orderPanel"
       class="sheet">
