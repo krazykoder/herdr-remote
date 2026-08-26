@@ -1700,10 +1700,12 @@
       min-width: 0;
     }
 
-    /* The member card's field rule above is intentionally full-width; do not let it turn this
-       switch into a full-width input. */
-    .ql-member .ql-solo { flex: 0 0 auto; margin-left: auto; }
-    .ql-member .ql-solo input { flex: 0 0 auto; min-width: 0; }
+    /* A line of its own, under the kind and its ✕. Beside them it is a switch and two words
+       competing with the name for the same row, and the name is what the reader is scanning for.
+       The card's own field rule gives it the full width; the rule below is what stops that rule
+       reaching the switch itself and stretching it into an input. */
+    .ql-member .ql-solo { flex: 1 1 100%; margin: 0; }
+    .ql-member .ql-solo input { flex: 0 0 auto; min-width: 0; width: 26px; }
 
     /* The arbitration block, borrowed whole: `arb-form` is what lays out the role picker, the
        folded clocks and the checkbox, so the launcher wears it rather than restating it. Only the
@@ -1806,12 +1808,21 @@
       white-space: nowrap;
     }
 
-    /* The launch sheet repeats the saved setting without permitting a last-second mutation. */
+    /* The launch sheet repeats the saved setting without permitting a last-second mutation. On
+       its own line inside the chip, for the reason the editor's is: the chip is read for the name
+       and the prompt under it, and a switch on that first line is read before either. */
+    .ql-part { flex-wrap: wrap; }
+
     .ql-part .ql-solo {
-      margin: 0 0 0 2px;
+      flex: 1 1 100%;
+      margin: 2px 0 0;
       gap: 4px;
       font-size: 0.62rem;
     }
+
+    .ql-part .ql-solo input { width: 22px; height: 13px; }
+    .ql-part .ql-solo input::after { width: 7px; height: 7px; }
+    .ql-part .ql-solo input:checked::after { transform: translateX(9px); }
 
     .ql-solo-readonly { cursor: default; }
     .ql-solo-readonly input { cursor: default; opacity: 1; }
