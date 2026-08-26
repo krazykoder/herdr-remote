@@ -80,14 +80,18 @@ test('the intent is set after the dialog opens, because opening one clears it', 
   assert.notEqual(e.intent(), 'null');
 });
 
-test('restarting a live member as something else ends its session first', () => {
-  // There is no changing the agent inside a running pane. The button asks twice; this is what
-  // happens after the second tap.
+test('restarting a live member as something else asks before it ends anything', () => {
+  // There is no changing the agent inside a running pane, so the session is spent — but at the
+  // submit and not here. Ending at the menu spent a running agent on a dialog the reader is free
+  // to close, and closing it left them with a member paused that they never asked to pause.
   const e = boot({live: [{pane_id: 'w1:p1', project_id: 'p2'}],
                   recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
   assert.equal(e.run("convStartAs('w1:p1')"), true);
-  assert.deepEqual(e.log, [['end', 'w1:p1'], ['open', 'p2']],
-    'ended, then asked — and on the Project the pane is in now, not the one it was recorded under');
+  assert.deepEqual(e.log, [['open', 'p2']],
+    'asked, and on the Project the pane is in now, not the one it was recorded under');
+  assert.deepEqual(JSON.parse(e.intent()),
+    {conv: 'c1', replace: 'w1:p1', endFirst: 'w1:p1'},
+    'the pane to spend travels with the intent, for submitStart to spend');
 });
 
 test('a member of no conversation, or a relay that starts nothing, swaps nothing', () => {

@@ -80,6 +80,11 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     showToast: t => calls.push(['toast', t]),
     syncStartProjectBadge() {}, renderStartRoles() {}, renderStartAgents() {},
     restoreStartChoice() {}, startRoles: () => [],
+    // What submitStart reaches for outside this module: the role row, the opening prompt that
+    // goes with it, and the pane a swap spends on the way out.
+    startRoleOf: () => ({at: 'architect', role: 'architect'}),
+    roleStarter: () => '', NO_STARTER: 'none', startMode: 'agent',
+    endPane: id => { calls.push(['end', id]); return true; },
   };
   const ctx = vm.createContext(g);
   vm.runInContext(PAIRS_PURE, ctx);
@@ -299,4 +304,42 @@ test('a card that resolves normally never fires the give-up timer', () => {
   assert.equal(el('spawnSpinner').hidden, true);
   g.timer();
   assert.equal(el('spawnStatus').style.display, 'none', 'success times out to hidden, not to a warning');
+});
+
+
+// --- Restart as… ------------------------------------------------------------------------------
+//
+// A pane runs one CLI, so replacing a member's harness costs the session it is running. What is
+// under test is *when* that is spent: at the submit, not at the menu that opened the dialog.
+
+function swapCtx() {
+  const c = startCtx();
+  c.el('startPlacement').value = 'new_tab';
+  c.el('startTarget').value = 'w1';
+  c.el('startName').value = '';
+  c.run("startProjectId = 'proj'; startAgentPick = 'codex';" +
+        "startIntent = {conv: 'c1', replace: 'k1', endFirst: 'w1:p1'};");
+  return c;
+}
+
+test('a swap ends the pane it replaces when the start is submitted, not before', () => {
+  const c = swapCtx();
+  assert.deepEqual(c.calls, [], 'opening the dialog spends nothing');
+  c.run('submitStart()');
+  assert.deepEqual(c.calls, [['end', 'w1:p1']]);
+  assert.equal(c.sent.length, 1, 'and the start goes out behind it');
+  assert.equal(c.sent[0].type, 'start_agent');
+});
+
+test('a dialog closed without starting leaves the session running', () => {
+  const c = swapCtx();
+  c.run('closeStart()');
+  assert.deepEqual(c.calls, [], 'nothing was ended, so there is nothing to have paused');
+});
+
+test('a second submit does not quit a pane id herdr may have recycled', () => {
+  const c = swapCtx();
+  c.run('submitStart()');
+  c.run("document.getElementById('startSubmit').disabled = false; submitStart()");
+  assert.deepEqual(c.calls, [['end', 'w1:p1']], 'the pane is spent once');
 });

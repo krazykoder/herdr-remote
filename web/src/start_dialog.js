@@ -679,6 +679,14 @@
       // terminal, or for a role whose prompt is still to be written.
       startPrompt = terminal ? '' : roleStarter(role, startAgentPick);
       startStarter = terminal ? '' : ((role || {}).at || NO_STARTER);
+      // The session this one replaces, ended here and not when the dialog was opened: a pane runs
+      // one CLI, so the swap has to spend it — but only now that there is something to spend it
+      // on. Cleared as it is used, so a second submit into a dialog left open cannot quit a pane
+      // that is already gone or, worse, one herdr has since recycled the id of.
+      if (startIntent && startIntent.endFirst) {
+        endPane(startIntent.endFirst);
+        startIntent = Object.assign({}, startIntent, {endFirst: ''});
+      }
       ws.send(JSON.stringify(msg));
     }
 

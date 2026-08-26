@@ -1104,8 +1104,11 @@
       // The live pane's Project first: a record's is what it was started under, and a member that
       // has been swapped once already may have moved since.
       openStartDialog((live && live.project_id) || spawn.project_id || '');
-      // After the open, which clears it — the same order reorder.js starts a pair with.
+      // After the open, which clears it — the same order reorder.js starts a pair with. `endFirst`
+      // is the pane submitStart quits on the way out, which is what makes this a swap rather than
+      // a second member: one pane runs one CLI.
       startIntent = { conv: conv.id, replace: key };
+      if (o.end) startIntent.endFirst = o.end;
       if (o.kind) {
         startAgentPick = o.kind;
         startCustomOpen = true;
@@ -1121,15 +1124,15 @@
     }
 
     // Restart as… — the same restart with the harness left open. A pane runs one CLI, so a member
-    // still running is ended and the dialog opened over the space it leaves; a paused one is
-    // simply picked up by whatever is started next. Asked twice by the button that calls this
-    // where there is something live, because ending an agent loses whatever it had not said yet.
+    // still running is ended to make room for what replaces it — but not here: the dialog comes
+    // first and the session is spent only once something has actually been chosen. Ending at the
+    // menu spent a running agent on a dialog the reader is free to close, and closing it then left
+    // them with a member paused that they never asked to pause and a pane sitting empty.
     function convStartAs(key) {
       closeRestartMenu();
       const live = agents.find(x => convMemberKey(x) === key);
-      if (live) endPane(live.pane_id);
       return convSwapMember(key, live
-        ? { note: 'Session ended. Pick what to start in its place.' } : null);
+        ? { end: live.pane_id, note: 'Pick what to start. This session ends when you do.' } : null);
     }
 
     // A restart names itself, so the pane it makes can be found again by equality rather than by
