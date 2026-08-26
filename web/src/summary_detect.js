@@ -342,9 +342,16 @@
     // rather than stopped on, because the user is walking the conversation and a command is not
     // part of it. `before` and `after` are line indices, exclusive and inclusive respectively, so
     // a returned range's own start feeds straight back in to get the next one.
+    //
+    // Trimmed of the pane's own footer for the reason `findFinalMessage` is: below the composer a
+    // harness draws its model, its credit and its status bar, and to a positional profile that is
+    // an indented line under a marker — a block, indistinguishable by shape from a reply. On
+    // opencode it made the ↓ pill's newest stop the status bar at the bottom of the pane. Trimming
+    // is from the end only, so every index returned is still an index into the caller's rows.
     function blockBefore(rows, agent, before) {
       const g = profileFor(agent);
       if (!g || !rows) return null;
+      rows = transcriptRows(rows, g);
       for (let i = Math.min(before, rows.length) - 1; i >= 0; i--) {
         if (!startsBlock(rows, g, i)) continue;
         const at = blockSpan(rows, g, i);
@@ -356,6 +363,7 @@
     function blockAfter(rows, agent, after) {
       const g = profileFor(agent);
       if (!g || !rows) return null;
+      rows = transcriptRows(rows, g);
       for (let i = Math.max(0, after); i < rows.length; i++) {
         if (!startsBlock(rows, g, i)) continue;
         const at = blockSpan(rows, g, i);
@@ -432,6 +440,7 @@
     function blockContaining(rows, agent, i) {
       const g = profileFor(agent);
       if (!g || !rows || !rows.length) return null;
+      rows = transcriptRows(rows, g);
       for (let s = Math.min(i, rows.length - 1); s >= 0; s--) {
         if (startsBlock(rows, g, s)) return blockSpan(rows, g, s);
         if (endsBlock(rows[s], g)) return null;

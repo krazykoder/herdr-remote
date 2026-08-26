@@ -136,6 +136,19 @@ test('OpenCode: a read that starts inside a tool block claims nothing', () => {
   assert.deepEqual(claimed, ['  ┃  Let’s explore the details of last commit']);
 });
 
+test('OpenCode: the pane footer is not a turn to step to', () => {
+  // Below the composer opencode draws its model and a status bar, and to a positional profile an
+  // indented line under a marker is a block — so the ↓ pill's newest stop was the status bar at
+  // the bottom of the pane rather than the answer above it. `blockBefore`/`blockAfter` trim the
+  // footer for the same reason `findFinalMessage` does.
+  const rows = fixture('pane_opencode_table.txt');
+  assert.deepEqual(ctx.turnSummaries(rows, 'opencode'), [[26, 64]]);
+  const foot = rows.findIndex(r => /ctrl\+p commands/.test(r));
+  assert.ok(foot > 64);
+  assert.equal(ctx.blockBefore(rows, 'opencode', rows.length)[1], 64);
+  assert.equal(ctx.blockContaining(rows, 'opencode', foot), null);
+});
+
 test('OpenCode: the reverted notice reads as a prompt', () => {
   // A known ceiling, pinned rather than claimed to be right: the `1 message reverted` notice is a
   // `┃` box drawn exactly like a prompt box, above the composer with nothing under it — which is
