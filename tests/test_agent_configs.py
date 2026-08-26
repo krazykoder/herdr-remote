@@ -8,18 +8,22 @@ a model string carrying shell metacharacters, a kind that does not match) and as
 refused rather than quietly defaulted.
 
 The export line is the other half: it is typed into a real shell, so every value in it goes through
-`shlex.quote`, and a key the relay does not hold is left unset rather than exported empty.
+`shlex.quote` — and the key is not a value at all but a `$(secret <id>)` call the pane's own shell
+runs, which is what keeps a credential out of this process, its environment and its logs.
 """
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from agent_configs import (  # noqa: E402
-    STOCK_PROVIDERS, Alias, ConfigError, export_line, load_providers, model_args, parse_aliases,
-    parse_providers, preview_command, public_configs, public_providers, resolve,
+    STOCK_PROVIDERS, Alias, ConfigError, export_line, keystore_names, load_providers, model_args,
+    parse_aliases, parse_providers, preview_command, public_configs, public_providers, resolve,
 )
 from start_agent import agent_start_args  # noqa: E402
 
@@ -38,7 +42,8 @@ PROVIDERS = """
 ]}
 """
 
-ENV = {"ROUTER_KEY": "sk-one", "ROUTER_KEY2": "sk-two"}
+# The key ids the keystore holds. Names only — a value never reaches this module.
+KEYS = {"ROUTER_KEY", "ROUTER_KEY2"}
 
 
 def providers():
@@ -131,23 +136,25 @@ class AliasDocument(unittest.TestCase):
 class ExportLine(unittest.TestCase):
     def line(self, **over):
         alias = aliases(oclaude(**over))[0]
-        return export_line(alias, providers()[0], ENV)
+        return export_line(alias, providers()[0])
 
     def test_it_carries_the_environment_and_the_chosen_key(self):
         line = self.line(key="ROUTER_KEY2")
         self.assertIn("ANTHROPIC_BASE_URL=https://cc.example.dev", line)
-        self.assertIn("ANTHROPIC_API_KEY=sk-two", line)
+        self.assertIn('ANTHROPIC_API_KEY="$(secret ROUTER_KEY2)"', line)
         self.assertIn("ANTHROPIC_MODEL=claude-opus-5", line)
         self.assertIn("unset ANTHROPIC_API_TOKEN", line)
 
     def test_no_key_named_means_the_providers_first(self):
-        self.assertIn("ANTHROPIC_API_KEY=sk-one", self.line())
+        self.assertIn('ANTHROPIC_API_KEY="$(secret ROUTER_KEY)"', self.line())
 
-    def test_a_key_the_relay_does_not_hold_is_left_unset(self):
-        alias = aliases(oclaude())[0]
-        line = export_line(alias, providers()[0], {})
-        self.assertNotIn("ANTHROPIC_API_KEY", line)
-        self.assertIn("ANTHROPIC_BASE_URL", line)
+    def test_the_key_is_fetched_by_the_pane_and_never_read_here(self):
+        # The point of the whole change: even with the key sitting in this process's environment,
+        # the line names it and nothing else, so no value can be echoed out of a relay or a log.
+        with mock.patch.dict(os.environ, {"ROUTER_KEY": "sk-one"}):
+            line = self.line()
+        self.assertNotIn("sk-one", line)
+        self.assertIn('"$(secret ROUTER_KEY)"', line)
 
     def test_it_hides_from_history_and_clears_the_screen(self):
         line = self.line()
@@ -158,7 +165,7 @@ class ExportLine(unittest.TestCase):
         # The values here are all well-formed, so the guard has to be checked on one that is not:
         # an Alias built directly, bypassing the document's charset check.
         line = export_line(Alias(id="x", label="x", provider="agentrouter", model="a b; id"),
-                           providers()[0], ENV)
+                           providers()[0])
         self.assertIn("ANTHROPIC_MODEL='a b; id'", line)
 
     def test_a_home_relative_config_dir_still_expands(self):
@@ -170,7 +177,7 @@ class ExportLine(unittest.TestCase):
 
     def test_a_provider_with_nothing_to_say_writes_nothing(self):
         bare = parse_providers('{"providers": [{"id": "p", "kind": "claude"}]}')[0]
-        self.assertEqual(export_line(Alias(id="x", label="x", provider="p"), bare, ENV), "")
+        self.assertEqual(export_line(Alias(id="x", label="x", provider="p"), bare), "")
 
 
 class Preview(unittest.TestCase):
@@ -179,10 +186,17 @@ class Preview(unittest.TestCase):
     def command(self, **over):
         return preview_command(aliases(oclaude(**over))[0], providers()[0])
 
-    def test_it_names_the_key_variable_and_never_its_value(self):
+    def test_it_names_the_key_and_never_its_value(self):
         line = self.command(key="ROUTER_KEY2")
-        self.assertIn('ANTHROPIC_API_KEY="$ROUTER_KEY2"', line)
+        self.assertIn('ANTHROPIC_API_KEY="$(secret ROUTER_KEY2)"', line)
         self.assertNotIn("sk-", line)
+
+    def test_it_is_the_same_text_the_relay_types(self):
+        # Nothing is redacted any more, so the row is the line — which is what makes a paste a
+        # real reproduction of the spawn rather than an approximation of it.
+        alias = aliases(oclaude())[0]
+        typed = export_line(alias, providers()[0]).strip().removesuffix("; clear")
+        self.assertTrue(self.command().startswith(typed + ";"), typed)
 
     def test_it_ends_at_the_harness_the_user_would_type(self):
         self.assertTrue(self.command().endswith("; claude"), self.command())
@@ -193,11 +207,37 @@ class Preview(unittest.TestCase):
         self.assertIn("ANTHROPIC_BASE_URL=https://cc.example.dev", line)
         self.assertIn("ANTHROPIC_CUSTOM_MODEL_OPTION='claude-opus-4-6[1m]'", line)
 
-    def test_it_is_shown_whether_or_not_the_relay_holds_the_key(self):
-        # Unlike the typed line, which leaves an absent key unset — this is the line to paste to
-        # find out *why* nothing is set.
+    def test_it_is_shown_whether_or_not_the_keystore_holds_the_key(self):
+        # This is the line to paste to find out *why* nothing is set: run it and `secret` says
+        # which id it could not find.
         alias = aliases(oclaude())[0]
         self.assertIn("ANTHROPIC_API_KEY", preview_command(alias, providers()[0]))
+
+
+class Keystore(unittest.TestCase):
+    """Names out of the keystore, and never a value — the one thing this module still reads."""
+
+    def file(self, text):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "secrets"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def test_it_takes_the_names_and_leaves_the_values(self):
+        names = keystore_names(self.file(
+            'ROUTER_KEY="sk-one"\n'
+            "export ROUTER_KEY2=sk-two  # spare\n"
+            "  INDENTED=x\n"
+            "# COMMENTED=y\n"
+            "not an assignment\n"))
+        self.assertEqual(names, {"ROUTER_KEY", "ROUTER_KEY2", "INDENTED"})
+
+    def test_a_keystore_that_is_not_there_is_empty_and_not_an_error(self):
+        self.assertEqual(keystore_names("/no/such/keystore"), set())
+
+    def test_it_honours_the_same_override_the_shell_function_does(self):
+        path = self.file("ONLY_KEY=v\n")
+        with mock.patch.dict(os.environ, {"SECRETS_FILE": path}):
+            self.assertEqual(keystore_names(), {"ONLY_KEY"})
 
 
 class Wire(unittest.TestCase):
@@ -210,7 +250,7 @@ class Wire(unittest.TestCase):
         self.assertEqual((pair[0].id, pair[1].id, why), ("oclaude1", "agentrouter", ""))
 
     def test_what_crosses_the_socket_is_names_and_never_values(self):
-        rows = public_configs(aliases(oclaude(key="ROUTER_KEY2")), providers(), ENV)
+        rows = public_configs(aliases(oclaude(key="ROUTER_KEY2")), providers(), KEYS)
         self.assertEqual(rows[0]["key"], "ROUTER_KEY2")
         self.assertTrue(rows[0]["key_set"])
         self.assertEqual(rows[0]["kind"], "claude")
@@ -220,13 +260,13 @@ class Wire(unittest.TestCase):
     def test_it_says_which_model_fields_a_provider_can_carry(self):
         # codex takes its model from CODEX_HOME/config.toml, so the editor must not draw a box
         # that silently goes nowhere.
-        rows = public_providers(providers(), ENV)
+        rows = public_providers(providers(), KEYS)
         self.assertEqual([(r["id"], r["has_model"], r["has_model_option"]) for r in rows],
                          [("agentrouter", True, True), ("stockcodex", False, False)])
         self.assertEqual(rows[0]["models"], ["claude-opus-5", "claude-opus-4-6[1m]"])
 
-    def test_a_key_the_relay_does_not_hold_says_so(self):
-        rows = public_configs(aliases(oclaude()), providers(), {})
+    def test_a_key_the_keystore_does_not_hold_says_so(self):
+        rows = public_configs(aliases(oclaude()), providers(), set())
         self.assertFalse(rows[0]["key_set"])
 
 
@@ -245,7 +285,7 @@ class SwitchedOff(unittest.TestCase):
     def test_it_survives_the_document_and_says_so_on_the_wire(self):
         a = self.off()
         self.assertTrue(a.off)
-        self.assertTrue(public_configs([a], providers(), ENV)[0]["off"])
+        self.assertTrue(public_configs([a], providers(), KEYS)[0]["off"])
 
     def test_a_start_naming_one_is_refused(self):
         pair, err = resolve("oclaude1", "claude", [self.off()], providers())
@@ -255,7 +295,7 @@ class SwitchedOff(unittest.TestCase):
     def test_an_ordinary_one_is_untouched(self):
         a = aliases(oclaude())[0]
         self.assertFalse(a.off)
-        self.assertFalse(public_configs([a], providers(), ENV)[0]["off"])
+        self.assertFalse(public_configs([a], providers(), KEYS)[0]["off"])
         self.assertIsNotNone(resolve("oclaude1", "claude", [a], providers())[0])
 
 
@@ -291,7 +331,7 @@ class StockProviders(unittest.TestCase):
         # A stock provider has no environment and no secret, so there is no export line at all —
         # the pane's shell is left exactly as the user's login left it.
         a, p = self.alias("claude", "claude-sonnet-5"), self.stock("claude")
-        self.assertEqual(export_line(a, p, ENV), "")
+        self.assertEqual(export_line(a, p), "")
         self.assertEqual(model_args(a, p), ("--model", "claude-sonnet-5"))
         self.assertEqual(preview_command(a, p), "claude --model claude-sonnet-5")
 
@@ -305,12 +345,12 @@ class StockProviders(unittest.TestCase):
                             "provider": "stock-claude", "model": "claude-sonnet-5"}]}
         got = parse_aliases(doc, list(STOCK_PROVIDERS))
         self.assertEqual([(a.id, a.model) for a in got], [("claude-sonnet", "claude-sonnet-5")])
-        rows = public_configs(got, list(STOCK_PROVIDERS), {})
+        rows = public_configs(got, list(STOCK_PROVIDERS), set())
         self.assertEqual(rows[0]["kind"], "claude")
         self.assertEqual(rows[0]["command"], "claude --model claude-sonnet-5")
 
     def test_the_editor_is_told_the_model_field_does_something(self):
-        rows = public_providers(list(STOCK_PROVIDERS), {})
+        rows = public_providers(list(STOCK_PROVIDERS), set())
         self.assertTrue(all(r["has_model"] for r in rows))
         self.assertFalse(any(r["has_model_option"] for r in rows))
         self.assertFalse(any(r["keys"] for r in rows))

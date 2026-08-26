@@ -445,11 +445,11 @@ def start_options_message():
     """The client's Start gate, and now its agent configs too. Blocking — it reads the store.
 
     Sent once on connect, and again to everyone whenever the configs document changes: half of a
-    config is this relay's answer about it — the harness, whether this machine holds the key
-    variable it names, the command line the spawn will run — and no browser can compute that.
+    config is this relay's answer about it — the harness, whether this machine's keystore holds the
+    key id it names, the command line the spawn will run — and no browser can compute that.
 
-    Names, never values. `key` is a variable's name and `key_set` says whether the relay holds it,
-    which is the most that can be said about a credential in a message a client receives.
+    Names, never values. `key` is a keystore id and `key_set` says whether the keystore holds a key
+    under it, which is the most that can be said about a credential in a message a client receives.
     """
     return {
         "type": "start_options", "agents": START_AGENTS, "roles": list(ROLES),
@@ -3275,8 +3275,8 @@ async def handle_client(ws, listener="lan"):
                             "type": "command_result", "command": "start_agent",
                             "ok": False, "error": config_err}))
                         return
-                    # The only place a secret value is ever read, and it goes straight into the
-                    # plan the worker thread types. Never logged, never sent, never stored.
+                    # No secret value passes through here: the line names the key's id and the
+                    # pane's own shell fetches it with `secret` as the line runs.
                     plan["env_line"] = export_line(*pair)
                     # The other half of a config: a stock provider has no environment to export
                     # and says which model it wants on the harness's own argv instead.

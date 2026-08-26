@@ -5,8 +5,8 @@ sentence: **a client can never cause a credential to reach an endpoint the file 
 
 Two layers make that true.
 
-A *provider* is file-owned. It names the base URL, the config directory, which of the relay's own
-environment variables may supply the key, and which variable the model is written into. Nothing
+A *provider* is file-owned. It names the base URL, the config directory, which keystore ids may
+supply the key, and which variable the model is written into. Nothing
 outside `~/.config/herdr-remote/agent-configs.json` can add one or change one, and the relay never
 writes that file.
 
@@ -15,11 +15,17 @@ provider that the file already authorised, a free-text model, and a key chosen *
 provider's own list*. There is no field in it that names a host, a variable, or a secret value, so
 adding one cannot widen what the relay will do. That asymmetry is the whole design.
 
-Secret *values* never appear here. `secrets` maps the variable the agent wants to the names of
-variables in the relay's environment; the value is read at spawn time and goes straight into the
-line typed at the pane. It is never stored, never logged, and never sent to a client.
+Secret *values* never appear here, and they never appear in the relay at all. `secrets` maps the
+variable the agent wants to the *key ids* the keystore holds it under, and the line typed at the
+pane fetches it there and then — `ANTHROPIC_API_KEY="$(secret AGENTROUTER_API_KEY)"`. The value is
+read by the pane's own shell, so it is never in this process's memory, its environment, its logs,
+or anything an agent can echo back into a transcript. All this module ever handles is the id.
 
-Pure by design — reading a file and reading `os.environ` are the only I/O.
+`secret` is a shell function, not a binary, so it exists only in an interactive shell — which is
+exactly where this line is typed. The relay cannot call it, and that is the point.
+
+Pure by design — reading two files is the only I/O, and the keystore one is read for its key
+*names* alone.
 """
 import json
 import os
@@ -29,6 +35,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_CONFIG = "~/.config/herdr-remote/agent-configs.json"
+
+# The keystore `secret` reads, and the same override it honours. Read here for key *names* only —
+# never for a value — so that a config row can say whether the key it names actually exists.
+DEFAULT_SECRETS = "~/.bash_secrets"
+# One assignment in that file, as `secrets-list` matches it: an optional `export`, a name, an `=`.
+KEY_LINE = re.compile(r"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=")
 
 # Ids are the names that end up on disk in launcher tiles and conversation records, so they are
 # held to the same shape as everything else this project stores under a name.
@@ -67,9 +79,9 @@ class Provider:
     label: str
     kind: str
     env: dict[str, str] = field(default_factory=dict)
-    # variable the agent wants -> the relay's own variable names that may supply it, in order.
-    # A list because one endpoint with two keys is the ordinary case: `f1claude` and `f2claude`
-    # differ by nothing else.
+    # variable the agent wants -> the keystore ids that may supply it, in order. A list because
+    # one endpoint with two keys is the ordinary case: `f1claude` and `f2claude` differ by nothing
+    # else. An id, never a value: the pane's shell fetches it with `secret <id>` at spawn time.
     secrets: dict[str, list[str]] = field(default_factory=dict)
     unset: tuple[str, ...] = ()
     model_var: str = ""
@@ -82,7 +94,7 @@ class Provider:
     models: tuple[str, ...] = ()
 
     def keys(self) -> list[str]:
-        """Every relay variable this provider may read, in the order it offers them."""
+        """Every keystore id this provider may draw a key from, in the order it offers them."""
         out: list[str] = []
         for names in self.secrets.values():
             out.extend(n for n in names if n not in out)
@@ -281,21 +293,38 @@ def parse_aliases(raw, providers: list[Provider]) -> list[Alias]:
     return out
 
 
+def keystore_names(path: str = "") -> set[str]:
+    """The key ids the keystore holds — names alone, never a value.
+
+    The one fact a config row needs about a credential that this relay can still answer now that
+    the value is fetched by the pane rather than read here: does the id the provider named exist
+    at all. Parsed the way `secrets-list` parses it, and nothing but the name of each line is kept.
+    A missing or unreadable keystore is an empty set, not an error — a machine that keeps its keys
+    somewhere else still starts sessions, it just cannot be told in advance which will work.
+    """
+    target = Path(os.path.expanduser(path or os.environ.get("SECRETS_FILE") or DEFAULT_SECRETS))
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    return {m.group(1) for m in map(KEY_LINE.match, text.splitlines()) if m}
+
+
 def alias_key(alias: Alias, provider: Provider) -> str:
-    """Which relay variable supplies this alias's key. The provider's first when it named none."""
+    """Which keystore id supplies this alias's key. The provider's first when it named none."""
     if alias.key:
         return alias.key
     offered = provider.keys()
     return offered[0] if offered else ""
 
 
-def public_configs(aliases: list[Alias], providers: list[Provider], environ=None) -> list[dict]:
+def public_configs(aliases: list[Alias], providers: list[Provider], known=None) -> list[dict]:
     """What `start_options` carries: names and nothing else.
 
-    `key` is the *variable's* name and `key_set` says whether the relay holds it — the one fact a
-    reader needs about a credential, and the most that can be said without saying the credential.
+    `key` is the *keystore id* and `key_set` says whether the keystore holds one under it — the one
+    fact a reader needs about a credential, and the most that can be said without saying it.
     """
-    env = os.environ if environ is None else environ
+    known = keystore_names() if known is None else known
     by_id = {p.id: p for p in providers}
     out = []
     for a in aliases:
@@ -307,24 +336,24 @@ def public_configs(aliases: list[Alias], providers: list[Provider], environ=None
             "id": a.id, "label": a.label, "kind": p.kind,
             "provider": p.id, "provider_label": p.label,
             "model": a.model, "model_option": a.model_option,
-            "key": key, "key_set": bool(key and env.get(key)),
+            "key": key, "key_set": bool(key and key in known),
             "off": a.off,
             "command": preview_command(a, p),
         })
     return out
 
 
-def public_providers(providers: list[Provider], environ=None) -> list[dict]:
+def public_providers(providers: list[Provider], known=None) -> list[dict]:
     """The file's contents, for the screen that says why a row cannot be edited.
 
     Safe to send: a base URL and a config directory are settings, not secrets — and the reason an
     alias is misbehaving is usually which endpoint it is pointed at.
     """
-    env = os.environ if environ is None else environ
+    known = keystore_names() if known is None else known
     return [{
         "id": p.id, "label": p.label, "kind": p.kind,
         "base_url": p.env.get("ANTHROPIC_BASE_URL", ""),
-        "keys": [{"name": n, "set": bool(env.get(n))} for n in p.keys()],
+        "keys": [{"name": n, "set": n in known} for n in p.keys()],
         # Which of the two model fields this provider can actually carry, so the editor draws the
         # ones that do something and says so about the ones it does not. codex takes its model
         # from CODEX_HOME/config.toml rather than the environment, and a field that silently goes
@@ -349,14 +378,13 @@ def _quote_env(value: str) -> str:
     return shlex.quote(value)
 
 
-def _statements(alias: Alias, provider: Provider, environ, refs: bool) -> list[str]:
+def _statements(alias: Alias, provider: Provider) -> list[str]:
     """The shell statements a session under this alias runs, in order.
 
-    `refs` is the difference between the line that is typed at the pane and the line that is shown
-    on screen: typed, a secret is its value; shown, it is `"$ROUTER_KEY"` — the name of the
-    variable, which is the most that can be said about a credential in a message a client receives.
+    One list, not two: the line typed at the pane and the line shown on screen are now the same
+    text, because a secret is a `$(secret <id>)` call in both. There is nothing left to redact —
+    the value only ever exists inside the pane's own shell, after this line has been sent.
     """
-    env = os.environ if environ is None else environ
     out: list[str] = []
     if provider.unset:
         out.append("unset " + " ".join(provider.unset))
@@ -368,12 +396,11 @@ def _statements(alias: Alias, provider: Provider, environ, refs: bool) -> list[s
         name = chosen if chosen in names else (names[0] if names else "")
         if not name:
             continue
-        if refs:
-            assignments.append(f'{wants}="${name}"')
-            continue
-        value = env.get(name)
-        if value:
-            assignments.append(f"{wants}={shlex.quote(value)}")
+        # Fetched by the pane, not by the relay. `secret` reads the keystore at the moment this
+        # line runs, so the value never reaches this process — which is the whole point: a key
+        # that is not in anyone's environment cannot be echoed out of one by an agent. The id is
+        # ENV_NAME-shaped by parse_providers, so it is a bare word inside the expansion.
+        assignments.append(f'{wants}="$(secret {name})"')
     if provider.model_var and alias.model:
         assignments.append(f"{provider.model_var}={shlex.quote(alias.model)}")
     if provider.model_option_var and alias.model_option:
@@ -383,19 +410,18 @@ def _statements(alias: Alias, provider: Provider, environ, refs: bool) -> list[s
     return out
 
 
-def export_line(alias: Alias, provider: Provider, environ=None) -> str:
+def export_line(alias: Alias, provider: Provider) -> str:
     """The one line typed at the pane's shell before `herdr agent start` attaches to it.
 
-    Every value is quoted with `shlex.quote`, and every value's *origin* is either the provider
-    file or the relay's own environment — a client's edit reaches the model strings and the choice
-    of key name, and nothing else. A key whose variable the relay does not hold is left unset
-    rather than exported empty: an empty key fails at the API with a clear message, and an unset
-    one lets the CLI fall back to whatever the user's own login already had.
+    Every value is quoted with `shlex.quote`, and every value's *origin* is the provider file — a
+    client's edit reaches the model strings and the choice of key id, and nothing else. A key the
+    keystore does not hold exports empty rather than unset, since only the shell running the line
+    knows: `secret` says so on stderr and the API says so at the first call.
 
     The leading space keeps the line out of the shell's history under HIST_IGNORE_SPACE; the
     trailing `clear` takes it off the screen the agent is about to draw on.
     """
-    parts = _statements(alias, provider, environ, refs=False)
+    parts = _statements(alias, provider)
     return " " + "; ".join(parts) + "; clear" if parts else ""
 
 
@@ -415,14 +441,15 @@ def preview_command(alias: Alias, provider: Provider) -> str:
     """The same session, as a line the user can paste into their own terminal.
 
     Shown on the config's row so the thing the relay will do is readable before it does it, and
-    testable without it — which is how a wrong base URL or a key that was never exported gets
-    found in one paste instead of one spawn. Carries variable *references*, never values.
+    testable without it — which is how a wrong base URL or a key the keystore never had gets found
+    in one paste instead of one spawn. Carries `$(secret <id>)` calls, never values — which is
+    also, now, exactly what the relay types, so what is read here is what will run.
 
     ponytail: the harness kind doubles as the binary name, which is true for claude, codex and pi.
     A provider whose CLI is called something else gets a `command` field here.
     """
     run = shlex.join((provider.kind,) + model_args(alias, provider))
-    return "; ".join(_statements(alias, provider, {}, refs=True) + [run])
+    return "; ".join(_statements(alias, provider) + [run])
 
 
 def resolve(config_id: str, kind: str, aliases: list[Alias], providers: list[Provider]):

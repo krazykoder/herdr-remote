@@ -28,7 +28,7 @@ const NAMES = ['AGENT_CONFIG_KEY', 'AGENT_CONFIG_MAX', 'parseAgentConfigs', 'loa
 const CLAUDE = {id: 'oclaude1', label: 'oclaude1', kind: 'claude', provider: 'router',
                 provider_label: 'AgentRouter', model: 'claude-opus-5', model_option: '',
                 key: 'ROUTER_KEY', key_set: true,
-                command: 'export ANTHROPIC_API_KEY="$ROUTER_KEY"; claude'};
+                command: 'export ANTHROPIC_API_KEY="$(secret ROUTER_KEY)"; claude'};
 const CODEX = {id: 'ocodex', label: 'ocodex', kind: 'codex', provider: 'oai',
                provider_label: 'OpenAI', model: '', key: 'OPENAI_KEY', key_set: false,
                command: 'export OPENAI_API_KEY="$OPENAI_KEY"; codex'};
@@ -106,9 +106,9 @@ test('a row wears its harness colour, not one of its own', () => {
   assert.match(s.agentConfigRowHtml(CLAUDE), /data-kind="claude"/);
 });
 
-test('a row names the key variable and says when the relay has not got it', () => {
+test('a row names the key id and says when the keystore has not got it', () => {
   const s = boot({configs: [CLAUDE, CODEX]});
-  assert.match(s.agentConfigRowHtml(CLAUDE), /\$ROUTER_KEY/);
+  assert.match(s.agentConfigRowHtml(CLAUDE), /ROUTER_KEY/);
   assert.doesNotMatch(s.agentConfigRowHtml(CLAUDE), /cfg-unset/);
   assert.match(s.agentConfigRowHtml(CODEX), /cfg-unset/);
 });
@@ -116,7 +116,8 @@ test('a row names the key variable and says when the relay has not got it', () =
 test('the effective command is on the row it belongs to, verbatim', () => {
   const s = boot({configs: [CLAUDE]});
   s.openAgentConfig('oclaude1');
-  assert.match(s.drawn.launcherEditBody.innerHTML, /ANTHROPIC_API_KEY=&quot;\$ROUTER_KEY&quot;/);
+  assert.match(s.drawn.launcherEditBody.innerHTML,
+    /ANTHROPIC_API_KEY=&quot;\$\(secret ROUTER_KEY\)&quot;/);
 });
 
 test('naming a new config names its id; renaming a saved one does not', () => {

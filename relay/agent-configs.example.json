@@ -1,12 +1,14 @@
 {
   "_comment": [
     "Copy to ~/.config/herdr-remote/agent-configs.json, or point HERDR_AGENT_CONFIGS at it.",
-    "This file names the endpoints a session may be started against and which of the relay's own",
-    "environment variables may supply a credential. It is the security boundary: the app can name",
-    "an alias, a model and which of these key variables to use, and nothing else. No key VALUE",
-    "belongs in this file — export the variables in the relay's own environment.",
+    "This file names the endpoints a session may be started against and which keystore ids may",
+    "supply a credential. It is the security boundary: the app can name an alias, a model and",
+    "which of these key ids to use, and nothing else. No key VALUE belongs in this file, and none",
+    "belongs in the relay's environment either — a key id is looked up by the pane's own shell,",
+    "with `secret <id>`, at the moment the session starts. Keep the ids matching the names in",
+    "~/.bash_secrets (`secrets-list` prints them).",
     "'unset' runs first. 'env' is exported verbatim. 'secrets' binds the variable the CLI wants to",
-    "the relay variables that may fill it, in offer order. 'model_var' is where an alias's model",
+    "the keystore ids that may fill it, in offer order. 'model_var' is where an alias's model",
     "string goes. 'kind' must be a herdr agent kind — it is checked against the start."
   ],
   "version": 1,

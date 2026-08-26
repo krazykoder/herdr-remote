@@ -34,8 +34,8 @@
       return kept;
     }
 
-    // What the relay says about each alias: its harness, whether the key variable is actually set
-    // over there, and the command line the spawn will run. Derived on the relay because only the
+    // What the relay says about each alias: its harness, whether the keystore over there actually
+    // holds the key id it names, and the command line the spawn will run. Derived on the relay because only the
     // relay has read the provider file — so a row this browser wrote is drawn from the answer
     // rather than from what it wrote, which is also what makes a typo visible.
     function agentConfigRows() {
@@ -86,17 +86,17 @@
     }
 
     // Two lines. The first is what the thing is — its name, its harness, the provider it is
-    // pointed at; the second is what it will do — the model, and the key variable with whether
-    // this relay actually holds it. Everything needed to tell two aliases apart without opening
+    // pointed at; the second is what it will do — the model, and the key id with whether the
+    // relay's keystore actually holds one under it. Everything needed to tell two aliases apart without opening
     // either, which is the whole job of a list of near-identical things.
     function agentConfigRowHtml(row) {
       const badge = typeof agentBadge === 'function' ? agentBadge(row.label, row.kind)
         : ` <span class="badge">${escapeHtml(row.label)}</span>`;
       const key = row.key
         ? `<span class="cfg-key${row.key_set ? '' : ' cfg-unset'}"`
-          + ` title="${row.key_set ? 'This relay holds ' + escapeHtml(row.key)
-              : escapeHtml(row.key) + ' is not set on the relay — the session would start without'
-                + ' a key'}">$${escapeHtml(row.key)}${row.key_set ? '' : ' ✕'}</span>`
+          + ` title="${row.key_set ? "The relay's keystore holds " + escapeHtml(row.key)
+              : escapeHtml(row.key) + ' is not in the relay\'s keystore — the session would start'
+                + ' without a key'}">${escapeHtml(row.key)}${row.key_set ? '' : ' ✕'}</span>`
         : '';
       const off = row.off
         ? '<span class="cfg-off-tag" title="Switched off — not offered anywhere">off</span>' : '';
@@ -251,19 +251,19 @@
         + agentConfigModelHtml(provider, d)
         + (keys.length
           ? '<div class="start-field">Key<div class="badge-strip">'
-            + keys.map(k => badgeHtml('$' + k.name + (k.set ? '' : ' ✕'),
+            + keys.map(k => badgeHtml(k.name + (k.set ? '' : ' ✕'),
                 k.name === (d.key || (keys[0] || {}).name),
                 `agentConfigSet('key', '${escapeHtml(k.name)}')`,
-                {proj: true, title: k.set ? 'This relay holds ' + k.name
-                  : k.name + ' is not set on the relay'})).join('')
+                {proj: true, title: k.set ? "The relay's keystore holds " + k.name
+                  : k.name + " is not in the relay's keystore"})).join('')
             + '</div></div>'
           : `<div class="cfg-note">${provider.base_url
-              ? 'This provider names no key variables.'
+              ? 'This provider names no keys.'
               : 'Stock harness — it runs on whatever login the CLI already has on the relay\'s'
                 + ' machine, so there is no key to choose.'}</div>`)
-        // The line the relay will actually run, with the key as a `$VAR` reference rather than a
-        // value — so it is both safe to show and pasteable into the user's own shell, which is
-        // how a wrong endpoint gets found in one paste instead of one spawn. Only for a saved
+        // The line the relay will actually run, with the key as the `$(secret <id>)` call that
+        // fetches it — so it is both safe to show and pasteable into the user's own shell, which
+        // is how a wrong endpoint gets found in one paste instead of one spawn. Only for a saved
         // config: it comes from the relay, and an unsaved draft is not one it has read.
         + (row && row.command
           ? '<div class="cfg-note">Effective command</div>'
