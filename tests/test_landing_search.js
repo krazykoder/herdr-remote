@@ -169,3 +169,16 @@ test('a row matched on its section keyword ranks under one matched on its name',
     .map(s => s.replace('class="name">', ''));
   assert.deepStrictEqual(names, ['session notes', 'zzz']);
 });
+
+test('a section asked for by name is not crowded out by weak matches above it', () => {
+  // Nine panes that match "ter" only as a subsequence, which is more than the box will draw. The
+  // Terminals section matches it as a substring of what the section is called, and that is the
+  // stronger claim — ranking per section and spending the budget top down lost it entirely.
+  const many = [];
+  for (let i = 0; i < 9; i++) many.push({pane_id: 'p' + i, label: 'the reaper ' + i, agent: 'codex'});
+  const e = boot({agents: many, shells: [{pane_id: 's1', label: 'build watch'}]});
+  const html = search(e, 'ter');
+  assert.match(html, /Terminals/, '"ter" reaches the terminals');
+  assert.match(html, /build watch/);
+  assert.match(search(e, 'term'), /build watch/, 'and one more letter changes nothing');
+});

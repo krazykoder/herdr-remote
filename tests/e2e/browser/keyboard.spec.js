@@ -119,3 +119,24 @@ test('the closed search pill keeps its icon, and grows from the middle', async (
   expect(open.height, 'the height changes with the state').toBe(shut.height);
   expect(Math.abs(open.x + open.width / 2 - 195), 'it grows off centre').toBeLessThanOrEqual(1);
 });
+
+// A tap outside the results dismisses the search. On a phone the bar floats over the cards, so the
+// same tap used to press whatever card was under it — the pane the reader was trying to get *away*
+// from opened instead.
+test.describe('on a touch screen', () => {
+  test.use({hasTouch: true, viewport: {width: 390, height: 844}});
+
+  test('a tap outside the open search closes it without pressing what is behind it', async ({page}) => {
+    await page.goto('/');
+    await expect(page.locator('#agents .agent').first()).toBeVisible();
+    await page.locator('#landingSearchInput').fill('a');
+    await expect(page.locator('#landingSearchResults .pair-pick').first()).toBeVisible();
+
+    const card = await page.locator('#agents .agent').first().boundingBox();
+    await page.touchscreen.tap(card.x + card.width / 2, card.y + card.height / 2);
+
+    await expect(page.locator('#landingSearchResults')).toBeHidden();
+    await expect(page.locator('#landingSearchInput')).toHaveValue('');
+    await expect(page.locator('#agentListView'), 'the card under the tap was pressed').toBeVisible();
+  });
+});

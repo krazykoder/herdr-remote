@@ -187,21 +187,29 @@
       if (!input || !out) return;
       const q = input.value.trim().toLowerCase();
       if (!q) { out.innerHTML = ''; out.hidden = true; return; }
-      let shown = 0, html = '';
-      landingSearchGroups().forEach(g => {
-        // Best match first, and among equals the one last looked at — a name typed halfway is
-        // usually the pane the reader has been in all morning, and the section it happens to sit
-        // in is no reason for it to be third.
-        const rows = g.rows.filter(r => pickMatch(landingHay(r, g), q))
-          .map(r => ({row: r, score: landingScore(r, g, q)}))
-          .sort((a, b) => b.score - a.score || (b.row.seen || 0) - (a.row.seen || 0))
-          .slice(0, LANDING_SEARCH_MAX - shown)
-          .map(x => x.row);
-        if (!rows.length) return;
-        shown += rows.length;
-        html += `<div class="pair-head">${escapeHtml(g.head)}</div>` +
+      // Every match in the app first, then the strongest few of them — and only then split back
+      // into sections. Ranking inside a group and spending the budget group by group meant the
+      // first section could eat all of it on weak subsequence hits: "ter" filled the page with
+      // panes whose names merely contain those three letters in order, and the Terminals section
+      // it plainly asks for never got a row. Nothing changes at "term" except that the weak
+      // matches stop matching — which is the section order deciding, not the query.
+      const groups = landingSearchGroups();
+      const hits = [];
+      groups.forEach(g => g.rows.forEach(r => {
+        if (pickMatch(landingHay(r, g), q)) hits.push({g, row: r, score: landingScore(r, g, q)});
+      }));
+      // Best match first, and among equals the one last looked at — a name typed halfway is
+      // usually the pane the reader has been in all morning.
+      hits.sort((a, b) => b.score - a.score || (b.row.seen || 0) - (a.row.seen || 0));
+      const keep = hits.slice(0, LANDING_SEARCH_MAX);
+      // Drawn in section order, each section keeping the ranking above: a list that jumped between
+      // sections row by row would be ordered by a score nobody can see.
+      const html = groups.map(g => {
+        const rows = keep.filter(h => h.g === g).map(h => h.row);
+        if (!rows.length) return '';
+        return `<div class="pair-head">${escapeHtml(g.head)}</div>` +
           rows.map(r => landingRowHtml(g.head, r)).join('');
-      });
+      }).join('');
       out.innerHTML = html || `<p class="pair-empty">Nothing here matches "${escapeHtml(q)}".</p>`;
       out.hidden = false;
     }
@@ -217,6 +225,18 @@
       const input = document.getElementById('landingSearchInput');
       if (input) input.blur();
       g.go(id);
+    }
+
+    // A tap on the frame and not on anything in it. Open, the frame takes pointer events on a
+    // touch screen — see the CSS — so this is what that tap is for: it closes the search and goes
+    // no further. Without it the tap fell through to whatever card was under the bar and opened a
+    // pane the reader was only trying to dismiss a keyboard over.
+    function landingSearchBackdrop(e) {
+      const bar = document.getElementById('landingSearch');
+      if (!bar || e.target !== bar) return;
+      clearLandingSearch();
+      const input = document.getElementById('landingSearchInput');
+      if (input) input.blur();
     }
 
     function landingSearchKey(e) {

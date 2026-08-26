@@ -2781,6 +2781,14 @@
 
     #landingSearch[hidden] { display: none; }
 
+    /* Open on a touch screen the frame stops being click-through: a tap outside the results is a
+       tap that dismisses the search, and it must not also press whatever card it landed over.
+       Touch only — with a mouse, focusing the field and then scrolling the list behind it is an
+       ordinary thing to do, and a full-screen catcher would eat the wheel with it. */
+    @media (pointer: coarse) {
+      #landingSearch.open { pointer-events: auto; }
+    }
+
     /* Narrower than the page it floats over, so it reads as a thing on top of the list rather than
        as the list's last row. The box sets its own width — see below, it has two. */
     #landingSearch > * { pointer-events: auto; }
@@ -7586,7 +7594,7 @@
   <!-- Fixed to the foot of the landing page, hidden everywhere else — see syncLandingSearch. The
        results sit above the box rather than below it, so the finger that is typing is not on top
        of what it is looking for. -->
-  <div class="landing-search" id="landingSearch" hidden>
+  <div class="landing-search" id="landingSearch" hidden onclick="landingSearchBackdrop(event)">
     <div class="landing-search-results" id="landingSearchResults" hidden></div>
     <label class="landing-search-box" for="landingSearchInput">
       <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
