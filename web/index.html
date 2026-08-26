@@ -2772,11 +2772,10 @@
       flex-direction: column;
       justify-content: flex-end;
       align-items: center;
-      /* Halfway up the bottom half of what is visible: it floats over the list rather than ending
-         it, and a thumb reaches it without stretching past the fold. Of --vv-height and not of a
-         percentage — a percentage padding resolves against the *width* of the box, which on a
-         phone is a quarter of 390px and not a quarter of the screen. */
-      padding-bottom: calc(var(--vv-height, 100dvh) * 0.25 + env(safe-area-inset-bottom, 0px));
+      /* At the foot of what is visible, clear of the status bar that is always there — its height
+         is measured rather than assumed, because it carries the safe-area inset itself and grows
+         with whatever it is saying. See syncLandingSearch. */
+      padding-bottom: calc(var(--status-h, 56px) + 12px);
       pointer-events: none;
     }
 
@@ -2790,10 +2789,13 @@
     }
 
     /* The bubble is the icon's own containing block, so the glyph is placed against the field it
-       belongs to rather than against the frame — which is the full height of the screen. */
+       belongs to rather than against the frame — which is the full height of the screen.
+       Left-aligned, because closed this is a single round button hanging at the bottom-left and
+       the corner it grows out of has to be the corner it lives in. */
     .landing-search-box {
       position: relative;
       display: flex;
+      justify-content: flex-start;
     }
 
     /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be —
@@ -2812,10 +2814,15 @@
     /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
        through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
        still reads as a raised control. */
+    /* Closed it is the glyph and nothing else — a list of panes is what the landing page already
+       is, and a permanent full-width box over it is a control competing with the thing it
+       searches. Open is the same element grown, not a second one swapped in: one field, so the
+       text, the focus and the caret are never handed over mid-gesture. */
     #landingSearch input {
-      width: 100%;
+      width: 42px;
       box-sizing: border-box;
       padding: 11px 16px 11px 38px;
+      transition: width 180ms ease;
       /* The one border in the app meant to be seen from across the page: this floats over cards
          that each carry a border of their own, and at --border it read as one more of them. */
       border: 1.5px solid color-mix(in srgb, var(--blue) 60%, var(--border));
@@ -2829,6 +2836,27 @@
       /* Two shadows: the near one lifts it off whatever card is under it, the far one is the drop
          that says it is not part of the list at all. */
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    #landingSearch.open input { width: 100%; }
+
+    /* Closed, the field is a circle with the glyph in the middle of it: the left padding that
+       makes room for the icon beside text would otherwise hold the button 56px wide and oval. */
+    #landingSearch:not(.open) input {
+      padding-left: 11px;
+      padding-right: 11px;
+    }
+
+    #landingSearch:not(.open) .landing-search-icon {
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    /* Nothing to read in a 42px circle, and a placeholder in one is a row of clipped letters. */
+    #landingSearch:not(.open) input::placeholder { color: transparent; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #landingSearch input { transition: none; }
     }
 
     #landingSearch input:focus {
@@ -2860,10 +2888,9 @@
     #landingSearchResults .pair-pick { background: none; }
     #landingSearchResults .pair-pick:last-child { border-bottom: none; }
 
-    /* The bubble floats over the list rather than sitting at its foot, so this is only enough to
-       keep the very last card from ending underneath it. */
+    /* Enough that the last card does not end underneath the closed button. */
     body.landing-search-on #agentListView {
-      padding-bottom: 24px;
+      padding-bottom: 72px;
     }
 
     /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
@@ -7572,9 +7599,10 @@
            stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
-           aria-label="Search panes and conversations" autocomplete="off"
-           autocorrect="off" autocapitalize="none" spellcheck="false"
-             oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)" />
+             aria-label="Search panes and conversations" autocomplete="off"
+             autocorrect="off" autocapitalize="none" spellcheck="false"
+             oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)"
+             onfocus="openLandingSearch()" onblur="landingSearchBlur()" />
     </div>
   </div>
 
