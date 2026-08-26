@@ -468,7 +468,7 @@
         const count = members.reduce((n, m) => n + (Number(m.messages) || 0), 0);
         const seen = Math.max(0, ...members.map(m => Number(m.seen) || 0));
         const live = members.map(m => agents.find(a => convMemberKey(a) === m.key)).filter(Boolean);
-        const names = members.map(m => escapeHtml(m.label || (agents.find(a => convMemberKey(a) === m.key) || {}).label || 'Former pane'));
+        const names = members.map(m => escapeHtml(convMemberName(m.key, m.label, 'Former pane')));
         // What each member is and where it is working, in the order of how much each source knows.
         // The member record, written when it joined; then the live pane, which is right for a
         // member that has come back under a new name; then the key itself, which carries the
@@ -872,7 +872,7 @@
             : `<button class="conv-eye" data-key="${escapeHtml(m.key)}" aria-pressed="${out ? 'true' : 'false'}"` +
               ` onclick="toggleConvHidden(this.dataset.key)"` +
               ` aria-label="${out ? 'Show' : 'Hide'} this member in the thread">${out ? '◌' : '◉'}</button>`) +
-          `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
+          `<span class="who">${escapeHtml(convMemberName(m.key, rec.label, m.label, 'Former pane'))}</span>` +
           kindBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '',
                     live.get(m.key), (rec.spawn || {}).config) +
           `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'paused')}</span>` +

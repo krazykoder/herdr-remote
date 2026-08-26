@@ -945,6 +945,33 @@ test('the Restart menu survives the redraws that arrive while it is open', async
     .not.toHaveAttribute('open', '');
 });
 
+test('a renamed pane is called its new name everywhere it is drawn', async ({page}) => {
+  // A rename is a correction — the reader retitled the pane because the old name was wrong — so a
+  // thread still drawing the old one is showing them the mistake they came to fix. Labels are
+  // stamped into the index and into every entry as they are written, which is why this needs the
+  // live pane to win over the stamp.
+  await open(page);
+  const key = await join(page);
+  await read(page);
+  await page.evaluate(() => handleMessage({type: 'command_result', command: 'rename_pane',
+                                           ok: true, pane_id: 'w1:p1', label: 'Reviewer 9'}));
+  // Recorded again under the new name, which is what carries it past the pane's own life: the
+  // record's label is written on every read that writes something, and the index is kept in step
+  // with it. A read that finds nothing new writes nothing, so the pane says something first.
+  await read(page, PANE + '\n⏺ And one more thing.\n\n❯\n');
+  expect(await page.evaluate(k => loadConvIndex()[0].members.find(m => m.key === k).label, key))
+    .toBe('Reviewer 9');
+
+  await page.locator('.term-header .back').click();
+  await page.locator('#conversations .conversation-card').click();
+  await expect(page.locator('#convView')).toBeVisible();
+  await openRoster(page);
+  await expect(page.locator('#convView .conv-roster-row .who')).toHaveText('Reviewer 9');
+  // Including the bubbles recorded before the rename: they were stamped with the old name.
+  await expect(page.locator('#convViewThread .conv-msg .conv-who').first())
+    .toContainText('Reviewer 9');
+});
+
 test('a session started as something opens as it again, whatever the pane was called',
   async ({page}) => {
     await openCard(page);

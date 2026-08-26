@@ -382,6 +382,19 @@
       return both.some(m => m.key === key) ? both : both.concat({key, label: paneLabel(partner)});
     }
 
+    // What a member is called *now*. Labels are stamped into the index and into every entry as they
+    // are written, which is right for a member whose pane has gone — that stamp is all there is
+    // left of what it was called. It is wrong for one still running: a rename is a correction, and
+    // a thread that keeps drawing the name the reader has just replaced is showing them the mistake
+    // they came to fix. So a live pane's own label wins wherever there is one.
+    function convMemberName(key) {
+      const live = key ? agents.find(x => convMemberKey(x) === key) : null;
+      const now = live ? paneLabel(live) : '';
+      if (now) return now;
+      for (let i = 1; i < arguments.length; i++) if (arguments[i]) return arguments[i];
+      return '';
+    }
+
     // A member is recording or it has ended, and that is derived rather than stored: a live pane
     // answers it, and a pane that has exited answers it by not being there. No lifecycle, no event
     // to miss, and a conversation whose panes have all gone is a full record rather than a
@@ -792,7 +805,7 @@
         const on = live.has(m.key);
         const facts = [spawn.role, spawn.project || spawn.cwd].filter(Boolean);
         return `<span class="conv-member${on ? '' : ' gone'}">` +
-          `<span class="who">${escapeHtml((rec && rec.label) || m.label || '')}</span>` +
+          `<span class="who">${escapeHtml(convMemberName(m.key, rec && rec.label, m.label))}</span>` +
           kindBadge(spawn.agent || (live.get(m.key) || {}).agent || '', live.get(m.key),
                     spawn.config) +
           `${on ? '' : '<span class="tag">paused</span>'}` +
@@ -920,7 +933,9 @@
           ? (convViewRecs.find(r => r.key === key) || {}).spawn : null) || {};
         const config = (live && live.config) || spawn.config || me.config || '';
         const color = agentColor(agent) || 'var(--muted)';
-        const name = escapeHtml(e.label || me.label || '');
+        // The name it goes by now, not the one stamped when the words were recorded — see
+        // convMemberName. An ended member has no live pane and keeps its stamp.
+        const name = escapeHtml(convMemberName(key, e.label, me.label));
         // The same badge the pane list and the pair sheet use, beside the name: colour says which
         // member, and the badge says what it is — a thread of claude and codex reads as two
         // colleagues rather than as two colours.

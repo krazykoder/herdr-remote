@@ -552,7 +552,7 @@
       const held = convHeld.get(key);
       if (!held) return;
       await convPut(held);
-      convNoteCounts(key, held.entries, Date.now());
+      convNoteCounts(key, held.entries, Date.now(), held.label);
     }
 
     // The one place the append-only rule (§5.1) is broken, and it is broken by the user, on a
@@ -872,7 +872,7 @@
     // `seen` here is the newest entry's own time, not the fold's — a first read that backfills an
     // afternoon of history would otherwise report the whole conversation as active just now, which
     // is the one thing the landing list is asked.
-    function convNoteCounts(key, entries, now) {
+    function convNoteCounts(key, entries, now, label) {
       const items = loadConvIndex();
       const last = convAt(entries[entries.length - 1]) || now;
       let hit = false;
@@ -885,6 +885,10 @@
           // in IndexedDB where there is room for them.
           m.last = String((entries[entries.length - 1] || {}).text || '')
             .replace(/\s+/g, ' ').trim().slice(0, 120);
+          // The name too, so a rename outlives the pane it was made on. The index stamps a label
+          // when a member joins and never again; the record's is written on every read, so this is
+          // where the two are kept in step. The landing card is drawn from the index alone.
+          if (label && m.label !== label) m.label = label;
           hit = true;
         }
       }
