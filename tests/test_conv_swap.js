@@ -41,7 +41,7 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
     },
     openStartDialog: p => log.push(['open', p || '']),
     renderStartAgents: () => log.push(['render']),
-    endPane: id => log.push(['end', id]),
+    endPane: id => { log.push(['end', id]); return true; },
   });
   vm.runInContext(src, ctx);
   vm.runInContext(`convViewId = 'c1'; convViewRecs = ${JSON.stringify(recs)};`, ctx);
@@ -254,6 +254,13 @@ test('restarting a live member ends it and starts the same thing again', () => {
     'and the same one started again, with no dialog in between');
 });
 
+test('restart does not replace a pane that could not end', () => {
+  const e = boot({live: [{pane_id: 'w1:p1'}], recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
+  e.run("endPane = () => false; respawned = []; convRespawn = k => respawned.push(k);");
+  assert.equal(e.run("convRestartMember('w1:p1')"), false);
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), []);
+});
+
 test('restart all goes one member at a time, and waits for a start in flight', () => {
   // A restart owns startIntent and the respawn note, and there is one of each — fired in a loop
   // they would trample each other and only the last member would continue its thread.
@@ -355,6 +362,14 @@ test('delete for good is offered on an archived card and nowhere else', () => {
   assert.match(bootArchive(index, true), /purgeConversation/);
   assert.doesNotMatch(bootArchive(index, false), /purgeConversation/,
     'the active list keeps the reversible Delete in the roster and no other');
+});
+
+test('archive actions are armed like End, across a card redraw', () => {
+  const active = bootArchive([{id: 'c1', name: 'Active', members: [{key: 'k1'}]}], false);
+  const archived = bootArchive([{id: 'c1', name: 'Put away', members: [{key: 'k1'}], archived: true}], true);
+  assert.match(active, /data-arm-key="archive:c1"/);
+  assert.match(active, /armButton\(this, 'Archive\?'/);
+  assert.match(archived, /armButton\(this, 'Unarchive\?'/);
 });
 
 test('a conversation that was never archived cannot be deleted for good', async () => {

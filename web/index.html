@@ -139,15 +139,18 @@
       border-radius: 4px;
     }
 
-    /* iOS Safari zooms the layout viewport whenever a focused field renders below 16px, which
-       pushes the page edges outside the visual viewport and does not spring back. 16px is a
-       platform threshold, not a design choice: no field rule below may set a smaller size.
-       The one sanctioned exception is the composer, which the user can take down to 8px from the
-       gear menu and which accepts the zoom as the price — see --input-font. */
+    /* Every field in the app reads at the pane composer's size, from the composer's own variable:
+       the sheets are where the same sentences are typed, and a field that rendered larger than the
+       box the message ends up in was the odd one out.
+
+       This is a deliberate reversal. iOS Safari zooms the layout viewport whenever a focused field
+       renders below 16px and does not spring back, which is why every field here used to be 16px
+       and only the composer opted out. The zoom is the price of one size across the app; the way
+       back is one line — set this rule to 16px and let --input-font stay on the composer alone. */
     input,
     textarea,
     select {
-      font-size: 16px;
+      font-size: var(--input-font, 13px);
     }
 
     /* The document never scrolls: overflow lives on html because the iOS rubber-band scroll
@@ -1151,7 +1154,7 @@
       background: var(--green);
       color: var(--bg);
       font-weight: 600;
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       cursor: pointer;
     }
 
@@ -1252,36 +1255,33 @@
       min-width: 0;
       /* Room for the corner the button sits in, kept by every line rather than by the one that
          happens to be longest today. */
-      padding-right: 26px;
+      padding-right: 52px;
     }
 
-    /* Quiet until it is looked for: a launcher is pressed far more often than it is edited, and a
-       control that is as loud as the tile it sits on is a mis-tap waiting to happen. */
+    /* Edit is an explicit action, not a glyph to hunt for. */
     .launcher-edit {
       position: absolute;
-      top: 2px;
-      right: 2px;
+      top: 6px;
+      right: 6px;
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: none;
+      min-width: 40px;
+      min-height: 28px;
+      padding: 3px 7px;
+      border: 1px solid var(--border);
       border-radius: 6px;
-      background: none;
+      background: var(--bg);
       color: var(--muted);
       font: inherit;
-      font-size: 0.7rem;
+      font-size: 0.68rem;
       line-height: 1;
-      opacity: 0.5;
       cursor: pointer;
     }
 
     .launcher-edit:hover, .launcher-edit:focus-visible {
-      opacity: 1;
       color: var(--blue);
-      background: var(--surface);
+      border-color: var(--blue);
     }
 
     /* A tile stands in for a thing that will exist, so it carries the kind's colour the way an
@@ -1363,7 +1363,7 @@
 
     /* On the tile these are footnotes, not headlines: the tile's name and payload are what is
        read, and three full-strength marks under them turn a keypad into a warning board. Paled
-       rather than recoloured, so `insecure` keeps its red and `no approvals` its orange — the
+       rather than recoloured, so `insecure` keeps its red and `skip approvals` its orange — the
        band headings above them are where either is stated at full strength. */
     .launcher-badges .launcher-badge {
       align-self: auto;
@@ -1407,10 +1407,14 @@
       display: flex;
       gap: 8px;
       align-items: flex-start;
-      margin: 10px 0 0;
+      align-self: flex-start;
+      margin: 2px 0 0;
       font-size: 0.75rem;
       line-height: 1.35;
       color: var(--muted);
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--red) 6%, var(--bg));
     }
 
     .ql-insecure input {
@@ -1432,7 +1436,7 @@
       display: flex;
       gap: 10px;
       align-items: center;
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       line-height: 1;
       white-space: nowrap;
       color: var(--muted);
@@ -1442,7 +1446,9 @@
        *beside* its word, so the pair has to win on specificity rather than on order. */
     .start-field.start-check { flex-direction: row; }
 
-    .ql-solo { margin: 8px 0 0; }
+    .ql-solo { margin: 2px 0 0; }
+
+    .start-field .start-check { align-self: flex-start; }
 
     .ql-solo input,
     .start-check input {
@@ -1696,7 +1702,7 @@
 
     /* The member card's field rule above is intentionally full-width; do not let it turn this
        switch into a full-width input. */
-    .ql-member .ql-solo { flex: 1 1 100%; }
+    .ql-member .ql-solo { flex: 0 0 auto; margin-left: auto; }
     .ql-member .ql-solo input { flex: 0 0 auto; min-width: 0; }
 
     /* The arbitration block, borrowed whole: `arb-form` is what lays out the role picker, the
@@ -2161,8 +2167,7 @@
     }
 
     .conversation-count {
-      margin-left: auto;
-      flex: none;
+      margin-top: 4px;
       font-weight: 400;
       white-space: nowrap;
     }
@@ -2437,10 +2442,7 @@
     .start-field select,
     .start-field textarea,
     .start-field input {
-      /* Read at the size the rest of the app reads at. The label above is small caps because it is
-         a label; what the user typed is content, and inheriting the label's 0.65rem made every
-         field in every sheet render its own value smaller than anything around it. */
-      font-size: 0.85rem;
+      font-size: var(--input-font, 13px);
       padding: 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -2508,6 +2510,16 @@
 
     .new-agent-body .start-field input {
       padding: 8px 10px;
+    }
+
+    @media (max-width: 767px) {
+      #newAgentModal [role="dialog"],
+      #launcherModal [role="dialog"] {
+        top: auto !important;
+        bottom: 8px;
+        transform: translateX(-50%) !important;
+        max-height: calc(100dvh - 16px) !important;
+      }
     }
 
     /* The Project row is the one that does not wrap: there is usually one Project in play, and the
@@ -2727,22 +2739,21 @@
        out, it is simply there while the landing page is, so it is styled as a bar rather than as a
        dialog. The results grow upwards out of it and are capped at half the screen, because the
        thing being searched for is behind them. */
-    .landing-search {
+    #landingSearch {
       position: fixed;
       left: 0;
       right: 0;
-      bottom: 0;
+      /* Raised off the edge rather than sitting on it: a bar flush with the bottom reads as part
+         of the browser's own chrome, and on a phone it is where the home indicator lives. */
+      bottom: calc(20px + env(safe-area-inset-bottom, 0px));
       z-index: 90;
-      /* The page is centred and capped at 1100px on a wide screen; a fixed bar is out of that flow
-         and would run the full window unless it is given the same cap and centred itself. */
-      max-width: 1100px;
+      /* Narrower than the page it floats over, so it reads as a thing on top of the list rather
+         than as the list's last row. */
+      width: min(calc(100% - 56px), 460px);
       margin-inline: auto;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
-      padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
     }
 
-    .landing-search input {
+    #landingSearch input {
       width: 100%;
       box-sizing: border-box;
       padding: 9px 12px;
@@ -2751,26 +2762,34 @@
       background: var(--bg);
       color: var(--text);
       font-family: inherit;
-      font-size: 0.8rem;
+      font-size: var(--input-font, 13px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     }
 
-    .landing-search input:focus {
+    #landingSearch input:focus {
       outline: none;
       border-color: var(--blue);
     }
 
     /* Its own scroller above the box. The rows are the picker's, so a pane found here looks like
        the same pane found anywhere else. */
-    .landing-search-results {
+    #landingSearchResults {
       max-height: 50vh;
       overflow-y: auto;
-      margin: -8px -12px 8px;
-      border-bottom: 1px solid var(--border);
+      /* The rows carry their own bottom border; the panel's radius has to clip the last one. */
+      overflow-x: hidden;
+      margin: 0 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     }
 
+    #landingSearchResults .pair-pick:last-child { border-bottom: none; }
+
     /* Room for the bar, or the last card on the page is behind it and unreachable. */
-    body.landing-search #agentListView {
-      padding-bottom: 60px;
+    body.landing-search-on #agentListView {
+      padding-bottom: 84px;
     }
 
     /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
@@ -2850,8 +2869,7 @@
       border-radius: 8px;
       background: var(--bg);
       color: var(--text);
-      /* 16px, like every other field here: anything smaller and iOS zooms the page on focus. */
-      font-size: 16px;
+      font-size: var(--input-font, 13px);
     }
 
     #pickList {
@@ -3467,9 +3485,9 @@
       box-sizing: border-box;
       /* The pane composer's face and size, from the same setting: this is the same act — writing a
          message to an agent — and a monospace box is also what makes the block cursor exactly one
-         character wide. 16px by default keeps iOS from zooming on focus. */
+         character wide. */
       font-family: monospace;
-      font-size: var(--input-font, 16px);
+      font-size: var(--input-font, 13px);
       line-height: 1.4;
       padding: 6px 0;
       white-space: pre-wrap;
@@ -4039,7 +4057,7 @@
     .arb-form input,
     .arb-form select {
       font: inherit;
-      font-size: 0.72rem;
+      font-size: var(--input-font, 13px);
       color: var(--text);
       background: var(--bg);
       border: 1px solid var(--border);
@@ -4365,7 +4383,7 @@
 
     .arb-bud-stepper input {
       font: inherit;
-      font-size: 0.78rem;
+      font-size: var(--input-font, 13px);
       font-variant-numeric: tabular-nums;
       text-align: center;
       /* Both steppers the same width whatever is in them, so the two rows are one shape. */
@@ -4499,7 +4517,7 @@
     .arb-setup textarea,
     .arb-setup input,
     .arb-setup select {
-      font-size: 0.78rem;
+      font-size: var(--input-font, 13px);
       padding: 8px 10px;
     }
 
@@ -4698,7 +4716,9 @@
       min-width: 0;
       font-size: 0.68rem;
       color: var(--text);
-      padding: 3px 0;
+      padding: 3px 6px;
+      background: color-mix(in srgb, var(--surface) 70%, var(--border));
+      border-radius: 6px;
     }
 
     .conv-roster-row.gone {
@@ -4736,6 +4756,12 @@
       align-items: center;
       gap: 4px;
       flex: 0 1 auto;
+    }
+
+    /* Keep the pane identity readable on a phone; its controls get their own compact line. */
+    @media (max-width: 767px) {
+      .conv-roster-row { flex-wrap: wrap; }
+      .conv-roster-acts { flex-basis: 100%; justify-content: flex-start; }
     }
 
     .conv-roster-row.gone .tag {
@@ -5530,7 +5556,7 @@
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       line-height: 1;
     }
 
@@ -5826,7 +5852,7 @@
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--muted);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       line-height: 1;
       cursor: pointer;
     }
@@ -6758,9 +6784,7 @@
       background: var(--bg);
       color: var(--text);
       font-family: monospace;
-      /* Default 16px keeps iOS from zooming on focus; the gear menu can take it to 8px, which
-         re-enables that zoom deliberately. See the base input rule. */
-      font-size: var(--input-font, 16px);
+      font-size: var(--input-font, 13px);
       min-width: 0;
     }
 
@@ -6963,7 +6987,7 @@
       border: 1px solid var(--border);
       background: var(--bg);
       color: var(--text);
-      font-size: 13px;
+      font-size: var(--input-font, 13px);
       font-weight: 500;
       cursor: pointer;
       min-height: 44px;
@@ -8082,16 +8106,16 @@
           </div>
           <div class="start-field">Agent
             <div id="startAgents" class="badge-strip"></div>
+            <label class="start-check" id="startUnattendedRow" style="display:none">
+              <input type="checkbox" id="startUnattended" onchange="pickStartUnattended(this.checked)" />
+              <span>Skip approvals</span>
+            </label>
           </div>
           <!-- Under the agent, because it is a fact about the agent and not about the session:
                claude and codex each have a flag for it and nothing else does, so the row is drawn
                only where the relay says the kind takes one. On by default under an agent config,
                off on a stock harness — the endpoint a user configured is the one they mean to leave
                running. -->
-          <label class="start-field start-check" id="startUnattendedRow" style="display:none">
-            <input type="checkbox" id="startUnattended" onchange="pickStartUnattended(this.checked)" />
-            <span>Skip approvals</span>
-          </label>
         </div>
         <label class="start-field">Where<select id="startPlacement" onchange="renderStartTarget()"></select></label>
         <label class="start-field">Name<input id="startName" type="text" maxlength="32" autocapitalize="none"
@@ -8241,6 +8265,10 @@
       <div class="new-agent-body">
         <div class="start-field">Agent
           <div id="newAgentKinds" class="badge-strip"></div>
+          <label class="start-check" id="newAgentUnattendedRow" style="display:none">
+            <input type="checkbox" id="newAgentUnattended" onchange="pickNewAgentUnattended(this.checked)" />
+            <span>Skip approvals</span>
+          </label>
         </div>
         <!-- What it is started as. The badge carries both halves: the role the relay names the pane
              for, and the @ prompt that opens the session — see START_ROLES. -->
@@ -8249,10 +8277,6 @@
         </div>
         <!-- The same row the Start sheet carries, under the agent for the same reason: it is a
              fact about the agent, and only claude and codex have a flag for it. -->
-        <label class="start-field start-check" id="newAgentUnattendedRow" style="display:none">
-          <input type="checkbox" id="newAgentUnattended" onchange="pickNewAgentUnattended(this.checked)" />
-          <span>Skip approvals</span>
-        </label>
         <label class="start-field">Name<input id="newAgentName" type="text" maxlength="32" autocapitalize="none"
             autocomplete="off" placeholder="Auto — Role N" /></label>
         <!-- One line, because there is usually one Project in play and the rest are a tap away. -->

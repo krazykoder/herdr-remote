@@ -423,6 +423,19 @@
         `() => ${o.fire}, this.dataset.armKey)">${escapeHtml(armed ? ask : rest)}</button>`;
     }
 
+    function archiveBtnHtml(id, archived, name) {
+      const key = `archive:${id}`, rest = archived ? 'Unarchive' : 'Archive';
+      const ask = archived ? 'Unarchive?' : 'Archive?';
+      const fire = archived ? 'unarchiveConversation' : 'archiveConversation';
+      const armed = typeof armButtonArmed === 'function' && armButtonArmed(key);
+      return `<button class="archive-btn arm-btn" data-arm-key="${escapeHtml(key)}"` +
+        ` data-conv-id="${escapeHtml(id)}"` +
+        (armed ? ` data-armed="1" data-arm-label="${rest}"` : '') +
+        ` onclick="event.stopPropagation();armButton(this, '${ask}', ` +
+        `() => ${fire}(this.dataset.convId), this.dataset.armKey)"` +
+        ` aria-label="${rest} ${escapeHtml(name)}">${armed ? ask : rest}</button>`;
+    }
+
     function renderConversations() {
       const el = document.getElementById('conversations');
       if (!el) return;
@@ -524,16 +537,11 @@
         // not a marker the app writes into what they typed (D4).
         `${r.c.auto ? '<span class="conversation-tier" title="Filed automatically, and dropped ' +
           'first when space runs out. Open it and rename it to keep it for good.">auto</span>' : ''}` +
-        `<span class="conversation-count">${r.count} ` +
-        `${r.count === 1 ? 'message' : 'messages'}</span>` +
         // Archiving is the reader saying "not now" about a conversation they mean to keep — the
         // one thing the auto tier cannot express, since that is about how a conversation was made
         // rather than whether anyone wants to look at it. Recorded on the conversation and not in
         // this browser, so a card put away on a phone is away on the desktop too.
-        `<button class="archive-btn" data-conv-id="${escapeHtml(r.c.id)}"` +
-        ` onclick="event.stopPropagation(); ${archived ? 'unarchiveConversation' : 'archiveConversation'}(this.dataset.convId)"` +
-        ` aria-label="${archived ? 'Unarchive' : 'Archive'} ${escapeHtml(r.c.name)}">` +
-        `${archived ? 'Unarchive' : 'Archive'}</button>` +
+        archiveBtnHtml(r.c.id, archived, r.c.name) +
         // Only in the archive, and only there. Putting a conversation away is the first of the two
         // steps — see purgeConversation for why that is the safeguard rather than a second dialog.
         (archived
@@ -557,6 +565,7 @@
               fire: 'endConversation(this.dataset.convId)'})
           : '') +
         `</div>` +
+        `<div class="conversation-count">${r.count} ${r.count === 1 ? 'message' : 'messages'}</div>` +
         // What is in it, before what was said in it: which harnesses, and which Projects they are
         // working in. A conversation is recognised by its members long before its newest line is
         // read, and on a phone that line is the only other thing on the card.
@@ -1257,8 +1266,11 @@
     // same Start again the row already offers, in one press.
     function convRestartMember(key) {
       const live = agents.find(x => convMemberKey(x) === key);
-      if (live) endPane(live.pane_id);
+      // A blocked (or just vanished) pane was not ended. Starting anyway leaves the old session
+      // beside its supposed replacement, which is precisely what Restart promises not to do.
+      if (!live || !endPane(live.pane_id)) return false;
       convRespawn(key);
+      return true;
     }
 
     // Every live member, one at a time.

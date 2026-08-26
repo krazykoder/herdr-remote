@@ -317,11 +317,8 @@
 
     function bumpFont(d) { setFont(currentFont() + d); }
 
-    // Floor is 8, below iOS Safari's 16px focus-zoom threshold, at the user's explicit direction.
-    // Under 16 the composer will zoom the layout viewport when focused on iPhone; that is the
-    // documented cost of the setting (S5.9), not an oversight. Default stays at 16, so the zoom
-    // is opt-in rather than something a fresh install walks into.
-    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 16;
+    // Under 16 iOS may zoom a focused composer. The compact 13px default is intentional.
+    const INPUT_FONT_KEY = 'herdr_input_font_size', INPUT_MIN = 8, INPUT_MAX = 24, INPUT_DEFAULT = 13;
 
     function currentInputFont() {
       const v = parseInt(localStorage.getItem(INPUT_FONT_KEY), 10);

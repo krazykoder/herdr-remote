@@ -104,7 +104,7 @@
       // the same shape: both are facts about what pressing it does, and neither is a gate.
       const solo = launcherSolo(tile)
         ? '<span class="launcher-badge solo" title="Starts without approval prompts — it runs'
-          + ' tools without asking">no approvals</span>'
+          + ' tools without asking">skip approvals</span>'
         : '';
       // aria-disabled and not the `disabled` attribute: a disabled button is skipped by the
       // keyboard and reports nothing to a screen reader, and the reason this tile cannot be
@@ -137,7 +137,7 @@
         + `<button class="launcher-edit" data-tile="${escapeHtml(tile.id)}"`
         + ` onclick="launcherEditFromTile(this.dataset.tile)"`
         + ` title="Edit ${escapeHtml(tile.label)}"`
-        + ` aria-label="Edit the tile ${escapeHtml(tile.label)}">\u270e</button>`
+        + ` aria-label="Edit the tile ${escapeHtml(tile.label)}">Edit</button>`
         + '</div>';
     }
 

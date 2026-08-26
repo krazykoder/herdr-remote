@@ -35,7 +35,10 @@
       const list = document.getElementById('agentListView');
       const show = landingSearchOn() && !!list && list.style.display !== 'none';
       bar.hidden = !show;
-      document.body.classList.toggle('landing-search', show);
+      // Not 'landing-search': that is the bar's own class, and a body wearing it turns every
+      // `.landing-search input` rule in the sheet into a rule about every input in the app —
+      // which is exactly what it did, and what stretched a toggle in the tile editor to 137px.
+      document.body.classList.toggle('landing-search-on', show);
       if (!show) clearLandingSearch();
     }
 

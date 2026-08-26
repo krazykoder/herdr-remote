@@ -603,6 +603,7 @@
         + `<span class="ql-member-kind">${escapeHtml(shown)}</span>`
         + `<button class="ql-del" onclick="launcherDropMember(${i})"`
         + ` aria-label="Remove ${escapeHtml(m.name)}">✕</button>`
+        + launcherUnattendedHtml(m, 'qlSolo' + i)
         + `<input id="qlMemberName${i}" type="text" maxlength="${LAUNCHER_LABEL_MAX}"`
         + ` autocapitalize="none" autocomplete="off" placeholder="name (optional)"`
         + ` value="${escapeHtml(m.label || '')}" />`
@@ -620,11 +621,6 @@
             `<option value="${escapeHtml(sc.at)}"${sc.at === canonAt(at) ? ' selected' : ''}>`
             + `@${escapeHtml(sc.at)} — ${escapeHtml(sc.label)}</option>`).join(''))
         + '</select>'
-        // Said in the tile because it is decided per member: two agents in one roster can want
-        // different answers, and the tile is where a roster is written down. Only for the kinds a
-        // relay has a flag for — see UNATTENDED_ARGS; the rest are drawn without it rather than
-        // with a control that would refuse the start.
-        + launcherUnattendedHtml(m, 'qlSolo' + i)
         + '</div>';
     }
 

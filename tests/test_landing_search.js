@@ -89,7 +89,7 @@ test('switched off, the bar is not on the page and holds no query', () => {
   e.run('syncLandingSearch()');
   assert.equal(e.el('landingSearch').hidden, true);
   assert.equal(e.el('landingSearchInput').value, '', 'a hidden box that kept its text would filter nothing and remember everything');
-  assert.equal(e.body.classes['landing-search'], false, 'and the page takes its foot back');
+  assert.equal(e.body.classes['landing-search-on'], false, 'and the page takes its foot back');
 });
 
 test('on, but only where there is a landing page under it', () => {
