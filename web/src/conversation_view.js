@@ -895,8 +895,13 @@
         // "rewrote it" are different facts about the same bubble.
         // An arbitrated send has no `from` pane: it was composed by the arbitrator out of what two
         // members said, so what the badge names is the arbitrator itself.
+        // `system` is this app's own send — a Reset's clear and the opening words replayed behind
+        // it. It goes on the user's side because that is the side prompts go on, and it says so
+        // for the same reason an arbitrated one does: nobody typed it.
         const from = user && e.via === 'arbitrator'
           ? `<span class="via" aria-hidden="true">${arbSign(12)}</span> arbitrator`
+          : user && e.via === 'system'
+          ? `<span class="via" aria-hidden="true">\u2699</span> app`
           : user && e.via && e.via !== 'typed' && e.from
           ? `<span class="via" aria-hidden="true">⇄</span> ${escapeHtml(e.from.label || 'another pane')}` +
             `${e.via === 'mixed' ? ' · edited' : ''}`

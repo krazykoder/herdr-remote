@@ -1318,11 +1318,14 @@
       // invoked that way there — `$ponytail`, `$caveman`. This is a slash command, and codex spells
       // those the same as everyone else: `$clear` would be typed at the composer as text.
       const cmd = RESET_CMD[agentHarness(live.agent)] || '/clear';
-      if (!sendTextTo(live.pane_id, cmd)) return false;
+      // Both sends marked as this app's own. Nobody typed either of them: the reader pressed
+      // Reset, and a thread that shows the clear and the opening words as their prompts is a
+      // record of a conversation that did not happen.
+      if (!sendTextTo(live.pane_id, cmd, 'system')) return false;
       // Second, and into the same pane, so the relay's per-pane lane keeps the order: the opening
       // words must arrive at a cleared session and not before it is cleared.
       const prompt = roleStarter(respawnStarter(rec.spawn || {}), live.agent);
-      if (prompt) sendTextTo(live.pane_id, agentSlash(prompt, live.agent));
+      if (prompt) sendTextTo(live.pane_id, agentSlash(prompt, live.agent), 'system');
       return true;
     }
 

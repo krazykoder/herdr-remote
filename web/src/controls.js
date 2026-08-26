@@ -322,7 +322,9 @@
     // One text into one pane, from whichever composer had it. The pane's own composer is one
     // caller; the conversation window's is the other, and it can be pointed at a pane nobody has
     // open — which is why this takes the pane rather than reading `activePane`.
-    function sendTextTo(paneId, text) {
+    // `via` is for a send this app composed on the reader's behalf — see noteSent. Left off, the
+    // send is classified the way every typed one is.
+    function sendTextTo(paneId, text, via) {
       // Both composers land here, which is why the arbitration guard is here and not in each of
       // them. It arms rather than refuses — see arbGuardSend.
       if (typeof arbGuardSend === 'function' && !arbGuardSend(paneId)) return false;
@@ -331,7 +333,7 @@
       // claims the user said what another agent said, and one that records a send the socket
       // dropped claims they said it at all. The whole text, not a chunk of it — what was sent is
       // one message, however many the wire took.
-      noteSent(text, paneId);
+      noteSent(text, paneId, via);
       lastSentText[paneId] = text;
       syncResend();
       return true;

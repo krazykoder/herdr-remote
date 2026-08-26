@@ -852,9 +852,12 @@
 
     // Called on the way out of every composer send. A prefill answers for one send: whether it was
     // used, edited or deleted, the next send starts from nothing.
-    function noteSent(text, paneId) {
+    // `via` names a send this app made rather than one the user typed — a Reset's `/clear` and the
+    // opening words replayed behind it. Nobody said those, and a thread that shows them as the
+    // reader's own prompts is a record of a conversation that did not happen.
+    function noteSent(text, paneId, via) {
       const now = Date.now();
-      const note = classifyVia(pendingTransfer, text, now);
+      const note = via ? { via: via } : classifyVia(pendingTransfer, text, now);
       pendingTransfer = null;
       // The prompt itself, straight into the transcript. Exact text, exact time, no reading back.
       convRecordSend(paneId, text, note.via === 'typed' ? null : note, now);

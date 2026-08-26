@@ -238,6 +238,24 @@ test('reset clears the harness and then says the words the session was started w
     [['w1:p1', '/clear'], ['w1:p1', 'You are the architect.']]);
 });
 
+test('a reset says the app sent it, not the reader', () => {
+  // Nobody typed the clear or the words replayed behind it. Recorded as the reader's own prompts,
+  // the thread is a record of a conversation that did not happen — so both carry `system`, which
+  // is what the bubble draws its badge from.
+  const e = boot({live: [{pane_id: 'w1:p1', agent: 'claude'}],
+                  recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
+  e.run(`
+    sent = [];
+    agentSlash = t => t;
+    agentHarness = a => a;
+    respawnStarter = () => ({at: 'architect-prompt'});
+    roleStarter = () => 'You are the architect.';
+    sendTextTo = (pane, text, via) => { sent.push([pane, text, via]); return true; };`);
+  e.run("convResetMember('w1:p1')");
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(sent)')),
+    [['w1:p1', '/clear', 'system'], ['w1:p1', 'You are the architect.', 'system']]);
+});
+
 test('a harness that calls it something else gets its own word', () => {
   const e = boot({live: [{pane_id: 'w1:p1', agent: 'pi'}],
                   recs: [{key: 'w1:p1', spawn: {agent: 'pi', starter: 'none'}}]});
