@@ -183,7 +183,7 @@ cd herdi-ios && xcodegen generate
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_PROJECTS_FILE` | Absolute path to the Projects config JSON (unset = Projects disabled) |
 | `HERDR_ENABLE_WRITE_EXT` | `1` enables remote Start session. Needs `HERDR_RELAY_TOKEN`, or `HERDR_LAN_OPEN=1` to run without one |
-| `HERDR_START_AGENTS` | Comma-separated allowlist of herdr agent *kinds* for Start session (default: `codex,claude,pi,agy`) |
+| `HERDR_START_AGENTS` | Comma-separated allowlist of herdr agent *kinds* for Start session (default: `codex,claude,pi,agy,kiro,opencode`) |
 | `HERDR_ENABLE_TERMINAL` | `1` lists shell panes (panes with no agent) as Terminals and makes them readable and writable. Off means they are never parsed, so the wire is unchanged. Creating one also needs `HERDR_ENABLE_WRITE_EXT` |
 | `HERDR_TERMINAL_INIT` | One line run in a terminal **the app opened**, once its shell reaches a prompt (default: `RPROMPT=; clear`). herdr spawns the user's login shell, so a pane opened from a phone wears whatever prompt their rc files draw — usually most of a 40-column line. The environment cannot fix it: rc files run after it is set and overwrite `PROMPT`/`RPROMPT`. Never sent to an agent pane, and never to a shell the user opened themselves. `""` sends nothing |
 | `HERDR_VAPID_PUBLIC` / `HERDR_VAPID_PRIVATE` | Web Push keypair, from `relay/make-vapid.py`. Unset = no push is ever sent |

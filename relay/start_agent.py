@@ -20,7 +20,7 @@ SUFFIX_LEN = 5
 # "must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'".
 # Pane labels are not bound by this — "Architect 1" is a fine label and an illegal agent name.
 HERDR_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-DEFAULT_START_AGENTS = ["codex", "claude", "pi", "agy", "kiro"]
+DEFAULT_START_AGENTS = ["codex", "claude", "pi", "agy", "kiro", "opencode"]
 # Extra argv a kind needs to come up usable, passed through herdr's `-- [AGENT_ARG]...`. Server
 # side and per kind, never from a client — a client that could name argv could name any argv.
 #

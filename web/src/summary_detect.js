@@ -50,20 +50,32 @@
       codex: { speaker: '•', result: ['└', '│'], user: ['›'] },
       pi: { speaker: '⏺', result: ['$'], user: ['›'], ends: ['⋯'], indent: 1, composer: false },
       // OpenCode puts the user's messages, every tool block and the composer itself behind one
-      // `┃`, and prints nothing at all in column 0 — so it has no speaker glyph, no result glyph
-      // and no block starts. `messages: false` says so: Summary and the ↓↑ pill are switched off
-      // rather than left to find nothing, because its reasoning and its answer are both plain
-      // prose at the same indent with no boundary between them. The blue user rule is the one
-      // thing that can be got right here, and it is worth getting right: the pane is a wall of
-      // `┃` and the rule is what shows where your own questions were.
+      // `┃` in column 2, and everything it says itself is plain prose indented five. So the bar is
+      // not a speaker glyph: it is what *opens* a block and what closes one, and the reply is the
+      // prose under it — the same positional shape agy and kiro have, two columns over. `indent: 2`
+      // is what moves the whole gutter reading there; column 0 in an opencode pane is a space on
+      // every line, so read there it finds no marker anywhere and nothing ever starts.
+      //
+      // `endLine` is the three things opencode draws that are not prose: `Thought:` opens a run of
+      // reasoning, `⚙` is a tool call drawn inside it, and `▣  Build · GPT-OSS-120B · 8.0s` is the
+      // stamp it rules every finished turn off with. The stamp is the boundary the profile turns
+      // on — it is the only mark between the end of an answer and the start of the next turn.
       //
       // Which `┃` is yours is a question about the whole run, not the line. A run holding a `$`
       // is a command and everything under it is that command's output; a run closed by `╹` is
       // the composer box at the foot; and a run reaching the top of what was read was cut off
       // mid-block, so its opener is not here to check. Each of those was read as user input by
       // the line-at-a-time version, on a real pane.
+      //
+      // What is left over: opencode's `1 message reverted / ctrl+x r or /redo to restore` notice
+      // is a `┃` box drawn exactly like a prompt box, above a composer, with nothing under it —
+      // which is also the shape of a prompt sent a moment ago and not yet answered. There is no
+      // rule that separates the two without reading the words, and dropping a real prompt from the
+      // record is the worse of the two mistakes, so the notice is read as one.
       opencode: {
-        speaker: null, result: [], messages: false, endLine: /^\s*Thought:/,
+        speaker: null, result: [], user: [], ends: ['┃'],
+        indent: 2, opens: ['┃'], composer: false,
+        endLine: /^\s*(?:Thought:|[▣⚙]\s)/, chrome: /^\s*╹/,
         userLine: (row, rows, i) => {
           if (!/^\s*┃\s+\S/.test(row || '') || /^\s*┃\s+\$/.test(row)) return false;
           if (!rows) return false;
@@ -111,8 +123,9 @@
       },
     };
 
-    // The character in a harness's gutter column, which is column 0 everywhere but pi.
-    function gutterOf(row, g) { return (row || '')[g.indent || 0]; }
+    // The character in a harness's gutter column, which is column 0 everywhere but pi and opencode.
+    // '' rather than undefined on a line too short to have one, so callers can `.trim()` it.
+    function gutterOf(row, g) { return (row || '')[g.indent || 0] || ''; }
 
     // How far above the bottom of a read the live composer may be found. The footer is a rule, an
     // empty input line, one or two blanks and a status bar; ten rows covers that and stops a
@@ -232,6 +245,10 @@
     // the nearest one dropped every message agy wrapped a tool call above, including the closing
     // one, which is the message the whole feature exists to find.
     //
+    // "Column 0" throughout is the harness's *gutter* column, which is column 0 for every harness
+    // but opencode — it draws the same shape two columns in, and reading column 0 there finds a
+    // space on every line of the pane and so no marker anywhere.
+    //
     // The prompt gutter wraps too, and its continuation is indented rather than column-0, which
     // makes it indistinguishable from a reply by shape alone. A blank line is what tells them
     // apart: agy answers a prompt through a tool call or a thought, never off the next row, so an
@@ -242,22 +259,23 @@
       // A line that closes a block is a marker, and never opens one.
       if (g.endLine && g.endLine.test(row)) return false;
       if (g.speaker) return gutterOf(row, g) === g.speaker;
-      if (!row.trim() || /^\S/.test(row)) return false;
+      if (!row.trim() || gutterOf(row, g).trim()) return false;
       for (let j = i - 1; j >= 0; j--) {
         const above = rows[j] || '';
         if (!above.trim()) continue;
-        if (!g.opens) return /^\S/.test(above);
+        if (!g.opens) return !!gutterOf(above, g).trim();
         const gap = j < i - 1;
         for (let k = j; k >= 0; k--) {
           const line = rows[k] || '';
           if (!line.trim()) return false;
           // A prompt opens the reply to it, wherever the harness draws it. kiro indents its
-          // prompts exactly as it indents everything else, so the walk back to column 0 would run
-          // straight past one — and a turn answered without running a tool has no column-0 line
+          // prompts exactly as it indents everything else, so the walk back to the gutter would
+          // run straight past one — and a turn answered without running a tool has no marker line
           // anywhere in it, which is the whole answer lost rather than a line of it.
           if (g.userLine && g.userLine(line, rows, k)) return gap;
-          if (!/^\S/.test(line)) return false;
-          if (g.opens.includes(line[0])) return gap || !(g.user || []).includes(line[0]);
+          const ch = gutterOf(line, g);
+          if (!ch.trim()) return false;
+          if (g.opens.includes(ch)) return gap || !(g.user || []).includes(ch);
         }
         return false;
       }

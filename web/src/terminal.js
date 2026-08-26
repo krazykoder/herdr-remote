@@ -596,6 +596,7 @@
       // kiro before pi: `startsWith('pi')` does not match it, but the two shared --green until
       // kiro got a badge of its own, and a reader cannot tell two kinds apart by one colour.
       if (k.startsWith('kiro')) return 'var(--agent-kiro)';
+      if (k.startsWith('opencode')) return 'var(--agent-opencode)';
       if (k.startsWith('pi')) return 'var(--green)';
       if (k.startsWith('agy')) return 'var(--agent-agy)';
       return '';

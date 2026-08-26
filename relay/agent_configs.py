@@ -127,6 +127,13 @@ STOCK_PROVIDERS = (
         "claude-opus-4-6[1m]", "claude-sonnet-4-6", "claude-haiku-4-5")),
     Provider(id="stock-codex", label="Stock", kind="codex", model_flag="--model", models=(
         "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4")),
+    # opencode names a model as `<provider>/<model>` — the provider half is one it already holds
+    # credentials for in its own configuration, which is why the suggestions carry it and why this
+    # is still a stock provider: nothing here names an endpoint or reads a variable of ours.
+    Provider(id="stock-opencode", label="Stock", kind="opencode", model_flag="--model", models=(
+        "anthropic/claude-opus-4-5", "anthropic/claude-sonnet-4-5",
+        "openai/gpt-5.1", "openai/gpt-5.1-codex",
+        "google/gemini-3-pro", "opencode/grok-code", "opencode/gpt-oss-120b")),
 )
 
 

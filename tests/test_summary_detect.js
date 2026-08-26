@@ -136,14 +136,34 @@ test('OpenCode: a read that starts inside a tool block claims nothing', () => {
   assert.deepEqual(claimed, ['  ┃  Let’s explore the details of last commit']);
 });
 
-test('OpenCode: no message boundary is guessed, and nothing offers to step through one', () => {
-  // Its reasoning and its answer are both plain prose at the same indent, and it prints nothing in
-  // column 0 for a block to start on. Summary and the ↓↑ pill are off by declaration rather than
-  // by finding nothing, which is what keeps ↑ from asking for more history on every press.
+test('OpenCode: the reverted notice reads as a prompt', () => {
+  // A known ceiling, pinned rather than claimed to be right: the `1 message reverted` notice is a
+  // `┃` box drawn exactly like a prompt box, above the composer with nothing under it — which is
+  // also the shape of a prompt sent a moment ago and not yet answered. Telling them apart needs
+  // the words, and losing a real prompt is the worse of the two mistakes.
+  const rows = fixture('pane_opencode_table.txt');
+  assert.deepEqual(rows.filter((row, i) => ctx.isUserInput(row, 'opencode', rows, i)), [
+    '  ┃  explin the last 2 commits',
+    '  ┃  1 message reverted',
+    '  ┃  ctrl+x r or /redo to restore',
+  ]);
+});
+
+test('OpenCode: the answer is the prose under the bar, and the turn stamp ends it', () => {
+  // The bar in column 2 is what opens a block; the answer is the prose under it, and what closes
+  // it is the stamp opencode rules every finished turn off with — `▣  Build · … · 24.1s`. Without
+  // the stamp in `endLine` the block runs on into the next turn's prompt box.
   const rows = fixture('pane_opencode_done.txt');
-  assert.equal(find(rows, 'opencode'), null);
-  assert.deepEqual(ctx.turnSummaries(rows, 'opencode'), []);
-  assert.equal(ctx.profileFor('opencode').messages, false);
+  assert.deepEqual(find(rows, 'opencode'), [39, 40]);
+  assert.ok(rows[42].trim().startsWith('▣'), rows[42]);
+});
+
+test('OpenCode: a turn that ran a command gives back the answer, not the output', () => {
+  // Prompt box, reasoning, a `$` box with its output, then the answer. Everything but the answer
+  // is behind the bar, so the bar is what has to be read.
+  const rows = fixture('pane_opencode_table.txt');
+  assert.deepEqual(find(rows, 'opencode'), [26, 64]);
+  assert.match(rows.slice(26, 65).join('\n'), /Why both commits came together/);
 });
 
 // pi is the one harness whose gutter is not its own: extensions/pi/herdr-gutter.ts puts the

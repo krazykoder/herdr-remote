@@ -51,6 +51,12 @@ _OPENCODE_BAR = re.compile(r"^\s*┃")
 _OPENCODE_TEXT = re.compile(r"^\s*┃\s+\S")
 _OPENCODE_CMD = re.compile(r"^\s*┃\s+\$")
 _OPENCODE_CLOSE = re.compile(r"^\s*╹")
+# What closes a block on its content. `Thought:` opens a run of reasoning, `▣` is the stamp
+# opencode rules every finished turn off with — `▣  Build · GPT-OSS-120B · 8.0s` — and `⚙` is a
+# tool call it draws inside that reasoning. None of the three is prose, and the stamp in
+# particular is the boundary the whole profile turns on: it is the only mark opencode makes
+# between the end of an answer and the start of the next turn.
+_OPENCODE_END = re.compile(r"^\s*(?:Thought:|[▣⚙]\s)")
 
 
 def _opencode_user_line(row, rows, i):
@@ -79,9 +85,19 @@ def _opencode_user_line(row, rows, i):
     return not _OPENCODE_CLOSE.match(rows[k] if k < len(rows) else "")
 
 
+# opencode's gutter is the `┃` in column 2, and it is the only column-like thing in the pane: what
+# the user typed, every tool call, every line of tool output and the composer box are all behind
+# it, and everything opencode says itself is plain prose indented five. So the bar is not a speaker
+# glyph — it is what *opens* a block (`opens`) and what closes one (`ends`), and the reply is the
+# prose under it, which is the same positional shape agy and kiro have one column over.
+#
+# `composer: False` for the reason kiro has it: the live composer is a `┃` run like any other and
+# `user_line` already refuses it, so the newest reply is *below* the newest prompt.
 GUTTERS["opencode"] = {
-    "speaker": None, "result": [], "messages": False,
-    "end_line": re.compile(r"^\s*Thought:"), "user_line": _opencode_user_line,
+    "speaker": None, "result": [], "user": [], "ends": ["┃"],
+    "indent": 2, "opens": ["┃"], "composer": False,
+    "end_line": _OPENCODE_END, "user_line": _opencode_user_line,
+    "chrome": _OPENCODE_CLOSE,
 }
 
 # kiro rules off every turn with a full-width line and hangs the prompt under it. Twenty is well
@@ -214,6 +230,10 @@ def starts_block(rows, g, i):
     it indistinguishable from a reply by shape alone. A blank line is what tells them apart: agy
     answers a prompt through a tool call or a thought, never off the next row, so an indented line
     touching a `>` is the rest of what the user typed.
+
+    "Column 0" throughout is the harness's *gutter* column, which is column 0 for every harness but
+    opencode — it draws the same shape two columns in, and reading column 0 there finds a space on
+    every line of the pane and so no marker anywhere.
     """
     row = rows[i] or "" if i < len(rows) else ""
     end_line = g.get("end_line")
@@ -221,7 +241,7 @@ def starts_block(rows, g, i):
         return False        # a line that closes a block is a marker, and never opens one
     if g.get("speaker"):
         return _gutter_of(row, g) == g["speaker"]
-    if not row.strip() or row[:1].strip():
+    if not row.strip() or _gutter_of(row, g).strip():
         return False
     for j in range(i - 1, -1, -1):
         above = rows[j] or ""
@@ -229,7 +249,7 @@ def starts_block(rows, g, i):
             continue
         opens = g.get("opens")
         if not opens:
-            return bool(above[:1].strip())
+            return bool(_gutter_of(above, g).strip())
         gap = j < i - 1
         user_line = g.get("user_line")
         for k in range(j, -1, -1):
@@ -237,15 +257,16 @@ def starts_block(rows, g, i):
             if not line.strip():
                 return False
             # A prompt opens the reply to it, wherever the harness draws it. kiro indents its
-            # prompts exactly as it indents everything else, so the walk back to column 0 would run
-            # straight past one — and a turn answered without running a tool has no column-0 line
+            # prompts exactly as it indents everything else, so the walk back to the gutter would
+            # run straight past one — and a turn answered without running a tool has no marker line
             # anywhere in it, which is the whole answer lost rather than a line of it.
             if user_line and user_line(line, rows, k):
                 return gap
-            if not line[:1].strip():
+            ch = _gutter_of(line, g)
+            if not ch.strip():
                 return False
-            if line[0] in opens:
-                return gap or line[0] not in (g.get("user") or [])
+            if ch in opens:
+                return gap or ch not in (g.get("user") or [])
         return False
     return False        # nothing above it, so nothing opened it
 

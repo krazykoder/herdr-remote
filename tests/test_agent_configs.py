@@ -278,7 +278,7 @@ class StockProviders(unittest.TestCase):
                         ' "model_flag": "--model", "models": ["gpt-9"]}]}')
         got = load_providers(str(path))
         self.assertEqual([p.id for p in got],
-                         ["stock-codex", "stock-agy", "stock-claude"])
+                         ["stock-codex", "stock-agy", "stock-claude", "stock-opencode"])
         self.assertEqual(got[0].models, ("gpt-9",))
 
     def stock(self, kind):

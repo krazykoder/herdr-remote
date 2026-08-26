@@ -81,10 +81,21 @@ class FinalMessage(unittest.TestCase):
         self.assertEqual(rows[2], "  and report what passed")
         self.assertEqual(final_message(rows[:4] + [">"], "agy"), None)
 
-    def test_opencode_draws_no_boundary_so_nothing_is_guessed(self):
-        # Its reasoning and its answer are both prose behind the same bar, and it prints nothing in
-        # column 0 for a block to start on. Declared off rather than found empty.
-        self.assertIsNone(final_message(fixture("pane_opencode_done.txt"), "opencode"))
+    def test_opencode_closes_on_its_own_turn_stamp(self):
+        # opencode's answer is prose under the `┃` run that opened it, and what ends it is the
+        # stamp it rules the turn off with — `▣  Build · GPT-OSS-120B · 24.1s`. Without the stamp
+        # in `end_line` the block runs straight on into the next turn's prompt box.
+        rows = fixture("pane_opencode_done.txt")
+        self.assertEqual(final_message(rows, "opencode"), (39, 40))
+        self.assertTrue(rows[42].strip().startswith("▣"), rows[42])
+
+    def test_opencode_reads_the_answer_and_not_the_tool_output_above_it(self):
+        # A turn that ran a command: prompt box, reasoning, `$` box with its output, then the
+        # answer. Everything but the answer is behind the bar, so the bar is what has to be read.
+        rows = fixture("pane_opencode_table.txt")
+        at = final_message(rows, "opencode")
+        self.assertEqual(at, (26, 64))
+        self.assertIn("Why both commits came together", "\n".join(rows[at[0]:at[1] + 1]))
 
     def test_a_block_that_ran_a_tool_is_not_a_message(self):
         rows = ["⏺ Committed as dd51cea.", "", "⏺ Bash(git status --short)",
@@ -228,6 +239,20 @@ class UserInput(unittest.TestCase):
         window = rows[cut:]
         claimed = [r for i, r in enumerate(window) if is_user_input(r, "opencode", window, i)]
         self.assertEqual(claimed, ["  ┃  Let’s explore the details of last commit"])
+
+    def test_opencode_reverted_notice_reads_as_a_prompt(self):
+        # A known ceiling, pinned rather than claimed to be right: opencode's `1 message reverted`
+        # notice is a `┃` box drawn exactly like a prompt box, sitting above the composer with
+        # nothing under it — which is also the shape of a prompt sent a moment ago and not yet
+        # answered. Telling them apart needs the words, and dropping a real prompt from the record
+        # is the worse of the two mistakes.
+        rows = fixture("pane_opencode_table.txt")
+        claimed = [r for i, r in enumerate(rows) if is_user_input(r, "opencode", rows, i)]
+        self.assertEqual(claimed, [
+            "  ┃  explin the last 2 commits",
+            "  ┃  1 message reverted",
+            "  ┃  ctrl+x r or /redo to restore",
+        ])
 
     def test_pi_marks_the_request_and_not_the_reasoning(self):
         rows = fixture("pane_pi_done.txt")
