@@ -2787,6 +2787,12 @@
        ordinary thing to do, and a full-screen catcher would eat the wheel with it. */
     @media (pointer: coarse) {
       #landingSearch.open { pointer-events: auto; }
+
+      /* 16px, and only on a phone: iOS zooms the page when a field smaller than that takes focus,
+         and the page it zooms is one whose body is `overflow: hidden` — so what the reader gets is
+         a landing page that pans sideways and will not pan back. The app's other fields are all
+         inside a sheet that is dismissed afterwards; this one is on the page itself. */
+      #landingSearch input { font-size: 16px; }
     }
 
     /* Narrower than the page it floats over, so it reads as a thing on top of the list rather than
