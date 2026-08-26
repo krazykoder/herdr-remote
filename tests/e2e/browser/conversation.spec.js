@@ -1018,6 +1018,30 @@ test('a session that asked for no starter is started again without one', async (
     (await convGet([convMemberKey(paneOf('w1:p1'))]))[0].spawn.starter)).toBe('none');
 });
 
+// The second half of that fallback. Joining as a new member is right for a pane the conversation
+// has never held; for one it already names it appends a second row for the same key, and the
+// roster then draws one pane twice with one transcript behind both. A replace intent that no
+// longer matches any member is exactly how that happens — a landing that arrives after the member
+// has already been moved by the restart before it.
+test('a landing whose member has already moved does not add the pane twice', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await tapWire(page);
+  await page.evaluate(() => {
+    const conv = loadConvIndex()[0];
+    // The member is already on the pane the landing is about to arrive for, and the intent names
+    // a key nothing in this conversation holds any more.
+    const items = loadConvIndex();
+    items[0].members = [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Architect 1'}];
+    saveConvIndex(items);
+    startIntent = {conv: conv.id, replace: 'gone:pane'};
+    pendingStart = 'w1:p1';
+  });
+  await page.evaluate(() => openPendingStart());
+  expect(await page.evaluate(() => loadConvIndex()[0].members.map(m => m.key)))
+    .toHaveLength(1);
+});
+
 // herdr recycles pane IDs, and a member key is [host, pane_id, agent, cwd] — so the replacement
 // can come up on a key another ended session already recorded under. Continuing by copying over it
 // would delete a transcript some other conversation still names, which is the one thing a restart
@@ -4532,8 +4556,10 @@ test('a new agent is started from the membership list, into this conversation', 
   expect(sent.workspace_id).toBe('w1');
 
   // It joins as a new member when the poll catches up, and is opened with the role's own prompt.
+  // A pane the conversation does not already hold: a start returns a pane of its own, and landing
+  // on one of the two members' panes is not a third member, it is that member again.
   await page.evaluate(() => {
-    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p1'});
+    handleMessage({type: 'command_result', command: 'start_agent', ok: true, pane_id: 'w1:p2'});
     openPendingStart();
   });
   expect(await page.evaluate(() => loadConvIndex()[0].members.length)).toBe(3);

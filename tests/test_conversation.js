@@ -548,6 +548,23 @@ test('a pane fingerprint is all four fields, so a recycled id cannot inherit a t
 
 const index = items => JSON.stringify({version: 1, items: items});
 // Same realm caveat as above: what is asserted is the contents, not which Array built them.
+
+test('an index carrying one pane twice reads it once, keeping the row with the history', () => {
+  // What a landing wrote when its replace intent no longer matched: a second member for a key the
+  // conversation already held. Both rows draw the same transcript, so the roster showed one pane
+  // twice. The first is kept — it is the row `was` is on.
+  const raw = JSON.stringify({version: 1, items: [{
+    id: 'c1', name: 'twice', members: [
+      {key: 'k1', label: 'Architect 1', was: ['w1:p9']},
+      {key: 'k2', label: 'Someone else'},
+      {key: 'k1', label: 'Architect 1', agent: 'kiro'},
+    ],
+  }]});
+  const members = parseConvIndex(raw)[0].members;
+  assert.deepEqual(members.map(m => m.key), ['k1', 'k2']);
+  assert.deepEqual(members[0].was, ['w1:p9'], 'and it is the one that knows where it has been');
+});
+
 const ids = raw => Array.from(parseConvIndex(raw), c => c.id);
 const dropped = (...args) => Array.from(evictOrder(...args));
 

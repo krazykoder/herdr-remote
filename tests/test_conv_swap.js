@@ -47,6 +47,11 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
       setItem: (k, v) => { store[k] = String(v); },
       removeItem: k => { delete store[k]; },
     },
+    // Everything convRestart asks about before it ends anything — a live socket, a Project the
+    // record names, an agent the relay still starts. Without them it refuses, which is the point.
+    ws: {send() {}},
+    projects: [{id: 'p1'}, {id: 'p2'}],
+    showToast: () => {},
     openStartDialog: p => log.push(['open', p || '']),
     renderStartAgents: () => log.push(['render']),
     endPane: id => { log.push(['end', id]); return true; },
@@ -270,6 +275,19 @@ test('restarting a paused member starts it without ending anything', () => {
   assert.equal(e.run("convRestart('w1:p1')"), true);
   assert.deepEqual(e.log, [], 'no pane was touched');
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), ['w1:p1']);
+});
+
+test('a restart that cannot start leaves the session running', () => {
+  // The order that matters: everything that can refuse is asked before the pane is quit. A
+  // restart that ends a session and then finds it cannot start one leaves the member paused with
+  // an orphaned pane beside it — the state this whole control exists to avoid.
+  const e = boot({live: [{pane_id: 'w1:p1'}],
+                  recs: [{key: 'w1:p1', spawn: {agent: 'claude', project_id: 'gone'}}]});
+  e.run("respawned = []; convRespawn = k => respawned.push(k); said = []; showToast = m => said.push(m);");
+  assert.equal(e.run("convRestart('w1:p1')"), false);
+  assert.deepEqual(e.log, [], 'nothing was ended');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), []);
+  assert.match(e.run('said[0]'), /cannot be restarted/);
 });
 
 test('restart does not replace a pane that could not end', () => {

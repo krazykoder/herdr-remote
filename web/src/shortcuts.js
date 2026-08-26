@@ -1329,6 +1329,16 @@
     // half a member is in is not a question the reader should have to answer before pressing.
     function convRestart(key) {
       closeRestartMenu();
+      // Everything convRespawn can refuse on, asked before anything is ended. It refuses in
+      // silence — a socket that is not open, a record it cannot start from — and by then the
+      // session was already quit, which leaves the member paused with the pane it was running in
+      // orphaned beside it and nothing on the row saying why.
+      const conv = loadConvIndex().find(c => c.id === convViewId);
+      const rec = (convViewRecs || []).find(r => r.key === key) || {};
+      if (!ws || !conv || !canRespawn(rec.spawn)) {
+        showToast('This session cannot be restarted — it was left as it is.');
+        return false;
+      }
       const live = agents.find(x => convMemberKey(x) === key);
       // A blocked (or just vanished) pane was not ended. Starting anyway leaves the old session
       // beside its supposed replacement, which is precisely what Restart promises not to do.

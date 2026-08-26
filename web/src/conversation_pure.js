@@ -542,6 +542,24 @@
     // A corrupt blob is no conversations, never a half-index — the contract parsePairs already
     // holds to, and for the same reason: a store that outlives the panes it describes will one day
     // be read by a version that did not write it.
+    // One member per pane. A key is [host, pane_id, agent, cwd], so two rows carrying the same one
+    // are the same pane drawn twice with one transcript behind both — a landing that joined as a
+    // new member when its replace intent no longer matched anything. Fixed at the source in
+    // start_dialog; read here so an index already carrying the duplicate reads clean, and is
+    // written clean by the next save rather than needing anyone to notice it.
+    //
+    // The first wins: it is the row the thread has been read under, and the one holding `was`.
+    function dedupeMembers(members) {
+      const seen = new Set();
+      return (members || []).filter(m => {
+        if (!m) return false;
+        if (!m.key) return true;
+        if (seen.has(m.key)) return false;
+        seen.add(m.key);
+        return true;
+      });
+    }
+
     function parseConvIndex(raw) {
       try {
         const d = JSON.parse(raw || '');
@@ -549,7 +567,9 @@
         return d.items.filter(c => c && c.id && typeof c.name === 'string' && Array.isArray(c.members))
           // The roster, not the recording cap: an ended member is the record of a session that
           // happened, and truncating it here would delete history on the next read of the index.
-          .map(c => Object.assign({}, c, { members: c.members.slice(-CONV_ROSTER_MAX) }));
+          .map(c => Object.assign({}, c, {
+            members: dedupeMembers(c.members).slice(-CONV_ROSTER_MAX),
+          }));
       } catch (e) { return []; }
     }
 

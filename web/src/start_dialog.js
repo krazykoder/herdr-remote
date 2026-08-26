@@ -183,6 +183,13 @@
         const conv = items.find(c => c.id === intent.conv);
         if (conv) {
           const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
+          // Whether this pane is already one of this conversation's members. The fallback below
+          // joins as a new member, which is right for a pane the conversation has never held and
+          // wrong for one it already names: herdr recycles pane ids, and a replace intent that no
+          // longer matches — a second landing, a member moved by the restart before it — would
+          // otherwise append a second row for a key that is already in the list. Two members, one
+          // pane, both drawing the same transcript.
+          const already = (conv.members || []).some(m => m.key === next);
           conv.members = continued && prior
             ? conv.members.map(m => m.key === prior.key
               ? Object.assign({}, m, {
@@ -195,7 +202,7 @@
                     .filter(Boolean).slice(-CONV_WAS_MAX),
                 })
               : m)
-            : (conv.members || []).concat(convMemberOf(a));
+            : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
           saveConvIndex(items);
           // This conversation and not merely "on": the new pane is a member of exactly one so far,
           // but a respawn into a grouping the user chose must open on that grouping.
