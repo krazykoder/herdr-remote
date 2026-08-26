@@ -263,11 +263,15 @@
     // must not move under the tap, while the cards are "what is going on right now" and the pane
     // that just moved is the one being looked for. A pane this browser has never watched move
     // sorts last and keeps snapshot order, which is what a fresh reload shows.
-    function agentCards(list) {
+    function byRecent(list) {
       return list.map((agent, index) => ({agent, index}))
         .sort((a, b) => (lastSeen[b.agent.pane_id] || 0) - (lastSeen[a.agent.pane_id] || 0)
           || a.index - b.index)
-        .map(x => agentCard(x.agent)).join('');
+        .map(x => x.agent);
+    }
+
+    function agentCards(list) {
+      return byRecent(list).map(agentCard).join('');
     }
 
     // `note` rides in the header at reduced weight, the same way the blocked count does. A section
@@ -337,8 +341,10 @@
         ? sectionNewHtml(`openStartDialog(activeProject, event, 'terminal')`,
             'Open a terminal — it asks which Project', 'Open a new terminal') : '';
       if (!list.length && !plus) return '';
+      // Newest-first, the same rule the agent cards follow: a terminal is a pane like any other,
+      // and a list that sorted by one thing above and another below would be two lists.
       return `<div class="section-header">Terminals${plus}</div>`
-        + orderedAgents(list).map(terminalCard).join('');
+        + byRecent(list).map(terminalCard).join('');
     }
 
     function pairsHtml() {

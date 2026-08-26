@@ -326,6 +326,14 @@ test('cards are newest-first, and a pane never seen move keeps its place in the 
     out = agentCards([{pane_id: 'a'}, {pane_id: 'b'}, {pane_id: 'c'}, {pane_id: 'd'}]);`);
   assert.equal(e.run('out'), 'b,c,a,d,',
     'the two with a clock lead in clock order, the two without follow in snapshot order');
+  // Terminals are panes too, and they are drawn by their own function.
+  e.run(`
+    shells = [{pane_id: 'a'}, {pane_id: 'b'}];
+    startOptions = null;
+    terminalCard = a => a.pane_id + ';';
+    activeProject = '';
+    term = terminalsHtml();`);
+  assert.match(e.run('term'), /b;a;$/, 'the terminal list follows the same clock');
 });
 
 test('auto is a mode too, and the way out of either is the same arrow', () => {
