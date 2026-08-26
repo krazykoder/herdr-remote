@@ -192,7 +192,7 @@
           const already = (conv.members || []).some(m => m.key === next);
           conv.members = continued && prior
             ? conv.members.map(m => m.key === prior.key
-              ? Object.assign({}, m, {
+              ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
                   key: next, label: prior.label || paneLabel(a),
                   // The pane this member continues. This is the only place a member's key moves
                   // from one pane to another, so it is the only place succession is a fact rather
@@ -200,6 +200,10 @@
                   // conversation running the same harness in the same directory.
                   was: (m.was || []).concat(convKeyPaneId(prior.key))
                     .filter(Boolean).slice(-CONV_WAS_MAX),
+                  // convWasFpPatch above names the bucket the record kept this member in, where
+                  // the restart moved it to a different one — another harness, or another
+                  // checkout. The pane ids here cannot find those rows on their own: a pane id is
+                  // only ever looked up inside a fingerprint's bucket.
                 })
               : m)
             : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));

@@ -331,6 +331,53 @@ test('an inherited row is keyed to the member that claimed it, not to the pane i
   assert.deepEqual(entries.map(e => e.member), [0, 0]);
 });
 
+// --- A member that changed harness ---------------------------------------------------------
+//
+// The record is bucketed by fingerprint — host, agent, cwd — so a Restart as… onto another harness
+// moves a member to a bucket holding none of what it said before. The pane ids on `was` cannot
+// reach those rows on their own: a pane id is only ever looked up inside a bucket. `wasFp` is the
+// buckets themselves, written where `was` is.
+
+const KEY_A_CODEX = JSON.stringify(['local', '%9', 'codex', '/work/a']);
+const FP_A_CODEX = ['local', 'codex', '/work/a'];
+
+test('a member restarted onto another harness asks for the bucket it used to be in', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [
+    {key: KEY_A_CODEX, was: ['%1'], wasFp: [FP_A]}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  const asked = sent.filter(m => m.type === 'conv_log').pop();
+  assert.deepEqual(asked.fingerprints, [FP_A_CODEX, FP_A],
+    'the bucket it is in now, and the one its words are in');
+});
+
+test('and reads what it said before the swap as its own', () => {
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [
+    {key: KEY_A_CODEX, was: ['%1'], wasFp: [FP_A]}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  convLiveReceive({fingerprints: [FP_A_CODEX, FP_A], turns: [
+    Object.assign(turn(1, FP_A, 1000, 'said as a claude'), {pane_id: '%1'}),
+    Object.assign(turn(2, FP_A_CODEX, 1100, 'said as a codex'), {pane_id: '%9'})]});
+  const entries = convLiveEntries([KEY_A_CODEX]);
+  assert.deepEqual(entries.map(e => e.text), ['said as a claude', 'said as a codex']);
+  // Both under the member that claimed them, which is what every filter by member key needs.
+  assert.deepEqual(entries.map(e => e.key), [KEY_A_CODEX, KEY_A_CODEX]);
+});
+
+test('a bucket it never recorded itself as leaving is not its own', () => {
+  // wasFp is written by the one place a member's key moves, and only where the fingerprint
+  // actually changed. Without it, a member is its own bucket and nothing else — the same rule
+  // that keeps a quit pane's words out of a conversation that never held it.
+  reset([{host: 'local', pane_id: '%9', agent: 'codex', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A_CODEX, was: ['%1']}]}];
+  convLiveFetch([KEY_A_CODEX]);
+  convLiveReceive({fingerprints: [FP_A_CODEX, FP_A], turns: [
+    Object.assign(turn(1, FP_A, 1000, 'somebody else, same checkout'), {pane_id: '%1'}),
+    Object.assign(turn(2, FP_A_CODEX, 1100, 'said as a codex'), {pane_id: '%9'})]});
+  assert.deepEqual(convLiveEntries([KEY_A_CODEX]).map(e => e.text), ['said as a codex']);
+});
+
 test('a quit pane does not leak into a conversation that never held it', () => {
   // The bug this rule replaced a heuristic to fix. Three agy panes in one checkout share one
   // fingerprint; one of them is quit by hand. It was never in this conversation, and "no longer
