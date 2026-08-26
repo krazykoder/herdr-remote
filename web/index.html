@@ -2523,13 +2523,27 @@
       padding: 8px 10px;
     }
 
+    /* The three centred dialogs become bottom sheets on a phone, and then obey the same two
+       numbers .sheet does: a dialog is `position: absolute` inside a `position: fixed` overlay, so
+       it is laid out against the layout viewport, which Safari does not shrink for the keyboard.
+       `bottom: 8px` alone put every field in the tile editor and the New agent form behind it.
+       arbModal is in the list too — it was the one this rule missed, and it has fields as well. */
     @media (max-width: 767px) {
       #newAgentModal [role="dialog"],
+      #arbModal [role="dialog"],
       #launcherModal [role="dialog"] {
         top: auto !important;
-        bottom: 8px;
+        bottom: calc(8px + var(--kb-inset, 0px));
         transform: translateX(-50%) !important;
-        max-height: calc(100dvh - 16px) !important;
+        max-height: min(calc(100dvh - 16px),
+                        calc(var(--vv-height, 100dvh) - 16px)) !important;
+        transition: bottom 120ms ease-out;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #newAgentModal [role="dialog"],
+        #arbModal [role="dialog"],
+        #launcherModal [role="dialog"] { transition: none; }
       }
     }
 
@@ -2756,7 +2770,11 @@
       right: 0;
       /* Raised off the edge rather than sitting on it: a bar flush with the bottom reads as part
          of the browser's own chrome, and on a phone it is where the home indicator lives. */
-      bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+      /* Halfway up the bottom half of the screen, not against its edge: it floats over the list
+         rather than ending it, and a thumb reaches it without stretching past the fold.
+         Above the keyboard it summons, like the sheets — see --kb-inset in utils.js. A search box
+         that types into itself from behind the keyboard is the one place this cannot be skipped. */
+      bottom: calc(25dvh + var(--kb-inset, 0px) + env(safe-area-inset-bottom, 0px));
       z-index: 90;
       /* Narrower than the page it floats over, so it reads as a thing on top of the list rather
          than as the list's last row. */
@@ -2764,17 +2782,36 @@
       margin-inline: auto;
     }
 
+    /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
+       through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
+       still reads as a raised control. */
+    /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be
+       — it is what says the pill is a search box before anything is typed into it. Pointer events
+       off, or the tap that should land in the field lands on the picture of a magnifier. */
+    .landing-search-icon {
+      position: absolute;
+      left: 15px;
+      bottom: 0;
+      top: auto;
+      margin-bottom: 13px;
+      color: var(--muted);
+      pointer-events: none;
+      z-index: 1;
+    }
+
     #landingSearch input {
       width: 100%;
       box-sizing: border-box;
-      padding: 9px 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg);
+      padding: 11px 16px 11px 38px;
+      border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
       color: var(--text);
       font-family: inherit;
       font-size: var(--input-font, 13px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     }
 
     #landingSearch input:focus {
@@ -2785,22 +2822,29 @@
     /* Its own scroller above the box. The rows are the picker's, so a pane found here looks like
        the same pane found anywhere else. */
     #landingSearchResults {
-      max-height: 50vh;
+      /* Of what is actually on screen, not of the layout viewport the keyboard is drawn over —
+         and never past the top of the visible half the bar itself floats in. */
+      max-height: min(45dvh, calc(var(--vv-height, 100dvh) - 25dvh - 140px));
       overflow-y: auto;
       /* The rows carry their own bottom border; the panel's radius has to clip the last one. */
       overflow-x: hidden;
       margin: 0 0 8px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--surface) 82%, transparent);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     }
 
+    #landingSearchResults .pair-pick { background: none; }
     #landingSearchResults .pair-pick:last-child { border-bottom: none; }
 
     /* Room for the bar, or the last card on the page is behind it and unreachable. */
+    /* The bar floats over the list rather than at its foot, so this is only enough to keep the
+       very last card from ending underneath it. */
     body.landing-search-on #agentListView {
-      padding-bottom: 84px;
+      padding-bottom: 24px;
     }
 
     /* A session that has already ended. Dimmer than a live pane, and it has to stay legible: this
@@ -7496,6 +7540,9 @@
        of what it is looking for. -->
   <div class="landing-search" id="landingSearch" hidden>
     <div class="landing-search-results" id="landingSearchResults" hidden></div>
+    <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
            aria-label="Search panes and conversations" autocomplete="off"
            autocorrect="off" autocapitalize="none" spellcheck="false"

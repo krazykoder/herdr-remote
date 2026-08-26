@@ -31,6 +31,26 @@
       fit();
     })();
 
+    // A sheet raised above the keyboard is still only as tall as what is left, and the field that
+    // was tapped can be below the fold of its own scroller. This nudges that scroller and nothing
+    // else: never scrollIntoView, which walks every scrollable ancestor and takes the page with it
+    // — the same trap renderAgentTabs documents.
+    //
+    // Deferred a frame and then some: on Safari the keyboard is still animating when focusin
+    // fires, so the box measured immediately is the one from before it appeared.
+    document.addEventListener('focusin', e => {
+      const field = e.target && e.target.closest && e.target.closest('input, textarea, select');
+      if (!field) return;
+      const box = field.closest('.sheet, [role="dialog"]');
+      if (!box) return;
+      setTimeout(() => {
+        const f = field.getBoundingClientRect(), b = box.getBoundingClientRect();
+        const pad = 12;
+        if (f.bottom > b.bottom - pad) box.scrollTop += f.bottom - b.bottom + pad;
+        else if (f.top < b.top + pad) box.scrollTop -= b.top + pad - f.top;
+      }, 200);
+    });
+
     // How recently a pane moved, in the three bands the colours are drawn from. One function so
     // the dot and the tab strip's cache signature cannot disagree about which band a pane is in.
     function activityBucket(paneId) {
