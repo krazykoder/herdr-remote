@@ -145,6 +145,7 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
 
 const RUN = {id: 'ql_a', label: 'Tests', action: 'run', project_id: 'p1',
              command: 'npm test'};
+const TERM = {id: 'ql_term', label: 'Terminal', action: 'term', project_id: 'p1'};
 const ONE = {id: 'ql_b', label: 'Solo', action: 'spawn', project_id: 'p1',
              members: [{name: 'claude', role: 'agent'}]};
 const THREE = {id: 'ql_c', label: 'Trio', action: 'spawn', project_id: 'p2',
@@ -261,6 +262,16 @@ test('a run opens a terminal, then types the command into the pane it got back',
     assert.ok(p.log.some(l => l[0] === 'noteTermCommand'),
       'recorded in the terminal history, because it is a command the user ran');
   });
+});
+
+test('an empty terminal tile lands as a terminal, not a cancelled agent batch', async () => {
+  const p = press({tiles: [TERM]});
+  p.press('ql_term');
+  await p.land(pane('w1:p1'));
+  assert.ok(p.log.some(l => l[0] === 'openTerminal' && l[1] === 'w1:p1'));
+  assert.ok(p.log.some(l => l[0] === 'status' && l[2] === 'success'));
+  assert.ok(!p.log.some(l => l[0] === 'status' && l[2] === 'warning'));
+  assert.deepEqual(p.log.filter(l => l[0] === 'sendTextTo'), []);
 });
 
 test('a member is recorded as what it was started as, not left to its name', async () => {

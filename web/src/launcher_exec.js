@@ -205,13 +205,16 @@
       // A `run`: the pane is a shell, and the command is what the tile is for. Through sendTextTo
       // rather than the socket directly, so the arbitration guard, the chunk cap and the record of
       // what the user sent all apply — this *is* the user typing a command, by proxy.
-      if (ql.command) {
+      if ('command' in ql) {
         openTerminal(a.pane_id);
-        sendTextTo(a.pane_id, ql.command);
+        if (ql.command) sendTextTo(a.pane_id, ql.command);
         // The same note sendText makes for anything typed at a shell, so the command shows up in
         // the terminal's own history. A launcher press is still a command the user ran.
-        if (typeof noteTermCommand === 'function' && isShell(a.pane_id)) noteTermCommand(ql.command);
-        showSpawnStatus(`${ql.tile.label} — running.`, 'success');
+        if (ql.command && typeof noteTermCommand === 'function' && isShell(a.pane_id)) {
+          noteTermCommand(ql.command);
+        }
+        showSpawnStatus(ql.command ? `${ql.tile.label} — running.` : `${ql.tile.label} opened.`,
+                        'success');
         return;
       }
       const batch = ql.batch;

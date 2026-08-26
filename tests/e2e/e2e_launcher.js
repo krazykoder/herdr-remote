@@ -193,8 +193,8 @@ async function main() {
     // The press ends on that conversation rather than on the pane — they were started together,
     // even when "they" is one.
     await page.waitForFunction(id => convViewId === id, soloConv.id, {timeout: 20000});
-    // And the card at the foot stops saying it is opening. It is the only sign a press gives that
-    // it is still working, so one that never clears reads as a start that never finished.
+    // And the card stops saying it is opening. It is the only sign a press gives that it is still
+    // working, so one that never clears reads as a start that never finished.
     const card = () => page.evaluate(() => ({
       text: document.getElementById('spawnStatusText').textContent,
       busy: !document.getElementById('spawnSpinner').hidden,
@@ -205,6 +205,22 @@ async function main() {
       .then(async () => check('the status card stops spinning once the session has landed', true))
       .catch(async e => check('the status card stops spinning once the session has landed', false,
                               JSON.stringify(await card())));
+    // Both notices the app draws over itself sit in one column at the top, stacked rather than
+    // pinned to the same point: a relay error during a spawn is when the two have the most to say.
+    const boxes = await page.evaluate(() => {
+      showToast('relay said no');
+      showSpawnStatus('Starting…', 'busy');
+      const r = id => document.getElementById(id).getBoundingClientRect();
+      return {toast: r('toast'), card: r('spawnStatus')};
+    });
+    check('the notices are at the top of the screen, and do not sit on each other',
+          boxes.toast.top < 40 && boxes.card.top >= boxes.toast.bottom,
+          JSON.stringify(boxes));
+    await page.evaluate(() => {
+      document.getElementById('toast').style.display = 'none';
+      showSpawnStatus('');
+    });
+
     // Back to the list the way the app gets there. A press that lands somewhere leaves the list
     // hidden, and the next tile is then not clickable — not flaky, invisible.
     await page.evaluate(() => showLanding());

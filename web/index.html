@@ -8433,22 +8433,28 @@
     </div>
   </div>
 
-  <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
-  <div id="spawnStatus" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + env(safe-area-inset-bottom,8px));z-index:201;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
-    <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
-    <span id="spawnStatusText"></span>
-  </div>
+  <!-- Both notices the app draws over itself, in one column at the top of the viewport, over the
+       header rather than under it. It used to hang below the header, which put it inside whichever
+       view was open — and in the conversation it read as part of the thread, one more bubble among
+       the messages it was warning about. A notice about the app belongs to the app.
 
-  <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
-     so a rejected send_text or rename looked identical to one that worked.
+       They are stacked rather than each pinned to the same point because both can be up at once:
+       a relay error during a spawn is exactly when the two have the most to say. -->
+  <div id="topNotices"
+    style="position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:201;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none">
 
-     At the very top of the viewport, over the header rather than under it. It used to hang below
-     the header, which put it inside whichever view was open — and in the conversation it read as
-     part of the thread, one more bubble among the messages it was warning about. A notice about
-     the app belongs to the app. -->
-  <div id="toast" role="status" aria-live="polite"
-    style="display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 4px);z-index:200;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    <!-- Relay errors. Until this existed every refusal the relay sent was dropped on the floor,
+       so a rejected send_text or rename looked identical to one that worked. -->
+    <div id="toast" role="status" aria-live="polite"
+      style="display:none;max-width:90vw;padding:8px 14px;border-radius:10px;border:1px solid var(--red);background:var(--surface);color:var(--text);font-size:0.65rem;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+    </div>
+
+    <!-- Stays visible after the launch sheet closes, including starts made from Duplicate. -->
+    <div id="spawnStatus" role="status" aria-live="polite"
+      style="display:none;max-width:90vw;padding:10px 14px;border-radius:10px;border:1px solid var(--blue);background:var(--surface);color:var(--text);font-size:0.75rem;box-shadow:0 4px 16px rgba(0,0,0,0.4);align-items:center;gap:8px">
+      <span id="spawnSpinner" aria-hidden="true" style="width:12px;height:12px;border:2px solid var(--muted);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite"></span>
+      <span id="spawnStatusText"></span>
+    </div>
   </div>
 
   <!-- The pane picker. Pinning a partner and adding members to a conversation ask the same
