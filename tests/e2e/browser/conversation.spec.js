@@ -821,21 +821,27 @@ const endMember = page => page.evaluate(async () => {
   await renderConvStandalone(false);
 });
 
+// Two taps either way: opening the menu is the first, and the item is the second. What used to
+// be an arm is the menu itself — see restartMenuHtml.
+async function tapRestart(page) {
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
+}
+
 test('an ended session restarts under its name and continues its member thread', async ({page}) => {
   await openCard(page);
   await endMember(page);
   await tapWire(page);
   await expect(page.locator('#convView .conv-roster-row.gone')).toHaveCount(1);
 
-  // Two taps, because the second one starts a real session on a real host. The first says where
-  // it will land — the drain cannot carry a sentence, so the toast does.
-  const again = page.locator('#convView .conv-roster-row .conv-restart');
-  await again.click();
-  await expect(again).toHaveText('Restart?');
-  await expect(page.locator('#toast')).toContainText('new claude session in herdr-remote');
+  // Two taps, because the second one starts a real session on a real host. The first opens the
+  // menu, which says where it will land for as long as it is up.
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-note'))
+    .toContainText('new claude session in herdr-remote');
   expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent'))).toEqual([]);
 
-  await again.click();
+  await page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart').click();
   await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
     .toHaveLength(1);
   const sent = await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent'));
@@ -882,6 +888,25 @@ test('an ended session restarts under its name and continues its member thread',
   await expect(page.locator('#convThread')).toBeVisible();
 });
 
+test('the Restart menu survives the redraws that arrive while it is open', async ({page}) => {
+  await openCard(page);
+  await endMember(page);
+  await tapWire(page);
+  const menu = page.locator('#convView .conv-roster-row .conv-menu');
+  await page.locator('#convView .conv-roster-row .conv-restart-open').click();
+  await expect(menu).toHaveAttribute('open', '');
+  // The roster is redrawn on every snapshot. The replacement node must come back open, or the
+  // poll shuts the menu under the thumb on its way to the second tap.
+  await page.evaluate(() => renderConvStandalone(false));
+  await expect(page.locator('#convView .conv-roster-row .conv-menu')).toHaveAttribute('open', '');
+  await expect(page.locator('#convView .conv-roster-row .conv-menu-items .conv-restart'))
+    .toBeVisible();
+  // And a tap that lands anywhere else gives it up, the way an arm does.
+  await page.locator('#convView .conv-roster-row .who').click();
+  await expect(page.locator('#convView .conv-roster-row .conv-menu'))
+    .not.toHaveAttribute('open', '');
+});
+
 test('a session started as something opens as it again, whatever the pane was called',
   async ({page}) => {
     await openCard(page);
@@ -904,9 +929,7 @@ test('a session started as something opens as it again, whatever the pane was ca
     });
     await tapWire(page);
 
-    const again = page.locator('#convView .conv-roster-row .conv-restart');
-    await again.click();
-    await again.click();
+    await tapRestart(page);
     await expect.poll(() => page.evaluate(() =>
       window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
 
@@ -946,9 +969,7 @@ async function respawnWithStarter(page, starter) {
     await renderConvStandalone(false);
   }, starter);
   await tapWire(page);
-  const again = page.locator('#convView .conv-roster-row .conv-restart');
-  await again.click();
-  await again.click();
+  await tapRestart(page);
   await expect.poll(() => page.evaluate(() =>
     window.__sent.filter(m => m.type === 'start_agent'))).toHaveLength(1);
   await page.evaluate(async () => {
@@ -994,9 +1015,7 @@ test('a restart that would land on another conversation\'s record leaves it alon
         members: [{key: convMemberKey(paneOf('w1:p1')), added: Date.now(), label: 'Someone else'}]});
       saveConvIndex(items);
     });
-    const again = page.locator('#convView .conv-roster-row .conv-restart');
-    await again.click();
-    await again.click();
+    await tapRestart(page);
     await expect.poll(() => page.evaluate(() => window.__sent.filter(m => m.type === 'start_agent')))
       .toHaveLength(1);
     await page.evaluate(async () => {

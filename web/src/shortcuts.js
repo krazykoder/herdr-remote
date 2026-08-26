@@ -897,26 +897,14 @@
             ` aria-label="Clear this member's session and start it over in the same pane">` +
             `Reset</button>` : '') +
           // One control, both halves of a row's life: a live member is ended first and a paused
-          // one is not, and either way what lands continues this member. The caret beside it is
-          // the same restart with the harness left open — what Swap and Start as… used to be.
-          (canRespawn(rec.spawn)
-            ? `<button class="conv-restart arm-btn" data-key="${escapeHtml(m.key)}"` +
-              ` onclick="convArmRestart(this, this.dataset.key)"` +
-              ` aria-label="Restart this member${on ? ', ending what is running' : ''}` +
-              `, keeping its thread">Restart</button>` : '') +
-          (canStartFromConv()
-            // Only the caret where Restart is beside it — a caret alone says nothing about what
-            // it opens, so a member with no restartable record gets the words instead.
-            ? (canRespawn(rec.spawn)
-              ? `<button class="conv-swap${on ? ' arm-btn' : ''}" data-key="${escapeHtml(m.key)}"` +
-                (on ? ` onclick="armButton(this, 'Pause?', () => convStartAs(this.dataset.key))"`
-                    : ` onclick="convStartAs(this.dataset.key)"`) +
-                ` aria-label="Restart this member as a different agent">\u25be</button>`
-              : `<button class="conv-swap${on ? ' arm-btn' : ''}" data-key="${escapeHtml(m.key)}"` +
-                (on ? ` onclick="armButton(this, 'Pause and start as?', () => convStartAs(this.dataset.key))"`
-                    : ` onclick="convStartAs(this.dataset.key)"`) +
-                ` aria-label="Restart this member as a different agent">Restart as\u2026</button>`)
-            : '') +
+          // one is not, and either way what lands continues this member. The two variants — the
+          // same agent, or the harness left open — are items under it rather than buttons beside
+          // it: what used to be Restart, Swap, Start as… and Start again is one word on the row.
+          //
+          // Opening the menu is the first of the two taps every destructive control here takes,
+          // so an item fires on its own tap and nothing is armed. What it will start is written
+          // above the items, where the toast that used to carry it could not be read twice.
+          restartMenuHtml(m.key, rec, on) +
           `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
           ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
           ` aria-label="Remove this member from the conversation">Remove</button>` +
@@ -1031,15 +1019,52 @@
         ? agentConfigRow(spawn.config) : null;
       const what = (row && row.label) || spawn.agent;
       if (spawn.config && !row) {
-        return `Agent config "${spawn.config}" is gone. Tap again to pick what to start instead.`;
+        return `Agent config "${spawn.config}" is gone — this opens the Start dialog instead.`;
       }
-      return `Tap again to start a new ${what} session in ${project.label || 'this Project'}.${moved}`;
+      return `Starts a new ${what} session in ${project.label || 'this Project'}.${moved}`;
     }
 
-    function convArmRestart(btn, key) {
-      // Said on the arm, not on the fire: by the second tap the session is already starting.
-      if (armedEl !== btn) { const note = respawnNote(key); if (note) showToast(note); }
-      armButton(btn, 'Restart?', () => convRestart(key));
+    // Which member's Restart menu is open. Held here rather than left to the DOM: the roster is
+    // redrawn on the poll, and a menu that shut itself under the thumb every three seconds is one
+    // nobody could reach the second item of. The same reason armButton keys its arm.
+    let convRestartMenuKey = '';
+
+    function convRestartMenuToggle(el) {
+      convRestartMenuKey = el.open ? (el.dataset.key || '') : '';
+    }
+
+    function closeRestartMenu() {
+      convRestartMenuKey = '';
+      if (typeof document === 'undefined' || !document.querySelectorAll) return;
+      for (const el of document.querySelectorAll('.conv-menu[open]')) el.open = false;
+    }
+
+    // A tap anywhere else closes it, the way an arm gives itself up to a tap that lands elsewhere.
+    document.addEventListener('click', (e) => {
+      if (!convRestartMenuKey) return;
+      if (e.target.closest && e.target.closest('.conv-menu')) return;
+      closeRestartMenu();
+    }, true);
+
+    function restartMenuHtml(key, rec, on) {
+      const again = canRespawn(rec.spawn);
+      const other = canStartFromConv();
+      if (!again && !other) return '';
+      const k = escapeHtml(key);
+      const note = again ? respawnNote(key) : 'Opens the Start dialog to pick what to start.';
+      return `<details class="conv-menu" data-key="${k}"${convRestartMenuKey === key ? ' open' : ''}` +
+        ` ontoggle="convRestartMenuToggle(this)">` +
+        `<summary class="conv-restart-open"` +
+        ` aria-label="Restart this member${on ? ', ending what is running' : ''}, keeping its thread">` +
+        `Restart \u25be</summary>` +
+        `<div class="conv-menu-items">` +
+        (note ? `<p class="conv-menu-note">${escapeHtml(note)}</p>` : '') +
+        (again ? `<button class="conv-restart" data-key="${k}"` +
+          ` onclick="convRestart(this.dataset.key)">` +
+          `${on ? 'Restart \u2014 ends this session first' : 'Restart'}</button>` : '') +
+        (other ? `<button class="conv-swap" data-key="${k}"` +
+          ` onclick="convStartAs(this.dataset.key)">Restart as\u2026</button>` : '') +
+        `</div></details>`;
     }
 
     // A member is named by its fingerprint and not by a pane — the roster outlives the panes in it,
@@ -1087,6 +1112,7 @@
     // simply picked up by whatever is started next. Asked twice by the button that calls this
     // where there is something live, because ending an agent loses whatever it had not said yet.
     function convStartAs(key) {
+      closeRestartMenu();
       const live = agents.find(x => convMemberKey(x) === key);
       if (live) endPane(live.pane_id);
       return convSwapMember(key, live
@@ -1289,6 +1315,7 @@
     // control for both halves of a row's life: what it means is the same either way, and which
     // half a member is in is not a question the reader should have to answer before pressing.
     function convRestart(key) {
+      closeRestartMenu();
       const live = agents.find(x => convMemberKey(x) === key);
       // A blocked (or just vanished) pane was not ended. Starting anyway leaves the old session
       // beside its supposed replacement, which is precisely what Restart promises not to do.

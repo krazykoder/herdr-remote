@@ -5011,7 +5011,10 @@
       border-radius: 6px;
     }
 
-    .conv-roster-row.gone {
+    /* The identity fades, the actions do not: a paused row is where a member is brought back, so
+       its controls are the one part of it that must not look switched off. Not opacity on the row
+       — that is a stacking context, and it dimmed the Restart menu that opens out of it. */
+    .conv-roster-row.gone > :not(.conv-roster-acts) {
       opacity: 0.65;
     }
 
@@ -5059,7 +5062,7 @@
     }
 
     .conv-roster .conv-drop,
-    .conv-roster .conv-swap,
+    .conv-roster .conv-restart-open,
     .conv-roster .conv-reset,
     .conv-roster .conv-restart,
     .conv-roster .conv-open,
@@ -5111,7 +5114,7 @@
     }
 
     .conv-roster .conv-open,
-    .conv-roster .conv-restart,
+    .conv-roster .conv-restart-open,
     .conv-roster-actions .conv-restart {
       color: var(--blue);
       border-color: var(--blue);
@@ -5125,21 +5128,67 @@
       border-color: var(--border);
     }
 
-    /* Restart as…, standing alone on a member with no record to restart from. Muted: it opens a
-       dialog rather than doing anything, and what it does after that is the reader's choice. */
-    .conv-roster .conv-swap {
-      color: var(--muted);
-      border-color: var(--border);
+    /* One word on the row, both ways of restarting under it. The panel is positioned rather than
+       laid out: a menu that pushed the row apart as it opened would move every control beneath it
+       out from under the thumb that opened this one. */
+    .conv-roster .conv-menu {
+      position: relative;
+      flex-shrink: 0;
     }
 
-    /* The same button as a caret, immediately after Restart. One control in two halves, so it
-       wears Restart's blue and sits against it — a gap here would read as a third action. */
-    .conv-roster .conv-restart + .conv-swap {
+    .conv-roster .conv-restart-open {
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .conv-roster .conv-restart-open::-webkit-details-marker { display: none; }
+
+    .conv-roster .conv-menu-items {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 30;
+      min-width: 220px;
+      max-width: min(78vw, 320px);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      /* Opaque, and darker than the row it covers rather than the same colour as it. A panel that
+         matches its background reads as transparent however solid it is. */
+      background: var(--bg);
+      border: 1px solid var(--blue);
+      border-radius: 8px;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+    }
+
+    /* What the tap will start, and where. It was a toast, which is gone by the time the second
+       tap is decided on — here it is beside the item it describes for as long as the menu is up. */
+    .conv-roster .conv-menu-note {
+      margin: 0 0 2px;
+      font-size: 0.6rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+    .conv-roster .conv-menu-items button {
+      width: 100%;
+      text-align: left;
+      white-space: normal;
+      font-size: 0.66rem;
+      min-height: 34px;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .conv-roster .conv-menu-items .conv-restart {
       color: var(--blue);
       border-color: var(--blue);
-      margin-left: -2px;
-      padding-left: 6px;
-      padding-right: 6px;
     }
 
     /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than
