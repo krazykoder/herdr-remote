@@ -94,8 +94,12 @@ NARROW_SLOT_COLS = (69, 70)
 # herdr's own ui.sidebar_min_width / sidebar_max_width defaults. Both are configurable, so this
 # only decides whether the advisory suggests the sidebar or the terminal — never a refusal.
 SIDEBAR_BOUNDS = (18, 36)
+# `ref` is the client's own id for a start — validated in the relay by validate_start_ref, and
+# named here because this is the set a message is checked against: an unlisted key is not ignored,
+# it rejects the whole message. Leaving it out refused every start that named itself, which is
+# every "Start again" a conversation makes.
 BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config",
-               "unattended"}
+               "unattended", "ref"}
 # An agent config's id. Checked for shape here and for existence in the relay, which is the only
 # place that knows what the provider file authorised — this module stays free of files.
 CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")

@@ -50,6 +50,13 @@
           ? [`Run this in a new terminal on ${where}?`, '', command]
           : [`Open a terminal on ${where}?`]);
       }
+      // A bot says what it is instead of how many it starts: one, always, and the same one.
+      if (launcherIsBot(tile)) {
+        return warn.concat([`Start ${tile.label} on ${where}?`, '',
+                            ((tile.members || [])[0] || {}).name || '',
+                            '', 'It keeps its conversation — the thread carries on where it left '
+                            + 'off.']);
+      }
       // The arbitrator counts. It is a third pane started on the same relay in the same Project,
       // and a confirm that said "2 sessions" before starting three would be the one number on
       // screen that was wrong.
@@ -112,7 +119,81 @@
       // `label` — the pane's name, the conversation's, the status line's — so naming it once here
       // is what keeps the launch's name and the tile's name from having to be the same thing.
       const named = launcherNamed(tile, typed);
+      if (launcherIsBot(named)) return launcherBotGo(named);
       return launcherIsTerm(named) ? launcherRunTile(named) : launcherSpawnTile(named);
+    }
+
+    // A bot press is "open this again", never "start another one like it". Three cases, and only
+    // the last two send anything:
+    //
+    //   the pane is up on the harness the tile names  — open it, and nothing else happens
+    //   the pane is gone                              — start it into the thread it left
+    //   the tile names a different harness            — end that pane and do the same
+    //
+    // The third is what "change the agent whenever you like" means in a terminal: a pane runs one
+    // CLI, so swapping the harness is End followed by Start again, which is exactly the succession
+    // a member swap already performs — same conversation, same name, the transcript carried across
+    // the seam by convContinueTranscript.
+    //
+    // ponytail: the harness alone decides whether the running pane is the one the tile asks for.
+    // An agent config swapped for another on the same harness is not restarted, and `config` falls
+    // off the snapshot on a relay restart — reading it here would end a live pane over a field
+    // that had merely gone quiet.
+    function launcherBotGo(tile) {
+      const member = (tile.members || [])[0] || {};
+      launcherBotHome(tile);
+      const conv = loadConvIndex().find(c => c.id === launcherBotConvId(tile.bot));
+      const held = conv && (conv.members || [])[0];
+      // Nothing has ever been started for this bot. The ordinary spawn path makes the pane and the
+      // conversation, and launcherMakeConv gives that conversation the bot's own fixed id — which
+      // is what every press after this one finds.
+      if (!held) return launcherSpawnTile(tile);
+      const live = agents.find(x => convMemberKey(x) === held.key);
+      if (live && live.agent === member.name) {
+        openConversation(conv.id);
+        openTerminal(live.pane_id);
+        showSpawnStatus(`${tile.label} is already running.`, 'success');
+        return true;
+      }
+      if (live && !endPane(live.pane_id)) {
+        showToast(`${tile.label} could not be ended — nothing was started.`);
+        return false;
+      }
+      return launcherBotContinue(tile, conv, held.key);
+    }
+
+    // Where a bot lives, written back onto the tile. The one place a press edits the tile it was
+    // made from, and the exception is the whole point of a bot: an ordinary tile is a template —
+    // the same roster pressed into whichever tree wants it, asked for every time — and a bot is a
+    // room, which is somewhere rather than anywhere. Asking again on every press would be asking
+    // the reader to re-answer a question that has one right answer already on screen.
+    function launcherBotHome(tile) {
+      const stored = loadLauncher().find(t => t.id === tile.id);
+      if (!stored || !tile.project_id || stored.project_id === tile.project_id) return;
+      putLauncherTile(Object.assign({}, stored, {project_id: tile.project_id}));
+      if (typeof renderLauncher === 'function') renderLauncher();
+    }
+
+    // The start that continues a bot's thread. Not a batch and not launcherLanded: what lands here
+    // is a *replacement* for a member of a conversation that already exists, which is the intent
+    // start_dialog's respawn branch is written for — it copies the transcript, moves the member's
+    // key onto the new pane, and opens the thread.
+    function launcherBotContinue(tile, conv, key) {
+      const member = (tile.members || [])[0] || {};
+      // Named before the send and written down before that: the answer to a start is what a reload
+      // loses, and the note is what a tab coming back finds the pane by. Same mechanism, same
+      // two-minute window, as Start again in a conversation.
+      const ref = typeof convRespawnRef === 'function' ? convRespawnRef() : '';
+      const msg = launcherSpawnMsg(tile, member, ref);
+      startIntent = {conv: conv.id, replace: key};
+      // Nothing is said to it. A bot is a room the user comes back to, and an opening prompt typed
+      // at every press would be the one line in the thread nobody wrote.
+      startPrompt = '';
+      startStarter = member.at || NO_STARTER;
+      if (ref && typeof rememberConvRespawn === 'function') rememberConvRespawn(conv.id, key, ref);
+      showSpawnStatus(`Continuing ${tile.label}…`, 'busy');
+      ws.send(JSON.stringify(msg));
+      return true;
     }
 
     // What the sheet calls back into: the tile as stored, run in the Project just chosen. The
@@ -302,7 +383,10 @@
       // conversation carrying it would show its brief as a third voice in the thread.
       const inside = batch.panes.slice(0, (batch.tile.members || []).length);
       const conv = {
-        id: 'c_' + Math.random().toString(36).slice(2, 10),
+        // A bot's conversation is found by its id rather than looked up by name, on every browser
+        // and after every restart — so the id is the bot's own and not this press's.
+        id: batch.tile.bot ? launcherBotConvId(batch.tile.bot)
+          : 'c_' + Math.random().toString(36).slice(2, 10),
         name: name, created: Date.now(), members: inside.map(convMemberOf),
       };
       saveConvIndex([conv].concat(items));

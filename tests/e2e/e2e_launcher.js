@@ -107,6 +107,7 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   page.on('console', m => { if (m.type() === 'error') console.log('  console:', m.text()); });
+  page.on('pageerror', e => console.log('  pageerror:', String(e)));
   // The launch sheet, answered with nothing typed — a real answer: the launch is then named
   // `${noun} ${tag}`, which is the shape the checks below match on. The sheet itself is what
   // launcher.spec.js pins; here it is in the way of the thing being tested.
@@ -330,6 +331,78 @@ async function main() {
           JSON.stringify(board()));
     const moved = board()[board().length - 1];
     check('at the new Project’s cwd', moved.cwd === '/work/relay', moved.cwd);
+
+    // --- the bot ------------------------------------------------------------------------------
+    // The one row that is always the same session. Pressed three times here: once to make it, once
+    // over the pane it made, and once after that pane has gone off the board — which is the case
+    // the whole feature is about, because it is the one where "the same session" has to survive a
+    // pane id that no longer exists.
+    const jarvis = page.locator('.launcher-tile[data-tile="ql_bot_jarvis"]');
+    check('the bot is on the page without anyone having made it', await jarvis.isVisible());
+    check('under a band of its own',
+          (await page.locator('.launcher-band', {hasText: 'Bots'}).count()) === 1);
+    const botBefore = board().filter(p => p.agent).length;
+    await jarvis.click();
+    // A template until somebody points it somewhere, so the sheet asks — and it asks for the
+    // Project and nothing else: there is no launch to name.
+    await page.waitForSelector('#launcherModal .arm-btn', {timeout: 10000});
+    check('the sheet does not ask what to call this one',
+          (await page.locator('#qlLaunchName').count()) === 0);
+    await page.locator('#launcherModal').getByRole('button', {name: 'Charts', exact: true}).click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start', exact: true}).click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start?', exact: true}).click();
+    check('pressing it starts one session', await waitForAgents(botBefore + 1),
+          JSON.stringify(board()));
+    await page.waitForFunction(() => !!loadConvIndex().find(c => c.id === 'c_bot_jarvis'),
+                               null, {timeout: 20000});
+    const first = await page.evaluate(() => loadConvIndex().find(c => c.id === 'c_bot_jarvis'));
+    check('into a conversation with the bot’s own id', !!first && first.name === 'Jarvis',
+          JSON.stringify(first));
+    const botPane = board().filter(p => p.agent).pop();
+
+    // Pressed again over the pane it is already on: nothing is started, and the reader is put back
+    // in the room rather than into a second one like it.
+    await page.evaluate(() => { showLanding(); renderLauncher(); });
+    await page.waitForSelector('.launcher-tile', {state: 'visible'});
+    const held = board().length;
+    await jarvis.click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start', exact: true}).click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start?', exact: true}).click();
+    await sleep(3000);
+    check('pressing it again starts nothing', board().length === held, JSON.stringify(board()));
+    check('and opens what is already there',
+          (await page.evaluate(() => activePane)) === botPane.pane_id);
+
+    // The pane taken off the board, which is what an agent quitting looks like from here. The
+    // press after it is a *continuation*: same conversation, one member, and that member now
+    // names a different pane than it did a moment ago.
+    fs.writeFileSync(STATE, JSON.stringify(board().filter(p => p.pane_id !== botPane.pane_id)));
+    await page.waitForFunction(id => !agents.some(a => a.pane_id === id), botPane.pane_id,
+                               {timeout: 20000});
+    await page.evaluate(() => { showLanding(); renderLauncher(); });
+    const goneAt = board().filter(p => p.agent).length;
+    await jarvis.click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start', exact: true}).click();
+    await page.locator('#launcherModal').getByRole('button', {name: 'Start?', exact: true}).click();
+    check('a bot whose pane has gone starts again', await waitForAgents(goneAt + 1),
+          JSON.stringify(board()));
+    // The member now names a pane that is live. Not "a different key": herdr recycles pane ids,
+    // and this board hands the replacement the id the pane that just went held — which is the
+    // case the succession has to survive, not one to assert its way around. What has to be true is
+    // that the thread was carried onto the new session rather than left on a dead one, and `was`
+    // is where that is recorded.
+    await page.waitForFunction(() => {
+      const c = loadConvIndex().find(x => x.id === 'c_bot_jarvis');
+      const m = c && (c.members || [])[0];
+      return !!m && (m.was || []).length > 0 && agents.some(a => convMemberKey(a) === m.key);
+    }, null, {timeout: 30000})
+      .then(() => check('into the same conversation, on the pane that is now live', true))
+      .catch(async e => check('into the same conversation, on the pane that is now live', false,
+        JSON.stringify(await page.evaluate(() => loadConvIndex()
+          .find(x => x.id === 'c_bot_jarvis')))));
+    const after = await page.evaluate(() => loadConvIndex().filter(c => c.id === 'c_bot_jarvis'));
+    check('and never into a second one', after.length === 1 && after[0].members.length === 1,
+          JSON.stringify(after));
   } catch (e) {
     check('the run finished', false, String(e));
     console.log(fs.readFileSync(path.join(TMP, 'relay.out'), 'utf8').split('\n').slice(-25).join('\n'));

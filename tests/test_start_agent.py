@@ -165,6 +165,14 @@ class ValidateBasicsTests(unittest.TestCase):
             _, err = validate_start_request(start(**{field: value}), PROJECTS, LIVE, ALLOWED)
             self.assertIn("unexpected field", err, field)
 
+    def test_a_start_may_name_itself(self):
+        # `ref` is the client's own id for this start, carried back on the pane it makes. An
+        # unlisted key rejects the whole message rather than being ignored, so leaving it out of
+        # BASE_FIELDS refused every "Start again" a conversation makes.
+        plan, err = validate_start_request(start(ref="r_abc"), PROJECTS, LIVE, ALLOWED)
+        self.assertIsNone(err)
+        self.assertIsNotNone(plan)
+
     def test_placement_field_for_the_wrong_placement(self):
         _, err = validate_start_request(start(split_from="w1:p1"), PROJECTS, LIVE, ALLOWED)
         self.assertIn("unexpected field", err)

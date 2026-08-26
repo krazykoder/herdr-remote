@@ -77,8 +77,10 @@
         + ` aria-label="Move ${escapeHtml(tile.label)} up"${i === 0 ? ' disabled' : ''}>↑</button>`
         + `<button class="ql-move" onclick="launcherMove('${escapeHtml(tile.id)}', 1)"`
         + ` aria-label="Move ${escapeHtml(tile.label)} down"${last ? ' disabled' : ''}>↓</button>`
-        + `<button class="ql-del" onclick="launcherDelete('${escapeHtml(tile.id)}')"`
-        + ` aria-label="Delete ${escapeHtml(tile.label)}">✕</button>`
+        + (launcherIsBot(tile)
+          ? ''
+          : `<button class="ql-del" onclick="launcherDelete('${escapeHtml(tile.id)}')"`
+            + ` aria-label="Delete ${escapeHtml(tile.label)}">✕</button>`)
         + `</div>`;
     }
 
@@ -192,12 +194,19 @@
                 {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
             : '<span class="ql-none">This relay has no Projects configured.</span>')
           + '</div></div>'
-          + `<label class="start-field">Name<input id="qlLaunchName" type="text"`
-          + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
-          + ` placeholder="${escapeHtml(launcherNoun(tile))} — blank is fine"`
-          + ` value="${escapeHtml(launcherLaunch.name)}" /></label>`
-          + `<p class="ql-none">Every pane this starts wears the name and one shared tag, so a `
-          + 'second press of the same tile is never mistaken for this one.</p>'
+          // A bot is not named per press. There is one of it, it keeps the name on the tile, and a
+          // box asking what to call this launch would be asking about a launch that is not a new
+          // thing — see launcherBotNamed.
+          + (launcherIsBot(tile)
+            ? `<p class="ql-none">${escapeHtml(tile.label)} keeps its name and its conversation. `
+              + 'Pressing this opens the one that is there, or starts it again where it left off.'
+              + '</p>'
+            : `<label class="start-field">Name<input id="qlLaunchName" type="text"`
+              + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
+              + ` placeholder="${escapeHtml(launcherNoun(tile))} — blank is fine"`
+              + ` value="${escapeHtml(launcherLaunch.name)}" /></label>`
+              + `<p class="ql-none">Every pane this starts wears the name and one shared tag, so a `
+              + 'second press of the same tile is never mistaken for this one.</p>')
           + '<div class="ql-actions">'
           + '<button class="ql-secondary" onclick="closeLauncherEdit()">Cancel</button>'
           // arm-btn is what draws the armed state — the orange fill draining over the arm window,
@@ -403,7 +412,11 @@
       return '<label class="start-field">Name<input id="qlName" type="text"'
         + ` maxlength="${LAUNCHER_LABEL_MAX}" autocapitalize="none" autocomplete="off"`
         + ` placeholder="what pressing this does" value="${escapeHtml(d.label || '')}" /></label>`
-        + '<div class="start-field">What it does<div class="badge-strip">'
+        + (launcherIsBot(d)
+          ? '<p class="ql-conv">' + launcherIcon('spawn') + '<span>A bot is one agent in one '
+            + 'conversation that outlives it. Change which agent below — the thread carries on '
+            + 'into whatever you pick.</span></p>'
+          : '<div class="start-field">What it does<div class="badge-strip">'
         + badgeHtml('Start agents', d.action === 'spawn', "launcherPickAction('spawn')",
                     {title: kinds.length ? 'Starts one or more sessions'
                                          : 'This relay starts nothing'})
@@ -413,7 +426,7 @@
         + badgeHtml('Run a command', d.action === 'run', "launcherPickAction('run')",
                     {title: terminal ? 'Opens a terminal and types this at it'
                                      : 'This relay has terminal mode switched off'})
-        + '</div></div>'
+        + '</div></div>')
         + '<div class="start-field">Project<div class="badge-strip">'
         + badgeHtml('Ask each time', !d.project_id, "launcherPickProject('')",
                     {title: 'A template — the Project is picked when the tile is pressed'})
@@ -448,7 +461,9 @@
         + launcherInsecureHtml(d)
         + '<p id="qlError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>'
         + '<div class="ql-actions">'
-        + (launcherEditing
+        // A bot has no Delete anywhere — not here and not in the list. removeLauncherTile refuses
+        // it either way; a button that is refused after the confirm is worse than no button.
+        + (launcherEditing && !launcherIsBot(d)
           ? `<button class="ql-secondary" onclick="launcherDelete('${escapeHtml(launcherEditing)}')">Delete</button>`
           : '<button class="ql-secondary" onclick="launcherDrawList()">Cancel</button>')
         + '<button id="qlSave" class="ql-primary" onclick="launcherSaveTile()">Save tile</button>'
@@ -683,6 +698,10 @@
     function launcherTileOf(d) {
       const tile = {id: d.id, label: String(d.label || '').trim(), action: d.action,
                     project_id: d.project_id};
+      // What makes this row a bot survives every edit of it. The form can change the harness, the
+      // Project and the name; it cannot turn a bot into an ordinary tile, because the thread on the
+      // other side of it would have nothing left that opens it.
+      if (d.bot) tile.bot = d.bot;
       // Absent rather than false, like every other optional field here: a tile that has never been
       // marked and one marked and unmarked are the same tile.
       if (d.insecure) tile.insecure = true;

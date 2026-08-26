@@ -116,13 +116,18 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
   run(`saveLauncher(${JSON.stringify(tiles)})`);
   return {
     run, log, store, dom: d,
-    tiles: () => run('loadLauncher()'),
+    // The user's own tiles. The bots are on every read of the document — they are seeded rather
+    // than saved — and every assertion in this file is about what the form wrote.
+    tiles: () => run('loadLauncher().filter(t => !t.bot)'),
+    // The seeded ones, for the tests that are about them.
+    bots: () => run('loadLauncher().filter(t => !!t.bot)'),
     body: () => d.nodes.launcherEditBody.innerHTML,
     title: () => d.nodes.launcherEditTitle.textContent,
     // Typing into a field the form has drawn. The stub invents it, which is the same thing the
     // browser does when the markup naming it is written.
     field: (id, value) => { d.get(id).value = value; },
     draft: () => run('launcherDraft'),
+    error: () => d.get('qlError').textContent || '',
   };
 }
 
@@ -561,8 +566,42 @@ test('the first and last rows do not offer the arrow that would do nothing', () 
   const rows = e.body().split('class="ql-row"').slice(1);
   assert.match(rows[0], /Move A up"[^>]*disabled/);
   assert.ok(!/Move A down"[^>]*disabled/.test(rows[0]), 'the first row can still go down');
-  assert.match(rows[1], /Move B down"[^>]*disabled/);
-  assert.ok(!/Move B up"[^>]*disabled/.test(rows[1]), 'and the last can still go up');
+  // The last row is the seeded bot, which is drawn in this list like anything else — it is
+  // reordered and edited here, and only Delete is missing from it.
+  const last = rows[rows.length - 1];
+  assert.match(last, /up"[^>]*>↑/, 'the last can still go up');
+  assert.match(last, / down"[^>]*disabled/);
+  assert.ok(!/Move B down"[^>]*disabled/.test(rows[1]), 'so B is no longer the end of the list');
+});
+
+test('a bot is edited from the list like anything else, but never deleted', () => {
+  const e = editor({tiles: [runTile()]});
+  e.run('openLauncherEdit()');
+  const rows = e.body().split('class="ql-row"').slice(1);
+  const bot = rows.find(r => /Jarvis/.test(r));
+  assert.ok(bot, 'the row is there before anything has been pressed');
+  assert.ok(!/ql-del/.test(bot), 'and it carries no ✕');
+  assert.match(bot, /launcherEditTile\('ql_bot_jarvis'\)/);
+  // Nor on the form it opens, where Delete is what that button would otherwise be.
+  e.run("launcherEditTile('ql_bot_jarvis')");
+  assert.ok(!/launcherDelete/.test(e.body()));
+  assert.match(e.body(), /A bot is one agent in one conversation/,
+               'what it is, said where the action strip would have been');
+});
+
+test('a bot can be moved to another harness, and stays a bot', () => {
+  const e = editor({tiles: []});
+  e.run("launcherEditTile('ql_bot_jarvis')");
+  e.run("launcherAddMember('codex')");
+  // The seed's own member first, then the one just added: a bot is one agent, so the save refuses
+  // until the roster is one again.
+  assert.equal(e.run('launcherSaveTile()'), false);
+  assert.match(e.error(), /exactly one agent/);
+  e.run('launcherDropMember(0)');
+  assert.equal(e.run('launcherSaveTile()'), true);
+  const [bot] = e.bots();
+  assert.equal(bot.bot, 'jarvis', 'the mark survives the edit that changed everything else');
+  assert.equal(bot.members[0].name, 'codex');
 });
 
 test('delete asks first, and a refusal keeps the tile', () => {

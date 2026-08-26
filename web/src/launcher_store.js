@@ -4,9 +4,12 @@
     // conversation_store.js already uses: the schema is pure and testable next door in
     // launcher_pure.js, and only this file knows there is a browser.
 
+    // Bots are added on the way out rather than written in on the way past: a browser that has
+    // never stored anything still draws them, and one whose stored bot the user has edited reads
+    // that one back untouched. It reaches storage the next time anything is saved.
     function loadLauncher() {
-      try { return parseLauncher(localStorage.getItem(LAUNCHER_KEY)); }
-      catch (e) { return []; }   // private mode: nothing stored
+      try { return launcherWithBots(parseLauncher(localStorage.getItem(LAUNCHER_KEY))); }
+      catch (e) { return launcherWithBots([]); }   // private mode: nothing stored
     }
 
     // Every write goes through here, which is what keeps the outbox honest. The outbox is the set
@@ -49,7 +52,10 @@
     // one operation to the person doing it.
     function putLauncherTile(tile) {
       const items = loadLauncher();
-      const had = items.length;
+      // The bots do not count. They are here on every load, so counting them would mean the
+      // section's one moment of "the user just made a tile" never arrives — see
+      // ensureLauncherSection for why that moment is the switch.
+      const had = items.filter(t => !launcherIsBot(t)).length;
       const at = items.findIndex(t => t.id === tile.id);
       if (at < 0) items.push(tile); else items[at] = tile;
       const kept = saveLauncher(items);
@@ -57,8 +63,14 @@
       return kept;
     }
 
+    // A bot is refused. Its row is the only way into a conversation that may have months in it,
+    // and deleting the row would not delete the thread — it would strand it, and the seed would
+    // put the row back wearing the default harness rather than the one that was chosen. The
+    // harness is editable; the row is not.
     function removeLauncherTile(id) {
-      return saveLauncher(loadLauncher().filter(t => t.id !== id));
+      const items = loadLauncher();
+      if (launcherIsBot(items.find(t => t.id === id))) return items;
+      return saveLauncher(items.filter(t => t.id !== id));
     }
 
     // Move one tile by one place. The whole of reordering: six tiles do not need a drag-and-drop

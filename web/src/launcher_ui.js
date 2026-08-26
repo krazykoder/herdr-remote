@@ -38,7 +38,10 @@
     // What the tile calls the thing it will make.
     function launcherKindLine(tile) {
       const many = (tile.members || []).length > 1;
-      const kind = launcherIsTerm(tile) ? 'Terminal'
+      // A bot before anything else it might also be. What matters about this row is not that it
+      // starts one session — every one-agent tile does — it is that it starts *the same* one.
+      const kind = launcherIsBot(tile) ? 'Bot'
+        : launcherIsTerm(tile) ? 'Terminal'
         : launcherWantsArb(tile) ? 'Arbitrated' : many ? 'Conversation' : 'Session';
       // The bubbles rather than the robot as soon as there is more than one agent on the tile:
       // what this press makes is a room with them in it, and that is what the reader wants to
@@ -156,13 +159,18 @@
       // belong to is one more badge in a grid of badges.
       const safe = tiles.filter(t => !launcherInsecure(t));
       band('[insecure]', tiles.filter(launcherInsecure));
-      band('Templates', safe.filter(t => !t.project_id));
-      projects.forEach(p => band(p.label || p.id, safe.filter(t => t.project_id === p.id)));
+      // Bots above the rest, and out of the Project bands: a bot is not one of the things the
+      // reader is choosing between — it is the one row that is always the same room, and it is
+      // read past rather than read through.
+      band('Bots', safe.filter(launcherIsBot));
+      const rest = safe.filter(t => !launcherIsBot(t));
+      band('Templates', rest.filter(t => !t.project_id));
+      projects.forEach(p => band(p.label || p.id, rest.filter(t => t.project_id === p.id)));
       // Tiles pointing at a Project this relay does not have. Last, and still drawn: they are the
       // broken ones, each already wearing its own badge, and a band that hid them would be the one
       // place the problem is fixable and the last place it is mentioned.
       const known = new Set(projects.map(p => p.id));
-      band('Missing Project', safe.filter(t => t.project_id && !known.has(t.project_id)));
+      band('Missing Project', rest.filter(t => t.project_id && !known.has(t.project_id)));
       return out;
     }
 

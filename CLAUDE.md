@@ -211,6 +211,13 @@ cd herdi-ios && xcodegen generate
 
 ## Web App
 
+The launcher also seeds **bots**: permanent tiles — Jarvis is the one — that are always the same
+session rather than another one like it. A bot press opens the pane it is already on, or starts the
+harness the tile now names into the conversation the last pane left, carrying the transcript across
+the seam. Pane ids are herdr's and are recycled, so what is permanent is the conversation: a fixed
+id (`c_bot_<slug>`) and a member key that moves from pane to pane. A bot's harness is edited like
+any other tile's; its row cannot be deleted.
+
 The web app ships as a single self-contained HTML file — `web/dist/index.html`, built from `web/index.html` (markup and CSS) plus `web/src/*.js` by `scripts/build.py`. No runtime dependencies and no framework; the build is one stdlib script that concatenates and escapes `</script`. It includes 11 color themes, a mobile terminal keyboard, PWA support, agent-icon detection, and a
 line ruler for picking a range of pane lines with a finger.
 
