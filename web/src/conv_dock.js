@@ -1058,7 +1058,7 @@
       let parsed = null;
       try { parsed = JSON.parse(key); } catch (e) {}
       // The key first. Failing that, the same key with the local host spelled the one way — a live
-      // row is keyed under whichever spelling its record carried (see `convLiveKey`), and the two
+      // row is keyed under whichever spelling its record carried (see `convLiveEntries`), and the two
       // must land on the same member. The host is part of that comparison and never dropped from
       // it: pane ids are unique per host and collide across them, so matching on a bare pane id
       // would address a stranger on another machine.

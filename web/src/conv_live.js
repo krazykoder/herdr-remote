@@ -774,23 +774,6 @@
     // which would draw every captured turn with the `~` that means "this time is a guess".
     const CONV_LIVE_AT_SRC = { poll: 'state', state: 'state', sent: 'sent', backfill: 'backfill' };
 
-    // A live row's key, in the spelling the roster uses. The rest of the view reads the key for
-    // colour, for which side of a pair a bubble goes on, and for the roster panel's hide-a-member
-    // filter, so a key that is right but spelled differently is a bubble drawn as a stranger.
-    //
-    // Two spellings exist for one host — see `convNormHost`. The relay's snapshot names the local
-    // host `local` and so does the record, and that ordinary case matches outright. But the
-    // browser's own key builder folds a missing host to '', so a pane that reached this app with no
-    // host at all is stored under a name its member key does not carry. Both are tried against the
-    // roster before either is believed.
-    function convLiveKey(t, roster) {
-      const pane = { pane_id: t.pane_id || '', agent: t.agent || '', cwd: t.cwd || '' };
-      const mine = convMemberKey(Object.assign({ host: t.host || '' }, pane));
-      if (!roster || roster.has(mine) || t.host !== 'local') return mine;
-      const bare = convMemberKey(Object.assign({ host: '' }, pane));
-      return roster.has(bare) ? bare : mine;
-    }
-
     // The record, in the shape the thread already renders. `keys` is the roster, so a row's member
     // index — which is what the standalone view picks a column from — is the position of its own
     // member rather than the order rows came back in. The buckets are per pane and each is already
@@ -822,13 +805,18 @@
           // same pane to the record — and the bucket must not be drawn twice for them.
           if (t.seq && seen.has(t.seq)) continue;
           if (t.seq) seen.add(t.seq);
-          turns.push(t);
+          // Filed under the member that claimed it, not under the pane id the row carries. Those
+          // two differ for every row a restarted member left behind: the roster key moved to the
+          // new pane and the old one lives in `was`, so a key derived from the row is a key no
+          // roster holds — and every filter that works by member key, solo among them, then has
+          // nothing to match those bubbles against and leaves them on screen.
+          turns.push({turn: t, key: k});
         }
       }
-      turns.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.seq || 0) - (b.seq || 0));
+      turns.sort((a, b) => (a.turn.at || 0) - (b.turn.at || 0) ||
+        (a.turn.seq || 0) - (b.turn.seq || 0));
 
-      return turns.map(t => {
-        const key = convLiveKey(t, at);
+      return turns.map(({turn: t, key}) => {
         return {
           who: CONV_LIVE_USER_KINDS.includes(t.kind) ? 'user' : 'agent',
           // `text` is the closing message the relay detected. `tail` is the last few lines it kept

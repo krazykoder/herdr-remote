@@ -316,6 +316,21 @@ test('a respawned member inherits the pane it recorded itself as continuing', ()
                    ['before the restart', 'after it']);
 });
 
+test('an inherited row is keyed to the member that claimed it, not to the pane it came from', () => {
+  // What every filter that works by member key depends on — solo, the roster's hide list, the
+  // column a bubble is drawn in. A row left behind by the pane a member was restarted out of is
+  // that member's row; keyed to the dead pane instead, it matches no roster entry and a solo on
+  // some other member leaves it on screen.
+  reset([{host: 'local', pane_id: '%9', agent: 'claude', cwd: '/work/a'}]);
+  recentIndex = [{id: 'c1', name: 'Arch', members: [{key: KEY_A2, was: ['%1']}]}];
+  convLiveFetch([KEY_A2]);
+  convLiveReceive({fingerprints: [FP_A], turns: [
+    paneTurn(1, '%1', 1000, 'before the restart'), paneTurn(2, '%9', 1100, 'after it')]});
+  const entries = convLiveEntries([KEY_A2]);
+  assert.deepEqual(entries.map(e => e.key), [KEY_A2, KEY_A2]);
+  assert.deepEqual(entries.map(e => e.member), [0, 0]);
+});
+
 test('a quit pane does not leak into a conversation that never held it', () => {
   // The bug this rule replaced a heuristic to fix. Three agy panes in one checkout share one
   // fingerprint; one of them is quit by hand. It was never in this conversation, and "no longer

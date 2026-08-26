@@ -5067,6 +5067,34 @@ test('a double-click on a target chip reads that agent alone', async ({page}) =>
   await expect(soloBanner(page)).toContainText('scratch');
 });
 
+test('a solo hides an ended member as well as a live one', async ({page}) => {
+  await open(page);
+  await joinBoth(page);
+  await read(page);
+  // A member whose pane is gone: a record with words in it, and a roster row nothing is running
+  // behind. Its bubbles are in the thread like anybody else's, so a solo has to take them out.
+  await page.evaluate(async () => {
+    await convPut({key: 'dead:pane', label: 'Retired 3', first: 1, touched: 3,
+      spawn: {agent: 'claude', role: 'agent'},
+      entries: [{who: 'agent', text: 'the ended pane spoke here', seen: 5, label: 'Retired 3',
+                 agent: 'claude'}]});
+    const items = loadConvIndex();
+    items[0].members = (items[0].members || []).concat({key: 'dead:pane', added: 1,
+      label: 'Retired 3', messages: 1});
+    saveConvIndex(items);
+  });
+  await openWindow(page);
+  await expect(page.locator('#convViewThread .conv-msg')).not.toHaveCount(0);
+
+  await whoRow(page).filter({hasText: 'scratch'}).dblclick();
+
+  const scratchKey = await page.evaluate(() =>
+    convMemberKey(agents.find(a => a.label === 'scratch')));
+  expect(await page.evaluate(() =>
+    [...new Set([...document.querySelectorAll('#convViewThread .conv-msg')]
+      .map(m => m.dataset.key))])).toEqual([scratchKey]);
+});
+
 test("the banner's X puts the whole conversation back", async ({page}) => {
   await open(page);
   await joinBoth(page);
