@@ -78,3 +78,19 @@ test('a field tapped in any sheet is visible after the keyboard takes half the s
     }, id);
   }
 });
+
+test('the landing search bubble is above the keyboard too, results and all', async ({page}) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await page.evaluate(summon, KB);
+  await page.fill('#landingSearchInput', 'a');
+  await expect(page.locator('#landingSearchResults .pair-pick').first()).toBeVisible();
+
+  const seen = KB.top + KB.height;
+  const bubble = await page.locator('#landingSearchInput').boundingBox();
+  const results = await page.locator('#landingSearchResults').boundingBox();
+  expect(bubble.y + bubble.height, 'the box types from behind the keyboard').toBeLessThanOrEqual(seen);
+  expect(results.y, 'the results run up under the header').toBeGreaterThanOrEqual(KB.top);
+  expect(results.y + results.height).toBeLessThanOrEqual(bubble.y + 1);
+});

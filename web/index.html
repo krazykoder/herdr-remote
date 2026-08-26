@@ -2751,50 +2751,74 @@
       font-size: 0.75rem;
     }
 
-    /* The landing page's own search, fixed to the foot. Not a sheet: it has no way in and no way
-       out, it is simply there while the landing page is, so it is styled as a bar rather than as a
-       dialog. The results grow upwards out of it and are capped at half the screen, because the
-       thing being searched for is behind them. */
+    /* The landing page's own search. Not a sheet: it has no way in and no way out, it is simply
+       there while the landing page is — so it is a bubble floating over the list rather than a bar
+       closing it, and the results grow upwards out of it.
+
+       What is pinned is the *frame*, not the bubble: the same trick the sheets use, see
+       .app-overlay. It is laid out against the visual viewport, so the keyboard is not over it —
+       the keyboard is outside it. A box fixed to the layout viewport with a `bottom` offset cannot
+       do that, because Safari does not shrink the layout viewport, so every offset from its foot
+       is measured from behind the keyboard. The frame itself is transparent and click-through;
+       only what is inside it takes a tap. */
     #landingSearch {
       position: fixed;
       left: 0;
       right: 0;
-      /* Raised off the edge rather than sitting on it: a bar flush with the bottom reads as part
-         of the browser's own chrome, and on a phone it is where the home indicator lives. */
-      /* Halfway up the bottom half of the screen, not against its edge: it floats over the list
-         rather than ending it, and a thumb reaches it without stretching past the fold.
-         Above the keyboard it summons, like the sheets — see --kb-inset in utils.js. A search box
-         that types into itself from behind the keyboard is the one place this cannot be skipped. */
-      bottom: calc(25dvh + var(--kb-inset, 0px) + env(safe-area-inset-bottom, 0px));
+      top: var(--vv-top, 0px);
+      height: var(--vv-height, 100dvh);
       z-index: 90;
-      /* Narrower than the page it floats over, so it reads as a thing on top of the list rather
-         than as the list's last row. */
-      width: min(calc(100% - 56px), 460px);
-      margin-inline: auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      /* Halfway up the bottom half of what is visible: it floats over the list rather than ending
+         it, and a thumb reaches it without stretching past the fold. Of --vv-height and not of a
+         percentage — a percentage padding resolves against the *width* of the box, which on a
+         phone is a quarter of 390px and not a quarter of the screen. */
+      padding-bottom: calc(var(--vv-height, 100dvh) * 0.25 + env(safe-area-inset-bottom, 0px));
+      pointer-events: none;
     }
 
-    /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
-       through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
-       still reads as a raised control. */
-    /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be
-       — it is what says the pill is a search box before anything is typed into it. Pointer events
+    #landingSearch[hidden] { display: none; }
+
+    /* Narrower than the page it floats over, so it reads as a thing on top of the list rather than
+       as the list's last row. */
+    #landingSearch > * {
+      pointer-events: auto;
+      width: min(calc(100% - 56px), 460px);
+    }
+
+    /* The bubble is the icon's own containing block, so the glyph is placed against the field it
+       belongs to rather than against the frame — which is the full height of the screen. */
+    .landing-search-box {
+      position: relative;
+      display: flex;
+    }
+
+    /* The glyph rides inside the bubble at its left, where a search box's icon is expected to be —
+       it is what says the pill is a search box before anything is typed into it. Pointer events
        off, or the tap that should land in the field lands on the picture of a magnifier. */
     .landing-search-icon {
       position: absolute;
       left: 15px;
-      bottom: 0;
-      top: auto;
-      margin-bottom: 13px;
+      top: 50%;
+      transform: translateY(-50%);
       color: var(--muted);
       pointer-events: none;
       z-index: 1;
     }
 
+    /* Glass, not a panel: it sits over the list it searches, so what is under it stays legible
+       through it. Backdrop-filter is progressive — where it is not supported the colour-mix alone
+       still reads as a raised control. */
     #landingSearch input {
       width: 100%;
       box-sizing: border-box;
       padding: 11px 16px 11px 38px;
-      border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      /* The one border in the app meant to be seen from across the page: this floats over cards
+         that each carry a border of their own, and at --border it read as one more of them. */
+      border: 1.5px solid color-mix(in srgb, var(--blue) 60%, var(--border));
       border-radius: 999px;
       background: color-mix(in srgb, var(--surface) 72%, transparent);
       backdrop-filter: blur(14px) saturate(140%);
@@ -2802,38 +2826,42 @@
       color: var(--text);
       font-family: inherit;
       font-size: var(--input-font, 13px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      /* Two shadows: the near one lifts it off whatever card is under it, the far one is the drop
+         that says it is not part of the list at all. */
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
     }
 
     #landingSearch input:focus {
       outline: none;
       border-color: var(--blue);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent),
+                  0 14px 36px rgba(0, 0, 0, 0.45);
     }
 
-    /* Its own scroller above the box. The rows are the picker's, so a pane found here looks like
-       the same pane found anywhere else. */
+    /* Its own scroller above the bubble. The rows are the picker's, so a pane found here looks
+       like the same pane found anywhere else. */
     #landingSearchResults {
-      /* Of what is actually on screen, not of the layout viewport the keyboard is drawn over —
-         and never past the top of the visible half the bar itself floats in. */
-      max-height: min(45dvh, calc(var(--vv-height, 100dvh) - 25dvh - 140px));
+      /* Of the frame, which is what is on screen — the keyboard is outside it. Of its height,
+         for the reason the frame's own padding is: a percentage here would be of the width. */
+      max-height: calc(var(--vv-height, 100dvh) * 0.45);
       overflow-y: auto;
       /* The rows carry their own bottom border; the panel's radius has to clip the last one. */
       overflow-x: hidden;
       margin: 0 0 8px;
-      border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      border: 1.5px solid color-mix(in srgb, var(--blue) 40%, var(--border));
       border-radius: 14px;
       background: color-mix(in srgb, var(--surface) 82%, transparent);
       backdrop-filter: blur(14px) saturate(140%);
       -webkit-backdrop-filter: blur(14px) saturate(140%);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28), 0 14px 36px rgba(0, 0, 0, 0.45);
     }
 
+    /* The rows sit on the panel's glass; their own surface would repaint it opaque. */
     #landingSearchResults .pair-pick { background: none; }
     #landingSearchResults .pair-pick:last-child { border-bottom: none; }
 
-    /* Room for the bar, or the last card on the page is behind it and unreachable. */
-    /* The bar floats over the list rather than at its foot, so this is only enough to keep the
-       very last card from ending underneath it. */
+    /* The bubble floats over the list rather than sitting at its foot, so this is only enough to
+       keep the very last card from ending underneath it. */
     body.landing-search-on #agentListView {
       padding-bottom: 24px;
     }
@@ -7539,13 +7567,15 @@
        of what it is looking for. -->
   <div class="landing-search" id="landingSearch" hidden>
     <div class="landing-search-results" id="landingSearchResults" hidden></div>
-    <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
-         stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-      <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
+    <div class="landing-search-box">
+      <svg class="landing-search-icon" viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="landingSearchInput" type="search" placeholder="Search panes and conversations"
            aria-label="Search panes and conversations" autocomplete="off"
            autocorrect="off" autocapitalize="none" spellcheck="false"
-           oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)" />
+             oninput="renderLandingSearch()" onkeydown="landingSearchKey(event)" />
+    </div>
   </div>
 
   <div class="view" id="timelineView" style="display:none;padding:12px;">
