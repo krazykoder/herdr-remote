@@ -716,7 +716,7 @@ test('changing the harness ends the pane and carries the thread onto the new one
                    convs: [{id: BOT_CONV, name: 'Jarvis', members: [{key: 'k_w1:p1'}]}]});
   p.press('ql_bot_jarvis');
   assert.ok(p.log.some(l => l[0] === 'endPane' && l[1] === 'w1:p1'),
-    'a pane runs one CLI, so a swap is End followed by Start again');
+    'a pane runs one CLI, so a swap is Pause followed by Restart');
   assert.equal(p.sent[0].name, 'codex');
   assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1'});
 });

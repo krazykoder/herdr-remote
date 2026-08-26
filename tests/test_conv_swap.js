@@ -75,12 +75,12 @@ test('the intent is set after the dialog opens, because opening one clears it', 
   assert.notEqual(e.intent(), 'null');
 });
 
-test('swapping a live member ends its session first', () => {
+test('restarting a live member as something else ends its session first', () => {
   // There is no changing the agent inside a running pane. The button asks twice; this is what
   // happens after the second tap.
   const e = boot({live: [{pane_id: 'w1:p1', project_id: 'p2'}],
                   recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
-  assert.equal(e.run("convSwapLive('w1:p1')"), true);
+  assert.equal(e.run("convStartAs('w1:p1')"), true);
   assert.deepEqual(e.log, [['end', 'w1:p1'], ['open', 'p2']],
     'ended, then asked — and on the Project the pane is in now, not the one it was recorded under');
 });
@@ -256,16 +256,26 @@ test('reset does nothing for a member with no live pane', () => {
 test('restarting a live member ends it and starts the same thing again', () => {
   const e = boot({live: [{pane_id: 'w1:p1'}], recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
   e.run("respawned = []; convRespawn = k => respawned.push(k);");
-  e.run("convRestartMember('w1:p1')");
+  e.run("convRestart('w1:p1')");
   assert.deepEqual(e.log, [['end', 'w1:p1']], 'the session it had');
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), ['w1:p1'],
     'and the same one started again, with no dialog in between');
 });
 
+test('restarting a paused member starts it without ending anything', () => {
+  // The row's one Restart, on the half of a member's life that has no pane. Nothing to end, so
+  // nothing is ended — what used to be Start again is the same button reaching the same place.
+  const e = boot({live: [], recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
+  e.run("respawned = []; convRespawn = k => respawned.push(k);");
+  assert.equal(e.run("convRestart('w1:p1')"), true);
+  assert.deepEqual(e.log, [], 'no pane was touched');
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), ['w1:p1']);
+});
+
 test('restart does not replace a pane that could not end', () => {
   const e = boot({live: [{pane_id: 'w1:p1'}], recs: [Object.assign({}, REC, {key: 'w1:p1'})]});
   e.run("endPane = () => false; respawned = []; convRespawn = k => respawned.push(k);");
-  assert.equal(e.run("convRestartMember('w1:p1')"), false);
+  assert.equal(e.run("convRestart('w1:p1')"), false);
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(respawned)')), []);
 });
 
@@ -284,7 +294,7 @@ test('restart all goes one member at a time, and waits for a start in flight', (
     showSpawnStatus = () => {};
     showToast = () => {};
     loadConvIndex = () => [{id: 'c1', members: [{key: 'a'}, {key: 'b'}]}];
-    convRestartMember = k => fired.push(k);
+    convRestart = k => fired.push(k);
     convRestartAll();`);
   assert.deepEqual(JSON.parse(e.run('JSON.stringify(fired)')), ['a'], 'one out, one queued');
   e.run("pendingStart = 'w1:p9'; convRestartStep();");

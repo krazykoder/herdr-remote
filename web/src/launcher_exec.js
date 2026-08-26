@@ -131,7 +131,7 @@
     //   the tile names a different harness            — end that pane and do the same
     //
     // The third is what "change the agent whenever you like" means in a terminal: a pane runs one
-    // CLI, so swapping the harness is End followed by Start again, which is exactly the succession
+    // CLI, so swapping the harness is Pause followed by Restart, which is exactly the succession
     // a member swap already performs — same conversation, same name, the transcript carried across
     // the seam by convContinueTranscript.
     //
@@ -182,7 +182,7 @@
       const member = (tile.members || [])[0] || {};
       // Named before the send and written down before that: the answer to a start is what a reload
       // loses, and the note is what a tab coming back finds the pane by. Same mechanism, same
-      // two-minute window, as Start again in a conversation.
+      // two-minute window, as Restart in a conversation.
       const ref = typeof convRespawnRef === 'function' ? convRespawnRef() : '';
       const msg = launcherSpawnMsg(tile, member, ref);
       startIntent = {conv: conv.id, replace: key};

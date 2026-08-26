@@ -5060,7 +5060,6 @@
 
     .conv-roster .conv-drop,
     .conv-roster .conv-swap,
-    .conv-roster .conv-again,
     .conv-roster .conv-reset,
     .conv-roster .conv-restart,
     .conv-roster .conv-open,
@@ -5097,8 +5096,8 @@
       border-color: var(--red);
     }
 
-    /* Orange, not the red Delete wears. Delete destroys a record and cannot be undone; End stops a
-       session that Start again brings back on the very same row. Two different promises, so not
+    /* Orange, not the red Delete wears. Delete destroys a record and cannot be undone; Pause stops
+       a session that Restart brings back on the very same row. Two different promises, so not
        the same colour — and orange is already what this app paints a pane that has stopped. */
     .conv-roster .conv-end,
     .conv-roster-actions .conv-end {
@@ -5112,7 +5111,6 @@
     }
 
     .conv-roster .conv-open,
-    .conv-roster .conv-again,
     .conv-roster .conv-restart,
     .conv-roster-actions .conv-restart {
       color: var(--blue);
@@ -5120,26 +5118,35 @@
     }
 
     /* Reset neither ends a session nor brings one back — it leaves the pane exactly where it is
-       and empties it. Muted, like Swap, because it is the third thing. */
+       and empties it. Muted, because it is the third thing. */
     .conv-roster .conv-reset,
     .conv-roster-actions .conv-reset {
       color: var(--muted);
       border-color: var(--border);
     }
 
-    /* Neither blue nor orange. Swap is not a way back into what is already there, and on a live
-       member it ends a session — so it wears the colour of the thing it is closest to being
-       without claiming to be either. */
+    /* Restart as…, standing alone on a member with no record to restart from. Muted: it opens a
+       dialog rather than doing anything, and what it does after that is the reader's choice. */
     .conv-roster .conv-swap {
       color: var(--muted);
       border-color: var(--border);
+    }
+
+    /* The same button as a caret, immediately after Restart. One control in two halves, so it
+       wears Restart's blue and sits against it — a gap here would read as a third action. */
+    .conv-roster .conv-restart + .conv-swap {
+      color: var(--blue);
+      border-color: var(--blue);
+      margin-left: -2px;
+      padding-left: 6px;
+      padding-right: 6px;
     }
 
     /* The same two-tap promise QUIT makes in the header, on a button a render draws rather than
        one that lives in the markup. Longer drain — see ARM_MS: these are aimed at off a panel,
        not pressed by a thumb already resting on them. */
     /* The send is out. Grey and inert, and the same shape as the button it replaces so the row
-       does not move under the thumb that just pressed it. It goes back to End by the entry leaving
+       does not move under the thumb that just pressed it. It goes back to Pause by the entry leaving
        endWatch — the pane gone, or the deadline passed — so a failure needs no state of its own. */
     .end-going,
     .conv-roster .end-going,

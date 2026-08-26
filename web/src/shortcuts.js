@@ -248,7 +248,7 @@
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${paneBadge(a).trimStart()} ${cwd}</div></div>
     ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + a.pane_id, pane: a.pane_id, stop: true,
-                  aria: 'End ' + label, fire: `endPane('${a.pane_id}')`})}
+                  aria: 'Pause ' + label, fire: `endPane('${a.pane_id}')`})}
     <button class="pair-btn${paired ? ' paired' : ''}" aria-label="Pair ${label}" onclick="openPairDialog('${a.pane_id}',event)">${paired ? 'Paired' : 'Pair'}</button>
     <span class="chev" aria-hidden="true">›</span>
   </div>`;
@@ -321,7 +321,8 @@
     <span class="term-glyph" aria-hidden="true">$</span>
     <div class="info"><div class="project">${paneChrome(s)}${host}</div><div class="meta">${cwd}</div></div>
     ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + s.pane_id, pane: s.pane_id, stop: true,
-                  aria: 'End ' + paneLabel(s), fire: `endPane('${s.pane_id}')`})}
+                  rest: 'Close', ask: 'Close?', going: 'Closing…',
+                  aria: 'Close ' + paneLabel(s), fire: `endPane('${s.pane_id}')`})}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
     }
@@ -419,12 +420,17 @@
       const pending = typeof endPending === 'function'
         && (o.panes || [o.pane]).filter(Boolean).some(endPending);
       const armed = typeof armButtonArmed === 'function' && armButtonArmed(key);
-      const rest = o.rest || 'End';
-      const ask = o.ask || 'End?';
+      // Pause, not End: quitting a session leaves its seat in the conversation and its thread
+      // intact, and the row it leaves behind is the way back. A shell is the one caller with no
+      // seat to come back to, so it passes Close.
+      const rest = o.rest || 'Pause';
+      const ask = o.ask || 'Pause?';
+      const going = o.going || 'Pausing…';
       if (pending) {
         return `<button class="${o.cls} end-going" disabled` +
           ` data-arm-key="${escapeHtml(key)}"` +
-          ` aria-label="${escapeHtml(o.aria)} — ending">Ending…</button>`;
+          ` aria-label="${escapeHtml(o.aria)} — ${escapeHtml(going.replace('…', '').toLowerCase())}"` +
+          `>${escapeHtml(going)}</button>`;
       }
       return `<button class="${o.cls} arm-btn" data-arm-key="${escapeHtml(key)}"` +
         (armed ? ` data-armed="1" data-arm-label="${escapeHtml(rest)}"` : '') +
@@ -567,17 +573,17 @@
             ` aria-label="Delete ${escapeHtml(r.c.name)}, its sessions and everything it recorded">` +
             `Delete</button>`
           : '') +
-        // The same control the roster panel calls End all, on the card, for the same reason the
+        // The same control the roster panel calls Pause all, on the card, for the same reason the
         // agent cards carry one: the list is where a session is recognised as finished, and going
         // into a conversation to close it is a trip taken only to press one button. Drawn only
         // where there is something running — an ended conversation is already where this leads.
         (r.liveNames.length
           // Ending… as soon as any member of it has a send in flight: the conversation is the
           // thing being ended, and one pane still on its way out is not a second question.
-          ? endBtnHtml({cls: 'end-btn', key: 'end-conversation:' + r.c.id, ask: 'End all?',
+          ? endBtnHtml({cls: 'end-btn', key: 'end-conversation:' + r.c.id, ask: 'Pause all?',
               panes: r.livePanes,
               stop: true, data: ` data-conv-id="${escapeHtml(r.c.id)}"`,
-              aria: `End every session in ${r.c.name}, keeping the transcripts`,
+              aria: `Pause every session in ${r.c.name}, keeping the transcripts`,
               fire: 'endConversation(this.dataset.convId)'})
           : '') +
         `</div>` +
@@ -811,7 +817,7 @@
     function renderConvPaneChrome(conv, recs, hidden, key, entries) {
       const who = document.getElementById('paneConvWho'), panel = document.getElementById('convPaneRoster');
       const n = (conv.members || []).length;
-      // The panel's actions read the thread that was drawn — Copy writes it out, Start again reads
+      // The panel's actions read the thread that was drawn — Copy writes it out, Restart reads
       // a member's spawn from it. Same variables as the standalone view's, for the same reason
       // convViewId is: the two are never on screen together.
       convViewRecs = recs;
@@ -834,7 +840,7 @@
       convPaneRosterHtml = '';
       convPaneRoster = false;
     }
-    // What the standalone view last drew, so Copy and Start again read the same thread the reader
+    // What the standalone view last drew, so Copy and Restart read the same thread the reader
     // is looking at rather than fetching it a second time and getting a different one.
     let convViewRecs = [], convViewEntries = [];
 
@@ -869,19 +875,19 @@
           `<span class="who">${escapeHtml(rec.label || m.label || 'Former pane')}</span>` +
           kindBadge((rec.spawn || {}).agent || (live.get(m.key) || {}).agent || '',
                     live.get(m.key), (rec.spawn || {}).config) +
-          `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'no longer live')}</span>` +
+          `<span class="tag">${out ? 'hidden' : (on ? 'recording' : 'paused')}</span>` +
           // The actions in a group of their own, so a row that runs out of width wraps them
           // together underneath instead of pushing the last one off the edge — the name, the badge
           // and the state stay on one line whatever the row holds.
           `<span class="conv-roster-acts">` +
-          // End, then the two ways back to the beginning, then Remove, and only then the way in.
-          // The ones that take something away sit together; Open is not one of them. End is offered
-          // only where there is something running to end — an ended row carries Start again in the
+          // Pause, then Reset, then the two ways to restart, then Remove, and only then the way
+          // in. The ones that take something away sit together; Open is not one of them. Pause is
+          // offered only where there is something running — a paused row carries Restart in the
           // same place, which is the other half of the same control: this row is where a member is
           // sent away and brought back.
           (on ? endBtnHtml({cls: 'conv-end', key: 'end-member:' + m.key,
             pane: (live.get(m.key) || {}).pane_id, data: ` data-key="${escapeHtml(m.key)}"`,
-            aria: "End this member's session",
+            aria: "Pause this member's session, keeping its seat and its thread",
             fire: 'endConvMember(this.dataset.key)'}) : '') +
           // Same pane, back at its first turn: the harness's own clear, then the words this
           // session was started with. Asked twice — what it throws away is the agent's context,
@@ -890,11 +896,27 @@
             ` onclick="armButton(this, 'Reset?', () => convResetMember(this.dataset.key))"` +
             ` aria-label="Clear this member's session and start it over in the same pane">` +
             `Reset</button>` : '') +
-          // A new pane, with the same everything. Swap without the question — see convRestartMember.
-          (on && canRespawn(rec.spawn)
+          // One control, both halves of a row's life: a live member is ended first and a paused
+          // one is not, and either way what lands continues this member. The caret beside it is
+          // the same restart with the harness left open — what Swap and Start as… used to be.
+          (canRespawn(rec.spawn)
             ? `<button class="conv-restart arm-btn" data-key="${escapeHtml(m.key)}"` +
-              ` onclick="armButton(this, 'Restart?', () => convRestartMember(this.dataset.key))"` +
-              ` aria-label="End this member and start the same session again">Restart</button>` : '') +
+              ` onclick="convArmRestart(this, this.dataset.key)"` +
+              ` aria-label="Restart this member${on ? ', ending what is running' : ''}` +
+              `, keeping its thread">Restart</button>` : '') +
+          (canStartFromConv()
+            // Only the caret where Restart is beside it — a caret alone says nothing about what
+            // it opens, so a member with no restartable record gets the words instead.
+            ? (canRespawn(rec.spawn)
+              ? `<button class="conv-swap${on ? ' arm-btn' : ''}" data-key="${escapeHtml(m.key)}"` +
+                (on ? ` onclick="armButton(this, 'Pause?', () => convStartAs(this.dataset.key))"`
+                    : ` onclick="convStartAs(this.dataset.key)"`) +
+                ` aria-label="Restart this member as a different agent">\u25be</button>`
+              : `<button class="conv-swap${on ? ' arm-btn' : ''}" data-key="${escapeHtml(m.key)}"` +
+                (on ? ` onclick="armButton(this, 'Pause and start as?', () => convStartAs(this.dataset.key))"`
+                    : ` onclick="convStartAs(this.dataset.key)"`) +
+                ` aria-label="Restart this member as a different agent">Restart as\u2026</button>`)
+            : '') +
           `<button class="conv-drop arm-btn" data-key="${escapeHtml(m.key)}"` +
           ` onclick="armButton(this, 'Remove?', () => convRemoveMember(this.dataset.key))"` +
           ` aria-label="Remove this member from the conversation">Remove</button>` +
@@ -903,24 +925,6 @@
           (on ? `<button class="conv-open" data-key="${escapeHtml(m.key)}"` +
             ` onclick="openConvMemberPane(this.dataset.key)"` +
             ` aria-label="Open this member's pane">Open</button>` : '') +
-          // Swapping the agent is a start whose destination happens to be a member that already
-          // exists, so it asks the Start dialog like every other start does — one place harnesses,
-          // roles and agent configs are listed, rather than a second smaller picker that would
-          // drift out of step with it. Offered on both halves of a row's life: an ended member is
-          // picked up by whatever is started next, and a live one is ended first, because a pane
-          // runs one CLI and there is no changing it underneath.
-          (canStartFromConv()
-            ? (on
-              ? `<button class="conv-swap arm-btn" data-key="${escapeHtml(m.key)}"` +
-                ` onclick="armButton(this, 'End and swap?', () => convSwapLive(this.dataset.key))"` +
-                ` aria-label="End this member and start a different agent in its place">Swap</button>`
-              : `<button class="conv-swap" data-key="${escapeHtml(m.key)}"` +
-                ` onclick="convSwapMember(this.dataset.key)"` +
-                ` aria-label="Start a different agent as this member">Start as\u2026</button>`)
-            : '') +
-          (!on && canRespawn(rec.spawn) ? `<button class="conv-again arm-btn" data-key="${escapeHtml(m.key)}"` +
-            ` onclick="convArmRespawn(this, this.dataset.key)"` +
-            ` aria-label="Start a new session and continue this conversation">Start again</button>` : '') +
           `</span></div>`;
       }).join('');
       // The tier, said where the button that changes it is. "How do I make this one mine" is the
@@ -933,19 +937,20 @@
         `<button class="conv-del arm-btn" onclick="armButton(this, 'Delete?', deleteConversation)"` +
         ` aria-label="Delete this conversation, keeping the transcripts">Delete</button>` +
         // Beside Delete because both end something, and apart from it in colour because they end
-        // very different things: Delete destroys the record, End stops the sessions and leaves it.
-        endBtnHtml({cls: 'conv-end', key: 'end-conversation:' + conv.id, ask: 'End all?',
-          rest: 'End all',
+        // very different things: Delete destroys the record, Pause stops the sessions and leaves
+        // it.
+        endBtnHtml({cls: 'conv-end', key: 'end-conversation:' + conv.id, ask: 'Pause all?',
+          rest: 'Pause all', going: 'Pausing…',
           panes: Array.from(live.values()).map(a => a.pane_id),
-          aria: 'End every session in this conversation, keeping the transcripts',
+          aria: 'Pause every session in this conversation, keeping the transcripts',
           fire: 'endConversation(convViewId)'}) +
-        // Beside End all, because they are the same question asked of every member at once. Reset
+        // Beside Pause all, because they are the same question asked of every member at once. Reset
         // keeps the panes and clears what is in them; Restart replaces them.
         `<button class="conv-reset arm-btn" onclick="armButton(this, 'Reset all?', convResetAll)"` +
         ` aria-label="Clear every session in this conversation and start each one over">` +
         `Reset all</button>` +
         `<button class="conv-restart arm-btn" onclick="armButton(this, 'Restart all?', convRestartAll)"` +
-        ` aria-label="End every session in this conversation and start each one again">` +
+        ` aria-label="Pause every session in this conversation and start each one again">` +
         `Restart all</button>` +
         `<button id="convCopyBtn" onclick="convCopy()">Copy</button>` +
         `<button class="arm-btn" onclick="armButton(this, 'Duplicate?', duplicateConversation)"` +
@@ -1031,10 +1036,10 @@
       return `Tap again to start a new ${what} session in ${project.label || 'this Project'}.${moved}`;
     }
 
-    function convArmRespawn(btn, key) {
+    function convArmRestart(btn, key) {
       // Said on the arm, not on the fire: by the second tap the session is already starting.
       if (armedEl !== btn) { const note = respawnNote(key); if (note) showToast(note); }
-      armButton(btn, 'Start again?', () => convRespawn(key));
+      armButton(btn, 'Restart?', () => convRestart(key));
     }
 
     // A member is named by its fingerprint and not by a pane — the roster outlives the panes in it,
@@ -1077,11 +1082,11 @@
       return true;
     }
 
-    // The same thing for a member still running. A pane runs one CLI, so there is no changing the
-    // agent in it — the session is ended and the dialog opened over the space it leaves. Asked
-    // twice by the button that calls this, because ending a live agent loses whatever it had not
-    // said yet.
-    function convSwapLive(key) {
+    // Restart as… — the same restart with the harness left open. A pane runs one CLI, so a member
+    // still running is ended and the dialog opened over the space it leaves; a paused one is
+    // simply picked up by whatever is started next. Asked twice by the button that calls this
+    // where there is something live, because ending an agent loses whatever it had not said yet.
+    function convStartAs(key) {
       const live = agents.find(x => convMemberKey(x) === key);
       if (live) endPane(live.pane_id);
       return convSwapMember(key, live
@@ -1279,13 +1284,15 @@
       return true;
     }
 
-    // A pane runs one CLI and there is no restarting it in place, so this is the same End and the
-    // same Start again the row already offers, in one press.
-    function convRestartMember(key) {
+    // A pane runs one CLI and there is no restarting it in place, so a restart is Pause followed
+    // by a start, in one press — and on a member that is already paused, the start alone. One
+    // control for both halves of a row's life: what it means is the same either way, and which
+    // half a member is in is not a question the reader should have to answer before pressing.
+    function convRestart(key) {
       const live = agents.find(x => convMemberKey(x) === key);
       // A blocked (or just vanished) pane was not ended. Starting anyway leaves the old session
       // beside its supposed replacement, which is precisely what Restart promises not to do.
-      if (!live || !endPane(live.pane_id)) return false;
+      if (live && !endPane(live.pane_id)) return false;
       convRespawn(key);
       return true;
     }
@@ -1316,7 +1323,7 @@
       // the note by its own deadline — so a member whose start never produced a pane costs the
       // queue a pause rather than the rest of the list.
       if ((typeof pendingStart !== 'undefined' && pendingStart) || heldConvRespawn()) return;
-      convRestartMember(convRestartQueue.shift());
+      convRestart(convRestartQueue.shift());
     }
 
     function convResetAll() {

@@ -81,7 +81,7 @@
       // The element that was armed, and — for a keyed arm — whatever is standing in its place now.
       // A poll redraw replaces the node between the two taps, so by the time the arm expires the
       // one on screen is not the one this holds, and clearing only `armedEl` leaves a detached
-      // node tidied and a live button still saying "End all?" with nothing behind it.
+      // node tidied and a live button still saying "Pause all?" with nothing behind it.
       // Member keys are JSON fingerprints, so quoting one into a CSS selector makes the second
       // tap throw before it can run. Compare the dataset instead.
       const live = key && typeof document !== 'undefined' && document.querySelectorAll
