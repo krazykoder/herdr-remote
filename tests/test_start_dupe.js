@@ -64,13 +64,14 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     pairSource: null,
     pairPartner: null,
     pairFor: (list, id) => list.find(p => p.members.some(m => m.pane_id === id)) || null,
-    projects: [{id: 'proj', label: 'charts'}],
+    projects: [{id: 'proj', label: 'charts'}, {id: 'root', label: 'Common', root: true}],
     fillSelect: () => 1,
     renderStartTarget() {},
     agentColor: () => 'var(--blue)',
     badgeHtml: () => '',
     renderStartProjects() {},
     setStartError() {},
+    escapeHtml: t => String(t),
     // conversation_store's, which this slice does not load. It answers what a pane was started
     // as; duplicating is meant to carry that, not drop it.
     convStarterOf: () => starter,
@@ -342,4 +343,46 @@ test('a second submit does not quit a pane id herdr may have recycled', () => {
   c.run('submitStart()');
   c.run("document.getElementById('startSubmit').disabled = false; submitStart()");
   assert.deepEqual(c.calls, [['end', 'w1:p1']], 'the pane is spent once');
+});
+
+test('a start under a root can name the directory it makes', () => {
+  const {el, sent, run} = startCtx();
+  run("startAgentPick = 'claude'; startPickProject('root')");
+  el('startPlacement').value = 'new_workspace';   // needs no target, so the sheet can be sent
+  // The row is drawn because the relay called this Project a root, and the input inside it is
+  // what a phone types into.
+  assert.ok(/New folder/.test(el('startChildRow').innerHTML));
+  el('startChild').value = ' notes ';
+  run('submitStart()');
+  assert.equal(sent[0].child, 'notes');
+  assert.equal(sent[0].project_id, 'root');
+});
+
+test('a Project that is not a root offers nothing to name', () => {
+  const {el, sent, run} = startCtx();
+  run("startAgentPick = 'claude'; startPickProject('proj')");
+  el('startPlacement').value = 'new_workspace';
+  assert.equal(el('startChildRow').innerHTML, '');
+  assert.equal(el('startChildRow').hidden, true);
+  run('submitStart()');
+  assert.ok(!('child' in sent[0]), 'sent a child the relay would refuse');
+});
+
+test('an empty field is not a child, and a terminal never carries one', () => {
+  const {el, sent, run} = startCtx();
+  run("startAgentPick = 'claude'; startPickProject('root')");
+  el('startPlacement').value = 'new_workspace';
+  el('startChild').value = '   ';
+  run('submitStart()');
+  assert.ok(!('child' in sent[0]), 'blank text is "start in the root itself"');
+
+  // open_terminal refuses `child` as an unexpected field, so the field is not drawn and its value
+  // is not read even if something left one behind.
+  const t = startCtx();
+  t.run("startMode = 'terminal'; startPickProject('root')");
+  t.el('startPlacement').value = 'new_workspace';
+  t.el('startChild').value = 'notes';
+  t.run('submitStart()');
+  assert.equal(t.sent[0].type, 'open_terminal');
+  assert.ok(!('child' in t.sent[0]));
 });

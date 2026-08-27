@@ -364,9 +364,15 @@ def public_projects(projects):
 
     `parent` rides along on a child and is absent everywhere else, so its presence is the answer
     to "can this row be edited by hand" without a second field saying so.
+
+    `root` is the other half of that question: it says a start may name a new `child` here. Not
+    simply "this entry is marked children" — a root narrowed by a `marker` cannot take one, because
+    the relay will not write the marker file and the scan would never adopt what it made. The field
+    answers what a client actually asks, so no browser has to know that rule.
     """
     return [dict({"id": p["id"], "label": p["label"], "host": p["host"]},
-                 **({"parent": p["parent"]} if p.get("parent") else {}))
+                 **({"parent": p["parent"]} if p.get("parent") else {}),
+                 **({"root": True} if p.get("children") and not p.get("marker") else {}))
             for p in projects]
 
 

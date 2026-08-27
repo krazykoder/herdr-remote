@@ -501,6 +501,28 @@
         + '</div></div>';
     }
 
+    // A root is a Project whose subdirectories are Projects, so a start into one may name a
+    // directory that is not there yet: the relay makes it and the next scan adopts it, which is
+    // the same row a directory made by hand would have produced. Optional — left empty the start
+    // lands in the root itself, which is what every start did before the field existed.
+    //
+    // Rebuilt on every pick rather than kept: a name typed under one root means nothing under
+    // another, and a stale value would ride along on a start the user believes is going to the
+    // root itself.
+    function renderStartChild() {
+      const row = document.getElementById('startChildRow');
+      if (!row) return;
+      const p = projects.find(x => x.id === startProjectId);
+      const show = !!(p && p.root && startMode !== 'terminal');
+      row.hidden = !show;
+      row.style.display = show ? '' : 'none';
+      row.innerHTML = show
+        ? '<label class="start-field">New folder <span class="field-note">optional</span>'
+          + '<input id="startChild" type="text" maxlength="64" autocapitalize="none"'
+          + ` autocomplete="off" placeholder="Start in ${escapeHtml(p.label || p.id)} itself" /></label>`
+        : '';
+    }
+
     // Picking one redraws the rest: placement is answered against what that Project has running,
     // and the answer the previous Project gave means nothing here. submitStart already refuses
     // without a Project, so the sheet is simply unusable until this is tapped.
@@ -508,6 +530,7 @@
       startProjectId = id;
       syncStartProjectBadge();
       renderStartProjects();
+      renderStartChild();
       renderStartTarget();
       if (document.getElementById('startSubmit').disabled) {
         document.getElementById('startPlacement').value = 'new_workspace';
@@ -537,6 +560,7 @@
       startAskProject = !projectId || !projects.some(x => x.id === projectId);
       syncStartProjectBadge();
       renderStartProjects();
+      renderStartChild();
       document.getElementById('startTitle').textContent = terminal ? 'New terminal' : 'Start session';
       document.getElementById('startAgentRows').style.display = terminal ? 'none' : '';
       document.getElementById('startSubmit').textContent = terminal ? 'Open terminal' : 'Start session';
@@ -657,6 +681,12 @@
       // Only when it is on. The relay's default is a session that asks before it acts, and saying
       // so on the wire would be a longer way of saying nothing.
       if (!terminal && startUnattendedOn()) msg.unattended = true;
+      // Only an agent start carries it, and only a root draws the field. Sent as typed: the relay
+      // refuses a name that is not one directory under that root rather than accepting a cleaned
+      // up version of it, so cleaning it here would only disagree with the answer.
+      const childField = terminal ? null : document.getElementById('startChild');
+      const child = childField ? (childField.value || '').trim() : '';
+      if (child) msg.child = child;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields
       // answered that for an agent, this answers it for the other message. Omitted, not empty — the

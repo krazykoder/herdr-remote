@@ -454,9 +454,16 @@ class ChildProjectsTests(unittest.TestCase):
     def test_only_a_child_says_who_its_parent_is(self):
         every = self.roots() + child_projects(self.roots(), scan=self.scanner("webapp"))
         self.assertEqual(public_projects(every), [
-            {"id": "common", "label": "Common", "host": "local"},
+            {"id": "common", "label": "Common", "host": "local", "root": True},
             {"id": "common-webapp", "label": "webapp", "host": "local", "parent": "common"},
         ])
+
+    def test_a_marker_root_does_not_say_a_start_may_make_a_child(self):
+        # It can list one, but the relay cannot write the marker file — so a directory a start
+        # made there would never be adopted, and the app is told not to offer the field.
+        roots = [dict(self.roots()[0], marker=".git")]
+        self.assertEqual(public_projects(roots),
+                         [{"id": "common", "label": "Common", "host": "local"}])
 
 
 class RefreshProjectsTests(unittest.TestCase):

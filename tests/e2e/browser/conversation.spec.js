@@ -4653,6 +4653,32 @@ test('the role badge is what the session is started as, and what opens it', asyn
 // The same four badges in the sheet a session is normally started from, doing the same two jobs:
 // what goes on the wire, and what the session is told first. Optional there as well — a start with
 // the row left empty is a start, on the neutral role and with nothing said to it.
+// The field a root's start types a directory into. A vm slice can see the function; only a page
+// can see that the markup it writes into is there at all — a renamed row id would leave
+// renderStartChild returning early and the field silently never drawn.
+test('a root offers a new folder to start in, and nothing else does', async ({page}) => {
+  await open(page);
+  await startable(page);
+  await tapWire(page);
+  await page.evaluate(() => {
+    projects.push({id: 'root1', label: 'Common', host: 'local', root: true});
+    openStartDialog('root1');
+  });
+  await expect(page.locator('#startChild')).toBeVisible();
+  await page.locator('#startChild').fill('notes');
+  await page.locator('#startSubmit').click();
+  expect(await page.evaluate(() => window.__sent.find(m => m.type === 'start_agent').child))
+    .toBe('notes');
+
+  // A Project that is not a root has no directories of its own to make, so there is nothing to
+  // type and nothing on the wire.
+  await page.evaluate(() => { closeStart(); window.__sent.length = 0; openStartDialog('p1'); });
+  await expect(page.locator('#startChild')).toHaveCount(0);
+  await page.locator('#startSubmit').click();
+  expect(await page.evaluate(() => 'child' in window.__sent.find(m => m.type === 'start_agent')))
+    .toBe(false);
+});
+
 test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
   await open(page);
   await startable(page);

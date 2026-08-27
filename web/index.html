@@ -8460,6 +8460,10 @@
              route already knows where it is starting, and a picker there would be a second way to
              change something the user already chose by where they tapped. -->
         <div id="startProjectRow" hidden style="display:none"></div>
+        <!-- A root's subdirectories are Projects in their own right, so starting somewhere new
+             under one is naming a directory. Drawn only where the relay says a start may make one
+             (`root` on the Project), and never for a terminal — open_terminal refuses `child`. -->
+        <div id="startChildRow" hidden style="display:none"></div>
         <!-- Hidden whole for a terminal: there is no agent to choose and no role for it to play.
              Everything below this — where it goes, what it is called — is the same question. -->
         <div id="startAgentRows" style="display:flex;flex-direction:column;gap:12px">
