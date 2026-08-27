@@ -55,6 +55,10 @@ async function main() {
     HERDR_LAN_OPEN: '1',
     HERDR_STATE_DIR: path.join(TMP, 'logs'),
     HERDR_ARBITER_DB: DB,
+    // Isolated like the arbiter DB, and for a sharper reason: without it the relay falls back to
+    // PROJECT_ROOT/.herdr-remote/state.sqlite3 — the live install's — and this test's one-item
+    // conversation index overwrites the user's. It has done exactly that.
+    HERDR_STATE_DB: path.join(TMP, 'state.sqlite3'),
     HERDR_CONV_LOG: '1',
     HERDR_ENABLE_WRITE_EXT: '1',
     HERDR_ENABLE_ARBITER: '1',

@@ -108,6 +108,10 @@ def relay_env(**extra):
         "HERDR_STATE_DIR": f"{TMP}/logs",
         "HERDR_LOG_DIR": os.path.dirname(DB),
         "HERDR_ARBITER_DB": DB,
+        # Isolated for the same reason the arbiter DB is, and a sharper one: unset, the relay falls
+        # back to PROJECT_ROOT/.herdr-remote/state.sqlite3 — the live install's — and a test's
+        # conversation index overwrites the user's.
+        "HERDR_STATE_DB": f"{TMP}/state.sqlite3",
         "HERDR_CONV_LOG": "1",
         "HERDR_ENABLE_WRITE_EXT": "1",
         "HERDR_ENABLE_ARBITER": "1",
