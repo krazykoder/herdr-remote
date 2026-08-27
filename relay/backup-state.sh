@@ -7,10 +7,10 @@
 # actually moves. Revision history is an undo, not a backup.
 #
 # Takes no arguments and needs no schedule of its own: the relay runs it, every
-# HERDR_BACKUP_HOURS (24), and `/ops backup` in Telegram runs one now. Deliberately not a launchd
-# job or a cron line — a system-level schedule is a second thing to install, a second thing to
-# remember to remove, and on macOS a permission prompt about a program the person did not start.
-# The data belongs to the relay, so the schedule does too.
+# HERDR_BACKUP_HOURS (24). It can also be run by hand or exposed through the ops bot's command
+# registry. Deliberately not a launchd job or a cron line — a system-level schedule is a second
+# thing to install, a second thing to remember to remove, and on macOS a permission prompt about a
+# program the person did not start. The data belongs to the relay, so the schedule does too.
 #
 #   relay/backup-state.sh    one backup, then prune to the last HERDR_BACKUP_KEEP
 set -e
