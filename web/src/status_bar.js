@@ -1064,21 +1064,32 @@
     function renderProjects() {
       if (activeProject && !projects.some(p => p.id === activeProject)) activeProject = null;
       let html = hoistHtml(ofKind(agents));
-      html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
-      html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       // Most-recently-picked first, containers left out. Same list drives the cards below, so the
       // strip and what it filters never disagree about which order Projects are in.
       const picks = projectsForPicking();
+      // A heading like every other one on this page, with the thing that makes a Project hanging
+      // off its right the way Reorder tabs and + hang off the Agents header. The chips go on their
+      // own line under it: they are a filter over what follows, not part of its title.
+      html += `<div class="section-header projects-header">Projects`
+        + (startOptions && projects.some(p => p.root)
+          ? '<button class="section-action" onclick="openNewProject(event)">+ Project</button>' : '')
+        + `</div>`;
+      html += `<div class="chip-row"><div class="chip-strip" id="projectChips">`;
+      html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
       for (const p of picks) {
         const list = agents.filter(a => a.project_id === p.id);
-        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${alertClass(groupKind(list))}" onclick="selectProject('${p.id}')">${p.label}</button>`;
-      }
-      // Last in the strip, and only where a start is possible at all: a Project is made by making
-      // a directory under a root, which is a write on the relay's machine like any other.
-      if (startOptions && projects.some(p => p.root)) {
-        html += `<button class="chip chip-add" onclick="openNewProject(event)">+ Project</button>`;
+        html += `<button class="chip${activeProject === p.id ? ' active' : ''}${alertClass(groupKind(list))}" onclick="selectProject('${p.id}')">${escapeHtml(p.label)}</button>`;
       }
       html += `</div>`;
+      // Beside the scroller, not inside it: a button floating over the last chip is a button
+      // sitting on top of something you were trying to read. Drawn always and shown only when the
+      // strip overflows, so the measurement reveals it rather than inserting it — inserting it
+      // would change the width it just measured.
+      html += `<button class="chip chip-more" id="projectMore" hidden aria-haspopup="menu"`
+        + ` aria-expanded="${projectMenuOpen}" aria-label="Every project"`
+        + ` onclick="toggleProjectMenu()">···</button>`;
+      html += `</div>`;
+      html += projectMenuHtml(picks);
       if (activeProject === null) {
         html += picks.map(projectCard).join('');
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
@@ -1104,7 +1115,53 @@
           : section('Agents', [], agentKind ? `No ${agentKind} sessions` : 'No sessions');
       }
       document.getElementById('agents').innerHTML = html;
+      syncProjectOverflow();
     }
+
+    // Whether the full list under the strip is open. Module state rather than the DOM's: the list
+    // is written into #agents, which is rebuilt on every snapshot, and a menu that closed itself
+    // every two seconds would be a menu nobody could read to the end of.
+    let projectMenuOpen = false;
+
+    function projectMenuHtml(picks) {
+      const item = (id, label) =>
+        `<button class="menu-item" role="menuitemradio" aria-checked="${activeProject === id}"`
+        + ` onclick="selectProject(${id === null ? 'null' : `'${id}'`})">`
+        + `<span class="tick">${activeProject === id ? '✓' : ''}</span>${escapeHtml(label)}</button>`;
+      // Every Project, including the ones the strip is showing. A list of only what is hidden
+      // changes what it holds as the window resizes, which is a list you cannot learn.
+      return `<div class="chip-menu" id="projectMenu" role="menu"${projectMenuOpen ? '' : ' hidden'}>`
+        + item(null, 'All') + picks.map(p => item(p.id, p.label || p.id)).join('')
+        + `</div>`;
+    }
+
+    function toggleProjectMenu() {
+      projectMenuOpen = !projectMenuOpen;
+      render();
+    }
+
+    // Measured, not counted. Whether the chips fit is a question about the width of this screen
+    // and the length of these names, and nothing else can answer it.
+    function syncProjectOverflow() {
+      const strip = document.getElementById('projectChips');
+      const more = document.getElementById('projectMore');
+      const menu = document.getElementById('projectMenu');
+      if (!strip || !more) return;
+      // Taken out of the row before the row is measured. It is what the measurement decides about,
+      // so leaving it in would let a window widened past the last chip keep the button alive on
+      // the width of the button itself.
+      more.hidden = true;
+      const over = strip.scrollWidth > strip.clientWidth + 1;
+      more.hidden = !over;
+      // A window widened until everything fits takes the list with it: the control that opened it
+      // is gone, and a list with no way back to it is a list that cannot be closed.
+      if (!over && projectMenuOpen) {
+        projectMenuOpen = false;
+        if (menu) menu.hidden = true;
+      }
+    }
+
+    window.addEventListener('resize', syncProjectOverflow);
 
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
@@ -1258,6 +1315,7 @@
     // silently filters the new Project down to nothing.
     function selectProject(id) {
       activeProject = id;
+      projectMenuOpen = false;   // picking from the list is the list's whole purpose
       noteProjectUse(id);   // null is "All", which is not a Project and is never remembered
       activeWorkspace = null;
       activeTab = null;

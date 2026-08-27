@@ -2620,6 +2620,53 @@
       color: var(--blue);
     }
 
+    /* The way into the full list when the strip cannot hold what is in it. Hidden until the strip
+       actually overflows — see syncProjectOverflow, which measures rather than counts, because
+       whether twelve chips fit is a question about the width of a phone and the length of twelve
+       names. */
+    /* The scroller and the way out of it, side by side. min-width on the scroller because a flex
+       item's default minimum is its content, which for a strip of chips is the whole strip — it
+       would push the button off the screen instead of scrolling. */
+    .chip-row {
+      display: flex;
+      align-items: center;
+    }
+
+    .chip-row .chip-strip {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .chip-more {
+      flex: 0 0 auto;
+      margin-right: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 5px 10px;
+      font-size: 0.9rem;
+      line-height: 1.2;
+    }
+
+    .chip-more[aria-expanded="true"] {
+      color: var(--blue);
+      border-color: var(--blue);
+    }
+
+    /* The dock's chip menu, in the page's flow under the strip. Aligned with the chips above it
+       rather than the panel edge, so the list reads as that strip opened out. */
+    #projectMenu {
+      width: auto;
+      margin: 0 12px 8px;
+    }
+
+    /* The dock gives its own copy of this component a display through .dock's button rules; this
+       one is on the landing page, where nothing else does. */
+    #projectMenu .menu-item {
+      display: flex;
+      align-items: center;
+    }
+
     .start-field {
       display: flex;
       flex-direction: column;

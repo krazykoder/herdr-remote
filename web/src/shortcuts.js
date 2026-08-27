@@ -287,7 +287,9 @@
     // Appended after the list is written rather than built into section(), which has no way of
     // knowing which of its calls came first.
     function addOrderButton() {
-      const header = document.querySelector('#agents .section-header');
+      // Not simply the first heading: the Projects strip draws one above every agent group, and
+      // these two buttons are about the tab strip and the agents in it.
+      const header = document.querySelector('#agents .section-header:not(.projects-header)');
       if (!header) return;
       // The kind filter on a line of its own under the header, not inside it. In the header it was
       // competing for the same row as the title and the two right-hand buttons — on a phone that

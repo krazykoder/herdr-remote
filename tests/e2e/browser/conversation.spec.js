@@ -4697,7 +4697,8 @@ test('a root takes a new project without starting anything in it', async ({page}
   await expect(page.locator('.chip-strip button.chip', {hasText: 'Common'})).toBeVisible();
   await expect(page.locator('.chip-strip button.chip', {hasText: 'Box'})).toHaveCount(0);
 
-  await page.locator('button.chip', {hasText: '+ Project'}).click();
+  // The heading's action, not a chip: the strip below it is a filter, and + Project makes one.
+  await page.locator('.section-header .section-action', {hasText: '+ Project'}).click();
   await expect(page.locator('#newProjectSheet')).toBeVisible();
   // Two roots, so the sheet asks which one — and Box is a root even though it is no Project.
   await expect(page.locator('#newProjectRootRow .badge')).toHaveText(['Common', 'Box']);
@@ -4706,6 +4707,35 @@ test('a root takes a new project without starting anything in it', async ({page}
   await page.locator('#newProjectSubmit').click();
   expect(await page.evaluate(() => window.__sent.find(m => m.type === 'create_project')))
     .toEqual({type: 'create_project', project_id: 'box', name: 'notes'});
+});
+
+// Twenty projects on a phone is a strip you swipe rather than read. The button that opens it out
+// is measured into existence, so only a real page at a real width can see it appear.
+test('a strip too narrow for its projects opens out into a list', async ({page}) => {
+  await page.setViewportSize({width: 380, height: 800});
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await startable(page);
+  await page.evaluate(() => render());
+  // Two projects fit, so there is nothing to open out.
+  await expect(page.locator('#projectMore')).toBeHidden();
+
+  await page.evaluate(() => {
+    for (let i = 0; i < 20; i++) {
+      projects.push({id: 'p' + i, label: 'proj-' + String(i).padStart(2, '0'), host: 'local'});
+    }
+    render();
+  });
+  await expect(page.locator('#projectMore')).toBeVisible();
+  await page.locator('#projectMore').click();
+  await expect(page.locator('#projectMenu')).toBeVisible();
+  // Every project and All — including the ones the strip is still showing.
+  await expect(page.locator('#projectMenu .menu-item')).toHaveCount(23);
+  await page.locator('#projectMenu .menu-item', {hasText: 'proj-17'}).click();
+  await expect(page.locator('#projectMenu')).toBeHidden();
+  expect(await page.evaluate(() => activeProject)).toBe('p17');
+  // Picked from the list, so it is now the first chip in the strip as well.
+  await expect(page.locator('#projectChips .chip').nth(1)).toHaveText('proj-17');
 });
 
 test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
