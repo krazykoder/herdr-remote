@@ -288,9 +288,6 @@ class WorkspaceResolutionTests(unittest.TestCase):
         self.assertIn("ambiguous", err)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RootValidationTests(unittest.TestCase):
     """A root is a file entry like any other; only what it permits underneath is new."""
@@ -619,3 +616,7 @@ class ChildPathGuardTests(unittest.TestCase):
                                            return_value=(None, "herdr not called for real")):
             _, _, exec_err = herdr_relay._create_target_pane(plan, None)
         self.assertEqual(exec_err, "herdr not called for real")
+
+
+if __name__ == "__main__":
+    unittest.main()
