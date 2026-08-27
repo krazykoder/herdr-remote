@@ -42,6 +42,10 @@ function boot({live = [], recs = [REC], options = {agents: ['claude', 'pi'], rol
     compactButton: () => '<button class="section-action" aria-label="Compact cards"></button>',
     loadConvIndex: () => [{id: 'c1', members: [{key: 'k1'}]}],
     convMemberKey: a => a.pane_id || '',
+    convMemberName: (key, ...fallbacks) => {
+      const liveMember = key && live.find(a => a.pane_id === key);
+      return (liveMember && liveMember.label) || fallbacks.find(Boolean) || '';
+    },
     sessionStorage: {
       getItem: k => (store[k] === undefined ? null : store[k]),
       setItem: (k, v) => { store[k] = String(v); },
