@@ -99,6 +99,29 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 HERDR = os.environ.get("HERDR_BIN") or shutil.which("herdr") or "/opt/homebrew/bin/herdr"
 
 
+def own_db(var, default):
+    """Where a database lives — and never the live one, for a relay running the fake herdr.
+
+    Every suite that spawns a relay points HERDR_BIN inside `tests/`. Unset, these paths default
+    into the checkout's own `.herdr-remote/`, which is the *running install's*, and a test's
+    fixtures land on the user's documents. Not hypothetical: it cost a real conversation index —
+    132 conversations, 27 named by hand, replaced by one called "footer" with members in
+    /work/one — recoverable only because the store keeps 200 revisions of each document.
+
+    PROJECT_ROOT above already carries this reasoning for the log directory and the push
+    subscriptions. The two databases are the ones it never reached. Refused at boot rather than
+    defaulted somewhere clever: a test that forgot to say where its data goes should say so on the
+    first line of its output, not write somewhere the author has to think about.
+    """
+    got = os.environ.get(var)
+    if got:
+        return got
+    if os.path.abspath(HERDR).startswith(os.path.join(PROJECT_ROOT, "tests") + os.sep):
+        sys.exit(f"herdr-remote: HERDR_BIN is {HERDR}, so this is a test relay — set {var} to a "
+                 f"path of its own rather than writing to {default}")
+    return default
+
+
 def _plugin_version():
     """This project's version, read from the plugin manifest that already declares it.
 
@@ -243,8 +266,8 @@ PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 # The durable conversation record. Off by default: it keeps what agents said on disk, which is a
 # decision about the user's data and not one to make for them. On, it is written once per turn end
 # and read back by `conv_log` — and later by an arbitrator deciding what happens next.
-CONV_LOG_DB = os.environ.get("HERDR_ARBITER_DB") or os.path.join(
-    PROJECT_ROOT, ".herdr-remote", "arbitration.sqlite3")
+CONV_LOG_DB = own_db("HERDR_ARBITER_DB",
+                     os.path.join(PROJECT_ROOT, ".herdr-remote", "arbitration.sqlite3"))
 conv_log = None
 if os.environ.get("HERDR_CONV_LOG", "") == "1":
     try:
@@ -435,8 +458,8 @@ async def probe_git(pane):
 # transcript puts what agents *said* on disk, which is the user's call to make. A pair's name is a
 # label the user typed into this app and cannot be anything else, and a feature that is off by
 # default is a feature that silently does not work.
-STATE_DB = os.environ.get("HERDR_STATE_DB") or os.path.join(
-    PROJECT_ROOT, ".herdr-remote", "state.sqlite3")
+STATE_DB = own_db("HERDR_STATE_DB",
+                  os.path.join(PROJECT_ROOT, ".herdr-remote", "state.sqlite3"))
 user_state = None
 try:
     user_state = UserState(STATE_DB)
