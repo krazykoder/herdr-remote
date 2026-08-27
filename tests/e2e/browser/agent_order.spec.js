@@ -81,7 +81,7 @@ test('rows identify agents and terminals without making the second line compete 
   expect(sizes[1], 'metadata is smaller than the pane name').toBeLessThan(sizes[0]);
 });
 
-test('dragging a row to the top reorders the main page, and it survives a reload', async ({page}) => {
+test('dragging a row to the top reorders tabs and survives a reload', async ({page}) => {
   await openSheet(page);
   await drag(page, 2, 0);              // amp, to the front
   expect(await names(page)).toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
@@ -89,14 +89,14 @@ test('dragging a row to the top reorders the main page, and it survives a reload
     .toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
 
   await backdrop(page).click();
-  // Status still wins — scratch is working and stays hoisted above the idle pair. What the drag
-  // decided is the order *inside* Idle, which is the promise the sheet's own hint makes.
-  expect(await cards(page)).toEqual(['scratch', 'amp', 'Architect 1']);
+  // Cards are deliberately most-recently-active first; tab order never moves this live feed.
+  expect(await cards(page)).toEqual(GROUPED);
 
   await page.reload();
   await expect(page.locator('#agents .agent').first()).toBeVisible();
-  expect(await cards(page), "the order is this browser's and outlives the tab")
-    .toEqual(['scratch', 'amp', 'Architect 1']);
+  expect(await tabs(page), "the tab order is this browser's and outlives the tab")
+    .toEqual(['amp', 'Architect 1', 'scratch', 'build watch', 'charts']);
+  expect(await cards(page), 'cards remain newest-first after reload').toEqual(GROUPED);
 });
 
 test('a poll arriving mid-drag does not move the row under the pointer', async ({page}) => {
@@ -167,11 +167,9 @@ test('a terminal can move to the front of the bottom tab strip', async ({page}) 
   expect(await names(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
   expect(await tabs(page)).toEqual(['charts', 'Architect 1', 'scratch', 'amp', 'build watch']);
 
-  // And the Terminals section on the landing page, not the strip alone. One order for every list
-  // a pane appears in — a sheet that moved a row and left the page it was dragged from unchanged
-  // would read as having done nothing.
+  // Terminal cards are also the newest-first landing feed, independent of stable tab positions.
   await backdrop(page).click();
   const terminals = await page.locator('#terminals .agent')
     .evaluateAll(els => els.map(e => e.getAttribute('aria-label').split(',')[0]));
-  expect(terminals).toEqual(['Terminal charts', 'Terminal build watch']);
+  expect(terminals).toEqual(['Terminal build watch', 'Terminal charts']);
 });
