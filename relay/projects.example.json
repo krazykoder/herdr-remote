@@ -1,5 +1,8 @@
 [
   {"id": "herdr-remote", "label": "herdr-remote", "cwd": "~/code/python/herdr-remote", "host": "local"},
   {"id": "charts", "label": "charts.TS", "cwd": "~/code/js/charts.TS", "host": "local"},
-  {"id": "tsignal", "label": "tsignal", "cwd": "~/code/python/tsignal", "host": "local"}
+  {"id": "tsignal", "label": "tsignal", "cwd": "~/code/python/tsignal", "host": "local"},
+
+  {"id": "common", "label": "Common", "cwd": "~/code/common", "host": "local",
+   "children": true}
 ]

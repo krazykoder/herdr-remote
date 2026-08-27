@@ -11,13 +11,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from projects import (
+    MAX_CHILDREN,
     ProjectConfigError,
     ambiguous_pane_ids,
     annotate_agents,
+    child_id,
+    child_projects,
     load_projects,
     public_projects,
     resolve_project_id,
     resolve_workspace_remote,
+    scan_root,
 )
 
 
@@ -284,3 +288,182 @@ class WorkspaceResolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RootValidationTests(unittest.TestCase):
+    """A root is a file entry like any other; only what it permits underneath is new."""
+
+    def load(self, **over):
+        entry = {"id": "common", "label": "Common", "cwd": "/work/common"}
+        return load_projects(write_config([dict(entry, **over)]), valid_hosts=["box"])
+
+    def test_a_plain_project_is_not_a_root(self):
+        self.assertEqual(self.load()[0]["children"], False)
+
+    def test_children_and_marker_are_carried(self):
+        got = self.load(children=True, marker=".git")[0]
+        self.assertEqual((got["children"], got["marker"]), (True, ".git"))
+
+    def test_children_must_be_a_boolean(self):
+        with self.assertRaisesRegex(ProjectConfigError, "children"):
+            self.load(children="yes")
+
+    def test_a_marker_is_a_file_name_and_never_a_path(self):
+        # Joined onto a directory this module scanned, so a separator in it reaches one level
+        # further down than the scan is allowed to look.
+        # An empty marker is the same as none at all, which is why it is not in this list.
+        for bad in ["../git", "a/b", " ", "x" * 65]:
+            with self.subTest(bad=bad), self.assertRaises(ProjectConfigError):
+                self.load(children=True, marker=bad)
+
+    def test_a_marker_without_children_is_refused_not_ignored(self):
+        with self.assertRaisesRegex(ProjectConfigError, "marker"):
+            self.load(marker=".git")
+
+    def test_a_remote_root_is_refused_rather_than_never_scanned(self):
+        with self.assertRaisesRegex(ProjectConfigError, "local-only"):
+            self.load(children=True, host="box", cwd="/work/common")
+
+
+class ScanRootTests(unittest.TestCase):
+    """What a listing of a root is allowed to call a project."""
+
+    def setUp(self):
+        self.root = self.enterContext(tempfile.TemporaryDirectory())
+
+    def mk(self, *names):
+        for n in names:
+            os.makedirs(os.path.join(self.root, n), exist_ok=True)
+
+    def test_direct_subdirectories_sorted(self):
+        self.mk("beta", "alpha")
+        self.assertEqual(scan_root(self.root), ["alpha", "beta"])
+
+    def test_depth_one_only(self):
+        # `src` lives under a child, not under the root, so it is never a candidate — which is
+        # what makes "is src a project?" a question nobody has to answer.
+        self.mk("proj/src")
+        self.assertEqual(scan_root(self.root), ["proj"])
+
+    def test_files_and_dotdirs_are_not_projects(self):
+        self.mk(".cache")
+        Path(self.root, "notes.md").write_text("x")
+        self.assertEqual(scan_root(self.root), [])
+
+    def test_a_symlink_is_skipped_rather_than_resolved(self):
+        # The one way the *filesystem* could authorise a path outside the root, and an agent
+        # working in one of these directories can make one.
+        outside = self.enterContext(tempfile.TemporaryDirectory())
+        os.symlink(outside, os.path.join(self.root, "escape"))
+        self.assertEqual(scan_root(self.root), [])
+
+    def test_a_marker_narrows_a_root_that_holds_other_things(self):
+        self.mk("real", "junk")
+        Path(self.root, "real", ".git").write_text("")
+        self.assertEqual(scan_root(self.root, ".git"), ["real"])
+
+    def test_a_root_that_is_not_there_has_no_children(self):
+        self.assertEqual(scan_root(os.path.join(self.root, "gone")), [])
+
+    def test_the_listing_is_capped(self):
+        self.mk(*[f"p{i:03d}" for i in range(MAX_CHILDREN + 5)])
+        self.assertEqual(len(scan_root(self.root)), MAX_CHILDREN)
+
+
+class ChildProjectsTests(unittest.TestCase):
+    """Children are ordinary project rows, which is what makes the rest of the relay work."""
+
+    def roots(self, **over):
+        return [dict({"id": "common", "label": "Common", "cwd": "/work/common",
+                      "host": "local", "children": True, "marker": ""}, **over)]
+
+    def scanner(self, *names):
+        return lambda cwd, marker: list(names)
+
+    def test_a_directory_becomes_a_project_under_its_root(self):
+        got = child_projects(self.roots(), scan=self.scanner("webapp"))
+        self.assertEqual(got, [{"id": "common-webapp", "label": "webapp",
+                                "cwd": "/work/common/webapp", "host": "local",
+                                "children": False, "marker": "", "parent": "common"}])
+
+    def test_a_project_that_is_not_a_root_is_never_scanned(self):
+        plain = [dict(self.roots()[0], children=False)]
+        self.assertEqual(child_projects(plain, scan=self.scanner("webapp")), [])
+
+    def test_a_name_outside_the_id_charset_still_gets_one(self):
+        got = child_projects(self.roots(), scan=self.scanner("charts.TS"))
+        # The id is folded; the label and the cwd keep the real directory name.
+        self.assertEqual((got[0]["id"], got[0]["label"], got[0]["cwd"]),
+                         ("common-charts-ts", "charts.TS", "/work/common/charts.TS"))
+
+    def test_two_names_that_fold_to_one_id_keep_the_first(self):
+        got = child_projects(self.roots(), scan=self.scanner("web-app", "web.app"))
+        self.assertEqual([c["label"] for c in got], ["web-app"])
+
+    def test_a_written_entry_wins_over_a_scanned_one(self):
+        # It has a label somebody chose and an id other documents already point at.
+        written = self.roots() + [{"id": "webapp", "label": "Web App",
+                                   "cwd": "/work/common/webapp", "host": "local",
+                                   "children": False, "marker": ""}]
+        self.assertEqual(child_projects(written, scan=self.scanner("webapp")), [])
+
+    def test_a_name_that_folds_to_nothing_is_dropped(self):
+        self.assertEqual(child_projects(self.roots(), scan=self.scanner("...")), [])
+
+    def test_child_id_is_its_root_and_its_directory(self):
+        self.assertEqual(child_id("common", "Web App"), "common-web-app")
+
+    def test_a_child_is_grouped_under_itself_not_its_root(self):
+        # The whole reason children are ordinary rows: longest-root-wins already does this.
+        every = self.roots() + child_projects(self.roots(), scan=self.scanner("webapp"))
+        self.assertEqual(
+            resolve_project_id("/work/common/webapp/src/deep", "local", every), "common-webapp")
+        self.assertEqual(resolve_project_id("/work/common/loose", "local", every), "common")
+
+    def test_only_a_child_says_who_its_parent_is(self):
+        every = self.roots() + child_projects(self.roots(), scan=self.scanner("webapp"))
+        self.assertEqual(public_projects(every), [
+            {"id": "common", "label": "Common", "host": "local"},
+            {"id": "common-webapp", "label": "webapp", "host": "local", "parent": "common"},
+        ])
+
+
+class RefreshProjectsTests(unittest.TestCase):
+    """The roster follows the disk without a restart, and a bad edit does not cost a session."""
+
+    def setUp(self):
+        self.root = self.enterContext(tempfile.TemporaryDirectory())
+        self.path = write_config([{"id": "common", "label": "Common",
+                                   "cwd": self.root, "children": True}])
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "PROJECTS_PATH", self.path))
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "_projects_stamp", ()))
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "_projects_listed", 0.0))
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "FILE_PROJECTS", []))
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "PROJECTS", []))
+
+    def ids(self):
+        return [p["id"] for p in herdr_relay.PROJECTS]
+
+    def test_the_first_pass_reads_the_file(self):
+        self.assertTrue(herdr_relay.refresh_projects())
+        self.assertEqual(self.ids(), ["common"])
+
+    def test_an_unchanged_roster_is_not_broadcast_again(self):
+        herdr_relay.refresh_projects()
+        self.assertFalse(herdr_relay.refresh_projects())
+
+    def test_a_new_directory_is_a_project_on_the_next_pass(self):
+        herdr_relay.refresh_projects()
+        os.makedirs(os.path.join(self.root, "webapp"))
+        self.assertTrue(herdr_relay.refresh_projects())
+        self.assertEqual(self.ids(), ["common", "common-webapp"])
+
+    def test_a_bad_edit_keeps_the_roster_that_worked(self):
+        herdr_relay.refresh_projects()
+        Path(self.path).write_text("{ not json")
+        self.assertFalse(herdr_relay.refresh_projects())
+        self.assertEqual(self.ids(), ["common"])
+
+    def test_no_projects_file_means_nothing_to_refresh(self):
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS_PATH", ""):
+            self.assertFalse(herdr_relay.refresh_projects())

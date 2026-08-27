@@ -19,6 +19,7 @@ from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
     annotate_agents,
+    child_projects,
     load_projects,
     public_projects,
     resolve_workspace_remote,
@@ -493,12 +494,24 @@ STATIC_FILES = {
 # Remote hosts: comma-separated SSH targets
 REMOTES = [r.strip() for r in os.environ.get("HERDR_REMOTES", "").split(",") if r.strip()]
 
-# Configured Projects: read once at startup, fail closed. Unset means Projects are disabled.
+# Configured Projects: read at startup, fail closed. Unset means Projects are disabled.
+# FILE_PROJECTS is what the file said; PROJECTS is that plus the children found under any root it
+# marked. Re-read on a change from the poll loop — see refresh_projects, which is where the two
+# stop being the same thing and why a bad edit after boot does not stop a running relay.
+PROJECTS_PATH = os.environ.get("HERDR_PROJECTS_FILE", "")
 try:
-    PROJECTS = load_projects(os.environ.get("HERDR_PROJECTS_FILE", ""), valid_hosts=REMOTES)
+    FILE_PROJECTS = load_projects(PROJECTS_PATH, valid_hosts=REMOTES)
 except ProjectConfigError as e:
     print(f"herdr-remote: bad Projects config: {e}", file=sys.stderr)
     sys.exit(1)
+PROJECTS = FILE_PROJECTS + child_projects(FILE_PROJECTS)
+# How often a root is listed even when nothing about it has changed. The stamp below catches a
+# child appearing or being removed, because that moves the root directory's own mtime; it does not
+# catch a `marker` file being created *inside* a directory that was already there, which is
+# exactly what `git init` does. One listing a minute closes that without watching a tree.
+PROJECT_RESCAN_MS = 60_000
+_projects_stamp = ()
+_projects_listed = 0.0
 
 # Write extensions (P2 start_agent) spawn processes on this machine and on any configured
 # SSH target, so an unauthenticated listener that reaches them is process spawn granted to the
@@ -1366,6 +1379,54 @@ async def poll_loop():
         await asyncio.sleep(POLL_INTERVAL)
 
 
+def projects_stamp():
+    """What would make the roster different: the config file, and each scanned root's directory.
+
+    A directory's mtime moves when an entry is added to it or removed from it, so one stat per
+    root answers "has a child appeared" without listing anything.
+    """
+    out = []
+    for target in [os.path.expanduser(PROJECTS_PATH)] + [
+            p["cwd"] for p in FILE_PROJECTS if p.get("children")]:
+        try:
+            st = os.stat(target)
+            out.append((target, st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((target, 0, 0))
+    return tuple(out)
+
+
+def refresh_projects():
+    """Re-read the file and re-scan its roots. Returns True when what clients hold has changed.
+
+    Blocking, and called from the poll loop in a thread: a stat per root every cycle, a listing
+    only when one moved or the slow rescan is due.
+
+    A bad edit keeps the last good roster and logs. Boot fails closed because a relay that started
+    against a config nobody has read is a relay nobody can reason about; a *running* one has a
+    roster that already works, and taking it down over a typo would cost every connected client
+    its session to punish a text editor.
+    """
+    global PROJECTS, FILE_PROJECTS, _projects_stamp, _projects_listed
+    if not PROJECTS_PATH:
+        return False
+    now = time.monotonic() * 1000
+    stamp = projects_stamp()
+    if stamp == _projects_stamp and now - _projects_listed < PROJECT_RESCAN_MS:
+        return False
+    _projects_stamp = stamp
+    _projects_listed = now
+    try:
+        FILE_PROJECTS = load_projects(PROJECTS_PATH, valid_hosts=REMOTES)
+    except ProjectConfigError as e:
+        # Deliberately not retried until the file changes again: it just did, and this is what it
+        # says. The roster in hand is the last one that parsed.
+        log.warning("Projects config not reloaded: %s", e)
+    before = public_projects(PROJECTS)
+    PROJECTS = FILE_PROJECTS + child_projects(FILE_PROJECTS)
+    return public_projects(PROJECTS) != before
+
+
 def pane_guard(pane_id):
     """Return an error string if this pane may not be addressed, else None.
 
@@ -2071,6 +2132,11 @@ def open_terminal_exec(plan):
 
 async def _poll_once():
         global latest_agents, latest_shells
+        # Before the panes, so the snapshot they are annotated with is the roster this cycle knows
+        # about: a child directory made a moment ago is a Project on the same poll that first sees
+        # a pane in it, rather than one poll later.
+        if await asyncio.to_thread(refresh_projects):
+            await broadcast({"type": "projects", "projects": public_projects(PROJECTS)})
         # One `pane list` per configured host, each a subprocess and each an SSH round trip for a
         # remote one — the longest blocking stretch in the relay, and it runs every poll interval.
         agents, shells = await asyncio.to_thread(get_all_panes)
