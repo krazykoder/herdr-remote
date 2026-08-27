@@ -293,10 +293,6 @@ class RecordedGitTest(unittest.TestCase):
         self.assertEqual(json.loads(raw)[0]["subject"], "second")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RelayWiringTest(unittest.TestCase):
     """The seam: what the relay hands the probe, and when it does not call it at all.
 
@@ -731,3 +727,7 @@ class GitCommitsRequestTest(unittest.TestCase):
     def test_a_short_sha_is_still_a_sha(self):
         self.assertEqual(self.target(cwd="/work", **{"from": "abc1234", "to": "b" * 40})[2],
                          "abc1234")
+
+
+if __name__ == "__main__":
+    unittest.main()
