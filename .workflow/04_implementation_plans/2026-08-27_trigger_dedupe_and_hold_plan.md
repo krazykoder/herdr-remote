@@ -71,21 +71,25 @@ as they are.
   - `UPDATE sessions SET state='active', steps_used=steps_used+1 WHERE id=?` — a step, but not
     `consecutive`, and back to armed rather than paused;
   - return `{"outcome": "hold", "why": ..., "decision_id": ...}`.
-- Consecutive-hold bound: count decisions at the tail of this session whose gate is `hold` and
-  which have no send between them. At 3, `self.pause(session_id, "holding")` instead of returning
-  to armed. Read off the `decisions` table rather than a new column — the same way the rejection
-  bound reads `valid=0` rows at a sequence.
+- Consecutive-hold bound: read this session's *valid* decisions newest-first and count the trailing
+  `hold` run, stopping at the first other valid gate. Do not query only `gate='hold'`, which would
+  skip an intervening action and turn non-consecutive holds into a pause. At 3,
+  `self.pause(session_id, "holding")` instead of returning to armed. Read off the `decisions` table
+  rather than a new column — the same way the rejection bound reads `valid=0` rows at a sequence.
 - `starter_prompt`: one paragraph on when to hold. "Choose `hold` when the trigger carried nothing
   the previous turn did not already say, when the member you would write to is already working, or
   when the right next step is to wait for a turn that is still running. A hold is a decision: say
   why. Three holds in a row stop the session."
 
-### B3 — `[MODIFY] web/src/arbitration.js`
+### B3 — `[MODIFY] web/src/arbitration.js`, `web/src/conversation_view.js`
 
-Verify only, then fix if needed: a decision with a gate and a `why` and no `to`/`instruction`
-already renders — that is what `call_human` is — so `hold` should ride the same path. What needs
-checking is that the strip's last-decision line does not read a `hold` as an instruction to a
-member, and that the `holding` pause reason has a human string.
+- Mark `hold` and `call_human` thread entries as intentional no-send decisions, separate from
+  `delivered`. The latter means a member send was confirmed; treating no-send as delivered would
+  make the model lie to the reader.
+- Suppress the `not confirmed` rail only for that no-send mark. Today a `hold` would have no target
+  and `delivered: false`, so it renders as a failed delivery rather than an intentional wait.
+- Add `holding` to the short and explanatory pause-reason maps. The generic fallback says
+  “holding”, but the pause needs to say that three no-send decisions stopped the loop.
 
 ### `[MODIFY] tests/test_conversation_log.py`
 
@@ -104,6 +108,12 @@ member, and that the `holding` pause reason has a human string.
 - Three consecutive holds pause with `holding`; a hold, a send, then two holds does not.
 - `hold` is refused when the session's gates do not include it (`unknown_gate`), and refused with
   `to`/`instruction` present (`field_not_allowed`).
+- A valid non-hold decision between holds resets the three-hold run; a rejected record does not.
+
+### `[MODIFY] tests/e2e/e2e_arb_ui.js`
+
+- A `hold` bubble has its gate and `why`, no recipient and no `not confirmed` warning; a paused
+  `holding` session has the human pause label and explanation.
 
 ### `[MODIFY] CLAUDE.md`
 
@@ -118,10 +128,10 @@ Only what these changes touch:
 .venv313/bin/python -m unittest discover -s tests -t tests -p 'test_arbitration.py'
 .venv313/bin/python -m unittest discover -s tests -t tests -p 'test_conversation_log.py'
 .venv313/bin/python tests/e2e/e2e_arbitration.py        # ~40s, the loop end to end
+node tests/e2e/e2e_arb_ui.js                             # hold/no-send presentation
 ```
 
-The browser suite is untouched — no client change beyond the render check in B3, which
-`e2e_arb_ui.js` covers if that check turns into an edit.
+The browser suite is untouched. `e2e_arb_ui.js` is the focused client check for B3.
 
 ## Acceptance
 

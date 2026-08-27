@@ -1,9 +1,9 @@
 # Decision Log: A trigger that carries nothing, and a decision that sends nothing
 
 **Class B** — one new gate (`hold`) in `DEFAULT_GATES`, one new pause reason (`holding`), one
-condition added to an existing trigger call, and one bug fixed in the conversation log's anchor. No
-message shape changes; a client that has never heard of `hold` renders it as the decision with no
-instruction that it already renders `call_human` as.
+condition added to an existing trigger call, one bug fixed in the conversation log's anchor, and one
+client render case for an intentional no-send decision. No wire-message shape changes: `hold` uses
+the existing decision row, but the client must not present it as an unconfirmed delivery.
 
 ## The problem, from one session's record
 
