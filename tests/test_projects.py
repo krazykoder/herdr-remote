@@ -18,6 +18,8 @@ from projects import (
     child_id,
     child_path_ok,
     child_projects,
+    child_target,
+    make_child_dir,
     load_projects,
     public_projects,
     resolve_project_id,
@@ -645,6 +647,149 @@ class ChildPathGuardTests(unittest.TestCase):
                                            return_value=(None, "herdr not called for real")):
             _, _, exec_err = herdr_relay._create_target_pane(plan, None)
         self.assertEqual(exec_err, "herdr not called for real")
+
+
+class ChildOnAStartTests(unittest.TestCase):
+    """A start may name a directory under a root, and the relay makes it. Nothing else does."""
+
+    def setUp(self):
+        self.root = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        self.outside = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        os.makedirs(os.path.join(self.root, "webapp"))
+        self.roots = [{"id": "common", "label": "Common", "cwd": self.root, "host": "local",
+                       "children": True, "marker": ""}]
+        self.projects = self.roots + child_projects(self.roots)
+
+    def start(self, **fields):
+        msg = {"type": "start_agent", "name": "claude", "role": "agent",
+               "project_id": "common", "placement": "new_workspace"}
+        msg.update(fields)
+        return start_agent.validate_start_request(msg, self.projects, [], ["claude"])
+
+    def test_a_start_can_name_a_directory_that_does_not_exist_yet(self):
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        self.assertEqual(plan["cwd"], os.path.join(self.root, "notes"))
+        self.assertEqual(plan["project_id"], "common-notes")
+        self.assertEqual(plan["parent"], "common")
+        self.assertEqual(plan["create_child"], "notes")
+        # Validation decides; it does not create. The directory appears at the executor.
+        self.assertFalse(os.path.exists(plan["cwd"]))
+
+    def test_a_child_that_already_exists_is_started_in_rather_than_made_again(self):
+        plan, err = self.start(child="webapp")
+        self.assertIsNone(err)
+        self.assertEqual(plan["project_id"], "common-webapp")
+        self.assertEqual(plan["cwd"], os.path.join(self.root, "webapp"))
+        self.assertEqual(plan["create_child"], "")
+
+    def test_a_name_outside_the_charset_is_refused(self):
+        for name in ("..", ".", ".hidden", "a/b", "/etc", "-x", "", None, 7, "x" * 65):
+            with self.subTest(child=name):
+                plan, err = self.start(child=name)
+                self.assertIsNone(plan)
+                self.assertIn("child must be", err)
+
+    def test_a_name_that_is_a_symlink_is_refused(self):
+        os.symlink(self.outside, os.path.join(self.root, "link"))
+        plan, err = self.start(child="link")
+        self.assertIsNone(plan)
+        self.assertEqual(err, "that name is not a directory inside this root")
+
+    def test_a_name_that_is_a_file_is_refused(self):
+        open(os.path.join(self.root, "notes"), "w").close()
+        plan, err = self.start(child="notes")
+        self.assertIsNone(plan)
+        self.assertEqual(err, "that name is not a directory inside this root")
+
+    def test_a_project_that_is_not_a_root_refuses_a_child(self):
+        plan, err = self.start(project_id="common-webapp", child="deeper")
+        self.assertIsNone(plan)
+        self.assertEqual(err, "that project is not a root")
+
+    def test_a_root_with_a_marker_refuses_a_new_child(self):
+        self.roots[0]["marker"] = ".git"
+        plan, err = self.start(child="notes")
+        self.assertIsNone(plan)
+        self.assertIn(".git", err)
+
+    def test_a_name_whose_id_is_already_another_directory_is_refused(self):
+        # `web.app` is a project, and `web-app` folds onto the same id — so the directory this
+        # start would make is one no scan will ever adopt. First wins, and it already has.
+        os.makedirs(os.path.join(self.root, "web.app"))
+        self.projects = self.roots + child_projects(self.roots)
+        plan, err = self.start(child="web-app")
+        self.assertIsNone(plan)
+        self.assertIn("common-web-app", err)
+        self.assertIn("already taken", err)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "web-app")))
+
+    def test_open_terminal_cannot_name_a_child(self):
+        plan, err = start_agent.validate_open_terminal(
+            {"type": "open_terminal", "project_id": "common", "placement": "new_workspace",
+             "child": "notes"}, self.projects, [])
+        self.assertIsNone(plan)
+        self.assertIn("unexpected field(s)", err)
+        self.assertIn("child", err)
+
+    def test_the_executor_creates_it_and_the_next_scan_finds_it(self):
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json",
+                                           return_value=(None, "herdr not called for real")):
+            _, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        # Past the guard and into the herdr call, which is where the stub answers.
+        self.assertEqual(exec_err, "herdr not called for real")
+        self.assertTrue(os.path.isdir(plan["cwd"]))
+        # Creation and adoption converge: nothing was registered, and the scan finds it anyway.
+        rescanned = child_projects(self.roots)
+        row = next(p for p in rescanned if p["id"] == "common-notes")
+        self.assertEqual(row["cwd"], plan["cwd"])
+        self.assertEqual(row["parent"], "common")
+
+    def test_the_executor_refuses_a_root_that_moved_and_makes_nothing(self):
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        moved = [dict(self.roots[0], cwd=self.outside)]
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", moved), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json") as herdr_call:
+            pane, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("that root has changed", exec_err)
+        self.assertFalse(os.path.exists(plan["cwd"]))
+        herdr_call.assert_not_called()
+
+    def test_a_symlink_planted_at_the_mkdir_still_loses(self):
+        # makedirs(exist_ok=True) is satisfied by a symlink to a directory — isdir follows it — so
+        # the check after it is the guard, not a formality.
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        outside = self.outside
+
+        def plant(cwd, root):
+            os.symlink(outside, cwd)
+            return None
+
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects), \
+                unittest.mock.patch.object(herdr_relay, "make_child_dir", plant), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json") as herdr_call:
+            pane, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("no longer inside its root", exec_err)
+        herdr_call.assert_not_called()
+
+    def test_make_child_dir_refuses_to_build_outside_the_root(self):
+        with self.assertRaises(AssertionError):
+            make_child_dir(self.outside, self.root)
+
+    def test_child_target_is_the_only_place_the_name_becomes_a_path(self):
+        child, create, err = child_target("notes", self.roots[0], self.projects)
+        self.assertIsNone(err)
+        self.assertEqual(create, "notes")
+        self.assertEqual(child["cwd"], os.path.join(self.root, "notes"))
+        self.assertIsNone(make_child_dir(child["cwd"], self.root))
+        self.assertTrue(child_path_ok(child, self.projects))
 
 
 if __name__ == "__main__":

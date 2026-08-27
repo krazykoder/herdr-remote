@@ -22,6 +22,7 @@ from projects import (
     child_path_ok,
     child_projects,
     load_projects,
+    make_child_dir,
     public_projects,
     resolve_workspace_remote,
 )
@@ -1872,6 +1873,27 @@ def log_tab_geometry():
         log.warning(advice)
 
 
+def _child_dir(plan):
+    """Make the directory a start named under its root. Returns (project, error).
+
+    The other half of `child`: validation settled the name and the row it will become, and this is
+    where the directory starts existing. Nothing is written anywhere else — the next poll stats the
+    root, sees its mtime moved, lists it, and derives the same row this returns.
+    """
+    root = next((p for p in PROJECTS if p["id"] == plan["parent"]
+                 and p["host"] == "local" and p.get("children")), None)
+    # The root is named by the plan and its cwd comes from the config file, which can be edited
+    # between the two moments. Checked before the mkdir so a stale plan does not leave a directory
+    # behind under a path that is no longer a root.
+    if root is None or root["cwd"] != os.path.dirname(plan["cwd"]):
+        return None, "that root has changed since the start was planned"
+    err = make_child_dir(plan["cwd"], root["cwd"])
+    if err:
+        return None, err
+    return {"id": plan["project_id"], "label": plan["project_label"], "cwd": plan["cwd"],
+            "host": "local", "children": False, "marker": "", "parent": plan["parent"]}, None
+
+
 def _create_target_pane(plan, remote):
     """Create the pane a validated plan asks for. Returns (pane_id, rollback, error).
 
@@ -1889,17 +1911,24 @@ def _create_target_pane(plan, remote):
     # a descriptor it opened with O_NOFOLLOW. Closing it means enforcing containment at the spawn
     # boundary: a directory handle herdr creates from, or a no-follow guarantee inside herdr.
     if plan.get("parent"):
-        project = next((p for p in PROJECTS if p["id"] == plan.get("project_id")), None)
-        # The id is not the identity: a derived id folds a directory name, so a root that lost
-        # `webapp` and gained `web.app` presents a *different* directory under the same id. The
-        # row has to still be the row this plan was built from, or the check below would pass on
-        # one path while the herdr calls that follow spawn at the other. A plan whose row moved
-        # underneath it fails; retargeting it here would make this a second place that decides
-        # where a pane goes.
-        if (project is None
-                or project["cwd"] != plan["cwd"]
-                or project.get("parent", "") != plan["parent"]):
-            return None, None, "that project has changed since the start was planned"
+        if plan.get("create_child"):
+            # The directory this start named does not exist yet, so there is no row to match it
+            # against — the root is the thing that has to still be what it was.
+            project, dir_err = _child_dir(plan)
+            if dir_err:
+                return None, None, dir_err
+        else:
+            project = next((p for p in PROJECTS if p["id"] == plan.get("project_id")), None)
+            # The id is not the identity: a derived id folds a directory name, so a root that lost
+            # `webapp` and gained `web.app` presents a *different* directory under the same id. The
+            # row has to still be the row this plan was built from, or the check below would pass
+            # on one path while the herdr calls that follow spawn at the other. A plan whose row
+            # moved underneath it fails; retargeting it here would make this a second place that
+            # decides where a pane goes.
+            if (project is None
+                    or project["cwd"] != plan["cwd"]
+                    or project.get("parent", "") != plan["parent"]):
+                return None, None, "that project has changed since the start was planned"
         if not child_path_ok(project, PROJECTS):
             return None, None, "that project's directory is no longer inside its root"
 
@@ -2842,6 +2871,11 @@ async def handle_client(ws, listener="lan"):
     # anyone reading the audit log will ask.
     device = f"{device}/{listener}"
     log.info("Client connected: ip=%s device=%s origin=%s", ip, device, origin or "-")
+    # Read before this socket joins the broadcast set. It reads the providers file off-thread, and
+    # a poll broadcast landing in that gap arrives *between* `projects` and `start_options` — the
+    # one ordering the burst below promises.
+    options = (await asyncio.to_thread(start_options_message)
+               if PROJECTS and WRITE_EXT else None)
     clients.add(ws)
     connected_at = time.monotonic()
     # Declared out here because the `finally` waits on them, and a socket can close before the read
@@ -2860,12 +2894,11 @@ async def handle_client(ws, listener="lan"):
             await ws.send(json.dumps({"type": "projects", "projects": public_projects(PROJECTS)}))
             # Presence of start_options is the browser's feature gate. Without Projects a
             # start can never resolve a cwd, so the control would only ever error (spec §3).
-            if WRITE_EXT:
+            if options is not None:
                 # `terminal` gates + New terminal the same way this message gates Start. It is
                 # only ever sent under WRITE_EXT, so a true here means both of open_terminal's
                 # gates are open — the client never has to reason about them separately.
-                await ws.send(json.dumps(
-                    await asyncio.to_thread(start_options_message)))
+                await ws.send(json.dumps(options))
         # The cached snapshot is what carries `shells`, and its presence is the client's terminal
         # feature gate — so a terminal-mode relay sends it even without Projects, or a client
         # connecting between polls would see no terminals and no gate. With both off this is the
@@ -3386,6 +3419,9 @@ async def handle_client(ws, listener="lan"):
                 detail = (f"name={plan['name']} role={plan['role']} project={plan['project_id']} "
                           f"placement={plan['placement']} host={plan['remote'] or 'local'} "
                           f"config={plan.get('config') or '-'} "
+                          # A start that makes a directory says so: it is the one kind of start
+                          # that leaves something behind even when the agent never comes up.
+                          f"child={plan.get('create_child') or '-'} "
                           # Worth a line of its own in the audit log: this is the start that will
                           # run tools without asking anyone.
                           f"unattended={'yes' if plan.get('unattended') else 'no'}")

@@ -24,6 +24,12 @@ MAX_LABEL = 64
 # A marker is a file *name* a child must contain to count as one, never a path: it is joined onto a
 # directory this module scanned, so a `/` in it would be a way to reach one level further down.
 MARKER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# A name a start may make a child out of. One path component, and that is a property of the
+# charset rather than of anything this module strips: there is no '/' in it, so there is no
+# traversal to defend against. The first character rules out '.' because scan_root skips dotdirs —
+# a directory the relay made and the scan would never adopt is a start into somewhere that is not
+# a project — and '-' because a leading dash is argv everywhere else.
+CHILD_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$")
 # Per root. A root with more directories than this is not a place where projects live, and a
 # roster that grows without bound is broadcast to every client on every change.
 MAX_CHILDREN = 64
@@ -250,6 +256,66 @@ def child_path_ok(project, projects):
         return _under(os.path.realpath(project["cwd"]), os.path.realpath(root["cwd"]))
     except OSError:
         return False
+
+
+def child_target(name, root, projects):
+    """Resolve a start's `child` against the root it named. Returns (project, create, error).
+
+    `create` is the directory name to make, and it is empty when the name is already a project:
+    creating a child and starting into one that exists converge, because a child *is* a directory
+    under a root and there is nothing else that registers one.
+
+    The row this returns is the row the next scan will build for that directory, which is what
+    lets the relay make the directory and then forget about it.
+    """
+    if not isinstance(name, str) or not CHILD_NAME_RE.match(name):
+        return None, "", ("child must be 1-64 characters of letters, digits, '.', '_' and '-' "
+                          "and cannot start with '.' or '-'")
+    if not root.get("children"):
+        return None, "", "that project is not a root"
+    # A marker root lists only the directories holding that file, and the relay is not going to
+    # write one. Refused rather than created and then never adopted.
+    if root.get("marker"):
+        return None, "", f"that root only lists directories holding {root['marker']}"
+    pid = child_id(root["id"], name)
+    if not pid:
+        return None, "", "no character of that name belongs in a project id"
+    cwd = os.path.normpath(os.path.join(root["cwd"], name))
+    taken = next((p for p in projects if p["id"] == pid and p["host"] == root["host"]), None)
+    if taken is not None:
+        # Same directory: the name is already a project and the start goes to it, which is the
+        # ordinary "start again where I started last time". A *different* directory holding that
+        # id means this one would be skipped by every scan — first wins there, and it already has.
+        if taken["cwd"] != cwd:
+            return None, "", f"that name's project id ({pid}) is already taken"
+        return taken, "", None
+    child = {"id": pid, "label": name, "cwd": cwd, "host": root["host"],
+             "children": False, "marker": "", "parent": root["id"]}
+    # It does not have to exist — that is what this start is for. If something is there already it
+    # has to be what a child is, and child_path_ok is this module's answer to that question for
+    # symlinks, non-directories, and anything resolving out of the root.
+    if os.path.lexists(cwd) and not child_path_ok(child, projects):
+        return None, "", "that name is not a directory inside this root"
+    return child, name, None
+
+
+def make_child_dir(cwd, root):
+    """Create a child's directory under its root. Returns an error string, or None.
+
+    exist_ok, because making a child and starting into one that exists are the same request: the
+    name is the project, and whether the directory was already there is a race rather than a
+    choice. A *symlink* to a directory satisfies exist_ok too — os.path.isdir follows it — which
+    is why the caller asks child_path_ok afterwards instead of reading this as a refusal.
+    """
+    # child_target built this from one path component joined onto a root the config file wrote, so
+    # it cannot leave the root. Asserted rather than branched on: were it ever false, this line is
+    # a mkdir at a path nobody authorised and there is no sensible way to carry on.
+    assert _under(cwd, root) and cwd != root, f"{cwd!r} is not under {root!r}"
+    try:
+        os.makedirs(cwd, exist_ok=True)
+    except OSError as e:
+        return f"could not create that directory ({e.strerror})"
+    return None
 
 
 def resolve_project_id(cwd, host, projects):

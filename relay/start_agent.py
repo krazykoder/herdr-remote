@@ -11,7 +11,7 @@ See .workflow/03_specs/2026-08-08_start_agent_spec.md
 import random
 import re
 
-from projects import ambiguous_pane_ids, child_path_ok, resolve_workspace_remote
+from projects import ambiguous_pane_ids, child_path_ok, child_target, resolve_workspace_remote
 
 ROLES = ("architect", "reviewer", "agent")
 # Collision suffix: "-XBEOE". Random rather than a counter because the taken set is a snapshot —
@@ -101,8 +101,10 @@ SIDEBAR_BOUNDS = (18, 36)
 # named here because this is the set a message is checked against: an unlisted key is not ignored,
 # it rejects the whole message. Leaving it out refused every start that named itself, which is
 # every "Start again" a conversation makes.
+# `child` is a start's alone: it makes a directory, and a terminal is not the thing to open a
+# new project with. An open_terminal naming one is refused as an unexpected field.
 BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config",
-               "unattended", "ref"}
+               "unattended", "ref", "child"}
 # An agent config's id. Checked for shape here and for existence in the relay, which is the only
 # place that knows what the provider file authorised — this module stays free of files.
 CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -257,12 +259,6 @@ def _placement_plan(msg, projects, panes, base_fields, default_label):
     project = next((p for p in projects if p["id"] == project_id), None)
     if project is None:
         return None, "unknown project_id"
-    # Below both validate_start_request and validate_open_terminal on purpose: this is where a
-    # chosen project's cwd becomes the path herdr is given, so every spawn route inherits the
-    # check and a future one cannot forget it. Refused rather than quietly rebound to the parent
-    # root — a start that lands somewhere other than where it said is worse than one that fails.
-    if not child_path_ok(project, projects):
-        return None, "that project's directory is no longer inside its root"
 
     placement = msg.get("placement")
     if placement not in PLACEMENTS:
@@ -274,6 +270,26 @@ def _placement_plan(msg, projects, panes, base_fields, default_label):
         return None, f"unexpected field(s) for {placement}: {', '.join(sorted(extra))}"
     if required and not msg.get(required):
         return None, f"{required} required for {placement}"
+
+    # A directory under a root, named rather than chosen — the project this start is about becomes
+    # that child. Refused rather than dropped, like the config and the ref: a start that ignored it
+    # would come up in the root itself, which is the parent of the place that was asked for and
+    # holds every sibling project, and no client can tell that from success.
+    create = ""
+    if "child" in msg:
+        project, create, child_err = child_target(msg["child"], project, projects)
+        if child_err:
+            return None, child_err
+
+    # Below both validate_start_request and validate_open_terminal on purpose: this is where a
+    # chosen project's cwd becomes the path herdr is given, so every spawn route inherits the
+    # check and a future one cannot forget it. Refused rather than quietly rebound to the parent
+    # root — a start that lands somewhere other than where it said is worse than one that fails.
+    # A directory this start is about to create is the one case with nothing to look at yet;
+    # child_target has already refused whatever is there instead, and the executor asks again once
+    # the directory exists.
+    if not create and not child_path_ok(project, projects):
+        return None, "that project's directory is no longer inside its root"
 
     # The one free-text field a spawn may carry. Absent means "name it for me"; present it
     # becomes the pane label — and, for a start, the herdr agent name too — so it is bounded
@@ -299,6 +315,9 @@ def _placement_plan(msg, projects, panes, base_fields, default_label):
         # Empty for a project the file wrote down. Present, it says this cwd was derived from a
         # directory listing, which is the only cwd worth looking at twice — see _create_target_pane.
         "parent": project.get("parent", ""),
+        # The directory to make, empty for every start that is not making one. Created at the same
+        # point containment is re-checked, so nothing else decides where a pane goes.
+        "create_child": create,
         "cwd": project["cwd"],
         "remote": remote,
         "placement": placement,

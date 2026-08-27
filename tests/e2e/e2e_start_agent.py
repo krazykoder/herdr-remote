@@ -100,11 +100,19 @@ async def drain_to_agents(ws):
             return seen, m
 
 
+# What the relay sends nobody in particular. A poll cycle can put any of these on the socket
+# between a request and its answer — `projects` and `start_options` are broadcast whenever the
+# roster or the configs move — so waiting for "the next message" reads one of these instead and
+# fails a test that was passing for reasons unrelated to it.
+BROADCASTS = ("agents", "blocked", "agent_update", "pane_content", "projects", "start_options",
+              "versions", "arb_sessions", "arb_session", "state")
+
+
 async def rpc(ws, payload):
     await ws.send(json.dumps(payload))
     while True:
         m = json.loads(await ws.recv())
-        if m["type"] in ("agents", "blocked", "agent_update", "pane_content"):
+        if m["type"] in BROADCASTS:
             continue
         return m
 
