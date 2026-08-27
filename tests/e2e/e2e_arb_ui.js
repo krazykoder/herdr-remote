@@ -60,6 +60,11 @@ async function main() {
     // conversation index overwrites the user's. It has done exactly that.
     HERDR_STATE_DB: path.join(TMP, 'state.sqlite3'),
     HERDR_CONV_LOG: '1',
+    // A turn that ends with nothing new on screen is held open for this long, and the fake's pane
+    // read is a fixed frame — so every turn here takes the late path. Unset, the default 45s is
+    // longer than the 30s this test waits for `Deciding`, and the trigger arrives after the
+    // assertion has already failed. e2e_arbitration.py shortens it for the same reason.
+    HERDR_LATE_TURN_MS: '1500',
     HERDR_ENABLE_WRITE_EXT: '1',
     HERDR_ENABLE_ARBITER: '1',
   });
@@ -110,8 +115,12 @@ async function main() {
       session_id: id, sequence: 1, gate: 'review', to: 'member-2',
       instruction: 'Check the footer change on mobile.', why: 'Ready for review.',
       ambiguity: 'low', decision_complexity: 'low'}));
-    await sleep(2.6e3);
-    setStatus('a1:p3', 'done');
+    // A *transition*, not a status. The trigger prompt is typed into the arbitrator's pane, and the
+    // fake herdr does not move a pane's status because something was typed at it — so a1:p3 is
+    // still 'done' from the line above and setting it 'done' again is not a turn end. The relay
+    // reads the drop box on the change into an ending state; with no change there is nothing to
+    // read and the decision sits on disk for ever.
+    await endTurn('a1:p3');
 
     await page.waitForFunction(() => /review ·/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 30000});
     const decided = await page.textContent('#arbStrip .arb-strip');
@@ -167,7 +176,10 @@ async function main() {
     relay.kill('SIGKILL');
   }
   console.log(fails ? `\n${fails} FAILED — ${TMP}` : '\nALL PASS');
-  fs.rmSync(TMP, {recursive: true, force: true});
+  // Kept when it failed. The line above has always named this directory and the line below has
+  // always deleted it, so the one run whose relay log is worth reading is the one that never had
+  // one. A pass leaves nothing behind, as before.
+  if (!fails) fs.rmSync(TMP, {recursive: true, force: true});
   process.exit(fails ? 1 : 0);
 }
 main();
