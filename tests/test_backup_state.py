@@ -38,7 +38,7 @@ class BackupState(unittest.TestCase):
             self.assertTrue((made[0] / "arbitration.sqlite3").is_file())
             self.assertTrue((made[0] / "config" / "settings.json").is_file())
             self.assertFalse((made[0] / "config" / "secrets.env").exists())
-            self.assertEqual([], list(backups.glob(".backup-*")))
+            self.assertEqual([], list(backups.glob(".backup.*")))
 
     def test_failed_copy_is_not_published_as_a_fresh_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,7 +55,7 @@ class BackupState(unittest.TestCase):
 
             self.assertNotEqual(0, done.returncode)
             self.assertEqual([], list(backups.glob("[0-9]*")))
-            self.assertEqual([], list(backups.glob(".backup-*")))
+            self.assertEqual([], list(backups.glob(".backup.*")))
 
 
 if __name__ == "__main__":
