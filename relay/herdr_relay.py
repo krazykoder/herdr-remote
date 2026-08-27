@@ -1887,6 +1887,8 @@ def _child_dir(plan):
     # behind under a path that is no longer a root.
     if root is None or root["cwd"] != os.path.dirname(plan["cwd"]):
         return None, "that root has changed since the start was planned"
+    if not os.path.isdir(root["cwd"]):
+        return None, "that root is no longer a directory"
     err = make_child_dir(plan["cwd"], root["cwd"])
     if err:
         return None, err

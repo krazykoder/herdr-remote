@@ -684,7 +684,8 @@ class ChildOnAStartTests(unittest.TestCase):
         self.assertEqual(plan["create_child"], "")
 
     def test_a_name_outside_the_charset_is_refused(self):
-        for name in ("..", ".", ".hidden", "a/b", "/etc", "-x", "", None, 7, "x" * 65):
+        for name in ("..", ".", ".hidden", "a..b", "a/b", "/etc", "-x", "", None,
+                     7, "a\0b", "x" * 65):
             with self.subTest(child=name):
                 plan, err = self.start(child=name)
                 self.assertIsNone(plan)
@@ -758,6 +759,19 @@ class ChildOnAStartTests(unittest.TestCase):
         self.assertIsNone(pane)
         self.assertIn("that root has changed", exec_err)
         self.assertFalse(os.path.exists(plan["cwd"]))
+        herdr_call.assert_not_called()
+
+    def test_the_executor_refuses_a_root_that_is_gone_and_makes_nothing(self):
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        os.rmdir(os.path.join(self.root, "webapp"))
+        os.rmdir(self.root)
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.roots), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json") as herdr_call:
+            pane, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("root is no longer a directory", exec_err)
+        self.assertFalse(os.path.exists(self.root))
         herdr_call.assert_not_called()
 
     def test_a_symlink_planted_at_the_mkdir_still_loses(self):

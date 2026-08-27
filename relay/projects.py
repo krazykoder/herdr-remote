@@ -29,7 +29,7 @@ MARKER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # traversal to defend against. The first character rules out '.' because scan_root skips dotdirs —
 # a directory the relay made and the scan would never adopt is a start into somewhere that is not
 # a project — and '-' because a leading dash is argv everywhere else.
-CHILD_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$")
+CHILD_NAME_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$")
 # Per root. A root with more directories than this is not a place where projects live, and a
 # roster that grows without bound is broadcast to every client on every change.
 MAX_CHILDREN = 64
