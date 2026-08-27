@@ -21,26 +21,35 @@ BACKUPS="${HERDR_BACKUP_DIR:-$PROJECT_DIR/.herdr-remote/backups}"
 CONFIG_DIR="${HERDR_CONFIG_DIR:-$HOME/.config/herdr-remote}"
 LOG_DIR="${HERDR_LOG_DIR:-$HOME/Library/Logs/herdr-remote}"
 KEEP="${HERDR_BACKUP_KEEP:-14}"
+STATE_DB="${HERDR_STATE_DB:-$PROJECT_DIR/.herdr-remote/state.sqlite3}"
+ARBITER_DB="${HERDR_ARBITER_DB:-$PROJECT_DIR/.herdr-remote/arbitration.sqlite3}"
 DEST="$BACKUPS/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$DEST/config" "$DEST/logs"
+if [ -e "$DEST" ]; then DEST="$DEST-$$"; fi
+mkdir -p "$BACKUPS"
+WORK="$(mktemp -d "$BACKUPS/.backup.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/config" "$WORK/logs"
 
 # SQLite's own backup, not cp: these run in WAL mode with the relay live, and a plain copy of the
 # .sqlite3 file alone is a copy missing every write still sitting in the -wal. Opened read-only so
 # a backup can never be the thing that corrupts what it is backing up.
-for db in state arbitration; do
-    src="$PROJECT_DIR/.herdr-remote/$db.sqlite3"
-    [ -f "$src" ] || continue
-    sqlite3 "file:$src?mode=ro" ".backup '$DEST/$db.sqlite3'"
-    sqlite3 "$DEST/$db.sqlite3" "pragma wal_checkpoint(TRUNCATE);" >/dev/null
+backup_db() {
+    local db="$1" src="$2"
+    [ -f "$src" ] || return
+    sqlite3 "file:$src?mode=ro" ".backup '$WORK/$db.sqlite3'"
+    sqlite3 "$WORK/$db.sqlite3" "pragma wal_checkpoint(TRUNCATE);" >/dev/null
     # The sidecars the line above just created. A backup that ships a stray -wal is one whose
     # contents depend on which files happen to travel with it.
-    rm -f "$DEST/$db.sqlite3-wal" "$DEST/$db.sqlite3-shm"
-done
+    rm -f "$WORK/$db.sqlite3-wal" "$WORK/$db.sqlite3-shm"
+}
+backup_db state "$STATE_DB"
+backup_db arbitration "$ARBITER_DB"
 
 # The arbitrator's drop boxes: the decision files themselves, which the database indexes but does
 # not contain.
-if [ -d "$PROJECT_DIR/.herdr-remote/arbitration" ]; then
-    cp -R "$PROJECT_DIR/.herdr-remote/arbitration" "$DEST/arbitration"
+ARBITRATION_DIR="$(dirname "$ARBITER_DB")/arbitration"
+if [ -d "$ARBITRATION_DIR" ]; then
+    cp -R "$ARBITRATION_DIR" "$WORK/arbitration"
 fi
 
 # Config, deliberately without secrets.env. A keystore copied nightly into a directory nobody
@@ -48,14 +57,19 @@ fi
 # recreated by hand is the one holding the keys. `run/` is pids, true only while they are running.
 if [ -d "$CONFIG_DIR" ]; then
     ( cd "$CONFIG_DIR" && tar cf - --exclude secrets.env --exclude run . ) |
-        ( cd "$DEST/config" && tar xf - )
+        ( cd "$WORK/config" && tar xf - )
 fi
 
 # Push subscriptions are user data — a device that has to re-subscribe is a device that stops
 # getting told its agent needs it. The logs are the forensic record; today is the argument.
 for f in push_subs.json audit.log relay.log; do
-    if [ -f "$LOG_DIR/$f" ]; then cp -p "$LOG_DIR/$f" "$DEST/logs/"; fi
+    if [ -f "$LOG_DIR/$f" ]; then cp -p "$LOG_DIR/$f" "$WORK/logs/"; fi
 done
+
+# Publish only a complete backup. A failed sqlite copy must not look fresh to the scheduler and
+# postpone its retry for another HERDR_BACKUP_HOURS.
+mv "$WORK" "$DEST"
+trap - EXIT
 
 # Pruned by count rather than by age: a machine that was off for a month should still have its
 # last fourteen backups, not none. Newest first, then everything past KEEP — BSD head has no

@@ -494,7 +494,9 @@ def last_backup_at():
     """
     try:
         return max((os.path.getmtime(os.path.join(BACKUP_DIR, n))
-                    for n in os.listdir(BACKUP_DIR)), default=0)
+                    for n in os.listdir(BACKUP_DIR)
+                    if re.fullmatch(r"\d{8}-\d{6}(?:-\d+)?", n)
+                    and os.path.isdir(os.path.join(BACKUP_DIR, n))), default=0)
     except OSError:
         return 0
 
