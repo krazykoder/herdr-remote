@@ -1263,6 +1263,9 @@ async def collect_late_turns(agents):
         if a is None or not ends_turn(a.get("status") or ""):
             late_turns.pop(pid, None)
             continue
+        # A write that raised said nothing about whether the pane spoke, so the trigger is not
+        # suppressed on it. Only an empty write is evidence of an empty turn.
+        wrote = True
         try:
             captured = await asyncio.to_thread(read_pane_for_record, pid, remote=a.get("remote"))
             said = await asyncio.to_thread(conv_log.pending, a, captured)
@@ -1270,8 +1273,10 @@ async def collect_late_turns(agents):
                 continue
             late_turns.pop(pid, None)
             git = await probe_git(a)
-            await note_turn_ids(pid, await asyncio.to_thread(
-                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git), a)
+            ids = await asyncio.to_thread(
+                conv_log.record_turn_end, a, captured, late["was"], late["status"], git=git)
+            wrote = bool(ids)
+            await note_turn_ids(pid, ids, a)
             log.info("late turn at %s: %s", pid,
                      f"{said} message(s) after the status changed" if said
                      else "nothing said before the deadline")
@@ -1279,7 +1284,7 @@ async def collect_late_turns(agents):
             late_turns.pop(pid, None)
             log.warning("conversation log write failed for %s: %s", pid, e)
         if arbitration is not None:
-            await asyncio.to_thread(arbitrate_turn_end, a, pid)
+            await asyncio.to_thread(arbitrate_turn_end, a, pid, wrote)
 
 
 def detect_options(text):
@@ -2345,6 +2350,10 @@ async def _poll_once():
                 # parser — see read_pane_for_record. Two reads of a pane that just ended a turn is
                 # the price of the record being right, and it is paid once per turn rather than
                 # once per poll.
+                #
+                # A write that raised said nothing about whether the pane spoke, so the trigger is
+                # not suppressed on it. Only an empty write is evidence of an empty turn.
+                wrote = True
                 try:
                     captured = await asyncio.to_thread(
                         read_pane_for_record, pid, remote=a.get("remote"))
@@ -2362,8 +2371,10 @@ async def _poll_once():
                         continue
                     late_turns.pop(pid, None)
                     git = await probe_git(a)
-                    await note_turn_ids(pid, await asyncio.to_thread(
-                        conv_log.record_turn_end, a, captured, was, status, git=git), a)
+                    ids = await asyncio.to_thread(
+                        conv_log.record_turn_end, a, captured, was, status, git=git)
+                    wrote = bool(ids)
+                    await note_turn_ids(pid, ids, a)
                 except (sqlite3.Error, OSError) as e:
                     log.warning("conversation log write failed for %s: %s", pid, e)
                 # A pane ending a turn means one of two opposite things, and arbitration decides
@@ -2374,7 +2385,7 @@ async def _poll_once():
                 # Recorded first, deliberately: the prompt is built out of the record, so a turn
                 # that has not landed yet is a turn the arbitrator would be asked to decide without.
                 if arbitration is not None:
-                    await asyncio.to_thread(arbitrate_turn_end, a, pid)
+                    await asyncio.to_thread(arbitrate_turn_end, a, pid, wrote)
             last_statuses[pid] = status
         # Turns that ended with nothing on screen yet, given another look now that some time has
         # passed. Before the clocks, because a turn that lands here is a turn that just happened.
@@ -2538,8 +2549,12 @@ def arb_broadcast(session):
     on_loop(broadcast(arb_session_message(session)))
 
 
-def arbitrate_turn_end(pane, pane_id):
+def arbitrate_turn_end(pane, pane_id, wrote=True):
     """One pane's turn end, offered to the running session. Called from a worker thread.
+
+    `wrote` is whether the conversation log wrote anything for this turn. It gates the *member*
+    path only: the arbitrator's own turn end is expected to leave nothing new on its pane, since
+    its answer is a file it has already written.
 
     Never raises into the poll loop. Arbitration is one feature among many and a session that
     cannot proceed is its own problem to report — it pauses and pushes — not a reason for the
@@ -2554,7 +2569,7 @@ def arbitrate_turn_end(pane, pane_id):
             return
         acted = arbitration.arbitrator_finished(pane_id)
         if acted is None:
-            acted = arbitration.turn_ended(pane_id, arbitration_entries(pane))
+            acted = arbitration.turn_ended(pane_id, arbitration_entries(pane), wrote=wrote)
         # Announced whether or not anything was asked. Read back rather than reused: whatever just
         # happened is very likely to have changed the state, the budget or the last decision, and
         # the strip above the thread is only worth having if it says what is true now. A turn that

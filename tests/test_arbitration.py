@@ -949,6 +949,29 @@ class Triggers(Harness):
         self.arb.turn_ended("p1", [])
         self.assertEqual("waiting", self.arb.arbitrator_finished("pA")["outcome"])
 
+    def test_a_turn_that_recorded_nothing_asks_nothing(self):
+        # Harnesses that pass through `working -> done -> idle` end their turn twice, which is
+        # correct and stays — others only ever reach `idle`. The second end carries nothing the
+        # record did not already hold, and asking about it cost a step and half a minute to be
+        # told so, four times in the session this came from.
+        s = self.start()
+        before = len(self.sent)
+        self.assertIsNone(self.arb.turn_ended("p1", [], wrote=False))
+        self.assertEqual(before, len(self.sent))
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+        # Said out loud. A trigger that vanishes in silence is how this went unseen.
+        path = self.arb.events(s["id"])
+        self.assertTrue(any(e["kind"] == "trigger" and "nothing new was recorded" in e["detail"]
+                            for e in path), [e["detail"] for e in path])
+
+    def test_the_arbitrator_finishing_is_never_gated_on_what_it_recorded(self):
+        # Its answer is a file it has already written, and its pane is expected to have nothing
+        # new on it — which is exactly the condition that suppresses a member's trigger.
+        s = self.start()
+        handle = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.write(s["id"], handle["sequence"])
+        self.assertEqual("sent", self.arb.arbitrator_finished("pA")["outcome"])
+
     def test_a_trigger_that_cannot_proceed_pauses_instead_of_raising(self):
         # The poll loop calls this for every pane on the machine. A session that cannot go on is
         # its own problem to report, not a reason to stop telling everyone else about their agents.
@@ -956,6 +979,90 @@ class Triggers(Harness):
         self.live = [p for p in self.live if p["pane_id"] != "p2"]
         self.assertIsNone(self.arb.turn_ended("p1", []))
         self.assertEqual("member_gone", self.arb.session(s["id"])["pause_reason"])
+
+
+class Holding(Harness):
+    """`hold` — a decision that records a reason, sends nothing, and leaves the session armed.
+
+    Its absence is what turned one spurious trigger into five wake-ups: an arbitrator that
+    correctly saw there was nothing to arbitrate could only write to somebody or stop the session,
+    and writing to somebody is itself a turn end and another trigger.
+    """
+
+    def hold(self, session_id, sequence, why="member-2 is still working on the review."):
+        return self.write(session_id, sequence, gate="hold", to=None, instruction=None,
+                          why=why, ambiguity=None, decision_complexity=None)
+
+    def held(self, session_id, why=None):
+        """One full cycle that ends in a hold, returning the collector's answer."""
+        handle = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.hold(session_id, handle["sequence"], **({"why": why} if why else {}))
+        return self.arb.arbitrator_finished("pA")
+
+    def test_a_hold_sends_nothing_and_leaves_the_session_armed(self):
+        s = self.start()
+        out = self.held(s["id"])
+        self.assertEqual("hold", out["outcome"])
+        # The arbitrator was written to — that is the trigger prompt. Neither member was, which is
+        # the whole of what a hold means.
+        self.assertEqual(set(), {pid for pid, _ in self.sent} - {"pA"})
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_a_hold_spends_a_step_and_no_consecutive(self):
+        # A step, because it is a decision the model produced. Not a consecutive: that counter
+        # bounds how far an unattended session can drive the members, and a hold drives nobody.
+        s = self.start()
+        self.held(s["id"])
+        row = self.arb.session(s["id"])
+        self.assertEqual(1, row["steps_used"])
+        self.assertEqual(0, row["consecutive"])
+
+    def test_a_hold_is_in_the_thread_with_its_reason(self):
+        s = self.start()
+        self.held(s["id"], why="Nothing new — member-2 is mid-review.")
+        got = [d for d in self.arb.detail(s["id"]) if d["gate"] == "hold"]
+        self.assertEqual(1, len(got))
+        self.assertEqual("Nothing new — member-2 is mid-review.", got[0]["why"])
+        self.assertIsNone(got[0]["send"])
+        self.assertTrue(got[0]["valid"])
+
+    def test_three_in_a_row_stop_the_session(self):
+        s = self.start()
+        self.assertEqual("hold", self.held(s["id"])["outcome"])
+        self.assertEqual("hold", self.held(s["id"])["outcome"])
+        out = self.held(s["id"])
+        self.assertEqual("paused", out["outcome"])
+        self.assertEqual("holding", self.arb.session(s["id"])["pause_reason"])
+
+    def test_a_send_between_them_is_not_a_run(self):
+        # The bound is on a trailing run, not on a count. Three holds spread around real work are
+        # three separate holds, and a session doing its job must not be stopped for them.
+        s = self.start()
+        self.held(s["id"])
+        handle = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.write(s["id"], handle["sequence"])
+        self.assertEqual("sent", self.arb.arbitrator_finished("pA")["outcome"])
+        self.held(s["id"])
+        self.assertEqual("hold", self.held(s["id"])["outcome"])
+        self.assertEqual("active", self.arb.session(s["id"])["state"])
+
+    def test_a_hold_carrying_an_instruction_is_refused(self):
+        s = self.start()
+        handle = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.write(s["id"], handle["sequence"], gate="hold", ambiguity=None,
+                   decision_complexity=None)
+        self.arb.arbitrator_finished("pA")
+        got = self.arb.detail(s["id"])[-1]
+        self.assertFalse(got["valid"])
+        self.assertEqual("field_not_allowed", got["reject_code"])
+
+    def test_a_session_with_its_own_gates_does_not_get_hold(self):
+        # The same rule every gate follows. `arb_edit` is how an existing session takes it up.
+        s = self.start(gates=[{"name": "implement", "template": "{instruction}"}])
+        handle = self.arb.turn_ended("p1", [{"label": "member-1", "text": "Done."}])
+        self.hold(s["id"], handle["sequence"])
+        self.arb.arbitrator_finished("pA")
+        self.assertEqual("unknown_gate", self.arb.detail(s["id"])[-1]["reject_code"])
 
 
 class Announced(Harness):

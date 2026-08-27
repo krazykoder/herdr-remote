@@ -99,9 +99,17 @@ This is a rule about *members*. The arbitrator's own turn end is checked first, 
 pane is expected to have nothing new on it.
 
 **2. The anchor skips what the relay typed.** `_aligns` walks past window messages that are echoes
-of sends the record already holds, using the `_sent_after_read` set the function computes anyway.
-A prompt sent by this relay is not evidence about where the record ends inside a window — it is in
-the record either way — so it must not be able to break a run.
+of sends the record already holds. A prompt sent by this relay is not evidence about where the
+record ends inside a window — it is in the record either way — so it must not be able to break a
+run.
+
+The set it walks past is *not* `_sent_after_read`, which was the first answer and is the wrong one.
+That set stops at the record's newest row read off the pane, because its question is "what has the
+pane not echoed back yet". A prompt with a recorded turn on top of it leaves it — and that is
+exactly the case here, since the turn being re-read is that turn. The pane's echo, meanwhile, stays
+on screen for the rest of the window's life. `_sent_keys` is the set that matches: every prompt
+this relay typed at the pane recently, echoed or not. `_sent_after_read` keeps its narrower job of
+filtering the messages returned past the record's end.
 
 Fixing this at the source matters more than catching the duplicate later: a duplicate that is never
 recorded costs nothing, where one caught at the send has already spent a decision and its 37

@@ -137,20 +137,32 @@ def _split_echo(text, sent):
     return head, rest
 
 
-def _aligns(fresh, i, keys):
+def _aligns(fresh, i, keys, said=()):
     """Does the record's trailing run end at `fresh[i]`?
 
     A context message that falls off the top of the window is not a mismatch — it is absent, and a
     window is allowed to begin in the middle of the record. Who said it is half of what a message
     is: matching on text alone would count the user's "ok" as the agent's, and the two speak in
     turn, so aligning on the wrong one is aligning half a turn out.
+
+    `said` is the set of prompts this relay typed since the record's newest read row. They are in
+    the window because the pane echoed them, and they are in the record because the relay wrote
+    them at the send — so they say nothing about where the record ends inside the window and are
+    walked past rather than compared. Without that, an ordinary turn with a prompt sent into it
+    fails to align at every offset, falls through to the last-resort rule, and re-records a turn
+    the record already holds. Every `done -> idle` transition in the session diagnosed in
+    `.workflow/02_architecture/decision_log/2026-08-27_a_trigger_that_carries_nothing.md` was
+    recorded twice for this reason.
     """
-    for back, (who, key) in enumerate(reversed(keys)):
-        j = i - back
+    j = i
+    for who, key in reversed(keys):
+        while j >= 0 and fresh[j][0] == "user" and _key(fresh[j][1]) in said:
+            j -= 1
         if j < 0:
             return True
         if fresh[j][0] != who or _key(fresh[j][1]) != key:
             return False
+        j -= 1
     return True
 
 SCHEMA = """
@@ -490,8 +502,9 @@ class ConversationLog:
             # the same words. Without this every prompt sent from a client was recorded twice — once
             # when it went out, once when the turn it started ended.
             said = self._sent_after_read(pane)
+            echoes = self._sent_keys(pane)
             for i in range(len(fresh) - 1, -1, -1):
-                if _aligns(fresh, i, keys):
+                if _aligns(fresh, i, keys, echoes):
                     return [m for m in fresh[i + 1:]
                             if not (m[0] == "user" and _key(m[1]) in said)]
         # The window cannot be placed against the record: a `/clear`, a record holding nothing read
@@ -534,6 +547,27 @@ class ConversationLog:
             " AND at_src != 'sent' AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
             (*params, limit)).fetchall()
         return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
+
+    def _sent_keys(self, pane):
+        """Every prompt this relay typed at this pane recently, echoed or not.
+
+        Wider than `_sent_after_read`, and for a different job. That set answers "what has the
+        pane not echoed back yet", and it stops at the newest row read off the pane — so once a
+        turn has been recorded on top of a prompt, the prompt leaves it. This one never stops:
+        the pane's echo of a prompt stays on screen for the rest of the window's life, so it is
+        still sitting between two of the record's messages long after the turn above it was
+        written. That is what `_aligns` has to walk past, and asking `_sent_after_read` for it
+        got an empty set exactly when it mattered.
+
+        Only the alignment uses this. The messages returned past the record's end are still
+        filtered by the narrow set, because a prompt this relay sent and has already seen
+        recorded is not evidence that a *new* one is an echo.
+        """
+        where, params = self._scope(pane)
+        rows = self.conn.execute(
+            f"SELECT kind, text FROM turns WHERE {where} AND text != '' AND at_src = 'sent'"
+            " ORDER BY at DESC, id DESC LIMIT ?", (*params, TRAILING_USER_MAX)).fetchall()
+        return {_key(r["text"]) for r in rows if _who(r["kind"]) == "user"}
 
     def _sent_after_read(self, pane):
         """The prompts written since the record's newest row that was *read off the pane*.

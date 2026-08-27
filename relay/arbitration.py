@@ -31,7 +31,7 @@ import sqlite3
 import threading
 import time
 
-from arbitrator import MAX_INSTRUCTION, validate
+from arbitrator import HOLD, MAX_INSTRUCTION, validate
 from start_agent import WARMUP_TEXT
 from pane_summary import ends_turn
 
@@ -71,8 +71,17 @@ DEFAULT_GATES = [
     {"name": "review", "template": "Please review the work described above.\n\n{instruction}"},
     {"name": "phase_plan",
      "template": "Before continuing, write the plan for the next phase.\n\n{instruction}"},
+    # Neither of the last two writes to anybody, so neither has a template. `hold` leaves the
+    # session armed; `call_human` stops it. A session that supplied its own gates does not get
+    # either by default — the same rule every gate follows, and `arb_edit` is how one takes it up.
+    {"name": "hold", "template": ""},
     {"name": "call_human", "template": ""},
 ]
+
+# Three in a row stop the session. An armed session with a clock trigger could otherwise hold for
+# ever, and from outside that is indistinguishable from one that is working — "an unattended loop
+# that stops must not be discovered hours later" cuts both ways.
+MAX_HOLDS = 3
 
 # Conservative on purpose, and raised only on evidence from real sessions. The maxima are the point:
 # a person who wants a longer loop can have one, and cannot have an unbounded one by typo.
@@ -437,6 +446,17 @@ For gate call_human, omit `to` and `instruction` entirely; `why` is still requir
 and it is what the person will read. call_human pauses the session — the person
 decides whether to resume it or end it.
 
+For gate hold, omit `to` and `instruction` entirely as well. A hold sends nothing
+and leaves the session armed for the next turn that ends, so it costs one step and
+nothing else. Choose it when the trigger carried nothing the previous turn had not
+already said, when the member you would write to is already working, or when the
+right next step is to wait for a turn that is still running. A hold is a decision,
+not a refusal to make one: say why. Three holds in a row stop the session.
+
+Do not write to a member merely to tell them there is nothing to do. That message
+ends their turn, which triggers you again, and the loop that follows spends the
+whole budget on saying nothing. Hold instead.
+
 Nothing else in your pane is read. Your reasoning, your tool calls and your prose
 are ignored by the relay. Only the file counts.
 
@@ -511,6 +531,9 @@ RESUME_NOTES = {
                   "turns below, under that member's name.",
     "user": "A person paused this session by hand and has now started it again. Anything they did "
             "in the meantime is in the turns below.",
+    "holding": "This session stopped because you held three times in a row without sending "
+               "anything. If the members really have nothing to do, call_human and say so. If "
+               "they do, write to one of them.",
     "restart": "The relay was restarted while this session was running, which stops it: a send in "
                "flight at that moment cannot be proven either way. Read the turns below before "
                "repeating an instruction.",
@@ -1620,11 +1643,19 @@ class Arbitration:
     # (§12.1). Both entry points are no-ops unless a session is running, so the poll loop can
     # call them on every pane transition without knowing anything about arbitration.
 
-    def turn_ended(self, pane_id, entries, kind="turn_end"):
+    def turn_ended(self, pane_id, entries, kind="turn_end", wrote=True):
         """A pane ended a turn. Prompts the arbitrator if that pane is a member. §10.
 
         Returns the prompt handle, or None if nothing was asked — which covers no session, a
-        session that is paused, a pane that is not on the roster, and the coalescing case.
+        session that is paused, a pane that is not on the roster, the coalescing case, and a turn
+        that recorded nothing.
+
+        `wrote` is whether the conversation log wrote any row for this turn. A pane that said
+        nothing the record did not already hold has given the arbitrator nothing to decide about,
+        and asking anyway costs a step and half a minute to be told so. Harnesses that pass
+        through `working -> done -> idle` end a turn twice by design, so this is an ordinary
+        occurrence rather than an error — see
+        `.workflow/02_architecture/decision_log/2026-08-27_a_trigger_that_carries_nothing.md`.
 
         **Coalesced, not queued.** While a session is `awaiting` there is already one prompt
         outstanding, and a second member finishing in that window folds into the next prompt's
@@ -1663,6 +1694,13 @@ class Arbitration:
                                     "a decision is already outstanding" if s["state"] == "awaiting"
                                     else "the session is paused, so nothing was asked"),
                                 once=True)
+                    return None
+                if not wrote:
+                    # Said out loud rather than dropped in silence. A trigger that vanishes without
+                    # a line in the path is how this cost a quarter of a session's budget without
+                    # anybody being able to see where it went.
+                    self._event(s["id"], "trigger",
+                                f"{member_id} ended a turn — nothing new was recorded", once=True)
                     return None
                 self._event(s["id"], "trigger", f"{member_id} ended a turn ({kind})")
                 return self.prompt(s["id"], f"{kind} — {member_id}", entries)
@@ -1965,7 +2003,44 @@ class Arbitration:
             self.pause(session_id, "call_human")
             self._record_turn(s, kind="decision", text=doc["why"], decision_id=decision_id)
             return {"outcome": "call_human", "why": doc["why"], "decision_id": decision_id}
+
+        if doc["gate"] == HOLD:
+            # A step, because it is a decision the model produced and the budget counts those. Not
+            # a `consecutive`, because that counter bounds how far an unattended session can drive
+            # the members, and a hold drives nobody.
+            self.conn.execute(
+                "UPDATE sessions SET state='active', steps_used=steps_used+1 WHERE id=?",
+                (session_id,))
+            self.conn.commit()
+            self._record_turn(s, kind="decision", text=doc["why"], decision_id=decision_id)
+            held = self._trailing_holds(session_id)
+            self._event(session_id, "held",
+                        f"nothing sent — {held} of {MAX_HOLDS} in a row", sequence=sequence)
+            if held >= MAX_HOLDS:
+                self.pause(session_id, "holding")
+                return {"outcome": "paused", "reason": "holding", "why": doc["why"],
+                        "decision_id": decision_id}
+            return {"outcome": "hold", "why": doc["why"], "decision_id": decision_id}
+
         return self._execute(s, doc, decision_id, roster)
+
+    def _trailing_holds(self, session_id):
+        """How many holds this session has made since it last did anything else.
+
+        Read off the decisions themselves rather than a counter, the way the rejection bound reads
+        `valid=0` rows: a counter is a second place for the truth to live, and this is asked once
+        per hold. Only valid rows count — a refused record is not a decision — and the run stops at
+        the first valid decision that was not a hold, so three holds spread around a send are three
+        separate holds and not a stall.
+        """
+        held = 0
+        for r in self.conn.execute(
+                "SELECT gate FROM decisions WHERE session_id = ? AND valid = 1 "
+                "ORDER BY id DESC", (session_id,)):
+            if r["gate"] != HOLD:
+                break
+            held += 1
+        return held
 
     def _execute(self, s, doc, decision_id, roster):
         """§13.2. Re-resolve, render, send, record, spend."""

@@ -21,13 +21,19 @@ Measured against `s-20260826-1746-ab40`: A removes 4 of 24 decisions outright, B
 
 ### A1 — `[MODIFY] relay/conversation_log.py`
 
-- `_aligns(fresh, i, keys)` gains a fourth parameter, the `said` set of echoed-send keys. Walking
-  backwards from `i`, it skips any `fresh[j]` that is a `user` message whose `_key` is in `said`
-  before comparing against the next anchor key. A prompt this relay typed is in the record either
-  way and is not evidence about where the record ends inside a window, so it must not break a run.
-- `_messages_after_record` computes `said = self._sent_after_read(pane)` **before** the alignment
-  loop rather than inside it, and passes it to `_aligns`. The post-alignment filter that already
-  uses `said` is unchanged.
+- `_aligns(fresh, i, keys, said=())` gains a fourth parameter, the set of echoed-send keys.
+  Walking backwards from `i`, it skips any `fresh[j]` that is a `user` message whose `_key` is in
+  it before comparing against the next anchor key. A prompt this relay typed is in the record
+  either way and is not evidence about where the record ends inside a window, so it must not break
+  a run.
+- The set is **not** `_sent_after_read`. That one stops at the record's newest row read off the
+  pane, so a prompt with a recorded turn on top of it has already left it — which is precisely the
+  case, since the turn being re-read is that turn. A new `_sent_keys(pane)` answers the question
+  actually being asked: every prompt this relay typed at the pane within `TRAILING_USER_MAX` rows,
+  echoed since or not.
+- `_messages_after_record` computes it once, above the alignment loop, and passes it to `_aligns`.
+  The post-alignment filter keeps using the narrow `_sent_after_read` set: a prompt this relay sent
+  and has already seen recorded is not evidence that a *new* one is an echo.
 
 Nothing else moves. The last-resort path, `_last_tail` dedupe and `turn_messages` fallback all stay
 as they are.

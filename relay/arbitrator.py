@@ -45,6 +45,16 @@ GRADES = ("low", "medium", "high")
 # cancels. Ending is the human's call.
 CALL_HUMAN = "call_human"
 
+# The other gate that sends nothing, and the opposite of the one above: nothing to do here, stay
+# armed. Its absence is what turned a single spurious trigger into five wake-ups — an arbitrator
+# that correctly saw there was nothing to arbitrate had to either write to somebody or stop the
+# session, and writing to somebody is itself another turn end and another trigger.
+HOLD = "hold"
+
+# Neither writes to a member, so neither carries a target or an instruction. Both still carry a
+# `why`: a decision nobody can read the reason for is not reviewable, whichever way it went.
+NO_SEND = (CALL_HUMAN, HOLD)
+
 # A pane acting on something is never written to (N7), and a decision naming one is rejected rather
 # than held: by the time it finished, its state and the reason for the decision have both moved.
 BUSY = "working"
@@ -124,7 +134,7 @@ def validate(raw, session):
         return None, "why_missing"
 
     has_target = "to" in doc or "instruction" in doc
-    if gate == CALL_HUMAN:
+    if gate in NO_SEND:
         if has_target:
             return None, "field_not_allowed"
         return doc, None

@@ -886,7 +886,10 @@
             `<span class="conv-commits-lede">${gate}</span>` +
             (to ? `<span class="conv-commit">${badge}${to}</span>` : '') +
             (role ? `<span class="conv-commit quiet">${role}</span>` : '') +
-            // Said out loud, because the alternative is a decision that looks executed and was not.
+            // Said out loud, because the alternative is a decision that looks executed and was
+            // not — but only where there was something to deliver. A gate that sends nothing on
+            // purpose has always been drawn with this badge, and it says the opposite of the
+            // truth: `call_human` and `hold` are the loop working.
             (e.delivered ? '' : '<span class="conv-commit warn">not confirmed</span>') +
             '</div>';
           last = at;

@@ -367,6 +367,11 @@
     // touches the conversation's roster, its record or its stored members. Turning the toggle off
     // leaves the conversation byte for byte what it was.
     //
+    // The two gates that write no instruction and send nothing: `call_human` stops the session
+    // and asks for a person, `hold` leaves it armed. A property of the gate, not something derived
+    // from an empty template — the templates never reach a client.
+    const NO_SEND_GATES = new Set(['call_human', 'hold']);
+
     // Refusals stay in the detail sheet. A record the relay rejected is a fact about the
     // arbitrator having a bad minute, not a step in the conversation.
     function arbThreadEntries(convId) {
@@ -384,12 +389,18 @@
           gate: d.gate || '',
           // The agent's own name, because `member-2` is an id this session made up and the person
           // reading the thread has never agreed to it. Its kind rides along for the badge.
-          to: d.gate === 'call_human' ? 'you' : (to ? (to.label || d.to) : (d.to || '')),
+          to: d.gate === 'call_human' ? 'you'
+            : d.gate === 'hold' ? '' : (to ? (to.label || d.to) : (d.to || '')),
           toAgent: to ? to.agent || '' : '',
           // Why this one and not the other. The roles are the person's instruction about who does
           // what, so the decision reads as an answer to it rather than a coin toss.
           toRole: to ? to.role || '' : '',
           delivered: !!d.send,
+          // A separate question from `delivered`, and the opposite answer to the same missing send
+          // row. "The arbitrator chose to write to nobody" and "the relay could not prove its
+          // write landed" were drawn identically — one is the loop working, the other is the thing
+          // a person most needs to go and look at.
+          noSend: NO_SEND_GATES.has(d.gate || ''),
         };
       })).sort((a, b) => (a.at || 0) - (b.at || 0));
     }
@@ -438,6 +449,7 @@
       arbitrator_gone: 'arbitrator gone',
       member_gone: 'member gone',
       member_ambiguous: 'two panes match',
+      holding: 'three holds in a row',
       restart: 'relay restarted',
       not_started: 'not started',
       user: 'by you',
@@ -480,6 +492,9 @@
       member_gone: 'A member’s pane has exited. Edit the session to put another in its place.',
       member_ambiguous: 'A member’s fingerprint now matches two panes, so nothing can be typed ' +
         'at it safely. Edit the session to name one.',
+      holding: 'The arbitrator decided three times in a row that there was nothing to send. ' +
+        'Either the members really are done — end it — or one of them needs telling what to do ' +
+        'next, which you can type yourself before resuming.',
       restart: 'The relay restarted while this was running. Nothing was decided in between.',
       not_started: 'Briefed and waiting for you to start it.',
       user: 'You stopped it.',
@@ -1419,8 +1434,13 @@
           // relay could not prove, and the second is the one a person has to go and look at.
           (d.send
             ? arbDecText(`What was typed · ${d.send.pane_id}`, d.send.text)
-            : (d.valid ? '<p class="arb-dec-meta">Nothing recorded as delivered — the pane never ' +
-                         'confirmed it.</p>' : '')) +
+            : (!d.valid ? ''
+               : NO_SEND_GATES.has(d.gate || '')
+               ? `<p class="arb-dec-meta">${d.gate === 'hold'
+                   ? 'Nothing was sent — the session stayed armed for the next turn.'
+                   : 'Nothing was sent — the session stopped and asked for you.'}</p>`
+               : '<p class="arb-dec-meta">Nothing recorded as delivered — the pane never ' +
+                 'confirmed it.</p>')) +
           '</div>';
       }).join('');
     }

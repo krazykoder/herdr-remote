@@ -170,6 +170,40 @@ async function main() {
     check('the prompt is badged as the arbitrator’s, not the reader’s', badges === 1,
           `${badges} arbitrator marks in the thread`);
 
+    // --- a decision that sends nothing ------------------------------------------------------
+    // `hold` records a reason, writes to nobody and leaves the session armed. It is drawn in the
+    // thread like any other decision, and the one thing it must not be drawn as is a delivery the
+    // relay could not confirm — which is what every no-send gate looked like before B3.
+    await endTurn('a1:p2');
+    await page.waitForFunction(
+      () => /Deciding/.test(document.querySelector('#arbStrip .arb-strip').textContent),
+      null, {timeout: 30000});
+    fs.writeFileSync(path.join(TMP, 'arb', 'arbitration', id, '0002-decision.json'), JSON.stringify({
+      session_id: id, sequence: 2, gate: 'hold',
+      why: 'member-1 is still on the review — nothing to send yet.'}));
+    await endTurn('a1:p3');
+
+    await page.waitForFunction(
+      () => arbSession && (arbSession.last_decision || {}).gate === 'hold', null, {timeout: 30000});
+    check('a hold leaves the session armed rather than stopping it',
+          /Arbitrating/.test(await page.textContent('#arbStrip .arb-strip')),
+          await page.textContent('#arbStrip .arb-strip'));
+    check('and nothing was typed at either member for it',
+          fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8')
+            .split('\n').filter(l => /send-text a1:p[12]/.test(l)).length === 1,
+          fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8').split('\n')
+            .filter(l => l.includes('send-text')).join(' | '));
+
+    await page.waitForFunction(
+      () => /nothing to send yet\./.test(document.querySelector('#convViewThread').textContent),
+      null, {timeout: 20000});
+    // Both no-send gates at once: the thread holds a `hold` here and a `review` that *was*
+    // delivered, and only a decision the relay could not stand behind may wear the warning.
+    const warned = await page.evaluate(() => [...document.querySelectorAll(
+      '#convViewThread .conv-arb-to .warn')].map(el => el.textContent));
+    check('a decision that sends nothing is not drawn as an unconfirmed delivery',
+          warned.length === 0, warned.join(' | '));
+
     await page.getByRole('button', {name: 'Pause'}).click();
     await page.waitForFunction(() => /Paused/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 15000});
     check('Pause stops it, from the page', true);

@@ -200,6 +200,30 @@ class Capture(Log):
         self.assertEqual("sent", said[0]["at_src"])
         self.assertTrue(any(r["text"] == "Good to go." for r in rows_out))
 
+    def test_a_second_transition_over_prompts_the_relay_sent_records_nothing_again(self):
+        # The 2775/2780 case, minimised. A harness passing through `working -> done -> idle` ends
+        # its turn twice, which is correct and stays — other harnesses only ever reach `idle`. The
+        # second transition re-reads the same window and must find nothing new in it.
+        #
+        # It did not, whenever a prompt this relay sent sat between the record's last two read
+        # messages. The anchor skips sent rows, correctly, but their echoes are still *in the
+        # window* — so the run "the message before, then the message after" never appeared at any
+        # offset, alignment failed, and the last-resort rule re-recorded a turn already held. Two
+        # prompts rather than one because that is the shape the session had: a human prompt and an
+        # arbitrated instruction, back to back.
+        base = fixture("pane_claude_done.txt")
+        self.seen(base)
+        for text in ("so are we good to go", "Check the footer change on mobile."):
+            self.log.record(agent="claude", pane_id="%1", cwd="/tmp/proj", label="Architect 1",
+                            kind="human_prompt", origin="human_web", at_src="sent", text=text)
+        content = "\n".join(base.splitlines() + [
+            "", "❯ so are we good to go", "", "❯ Check the footer change on mobile.",
+            "", "⏺ Good to go.", "", "❯"])
+        self.assertTrue(self.log.record_turn_end(PANE, content, "working", "done"))
+        self.assertEqual(self.log.record_turn_end(PANE, content, "done", "idle"), [])
+        rows, _ = self.log.query()
+        self.assertEqual(1, len([r for r in rows if r["text"] == "Good to go."]))
+
     def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
         # N4. The relay knows a person put those words in the pane and does not know which person;
         # only a send it performed itself may say more than that.

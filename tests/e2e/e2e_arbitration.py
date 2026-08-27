@@ -85,11 +85,28 @@ async def arbitrator_answers(session_id, sequence, doc):
     set_status(ARBITER["pane_id"], "done")
 
 
-async def end_turn(pane_id):
+def say(pane_id, text):
+    """Put a new line on a pane's screen.
+
+    The fake herdr reads a pane back as a fixed frame plus whatever has been typed at it, so
+    without this every turn a pane ends after its first looks identical to the one before — and a
+    turn that recorded nothing is no longer a trigger, by design. Real agents say something new
+    each turn; this is how a fake one does.
+    """
+    panes = read_panes()
+    for p in panes:
+        if p["pane_id"] == pane_id:
+            p["typed"] = (p.get("typed") or []) + [text]
+    write_panes(panes)
+
+
+async def end_turn(pane_id, said=None):
     """Take a pane through a turn: working, then done. Both transitions have to be *seen* by the
     poll loop, so each gets more than a poll interval — the end state is only an end state
     relative to the status the loop last recorded."""
     set_status(pane_id, "working")
+    if said:
+        say(pane_id, said)
     await asyncio.sleep(2.6)
     set_status(pane_id, "done")
 
@@ -394,8 +411,31 @@ async def loop_run():
             # --- T13: a decision naming a working member ---------------------------------
             # member-2 is `working` now, because it was just handed an instruction. Naming it is
             # the mistake an arbitrator makes constantly, and N7 says it is never queued.
+            # --- a turn end that carried nothing ------------------------------------------
+            # A harness that passes through `working -> done -> idle` ends its turn twice, and the
+            # second end has nothing on screen the record does not already hold. Asking about it
+            # cost a step and half a minute to be told so; now it costs an event line. Asserted
+            # before T13's real trigger because after it the session is `awaiting`, which suppresses
+            # a trigger for an entirely different reason.
             open(LOG, "w").close()
             await end_turn("a1:p1")
+            await asyncio.sleep(4)          # past HERDR_LATE_TURN_MS and a poll either side of it
+            row = rows("SELECT * FROM sessions WHERE id=?", session_id)[0]
+            check("an empty turn end leaves the session armed rather than deciding",
+                  row["state"] == "active" and row["sequence"] == 1, dict(row))
+            check("and nothing was typed at the arbitrator for it",
+                  "pane send-text a1:p3" not in herdr_log(),
+                  [l for l in herdr_log().splitlines() if "send-text" in l][:2])
+            check("but the path says a turn ended and why nothing was asked",
+                  any("nothing new was recorded" in e["detail"] for e in rows(
+                      "SELECT * FROM events WHERE session_id=?", session_id)),
+                  [e["detail"] for e in rows("SELECT * FROM events WHERE session_id=?",
+                                             session_id)][-4:])
+
+            open(LOG, "w").close()
+            # With something new on the pane. A second turn end over an unchanged screen records
+            # nothing, and a turn that recorded nothing is not a trigger — the case just above.
+            await end_turn("a1:p1", said="Pushed the footer fix.")
             m = await wait_msg(ws, "arb_session", lambda m: m["session"]["state"] == "awaiting")
             check("T13 a second turn end prompts again, at the next sequence", m is not None, m)
 
