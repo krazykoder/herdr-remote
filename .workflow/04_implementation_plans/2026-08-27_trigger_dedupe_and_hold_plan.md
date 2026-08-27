@@ -83,13 +83,25 @@ as they are.
 
 ### B3 — `[MODIFY] web/src/arbitration.js`, `web/src/conversation_view.js`
 
-- Mark `hold` and `call_human` thread entries as intentional no-send decisions, separate from
-  `delivered`. The latter means a member send was confirmed; treating no-send as delivered would
-  make the model lie to the reader.
-- Suppress the `not confirmed` rail only for that no-send mark. Today a `hold` would have no target
-  and `delivered: false`, so it renders as a failed delivery rather than an intentional wait.
-- Add `holding` to the short and explanatory pause-reason maps. The generic fallback says
-  “holding”, but the pause needs to say that three no-send decisions stopped the loop.
+**This is a bug fix before it is a new render path.** `delivered: !!d.send` is false for any
+decision that sends nothing, and `call_human` sends nothing — so every `call_human` in the thread
+already carries a red `not confirmed` badge today, and its detail sheet already says "the pane
+never confirmed it". Five of them in `s-20260826-1746-ab40`. `hold` would join an existing wrong,
+not create one.
+
+- One shared set, `NO_SEND_GATES = new Set(['call_human', 'hold'])`, in `arbitration.js` where the
+  entry is built. A gate that delivers nothing is a property of the gate; deriving it from an empty
+  template would need the templates on the wire, which they are not.
+- Carry `noSend` on the decision entry beside `delivered`. `delivered` keeps its meaning — a member
+  send the relay stands behind — and the two questions stay separate rather than one field
+  answering both.
+- `conversation_view.js:890`: the `not confirmed` rail is drawn only when `!e.noSend && !e.delivered`.
+- `arbitration.js:1422`: the detail sheet's "Nothing recorded as delivered" paragraph is suppressed
+  for a no-send gate, and says what the decision *was* instead — a hold that is waiting, a
+  `call_human` that stopped the session.
+- Add `holding` to the short and explanatory pause-reason maps beside `send_unconfirmed`. The
+  generic fallback would say “holding”, but the pause needs to say that three no-send decisions
+  stopped the loop.
 
 ### `[MODIFY] tests/test_conversation_log.py`
 
@@ -114,6 +126,8 @@ as they are.
 
 - A `hold` bubble has its gate and `why`, no recipient and no `not confirmed` warning; a paused
   `holding` session has the human pause label and explanation.
+- A `call_human` bubble carries no `not confirmed` warning either — the regression test for the
+  existing bug, which must fail against today's client.
 
 ### `[MODIFY] CLAUDE.md`
 
@@ -144,3 +158,5 @@ The browser suite is untouched. `e2e_arb_ui.js` is the focused client check for 
 5. Three consecutive holds pause the session with reason `holding`, visible in the events path.
 6. Replaying the shape of 19:19:41–19:21:50 — a duplicate trigger against a member whose partner is
    working — costs one decision and no send.
+7. Neither a `hold` nor a `call_human` is presented as an unconfirmed delivery, in the thread rail
+   or in the detail sheet. A member send the relay could not prove still is.

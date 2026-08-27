@@ -121,7 +121,15 @@ armed session with a clock trigger could otherwise hold for ever, which looks id
 outside to a session that is working — and "an unattended loop that stops must not be discovered
 hours later" cuts both ways: one that never stops must not be either.
 
-**5. The path shows what did not happen.** A suppressed trigger and a hold both write an event.
+**5. A decision that sends nothing is not an unconfirmed delivery.** The client derives
+`delivered` from whether a send row exists, which makes "the arbitrator chose not to write to
+anyone" and "the relay could not prove its write landed" the same picture. They are opposites: one
+is the loop working, the other is the thing a person most needs to go and look at. `call_human`
+has been mis-drawn this way since it existed — five red `not confirmed` badges in the session
+diagnosed above, all of them decisions that worked. `hold` makes it common enough to fix rather
+than inheriting it.
+
+**6. The path shows what did not happen.** A suppressed trigger and a hold both write an event.
 The `events` table is where a person reconstructs a session, and this whole diagnosis was possible
 only because triggers that were dropped for other reasons already wrote lines. Two new kinds of
 non-event join them rather than being optimised away.
