@@ -723,6 +723,23 @@ class CreateProjectTests(unittest.TestCase):
         self.assertIsNone(project)
         self.assertEqual(err, "that name is not a directory inside this root")
 
+    def test_a_root_swapped_during_mkdir_cannot_redirect_the_write(self):
+        parent = os.path.dirname(self.root)
+        old = os.path.join(parent, "root-before-swap")
+        real_mkdir = os.mkdir
+
+        def swap_then_mkdir(name, *, dir_fd=None):
+            os.rename(self.root, old)
+            os.symlink(self.outside, self.root)
+            return real_mkdir(name, dir_fd=dir_fd)
+
+        with unittest.mock.patch("projects.os.mkdir", swap_then_mkdir):
+            project, err = create_child("notes", "common", self.projects)
+        self.assertIsNone(project)
+        self.assertEqual(err, "that name is not a directory inside this root")
+        self.assertTrue(os.path.isdir(os.path.join(old, "notes")))
+        self.assertFalse(os.path.exists(os.path.join(self.outside, "notes")))
+
 
 class ContainerRootTests(unittest.TestCase):
     """A root that is a place for projects rather than one to work in."""

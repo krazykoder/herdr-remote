@@ -321,10 +321,23 @@ def make_child_dir(cwd, root):
     # it cannot leave the root. Asserted rather than branched on: were it ever false, this line is
     # a mkdir at a path nobody authorised and there is no sensible way to carry on.
     assert _under(cwd, root) and cwd != root, f"{cwd!r} is not under {root!r}"
+    # Use the root we opened, not the pathname again: a replacement of the configured root with a
+    # symlink between validation and mkdir must not redirect this write. `child_target` guarantees
+    # one component, and the post-mkdir child_path_ok remains the answer for an existing symlink.
+    name = os.path.basename(cwd)
     try:
-        os.makedirs(cwd, exist_ok=True)
+        fd = os.open(os.path.realpath(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError as e:
         return f"could not create that directory ({e.strerror})"
+    try:
+        try:
+            os.mkdir(name, dir_fd=fd)
+        except FileExistsError:
+            pass
+    except OSError as e:
+        return f"could not create that directory ({e.strerror})"
+    finally:
+        os.close(fd)
     return None
 
 
