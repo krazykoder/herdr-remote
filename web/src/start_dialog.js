@@ -667,9 +667,13 @@
 
     function submitNewProject() {
       if (!ws || !newProjectRoot) return;
-      // A field holding only spaces looks empty and is not. The relay is the one place that says
-      // which names are names, so every non-empty value goes there unchanged.
-      const name = document.getElementById('newProjectName').value || '';
+      // Trimmed, like the start dialog's folder field and the Name field beside it. Whitespace is
+      // not in the relay's charset, so this widens nothing — it only decides whether a phone's
+      // stray space costs a round trip and an error about a word that reads correctly on screen.
+      // A field holding *only* spaces is sent as it stands: it looks empty and is not, and being
+      // refused is the right answer where being trimmed away to nothing is not.
+      const raw = document.getElementById('newProjectName').value || '';
+      const name = raw.trim() || raw;
       if (!name) { setNewProjectError('Name the folder this project lives in'); return; }
       setNewProjectError('');
       document.getElementById('newProjectSubmit').disabled = true;

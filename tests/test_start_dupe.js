@@ -442,12 +442,12 @@ test('a name that is only spaces goes as it stands, for the relay to refuse', ()
   assert.deepEqual(sent, [{type: 'create_project', project_id: 'root', name: '  '}]);
 });
 
-test('a malformed name is not cleaned into a different project', () => {
+test('a stray space around a name is trimmed, like the start dialog trims its own', () => {
   const {el, sent, run} = startCtx();
   run('openNewProject()');
   el('newProjectName').value = ' notes ';
   run('submitNewProject()');
-  assert.deepEqual(sent, [{type: 'create_project', project_id: 'root', name: ' notes '}]);
+  assert.deepEqual(sent, [{type: 'create_project', project_id: 'root', name: 'notes'}]);
 });
 
 test('a refusal is said in the sheet, which stays open on what was typed', () => {
