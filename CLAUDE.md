@@ -129,6 +129,7 @@ The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent 
 | `relay/ops_config.py` | The `ops.json` contract — the allowlist of services and commands, and the argv builder that is the ops bot's security boundary | Python (stdlib) |
 | `relay/OPS_COMMANDS.md` | Slash command reference: how to put a script behind a Telegram command, and which of Telegram's three UI mechanisms to use | Markdown |
 | `relay/ops_supervisor.py` | Detached start/stop/probe for those services. Own session, signalled by process group | Python (stdlib) |
+| `relay/backup-state.sh` | The copy that is not an undo. `sqlite3 .backup` of both databases with the relay live, plus the drop boxes, the config directory without `secrets.env`, and the push subscriptions — into a timestamped directory under `.herdr-remote/backups/`, pruned to the last `HERDR_BACKUP_KEEP` (14). `--install` writes a daily launchd job; the ops bot's `/ops backup` runs it now. The shared store's 200 revisions per document are an undo with a window of about two hours at the rate the conversation index moves, which is not the same thing | Bash |
 | `relay/tg_util.py` | The little both bots share: `scrub()`, chunking, confirmations, rate limit | Python (stdlib) |
 | `relay/herdr_tui.py` | Terminal TUI client | Python (textual) |
 | `web/index.html` + `web/src/*.js` | Mobile/desktop web app (markup and CSS in one file, 30 script modules) | HTML/CSS/JS |
