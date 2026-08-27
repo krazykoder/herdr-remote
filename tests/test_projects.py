@@ -774,6 +774,19 @@ class ChildOnAStartTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.root))
         herdr_call.assert_not_called()
 
+    def test_the_executor_refuses_a_child_id_claimed_since_validation(self):
+        plan, err = self.start(child="notes")
+        self.assertIsNone(err)
+        os.makedirs(os.path.join(self.root, "notes."))
+        rescanned = self.roots + child_projects(self.roots)
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", rescanned), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json") as herdr_call:
+            pane, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("already taken", exec_err)
+        self.assertFalse(os.path.exists(plan["cwd"]))
+        herdr_call.assert_not_called()
+
     def test_a_symlink_planted_at_the_mkdir_still_loses(self):
         # makedirs(exist_ok=True) is satisfied by a symlink to a directory — isdir follows it — so
         # the check after it is the guard, not a formality.

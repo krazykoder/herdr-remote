@@ -21,6 +21,7 @@ from projects import (
     annotate_agents,
     child_path_ok,
     child_projects,
+    child_target,
     load_projects,
     make_child_dir,
     public_projects,
@@ -1889,6 +1890,12 @@ def _child_dir(plan):
         return None, "that root has changed since the start was planned"
     if not os.path.isdir(root["cwd"]):
         return None, "that root is no longer a directory"
+    project, _, target_err = child_target(plan["create_child"], root, PROJECTS)
+    if target_err:
+        return None, target_err
+    if (project["id"] != plan["project_id"] or project["cwd"] != plan["cwd"]
+            or project.get("parent", "") != plan["parent"]):
+        return None, "that child has changed since the start was planned"
     err = make_child_dir(plan["cwd"], root["cwd"])
     if err:
         return None, err
