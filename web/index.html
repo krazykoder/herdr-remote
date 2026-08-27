@@ -2635,11 +2635,15 @@
     .chip-row .chip-strip {
       flex: 1 1 auto;
       min-width: 0;
+      /* No inset of its own: the cards under this row and the heading over it start at the
+         section's edge, and a filter for those cards that starts 12px in from them reads as a
+         third margin nobody chose. Vertical padding stays — that is the gap to the heading. */
+      padding-left: 0;
+      padding-right: 0;
     }
 
     .chip-more {
       flex: 0 0 auto;
-      margin-right: 12px;
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--muted);
@@ -7555,7 +7559,13 @@
         grid-column: 1 / -1;
       }
 
-      .chip-strip {
+      /* A band's own furniture spans the grid; only cards are laid out in columns. The kind
+         filter was left out of this when it arrived, so on a two-column desktop it took the first
+         cell and pushed the first agent card into the second column — one card starting 350px in
+         from the left edge every other section began at. */
+      .chip-row,
+      .chip-strip,
+      .agent-kind-filter {
         grid-column: 1 / -1;
       }
     }
