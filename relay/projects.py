@@ -163,14 +163,23 @@ def child_id(parent_id, name):
     return f"{parent_id}-{slug}"[:64] if slug else ""
 
 
-def child_projects(projects, scan=scan_root):
+def child_projects(projects, scan=scan_root, note=None):
     """The projects that exist because a directory does, one level under each root.
 
     Ordinary project rows, deliberately: everything downstream — grouping, starting, tiles, the
     record — already works on those, and a second kind of thing would need every one of them to
     learn about it. `parent` is the whole difference, and it says the row was derived rather than
     written down, so a client can tell what only a human can change.
+
+    `note(root_id, name, reason)` is called for a directory that exists and did not become a
+    project. A skip is rare and always a surprise to whoever made the directory, so it has to be
+    findable — the alternative, refusing the whole roster, lets one stray directory cost every
+    other project its refresh. Not called for a directory an explicit entry already claims: that
+    one *is* a project, under the name somebody chose for it.
     """
+    def skip(root_id, name, reason):
+        if note:
+            note(root_id, name, reason)
     known_ids = {p["id"] for p in projects}
     known_roots = {(p["host"], p["cwd"]) for p in projects}
     out = []
@@ -183,13 +192,22 @@ def child_projects(projects, scan=scan_root):
             # anyway: this is the only place in the module where a path is built out of something
             # the config file did not write.
             if not _under(cwd, root["cwd"]) or cwd == root["cwd"]:
+                skip(root["id"], name, "resolves outside its root")
                 continue
             # A root that also names one of its own children explicitly keeps the written entry:
             # it has a label somebody chose and an id other documents already point at.
             if (root["host"], cwd) in known_roots:
                 continue
             pid = child_id(root["id"], name)
-            if not pid or pid in known_ids:
+            if not pid:
+                skip(root["id"], name, "no character of it belongs in a project id")
+                continue
+            # Folding and truncation can land two different directories on one id, and an id is
+            # what every other document points at. First wins, so the winner is the written entry
+            # where there is one and the earlier name otherwise — and the loser is said out loud,
+            # because a directory that is silently not a project is the hardest kind to notice.
+            if pid in known_ids:
+                skip(root["id"], name, f"its id ({pid}) is already taken")
                 continue
             known_ids.add(pid)
             known_roots.add((root["host"], cwd))
@@ -203,6 +221,35 @@ def _under(cwd, root):
     if cwd == root:
         return True
     return cwd.startswith(root if root.endswith("/") else root + "/")
+
+
+def child_path_ok(project, projects):
+    """Whether a derived child still physically sits under the root that authorised it.
+
+    The scan refuses to list a symlink, but a scan is one moment and a start is a later one: the
+    directory that was listed can be replaced with a symlink to anywhere before anybody starts
+    anything in it. That is a window, not a guard, so the question is asked again here — at the
+    point the chosen project's cwd becomes the path herdr is handed.
+
+    Both ends are resolved before they are compared. A lexical prefix check is precisely what a
+    symlink defeats: `/root/child` is under `/root` by string and somewhere else entirely on disk.
+
+    Only a *derived* row is checked. A file project's cwd is authorised by the file itself, and a
+    user who points their own config at a symlink has said what they meant.
+    """
+    parent_id = project.get("parent")
+    if not parent_id:
+        return True
+    root = next((p for p in projects
+                 if p["id"] == parent_id and p["host"] == project["host"]), None)
+    if root is None:
+        return False
+    try:
+        if os.path.islink(project["cwd"]) or not os.path.isdir(project["cwd"]):
+            return False
+        return _under(os.path.realpath(project["cwd"]), os.path.realpath(root["cwd"]))
+    except OSError:
+        return False
 
 
 def resolve_project_id(cwd, host, projects):

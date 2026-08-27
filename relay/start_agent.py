@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Start session: validate a start_agent request and build its herdr command arguments.
 
-Pure module — no I/O, no subprocess, no relay state. Everything that decides *whether* a
-start is allowed lives here so it is testable without herdr.
+No subprocess, no relay state. Everything that decides *whether* a start is allowed lives here so
+it is testable without herdr. One question needs the disk — whether a derived child project's
+directory is still inside the root that authorised it — and it is asked in _placement_plan, below
+every caller, because the answer can change between the scan that found the directory and the
+request that starts something in it.
 See .workflow/03_specs/2026-08-08_start_agent_spec.md
 """
 import random
 import re
 
-from projects import ambiguous_pane_ids, resolve_workspace_remote
+from projects import ambiguous_pane_ids, child_path_ok, resolve_workspace_remote
 
 ROLES = ("architect", "reviewer", "agent")
 # Collision suffix: "-XBEOE". Random rather than a counter because the taken set is a snapshot —
@@ -254,6 +257,12 @@ def _placement_plan(msg, projects, panes, base_fields, default_label):
     project = next((p for p in projects if p["id"] == project_id), None)
     if project is None:
         return None, "unknown project_id"
+    # Below both validate_start_request and validate_open_terminal on purpose: this is where a
+    # chosen project's cwd becomes the path herdr is given, so every spawn route inherits the
+    # check and a future one cannot forget it. Refused rather than quietly rebound to the parent
+    # root — a start that lands somewhere other than where it said is worse than one that fails.
+    if not child_path_ok(project, projects):
+        return None, "that project's directory is no longer inside its root"
 
     placement = msg.get("placement")
     if placement not in PLACEMENTS:

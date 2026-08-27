@@ -16,6 +16,7 @@ from projects import (
     ambiguous_pane_ids,
     annotate_agents,
     child_id,
+    child_path_ok,
     child_projects,
     load_projects,
     public_projects,
@@ -26,6 +27,7 @@ from projects import (
 
 
 import herdr_relay  # noqa: E402
+import start_agent  # noqa: E402
 
 
 def write_config(payload):
@@ -400,6 +402,36 @@ class ChildProjectsTests(unittest.TestCase):
         got = child_projects(self.roots(), scan=self.scanner("web-app", "web.app"))
         self.assertEqual([c["label"] for c in got], ["web-app"])
 
+    def test_an_id_collision_at_another_cwd_is_reported_not_swallowed(self):
+        # Two directories can fold to one id, and an id is what every other document points at.
+        # The authorised entry keeps it; the loser has to be findable, or a directory somebody
+        # made is permanently not a project with nothing said anywhere.
+        written = self.roots() + [{"id": "common-web-app", "label": "Web App",
+                                   "cwd": "/work/elsewhere", "host": "local",
+                                   "children": False, "marker": ""}]
+        notes = []
+        got = child_projects(written, scan=self.scanner("web.app"),
+                             note=lambda *row: notes.append(row))
+        self.assertEqual(got, [])
+        self.assertEqual(notes, [("common", "web.app", "its id (common-web-app) is already taken")])
+
+    def test_the_loser_of_a_fold_collision_is_reported(self):
+        notes = []
+        got = child_projects(self.roots(), scan=self.scanner("web-app", "web.app"),
+                             note=lambda *row: notes.append(row))
+        self.assertEqual([c["label"] for c in got], ["web-app"])
+        self.assertEqual([(n[1], "taken" in n[2]) for n in notes], [("web.app", True)])
+
+    def test_a_directory_an_explicit_entry_already_claims_is_not_a_skip(self):
+        # It is a project, under the name somebody chose for it — nothing was lost, so nothing is
+        # reported. This is the case the collision notes must not be confused with.
+        written = self.roots() + [{"id": "webapp", "label": "Web App",
+                                   "cwd": "/work/common/webapp", "host": "local",
+                                   "children": False, "marker": ""}]
+        notes = []
+        child_projects(written, scan=self.scanner("webapp"), note=lambda *row: notes.append(row))
+        self.assertEqual(notes, [])
+
     def test_a_written_entry_wins_over_a_scanned_one(self):
         # It has a label somebody chose and an id other documents already point at.
         written = self.roots() + [{"id": "webapp", "label": "Web App",
@@ -438,6 +470,7 @@ class RefreshProjectsTests(unittest.TestCase):
         self.enterContext(unittest.mock.patch.object(herdr_relay, "PROJECTS_PATH", self.path))
         self.enterContext(unittest.mock.patch.object(herdr_relay, "_projects_stamp", ()))
         self.enterContext(unittest.mock.patch.object(herdr_relay, "_projects_listed", 0.0))
+        self.enterContext(unittest.mock.patch.object(herdr_relay, "_projects_skipped", ()))
         self.enterContext(unittest.mock.patch.object(herdr_relay, "FILE_PROJECTS", []))
         self.enterContext(unittest.mock.patch.object(herdr_relay, "PROJECTS", []))
 
@@ -464,6 +497,93 @@ class RefreshProjectsTests(unittest.TestCase):
         self.assertFalse(herdr_relay.refresh_projects())
         self.assertEqual(self.ids(), ["common"])
 
+    def test_a_directory_that_is_not_a_project_is_logged_once(self):
+        # The reason has to reach a human, and it has to stop reaching them once they have it:
+        # the condition stays true for as long as the directory does, and the poll runs forever.
+        os.makedirs(os.path.join(self.root, "web-app"))
+        os.makedirs(os.path.join(self.root, "web.app"))
+        with self.assertLogs("herdr-relay", level="WARNING") as caught:
+            herdr_relay.refresh_projects()
+        self.assertEqual(len(caught.output), 1)
+        self.assertIn("common/web.app", caught.output[0])
+        self.assertIn("already taken", caught.output[0])
+        # Same skip, same reason, nothing new to say.
+        herdr_relay._projects_listed = 0.0
+        with self.assertNoLogs("herdr-relay", level="WARNING"):
+            herdr_relay.refresh_projects()
+
     def test_no_projects_file_means_nothing_to_refresh(self):
         with unittest.mock.patch.object(herdr_relay, "PROJECTS_PATH", ""):
             self.assertFalse(herdr_relay.refresh_projects())
+
+
+class ChildPathGuardTests(unittest.TestCase):
+    """The scan is one moment and a start is a later one. This is the later one."""
+
+    def setUp(self):
+        self.root = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        self.outside = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        os.makedirs(os.path.join(self.root, "webapp"))
+        self.projects = [
+            {"id": "common", "label": "Common", "cwd": self.root, "host": "local",
+             "children": True, "marker": ""},
+        ] + child_projects([{"id": "common", "label": "Common", "cwd": self.root,
+                             "host": "local", "children": True, "marker": ""}])
+
+    def child(self):
+        return next(p for p in self.projects if p.get("parent"))
+
+    def swap_for_a_symlink(self):
+        """What the scan cannot see: the directory it listed, replaced after it listed it."""
+        path = self.child()["cwd"]
+        os.rmdir(path)
+        os.symlink(self.outside, path)
+
+    def test_a_real_directory_under_its_root_is_allowed(self):
+        self.assertTrue(child_path_ok(self.child(), self.projects))
+
+    def test_a_directory_swapped_for_a_symlink_after_the_scan_is_refused(self):
+        self.swap_for_a_symlink()
+        self.assertFalse(child_path_ok(self.child(), self.projects))
+
+    def test_a_directory_that_has_gone_away_is_refused(self):
+        os.rmdir(self.child()["cwd"])
+        self.assertFalse(child_path_ok(self.child(), self.projects))
+
+    def test_a_file_project_is_not_asked_about_its_symlinks(self):
+        # Authorised by the file itself; a user who points their own config at one meant it.
+        root = next(p for p in self.projects if not p.get("parent"))
+        self.assertTrue(child_path_ok(root, self.projects))
+
+    def test_a_child_whose_root_is_gone_is_refused(self):
+        self.assertFalse(child_path_ok(self.child(), [self.child()]))
+
+    def test_a_start_into_a_swapped_directory_is_refused(self):
+        self.swap_for_a_symlink()
+        plan, err = start_agent.validate_start_request(
+            {"type": "start_agent", "name": "claude", "role": "agent",
+             "project_id": self.child()["id"], "placement": "new_workspace"},
+            self.projects, [], ["claude"])
+        self.assertIsNone(plan)
+        self.assertIn("no longer inside its root", err)
+
+    def test_open_terminal_is_refused_by_the_same_guard(self):
+        # Both routes go through _placement_plan, which is the whole reason the check sits there.
+        self.swap_for_a_symlink()
+        plan, err = start_agent.validate_open_terminal(
+            {"type": "open_terminal", "project_id": self.child()["id"],
+             "placement": "new_workspace"},
+            self.projects, [])
+        self.assertIsNone(plan)
+        self.assertIn("no longer inside its root", err)
+
+    def test_both_routes_still_work_before_the_swap(self):
+        # Or the two refusals above would pass against a guard that refuses everything.
+        for call, msg in (
+            (start_agent.validate_open_terminal,
+             {"type": "open_terminal", "project_id": self.child()["id"],
+              "placement": "new_workspace"}),
+        ):
+            plan, err = call(msg, self.projects, [])
+            self.assertIsNone(err)
+            self.assertEqual(plan["cwd"], os.path.join(self.root, "webapp"))

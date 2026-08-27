@@ -512,6 +512,9 @@ PROJECTS = FILE_PROJECTS + child_projects(FILE_PROJECTS)
 PROJECT_RESCAN_MS = 60_000
 _projects_stamp = ()
 _projects_listed = 0.0
+# Directories under a root that exist and are not projects, as (root, name, reason). Kept so the
+# reason is logged when it first appears and not once a minute for as long as it is true.
+_projects_skipped = ()
 
 # Write extensions (P2 start_agent) spawn processes on this machine and on any configured
 # SSH target, so an unauthenticated listener that reaches them is process spawn granted to the
@@ -1407,7 +1410,7 @@ def refresh_projects():
     roster that already works, and taking it down over a typo would cost every connected client
     its session to punish a text editor.
     """
-    global PROJECTS, FILE_PROJECTS, _projects_stamp, _projects_listed
+    global PROJECTS, FILE_PROJECTS, _projects_stamp, _projects_listed, _projects_skipped
     if not PROJECTS_PATH:
         return False
     now = time.monotonic() * 1000
@@ -1423,7 +1426,16 @@ def refresh_projects():
         # says. The roster in hand is the last one that parsed.
         log.warning("Projects config not reloaded: %s", e)
     before = public_projects(PROJECTS)
-    PROJECTS = FILE_PROJECTS + child_projects(FILE_PROJECTS)
+    skipped = []
+    PROJECTS = FILE_PROJECTS + child_projects(
+        FILE_PROJECTS, note=lambda *row: skipped.append(row))
+    # A directory somebody made that did not become a project is a surprise to them and to nobody
+    # else, so it is said once, when it becomes true. Logged rather than fatal: one stray name
+    # must not cost every other project its refresh.
+    if tuple(skipped) != _projects_skipped:
+        _projects_skipped = tuple(skipped)
+        for root_id, name, reason in skipped:
+            log.warning("Project directory %s/%s is not listed: %s", root_id, name, reason)
     return public_projects(PROJECTS) != before
 
 
