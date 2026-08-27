@@ -25,8 +25,12 @@ mid-way through — these rows are minutes to weeks old.
     uv run scripts/repair_record.py                     # what would change
     uv run scripts/repair_record.py --apply             # change it
     uv run scripts/repair_record.py --drop-echoes       # also drop rows that are *only* an echo
+    uv run scripts/repair_record.py --dupes             # a third fault: the same message recorded
+                                                        # twice on one pane, when a block boundary
+                                                        # moved between two reads. See `dupes`.
 """
 import argparse
+import collections
 import json
 import os
 import re
@@ -39,7 +43,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
-from conversation_log import SENT_LOOKBACK, _key, _split_echo   # noqa: E402
+from conversation_log import (ANCHOR_CONTEXT, SENT_LOOKBACK,     # noqa: E402
+                              _is_echo, _key, _split_echo, _who)
 from pane_summary import pane_messages                          # noqa: E402
 
 DEFAULT_DB = ROOT / ".herdr-remote" / "arbitration.sqlite3"
@@ -136,6 +141,57 @@ def plan(conn, drop_echoes):
     return out
 
 
+def dupes(conn):
+    """Rows the writer would not write today: the same message recorded twice on one pane.
+
+    Two faults, both of them a block boundary that moved between two reads of the same pane:
+
+      * the window re-blocked what the record holds as separate messages, so no offset aligned and
+        the last-resort rule wrote the closing block a second time — 938 identical bytes, three
+        minutes apart, in the session this was measured on;
+      * a prompt was echoed back with screen caught under it in the same block, so its key was the
+        send's key plus a tail and the equality test for an echo missed it.
+
+    Both are fixed in `conversation_log` for rows written from now on. This is the same predicate,
+    replayed over the rows already in the table, so what it leaves behind is what the fixed writer
+    would have produced.
+
+    Bounded exactly as the writer is bounded: a row is compared against the last ANCHOR_CONTEXT
+    messages read off *that pane* and the last SENT_LOOKBACK prompts sent to it, and against
+    nothing else. That bound is the whole safety argument — an agent that genuinely says the same
+    thing again an hour and forty turns later is not inside it, and is kept. Measured over the live
+    record: of 218 exact-key pairs within five rows of each other, 35 were more than an hour apart.
+
+    Exact tests only, no similarity score. Every real duplicate measured was either an exact key
+    match or an exact prefix; 661 pairs scored above 0.80 similarity and were different messages,
+    two of them sharing no common prefix at all. A threshold would delete those.
+
+    A row this relay *sent* is never a candidate: it is the relay's own record of what it typed,
+    and it is the copy that should survive. The lowest id always wins.
+    """
+    out = []
+    kept = collections.defaultdict(
+        lambda: (collections.deque(maxlen=ANCHOR_CONTEXT), collections.deque(maxlen=SENT_LOOKBACK)))
+    for row in conn.execute("SELECT * FROM turns WHERE text != '' ORDER BY id"):
+        anchor, sent = kept[row["pane_id"]]
+        who, key = _who(row["kind"]), _key(row["text"])
+        if row["at_src"] == "sent":
+            if who == "user":
+                sent.append((key, row["id"], row["at"]))
+            continue
+        hit = next((a for a in reversed(anchor) if a[0] == (who, key)), None) \
+            or (next((s for s in reversed(sent) if _is_echo(key, {s[0]})), None)
+                if who == "user" else None)
+        if hit:
+            # What it matched and how long ago, because that is the one thing the reviewer cannot
+            # work out from the row itself — and the gap is what separates a window read twice in
+            # one turn from an agent that really did say the same words again the next morning.
+            out.append(("dupe", row, f"id={hit[1]}, {round((row['at'] - hit[2]) / 1000)}s earlier"))
+            continue
+        anchor.append(((who, key), row["id"], row["at"]))
+    return out
+
+
 def snapshot(conn, db):
     """sqlite's own backup, not a file copy: this database runs in WAL mode under a live relay, and
     the pages a copy of the main file would miss are exactly the newest turns in it."""
@@ -151,7 +207,8 @@ def show(actions):
         print(f"  [{kind}] id={row['id']} {row['agent']} {row['pane_id']} "
               f"{row['label'] or '-'}  {one[:80]}")
         if new:
-            print(f"          keeps: {' '.join(new.split())[:80]}")
+            print(f"          {'keeps' if kind == 'split' else 'matched'}: "
+                  f"{' '.join(new.split())[:80]}")
 
 
 def apply(conn, actions):
@@ -284,6 +341,10 @@ def self_check():
         ("user", prompt, (1, 4)), ("agent", "### It passes.", (1, 4))]
     assert is_echo(prompt, [prompt])
     assert not is_echo("### It passes.", [prompt])
+    # The two duplicate shapes, and the two things that must survive them.
+    assert _is_echo(_key(prompt + "\nb1759cb fix(backup): publish only complete copies"),
+                    {_key(prompt)})
+    assert not _is_echo(_key("continue with the footer"), {_key("continue")})
     print("self-check ok")
 
 
@@ -293,6 +354,8 @@ def main():
     ap.add_argument("--apply", action="store_true", help="write the changes (a copy is kept)")
     ap.add_argument("--drop-echoes", action="store_true",
                     help="also delete rows that are only a prompt echo, with nothing said under it")
+    ap.add_argument("--dupes", action="store_true",
+                    help="delete rows the same pane already had, instead of the repairs above")
     ap.add_argument("--self-check", action="store_true", help="prove the rules and exit")
     ap.add_argument("--backfill", metavar="PANE_ID",
                     help="read this pane and add the messages the record has no row for")
@@ -310,10 +373,14 @@ def main():
         if not args.apply:
             print("\nDry run. Pass --apply to write.")
         return
-    actions = plan(conn, args.drop_echoes)
-    counts = {k: sum(1 for a in actions if a[0] == k) for k in ("chrome", "split", "echo")}
-    print(f"{args.db}: {counts['split']} merged, {counts['chrome']} chrome, "
-          f"{counts['echo']} echo-only")
+    if args.dupes:
+        actions = dupes(conn)
+        print(f"{args.db}: {len(actions)} duplicate row(s)")
+    else:
+        actions = plan(conn, args.drop_echoes)
+        counts = {k: sum(1 for a in actions if a[0] == k) for k in ("chrome", "split", "echo")}
+        print(f"{args.db}: {counts['split']} merged, {counts['chrome']} chrome, "
+              f"{counts['echo']} echo-only")
     show(actions)
     if not actions or not args.apply:
         print("\nDry run. Pass --apply to write." if actions else "\nNothing to repair.")

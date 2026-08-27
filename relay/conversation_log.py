@@ -85,6 +85,21 @@ SENT_LOOKBACK = 4
 ECHO_EDGE = 40
 
 
+def _is_echo(key, sent):
+    """Whether a window message is one of these prompts, with or without screen caught under it.
+
+    Equality alone is not enough. A prompt is echoed at the foot of the pane, so whatever the
+    terminal draws *under* it — a tool's output, a status line, the harness's own footer — can end
+    up inside the same block, and the echo is then the prompt plus a tail. Measured against the
+    live record: every such pair was an exact prefix, never a fuzzy match, with 34 to 573 extra
+    characters. So this is still an exact test, taken at one end instead of both.
+
+    Floored at ECHO_EDGE, because a short prompt is a prefix of half of what an agent ever says:
+    without it "continue" would swallow every message that happens to begin with the word.
+    """
+    return key in sent or any(len(s) >= ECHO_EDGE and key.startswith(s) for s in sent)
+
+
 def _cut_at(text, count):
     """The offset in `text` just past its `count`th non-whitespace character.
 
@@ -156,7 +171,7 @@ def _aligns(fresh, i, keys, said=()):
     """
     j = i
     for who, key in reversed(keys):
-        while j >= 0 and fresh[j][0] == "user" and _key(fresh[j][1]) in said:
+        while j >= 0 and fresh[j][0] == "user" and _is_echo(_key(fresh[j][1]), said):
             j -= 1
         if j < 0:
             return True
@@ -506,13 +521,22 @@ class ConversationLog:
             for i in range(len(fresh) - 1, -1, -1):
                 if _aligns(fresh, i, keys, echoes):
                     return [m for m in fresh[i + 1:]
-                            if not (m[0] == "user" and _key(m[1]) in said)]
+                            if not (m[0] == "user" and _is_echo(_key(m[1]), said))]
         # The window cannot be placed against the record: a `/clear`, a record holding nothing read
         # off this pane, or a message whose text changed. The last-block rule cannot see an input
         # made mid-turn, but it does see the turn — and a turn recorded without its interruptions
         # beats a turn not recorded.
         said = self._trailing_user_keys(pane)
-        return [m for m in turn_messages(fresh) if not (m[0] == "user" and _key(m[1]) in said)]
+        # The anchor could not be placed, but it is still the newest few things this pane is known
+        # to have said — so a block reproducing one of them is not new, whatever the window did to
+        # the boundaries around it. This is the case a moved block boundary lands in: the record
+        # holds messages the re-blocked window can no longer produce separately, so no offset
+        # aligns, and without this the turn above is written a second time. Bounded to
+        # ANCHOR_CONTEXT rows, which is what keeps an agent that genuinely repeats itself an hour
+        # later recorded rather than swallowed.
+        return [m for m in turn_messages(fresh)
+                if (m[0], _key(m[1])) not in keys
+                and not (m[0] == "user" and _is_echo(_key(m[1]), said))]
 
     @staticmethod
     def _fingerprint(pane):

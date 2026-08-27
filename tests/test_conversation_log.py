@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "relay"))
 
 from conv_query import FINGERPRINTS_MAX, fingerprints_from, open_ro, query
-from conversation_log import TAIL_MAX, TEXT_MAX, ConversationLog
+from conversation_log import TAIL_MAX, TEXT_MAX, ConversationLog, _key
 from pane_summary import TURN_END_STATES, ends_turn
 
 
@@ -223,6 +223,60 @@ class Capture(Log):
         self.assertEqual(self.log.record_turn_end(PANE, content, "done", "idle"), [])
         rows, _ = self.log.query()
         self.assertEqual(1, len([r for r in rows if r["text"] == "Good to go."]))
+
+    def test_a_block_that_moved_does_not_re_record_what_the_anchor_still_names(self):
+        # The 2945/2947 case. Between two reads the pane re-wrapped and what had been three
+        # messages came back as one block. The record still held the old three, so the anchor named
+        # a run the window could no longer produce, alignment failed at every offset, and the
+        # last-resort rule wrote the merged block a second time — 938 bytes, identical, three
+        # minutes later. The turn was recorded, so `wrote` was true, and the arbitrator was woken
+        # by the duplicate.
+        #
+        # The anchor cannot be repaired here: the record's messages really are gone from the pane.
+        # What is still true is that its newest few rows are the newest things this pane is known
+        # to have said, so a block reproducing one of them is not new.
+        head = ["⏺ Working on it.", "", "⏺ Bash(git status --short)", "  ⎿  M web/index.html", ""]
+        apart = "\n".join(head + [
+            "❯ continue", "", "⏺ Model changed to gpt-5.6-terra high", "",
+            "⏺ Ready. Name the change.", "",
+        ])
+        merged_text = "continue\nModel changed to gpt-5.6-terra high\nReady. Name the change."
+        together = "\n".join(head + [
+            "⏺ continue", "  Model changed to gpt-5.6-terra high", "  Ready. Name the change.", "",
+        ])
+        self.assertTrue(self.log.record_turn_end(PANE, apart, "working", "idle"))
+        self.assertTrue(self.log.record_turn_end(PANE, together, "working", "done"))
+        # A prompt lands between the two transitions, which is what made the pane change at all —
+        # an unchanged pane is stopped a step earlier and never reaches the anchor.
+        self.log.record(agent="claude", pane_id="%1", cwd="/tmp/proj", label="Architect 1",
+                        kind="human_prompt", origin="human_web", at_src="sent", text="carry on")
+        after = "\n".join([together, "❯ carry on", ""])
+        self.assertEqual(self.log.record_turn_end(PANE, after, "done", "idle"), [])
+        rows, _ = self.log.query(last=50)
+        self.assertEqual(1, len([r for r in rows if _key(r["text"]) == _key(merged_text)]))
+
+    def test_a_prompt_echoed_with_screen_under_it_is_still_the_prompt(self):
+        # The 2946/2948 case. The relay's own send was 1023 characters; the pane echoed it with 80
+        # characters of screen caught in the same block — a commit line and a "+8 lines" hint — so
+        # the echo's key was the send's key plus a tail, and a test for equality missed it. Every
+        # such pair measured over the live record was an exact prefix, so the test is still exact.
+        prompt = ("Check the footer change on mobile and report back with what you see at 390 "
+                  "columns, then stop and wait for me before touching anything else.")
+        self.log.record(agent="claude", pane_id="%1", cwd="/tmp/proj", label="Architect 1",
+                        kind="human_prompt", origin="human_web", at_src="sent", text=prompt)
+        content = "\n".join([
+            "⏺ Bash(git status --short)", "  ⎿  M web/index.html", "",
+            "❯ " + prompt,
+            "  b1759cb fix(backup): publish only complete copies",
+            "  … +8 lines (ctrl+o to expand)", "",
+            "⏺ Good to go.", "",
+        ])
+        self.log.record_turn_end(PANE, content, "working", "idle")
+        rows, _ = self.log.query(last=50)
+        said = [r for r in rows if _key(prompt) in _key(r["text"])]
+        self.assertEqual(1, len(said), [r["at_src"] for r in said])
+        self.assertEqual("sent", said[0]["at_src"])
+        self.assertTrue(any(r["text"] == "Good to go." for r in rows))
 
     def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
         # N4. The relay knows a person put those words in the pane and does not know which person;
