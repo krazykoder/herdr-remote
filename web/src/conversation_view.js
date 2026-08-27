@@ -890,7 +890,7 @@
             // not — but only where there was something to deliver. A gate that sends nothing on
             // purpose has always been drawn with this badge, and it says the opposite of the
             // truth: `call_human` and `hold` are the loop working.
-            (e.delivered ? '' : '<span class="conv-commit warn">not confirmed</span>') +
+            ((e.delivered || e.noSend) ? '' : '<span class="conv-commit warn">not confirmed</span>') +
             '</div>';
           last = at;
           return `<div class="conv-arb"><span class="conv-arb-who">${arbSign(13)} ` +
