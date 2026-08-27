@@ -4738,6 +4738,43 @@ test('a strip too narrow for its projects opens out into a list', async ({page})
   await expect(page.locator('#projectChips .chip').nth(1)).toHaveText('proj-17');
 });
 
+// Two lists in one container, each with its own switch. Only a page can see that they stay
+// independent, and that a snapshot arriving afterwards does not take the mode with it.
+test('compact is one line a card, per list, and is remembered', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await startable(page);
+  await page.evaluate(() => render());
+  const project = page.locator('#agents .agent.project-card').first();
+  const session = page.locator('#agents .agent:not(.project-card)').first();
+  const tallProject = (await project.boundingBox()).height;
+  const tallSession = (await session.boundingBox()).height;
+
+  await page.locator('.projects-header')
+    .getByRole('button', {name: 'Compact projects'}).click();
+  await expect(page.locator('#agents')).toHaveClass(/projects-compact/);
+  expect((await project.boundingBox()).height).toBeLessThan(tallProject);
+  // One switch, one list: the sessions below are untouched.
+  expect((await session.boundingBox()).height).toBe(tallSession);
+
+  await page.getByRole('button', {name: 'Compact sessions'}).click();
+  await expect(page.locator('#agents')).toHaveClass(/agents-compact/);
+  expect((await session.boundingBox()).height).toBeLessThan(tallSession);
+  // The path goes; what the session is stays.
+  await expect(session.locator('.cwd')).toBeHidden();
+  await expect(session.locator('.meta')).toBeVisible();
+
+  // A snapshot redraws #agents from scratch every couple of seconds, so the class has to be put
+  // back by the draw rather than left where the click hung it.
+  await page.evaluate(() => render());
+  await expect(page.locator('#agents')).toHaveClass(/agents-compact/);
+
+  await page.reload();
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await expect(page.locator('#agents')).toHaveClass(/projects-compact/);
+  await expect(page.locator('#agents')).toHaveClass(/agents-compact/);
+});
+
 test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
   await open(page);
   await startable(page);

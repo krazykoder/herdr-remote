@@ -2876,6 +2876,23 @@
 
     .conv-glyph { display: block; }
 
+    /* The Project card's folder, sized and seated like the agent card's robot so the two lists
+       read as one column. Blue rather than the agent's pink or the conversation's green: three
+       kinds of card on one page, three marks, and the colour is half of what tells them apart. */
+    .project-kind {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 6px;
+      color: var(--blue);
+    }
+
+    .project-glyph {
+      width: 1.05em;
+      height: 1.05em;
+      vertical-align: -0.15em;
+      flex-shrink: 0;
+    }
+
     .order-row .info,
     .pair-pick .info {
       flex: 1;
@@ -3253,6 +3270,42 @@
       font-size: 0.7rem;
       color: var(--muted);
       margin-top: 2px;
+    }
+
+    /* Compact: one line a card. The name and what it is on the same line, and the second line's
+       prose gone — the working directory under a session, the session count under a Project. Both
+       lists live in #agents, so the switch is a class on the container and the card says which
+       list it belongs to. See compactButton in utils.js. */
+    #agents.projects-compact .agent.project-card,
+    #agents.agents-compact .agent:not(.project-card) {
+      padding: 8px 12px;
+      margin-bottom: 6px;
+    }
+
+    #agents.projects-compact .agent.project-card .info,
+    #agents.agents-compact .agent:not(.project-card) .info {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    /* Both halves clip rather than wrap: a card that grows a second line in compact mode is the
+       one thing this mode is for stopping. */
+    #agents.projects-compact .agent.project-card .project,
+    #agents.projects-compact .agent.project-card .meta,
+    #agents.agents-compact .agent:not(.project-card) .project,
+    #agents.agents-compact .agent:not(.project-card) .meta {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 0;
+    }
+
+    /* The path is the first thing to go: it is the longest part of the line and the least of what
+       a name is recognised by. The harness badge beside it stays. */
+    #agents.agents-compact .agent:not(.project-card) .cwd {
+      display: none;
     }
 
     /* Terminal view */

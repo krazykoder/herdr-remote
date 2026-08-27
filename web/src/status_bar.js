@@ -1046,7 +1046,22 @@
       applySections();
     }
 
+    // Compact is one line a card: the name and its badge, without the path under an agent or the
+    // session note under a Project. Two keys and not one, because the two lists share #agents and
+    // are read at different lengths — twenty projects is a keypad, twenty sessions is a feed.
+    // See compactButton in utils.js.
+    const PROJECTS_COMPACT_KEY = 'herdr_projects_compact';
+
     function renderBodyMain() {
+      // Set from storage on every draw rather than toggled where the buttons are: a snapshot
+      // arriving two seconds later rewrites this element, and a class hung on it by a click would
+      // go with it. Here it survives, whichever of the branches below draws the page.
+      const box = document.getElementById('agents');
+      if (box) {
+        box.classList.toggle('projects-compact', compactOn(PROJECTS_COMPACT_KEY));
+        box.classList.toggle('agents-compact',
+          typeof AGENTS_COMPACT_KEY === 'string' && compactOn(AGENTS_COMPACT_KEY));
+      }
       if (projects.length) { renderProjects(); return; }
       const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
       if (workspaces.length <= 1) {
@@ -1071,6 +1086,9 @@
       // off its right the way Reorder tabs and + hang off the Agents header. The chips go on their
       // own line under it: they are a filter over what follows, not part of its title.
       html += `<div class="section-header projects-header">Projects`
+        // Compact first, + last: the same right-hand order the Launcher header uses, because + is
+        // the one that makes something rather than changing how what is there is read.
+        + (picks.length ? compactButton(PROJECTS_COMPACT_KEY, 'renderBody', 'Compact projects') : '')
         + (startOptions && projects.some(p => p.root)
           ? '<button class="section-action" onclick="openNewProject(event)">+ Project</button>' : '')
         + `</div>`;
@@ -1163,6 +1181,16 @@
 
     window.addEventListener('resize', syncProjectOverflow);
 
+    // The mark a Project card leads with, the way an agent card leads with its robot and a
+    // conversation card with its bubble: a folder, which is what a Project is on disk. Inline, like
+    // both of those — one file, no request, and it takes the colour it is given.
+    function projectGlyph() {
+      return '<svg class="project-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="M3 7.5a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.7.9l.8 1.2H19a2 2 0 0 1 2 2v8.9a2 2 0 0 1'
+        + '-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+    }
+
     function projectCard(p) {
       const list = agents.filter(a => a.project_id === p.id);
       // Counted apart and said apart. One number covering both read as "N needs you" over a
@@ -1183,9 +1211,9 @@
       const start = startOptions
         ? `<button class="chip chip-add" aria-label="Start session in ${p.label}" onclick="openStartDialog('${p.id}',event)">+ Start</button>`
         : '';
-      return `<div class="agent" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
+      return `<div class="agent project-card" role="button" tabindex="0" aria-label="${p.label}, ${meta}" onclick="selectProject('${p.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectProject('${p.id}')}">
     <span class="dot" style="background:${color}" aria-hidden="true"></span>
-    <div class="info"><div class="project">${p.label}${host}</div><div class="meta">${meta}</div></div>
+    <div class="info"><div class="project"><span class="project-kind" aria-hidden="true">${projectGlyph()}</span>${p.label}${host}</div><div class="meta">${meta}</div></div>
     ${start}
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;

@@ -231,7 +231,7 @@
       const color = statusColor(a);
       const pulseClass = a.status === 'working' ? ' pulse' : '';
       const host = a.host && a.host !== 'local' ? ` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>` : '';
-      const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
+      const cwd = a.cwd ? `<span class="cwd" style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
       // Escaped once here rather than at each aria-label: a pane can be renamed to anything with a
       // quote in it, and an attribute that breaks out of itself is not a cosmetic bug.
       const label = escapeHtml(paneLabel(a));
@@ -286,6 +286,8 @@
     // group is currently on top, so it stays visible without a second heading above status groups.
     // Appended after the list is written rather than built into section(), which has no way of
     // knowing which of its calls came first.
+    const AGENTS_COMPACT_KEY = 'herdr_agents_compact';
+
     function addOrderButton() {
       // Not simply the first heading: the Projects strip draws one above every agent group, and
       // these two buttons are about the tab strip and the agents in it.
@@ -298,6 +300,8 @@
       // has to be.
       const filter = agentKindsHtml(agents);
       if (filter) header.insertAdjacentHTML('afterend', filter);
+      header.insertAdjacentHTML('beforeend',
+        compactButton(AGENTS_COMPACT_KEY, 'renderBody', 'Compact sessions'));
       header.insertAdjacentHTML('beforeend',
         '<button class="section-action" onclick="openOrder()"' +
         ' title="The order of the tab strip. The cards below are newest-first."' +
