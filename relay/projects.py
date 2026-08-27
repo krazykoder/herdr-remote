@@ -95,6 +95,16 @@ def load_projects(path, valid_hosts=()):
         if marker and not children:
             raise ProjectConfigError(f"{where} ({pid}): marker means nothing without children")
 
+        # A root that is only a place for projects rather than one itself. Display only: it is
+        # still scanned, still takes new children, and still names any pane that sits directly in
+        # it — a pane has to be called something. All it says is "do not offer this as somewhere
+        # to start", which is the whole of what a root used for nothing else was wrong about.
+        container = entry.get("container", False)
+        if not isinstance(container, bool):
+            raise ProjectConfigError(f"{where} ({pid}): container must be true or false")
+        if container and not children:
+            raise ProjectConfigError(f"{where} ({pid}): container means nothing without children")
+
         host = entry.get("host", "local")
         if host not in allowed_hosts:
             raise ProjectConfigError(
@@ -133,7 +143,7 @@ def load_projects(path, valid_hosts=()):
         seen_ids.add(pid)
         seen_roots.add((host, cwd))
         projects.append({"id": pid, "label": label, "cwd": cwd, "host": host,
-                         "children": children, "marker": marker})
+                         "children": children, "marker": marker, "container": container})
     return projects
 
 
@@ -318,6 +328,35 @@ def make_child_dir(cwd, root):
     return None
 
 
+def create_child(name, root_id, projects):
+    """Make a directory under a root so the next scan adopts it as a Project.
+
+    Returns (project, error). The row returned is the row that scan will build, and the only
+    thing written is the directory — which is what keeps this the same mechanism as a start
+    naming a `child` and as somebody typing mkdir in the root: three doors, one registration.
+    """
+    root = next((p for p in projects
+                 if p["id"] == root_id and p["host"] == "local" and p.get("children")), None)
+    if root is None:
+        return None, "unknown root"
+    # makedirs would create the root itself just as happily. A root that is not there is a config
+    # pointing somewhere that moved, and making it back is not this function's decision.
+    if not os.path.isdir(root["cwd"]):
+        return None, "that root is no longer a directory"
+    project, create, err = child_target(name, root, projects)
+    if err:
+        return None, err
+    if create:
+        err = make_child_dir(project["cwd"], root["cwd"])
+        if err:
+            return None, err
+        # exist_ok is satisfied by a symlink to a directory, so the question child_target asked
+        # before the mkdir is asked once more after it.
+        if not child_path_ok(project, projects):
+            return None, "that name is not a directory inside this root"
+    return project, None
+
+
 def resolve_project_id(cwd, host, projects):
     """Return the id of the longest same-host configured root containing cwd, else None.
 
@@ -372,7 +411,8 @@ def public_projects(projects):
     """
     return [dict({"id": p["id"], "label": p["label"], "host": p["host"]},
                  **({"parent": p["parent"]} if p.get("parent") else {}),
-                 **({"root": True} if p.get("children") and not p.get("marker") else {}))
+                 **({"root": True} if p.get("children") and not p.get("marker") else {}),
+                 **({"container": True} if p.get("container") else {}))
             for p in projects]
 
 

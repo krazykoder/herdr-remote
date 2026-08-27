@@ -103,6 +103,41 @@
     let activeWorkspace = null;
     let activeTab = null;
     let projects = [], activeProject = null;
+
+    // Which Projects to put first. A roster derived from a directory listing is in whatever order
+    // the config file and the filesystem happened to produce, and past about a dozen entries the
+    // one you want is off the end of a strip you have to swipe. Most-recently-picked first, and
+    // everything else in roster order behind it — sort is stable, so a browser that has picked
+    // nothing sees exactly what it saw before this existed.
+    //
+    // This browser's own list, in localStorage and not in shared state: which Projects *this*
+    // hand reaches for is not a fact about the work, and a phone and a laptop disagreeing about
+    // it is each of them being right.
+    const PROJECT_RECENT_KEY = 'herdr_project_recent';
+    const PROJECT_RECENT_MAX = 32;
+
+    function projectRecent() {
+      try {
+        const v = JSON.parse(localStorage.getItem(PROJECT_RECENT_KEY) || '[]');
+        return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
+      } catch (e) { return []; }
+    }
+
+    function noteProjectUse(id) {
+      if (!id) return;
+      const next = [id, ...projectRecent().filter(x => x !== id)].slice(0, PROJECT_RECENT_MAX);
+      try { localStorage.setItem(PROJECT_RECENT_KEY, JSON.stringify(next)); }
+      catch (e) { /* private mode: this session only */ }
+    }
+
+    // Containers are dropped: a root marked that way is a place projects live rather than one to
+    // work in. It stays on the roster — a pane sitting directly in it still has to be named
+    // something — it is simply never offered as somewhere to go.
+    function projectsForPicking() {
+      const rank = projectRecent();
+      const at = p => { const i = rank.indexOf(p.id); return i < 0 ? Infinity : i; };
+      return projects.filter(p => !p.container).sort((a, b) => at(a) - at(b));
+    }
     // Absence of start_options is the feature gate: no message, no Start session control.
     // startMode is which of the two things the shared dialog is currently asking about.
     let startOptions = null, startProjectId = null, startMode = 'agent';

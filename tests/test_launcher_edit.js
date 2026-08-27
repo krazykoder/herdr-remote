@@ -49,6 +49,9 @@ function editor({tiles = [], projects = PROJECTS, startOptions = OPTIONS, confir
     console, JSON, Set, Math, Array, Object, String,
     SEND_TEXT_MAX: 4000,
     projects, startOptions,
+    // utils.js's: which Projects are offered and in what order. Order is that module's business
+    // and is covered there; what matters here is that a container root is never offered.
+    projectsForPicking: () => projects.filter(p => !p.container),
     localStorage: {
       getItem: k => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },

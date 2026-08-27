@@ -4679,6 +4679,35 @@ test('a root offers a new folder to start in, and nothing else does', async ({pa
     .toBe(false);
 });
 
+// The other door into a root: a Project made without starting anything in it. A vm slice sees
+// the message; only a page sees that the chip is in the strip and the sheet it opens is there.
+test('a root takes a new project without starting anything in it', async ({page}) => {
+  // The agent list rather than a pane: the Projects strip is what this test is about, and open()
+  // goes straight into a pane, where the strip is drawn but not on screen.
+  await page.goto('/');
+  await expect(page.locator('#agents .agent').first()).toBeVisible();
+  await startable(page);
+  await tapWire(page);
+  await page.evaluate(() => {
+    projects.push({id: 'root1', label: 'Common', host: 'local', root: true});
+    projects.push({id: 'box', label: 'Box', host: 'local', root: true, container: true});
+    render();
+  });
+  // A container root is a place projects live, not one to work in: no chip, no card.
+  await expect(page.locator('.chip-strip button.chip', {hasText: 'Common'})).toBeVisible();
+  await expect(page.locator('.chip-strip button.chip', {hasText: 'Box'})).toHaveCount(0);
+
+  await page.locator('button.chip', {hasText: '+ Project'}).click();
+  await expect(page.locator('#newProjectSheet')).toBeVisible();
+  // Two roots, so the sheet asks which one — and Box is a root even though it is no Project.
+  await expect(page.locator('#newProjectRootRow .badge')).toHaveText(['Common', 'Box']);
+  await page.locator('#newProjectRootRow .badge', {hasText: 'Box'}).click();
+  await page.locator('#newProjectName').fill('notes');
+  await page.locator('#newProjectSubmit').click();
+  expect(await page.evaluate(() => window.__sent.find(m => m.type === 'create_project')))
+    .toEqual({type: 'create_project', project_id: 'box', name: 'notes'});
+});
+
 test('the Start sheet starts as a role too, and remembers which', async ({page}) => {
   await open(page);
   await startable(page);

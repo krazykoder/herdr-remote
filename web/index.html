@@ -8441,6 +8441,33 @@
 
   <!-- Start session, and New terminal — one sheet, because the questions are the same ones
      minus the agent. Rendered only when the relay advertises start_options. -->
+  <!-- Making a Project is making a directory under a root and nothing else — no agent, no pane,
+       no placement to answer. Its own small sheet rather than a third mode of the start sheet:
+       every other field there is a question about a session, and a sheet that hid all of them
+       would be this one wearing the other's markup. -->
+  <div id="newProjectSheet" class="app-overlay" style="display:none;z-index:100;">
+    <div onclick="closeNewProject()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
+    <div
+      style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:420px;max-height:80dvh;overflow-y:auto;background:var(--surface);border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,8px)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:0.8rem;font-weight:600;flex:1">New project</span>
+        <button onclick="closeNewProject()" aria-label="Close"
+          style="background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+        <!-- Drawn only when there is a choice to make: one root is not a question. -->
+        <div id="newProjectRootRow" hidden style="display:none"></div>
+        <label class="start-field">Folder name<input id="newProjectName" type="text" maxlength="64"
+            autocapitalize="none" autocomplete="off" placeholder="what this project is called"
+            onkeydown="if(event.key==='Enter')submitNewProject()" /></label>
+        <p id="newProjectError" style="display:none;color:var(--red);font-size:0.75rem;margin:0"></p>
+        <button id="newProjectSubmit" onclick="submitNewProject()"
+          style="padding:12px;border-radius:8px;border:none;background:var(--blue);color:var(--bg);font-weight:600;font-size:0.85rem;cursor:pointer">Create
+          project</button>
+      </div>
+    </div>
+  </div>
+
   <div id="startSheet" class="app-overlay" style="display:none;z-index:100;">
     <div onclick="closeStart()" style="position:absolute;inset:0;background:rgba(0,0,0,0.5)"></div>
     <div

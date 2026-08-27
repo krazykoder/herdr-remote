@@ -768,6 +768,9 @@
           if (typeof launcherFailed === 'function') launcherFailed();
         }
       }
+      else if (msg.type === 'command_result' && msg.command === 'create_project') {
+        newProjectResult(msg);
+      }
       else if (msg.type === 'command_result' && msg.command === 'set_slot') {
         if (!msg.ok) { showToast(msg.error || 'Could not adjust the pane'); }
         else if (activePane === msg.pane_id) {
@@ -1063,13 +1066,21 @@
       let html = hoistHtml(ofKind(agents));
       html += `<div class="chip-strip"><span class="chip-label">Projects</span>`;
       html += `<button class="chip${activeProject === null ? ' active' : ''}" onclick="selectProject(null)">All</button>`;
-      for (const p of projects) {
+      // Most-recently-picked first, containers left out. Same list drives the cards below, so the
+      // strip and what it filters never disagree about which order Projects are in.
+      const picks = projectsForPicking();
+      for (const p of picks) {
         const list = agents.filter(a => a.project_id === p.id);
         html += `<button class="chip${activeProject === p.id ? ' active' : ''}${alertClass(groupKind(list))}" onclick="selectProject('${p.id}')">${p.label}</button>`;
       }
+      // Last in the strip, and only where a start is possible at all: a Project is made by making
+      // a directory under a root, which is a write on the relay's machine like any other.
+      if (startOptions && projects.some(p => p.root)) {
+        html += `<button class="chip chip-add" onclick="openNewProject(event)">+ Project</button>`;
+      }
       html += `</div>`;
       if (activeProject === null) {
-        html += projects.map(projectCard).join('');
+        html += picks.map(projectCard).join('');
         // Every agent, flat, exactly the way Terminals are listed below it. A Project card is a
         // filter, not the only door in: a session visible in a card's count was two taps away and
         // is now one. Whatever needs you is already hoisted to the top, so it is not repeated.
@@ -1245,7 +1256,13 @@
 
     // A workspace ID from one Project means nothing under another, and leaving it set
     // silently filters the new Project down to nothing.
-    function selectProject(id) { activeProject = id; activeWorkspace = null; activeTab = null; render(); }
+    function selectProject(id) {
+      activeProject = id;
+      noteProjectUse(id);   // null is "All", which is not a Project and is never remembered
+      activeWorkspace = null;
+      activeTab = null;
+      render();
+    }
     function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
     function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
     function selectTab(id) { activeTab = id; render(); }

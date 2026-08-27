@@ -28,7 +28,8 @@ const PANE = {
 function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'agent'], agents: ['claude', 'codex']}, pairs = [], starter = '', store = {}} = {}) {
   const els = {};
   const el = id => els[id] || (els[id] =
-    {id, value: '', textContent: '', hidden: false, style: {}, options: [], disabled: false});
+    {id, value: '', textContent: '', hidden: false, style: {}, options: [], disabled: false,
+     innerHTML: '', focus() {}});
   const sent = [];
   const calls = [];
   const live = pane ? [pane] : [];
@@ -79,6 +80,10 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     agentConfigLive: (id, kind) => (options && (options.configs || [])
       .some(c => c.id === id && c.kind === kind)),
     showToast: t => calls.push(['toast', t]),
+    // status_bar.js's, which this slice does not load: which Project the strip is filtered to,
+    // and the one call the new-project sheet makes back into it.
+    activeProject: null,
+    selectProject: id => calls.push(['select', id]),
     syncStartProjectBadge() {}, renderStartRoles() {}, renderStartAgents() {},
     restoreStartChoice() {}, startRoles: () => [],
     // What submitStart reaches for outside this module: the role row, the opening prompt that
@@ -397,4 +402,99 @@ test('an empty field is not a child, and a terminal never carries one', () => {
   t.run('submitStart()');
   assert.equal(t.sent[0].type, 'open_terminal');
   assert.ok(!('child' in t.sent[0]));
+});
+
+// --- New project ---
+//
+// Making a Project is a mkdir on the relay's machine and nothing else, so the message is the
+// whole of what this side does. The recency helpers come out of utils.js, which this slice does
+// not otherwise load: they decide which Projects are offered and in what order.
+
+const UTILS = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'utils.js'), 'utf8');
+const recentFrom = UTILS.indexOf('const PROJECT_RECENT_KEY');
+const recentTo = UTILS.indexOf('// --- Compact sections ---', recentFrom);
+assert.ok(recentFrom !== -1 && recentTo > recentFrom, 'project recency helpers not in utils.js');
+const RECENT = UTILS.slice(recentFrom, recentTo);
+
+test('a new project names the root it goes under and the folder to make', () => {
+  const {el, sent, run} = startCtx();
+  run('openNewProject()');
+  el('newProjectName').value = 'notes';
+  run('submitNewProject()');
+  assert.deepEqual(sent, [{type: 'create_project', project_id: 'root', name: 'notes'}]);
+});
+
+test('a folder nobody named is refused here rather than sent', () => {
+  const {el, sent, run} = startCtx();
+  run('openNewProject()');
+  el('newProjectName').value = '';
+  run('submitNewProject()');
+  assert.deepEqual(sent, []);
+  assert.match(el('newProjectError').textContent, /Name the folder/);
+});
+
+test('a name that is only spaces goes as it stands, for the relay to refuse', () => {
+  // It looks empty and is not. Trimming it away would create the wrong thing quietly.
+  const {el, sent, run} = startCtx();
+  run('openNewProject()');
+  el('newProjectName').value = '  ';
+  run('submitNewProject()');
+  assert.deepEqual(sent, [{type: 'create_project', project_id: 'root', name: '  '}]);
+});
+
+test('a refusal is said in the sheet, which stays open on what was typed', () => {
+  const {el, run} = startCtx();
+  run('openNewProject()');
+  el('newProjectName').value = '../escape';
+  run('submitNewProject()');
+  run('newProjectResult({ok: false, error: "child must be 1-64 characters"})');
+  assert.match(el('newProjectError').textContent, /child must be/);
+  assert.equal(el('newProjectSheet').style.display, 'block');
+  assert.equal(el('newProjectName').value, '../escape');
+  assert.equal(el('newProjectSubmit').disabled, false, 'left the button dead after a refusal');
+});
+
+test('a project that was made is opened, not merely announced', () => {
+  const {el, calls, run} = startCtx();
+  run('openNewProject()');
+  el('newProjectName').value = 'notes';
+  run('submitNewProject()');
+  run('newProjectResult({ok: true, project_id: "root-notes"})');
+  assert.equal(el('newProjectSheet').style.display, 'none');
+  assert.deepEqual(calls.filter(c => c[0] === 'select'), [['select', 'root-notes']]);
+});
+
+test('the sheet asks which root only when there is more than one', () => {
+  const {el, g, run} = startCtx();
+  run('openNewProject()');
+  assert.equal(el('newProjectRootRow').hidden, true);
+  g.projects = [{id: 'root', label: 'Common', root: true},
+                {id: 'scratch', label: 'Scratch', root: true}];
+  run('openNewProject()');
+  assert.equal(el('newProjectRootRow').hidden, false);
+});
+
+test('it opens under the project being looked at when that project is a root', () => {
+  const {el, sent, g, run} = startCtx();
+  g.projects = [{id: 'root', label: 'Common', root: true},
+                {id: 'scratch', label: 'Scratch', root: true}];
+  g.activeProject = 'scratch';
+  run('openNewProject()');
+  el('newProjectName').value = 'notes';
+  run('submitNewProject()');
+  assert.equal(sent[0].project_id, 'scratch');
+});
+
+test('projects are offered most recently picked first, and a container is not offered', () => {
+  const {g, run} = startCtx();
+  g.projects = [{id: 'a', label: 'A'}, {id: 'b', label: 'B'},
+                {id: 'c', label: 'C', root: true, container: true}];
+  run(RECENT);
+  // Nothing picked yet: roster order, which is what every browser saw before this existed.
+  assert.deepEqual(run('projectsForPicking().map(p => p.id)'), ['a', 'b']);
+  run('noteProjectUse("b")');
+  assert.deepEqual(run('projectsForPicking().map(p => p.id)'), ['b', 'a']);
+  // "All" is not a Project and never displaces one.
+  run('noteProjectUse(null)');
+  assert.deepEqual(run('projectsForPicking().map(p => p.id)'), ['b', 'a']);
 });

@@ -22,6 +22,7 @@ from projects import (
     child_path_ok,
     child_projects,
     child_target,
+    create_child,
     load_projects,
     make_child_dir,
     public_projects,
@@ -3483,6 +3484,50 @@ async def handle_client(ws, listener="lan"):
                 log.info("Open terminal ok: pane=%s label=%r", pane_id, plan["label"])
                 await ws.send(json.dumps({"type": "command_result", "command": "open_terminal",
                                           "ok": True, "pane_id": pane_id, "label": plan["label"]}))
+            elif msg_type == "create_project":
+                # The same gate a start crosses. Nothing is spawned here, but a directory made on
+                # this machine at a client's word is the same kind of write, and without this gate
+                # there is no way to make a child at all.
+                if not WRITE_EXT:
+                    await ws.send(json.dumps({"type": "command_result", "command": "create_project",
+                                              "ok": False, "error": "write extensions disabled"}))
+                    return
+                extra = set(msg) - {"type", "project_id", "name"}
+                if extra:
+                    await ws.send(json.dumps({"type": "command_result", "command": "create_project",
+                                              "ok": False,
+                                              "error": f"unexpected field(s): {', '.join(sorted(extra))}"}))
+                    return
+                project, create_err = await asyncio.to_thread(
+                    create_child, msg.get("name"), msg.get("project_id"), PROJECTS)
+                if create_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "create_project",
+                                              "ok": False, "error": create_err}))
+                    return
+                # Audited after the fact rather than before, unlike a start: there is no plan to
+                # record — validation and the mkdir are one call — and a name that was refused is
+                # not something that happened to the filesystem.
+                # A name that is already a project answers with the row it already has, which
+                # can be a file project sitting at that exact path and carrying no parent.
+                detail = (f"root={project.get('parent') or msg.get('project_id')} "
+                          f"id={project['id']} cwd={project['cwd']}")
+                log.info("Create project from %s (%s): %s", ip, device, detail)
+                audit("create_project", ip, device, "", detail)
+                # The roster is derived from a listing, so the directory that now exists is all
+                # there is to write. Refreshed here rather than left to the next poll so the
+                # client that asked can press what it just made: the answer to this message and
+                # the roster it changed arrive on the same socket in that order.
+                #
+                # ponytail: this is the second caller of refresh_projects, and the poll loop's
+                # call can overlap it in the thread pool. Both compute the same roster and each
+                # global it touches is replaced by a whole new object, so a reader sees the old
+                # one or the new one and the loser's stamp check makes its broadcast a no-op.
+                # A lock here if a third caller ever appears.
+                if await asyncio.to_thread(refresh_projects):
+                    await broadcast({"type": "projects", "projects": public_projects(PROJECTS)})
+                await ws.send(json.dumps({"type": "command_result", "command": "create_project",
+                                          "ok": True, "project_id": project["id"],
+                                          "label": project["label"]}))
             elif msg_type == "push_subscribe":
                 sub = msg.get("subscription")
                 if sub and sub not in push_subscriptions:

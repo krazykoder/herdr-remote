@@ -19,6 +19,7 @@ from projects import (
     child_path_ok,
     child_projects,
     child_target,
+    create_child,
     make_child_dir,
     load_projects,
     public_projects,
@@ -654,6 +655,113 @@ class ChildPathGuardTests(unittest.TestCase):
                                            return_value=(None, "herdr not called for real")):
             _, _, exec_err = herdr_relay._create_target_pane(plan, None)
         self.assertEqual(exec_err, "herdr not called for real")
+
+
+class CreateProjectTests(unittest.TestCase):
+    """A Project made without starting anything: the directory is the whole registration."""
+
+    def setUp(self):
+        self.root = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        self.outside = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        os.makedirs(os.path.join(self.root, "webapp"))
+        self.roots = [{"id": "common", "label": "Common", "cwd": self.root, "host": "local",
+                       "children": True, "marker": "", "container": False}]
+        self.projects = self.roots + child_projects(self.roots)
+
+    def test_a_new_name_becomes_a_directory_and_the_row_the_scan_will_build(self):
+        project, err = create_child("notes", "common", self.projects)
+        self.assertIsNone(err)
+        self.assertEqual(project["id"], "common-notes")
+        self.assertEqual(project["label"], "notes")
+        self.assertEqual(project["parent"], "common")
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "notes")))
+        # The row it returned is the row a rescan derives, which is what makes the mkdir the
+        # only thing that had to happen.
+        scanned = child_projects(self.roots)
+        self.assertIn(project["id"], [p["id"] for p in scanned])
+
+    def test_a_name_that_is_already_a_project_answers_with_that_project(self):
+        project, err = create_child("webapp", "common", self.projects)
+        self.assertIsNone(err)
+        self.assertEqual(project["id"], "common-webapp")
+
+    def test_a_project_that_is_not_a_root_takes_no_new_child(self):
+        projects = self.projects + [{"id": "solo", "label": "Solo", "cwd": self.outside,
+                                     "host": "local", "children": False, "marker": ""}]
+        project, err = create_child("notes", "solo", projects)
+        self.assertIsNone(project)
+        self.assertEqual(err, "unknown root")
+
+    def test_an_unknown_root_is_refused(self):
+        project, err = create_child("notes", "nope", self.projects)
+        self.assertIsNone(project)
+        self.assertEqual(err, "unknown root")
+
+    def test_a_root_whose_directory_is_gone_is_not_made_again(self):
+        gone = os.path.join(self.outside, "went-away")
+        roots = [dict(self.roots[0], cwd=gone)]
+        project, err = create_child("notes", "common", roots)
+        self.assertIsNone(project)
+        self.assertEqual(err, "that root is no longer a directory")
+        self.assertFalse(os.path.exists(gone))
+
+    def test_a_name_outside_the_charset_is_refused_before_anything_is_made(self):
+        project, err = create_child("../escape", "common", self.projects)
+        self.assertIsNone(project)
+        self.assertIn("child must be", err)
+        self.assertEqual(sorted(os.listdir(self.root)), ["webapp"])
+
+    def test_a_marker_root_takes_no_new_child(self):
+        roots = [dict(self.roots[0], marker=".git")]
+        project, err = create_child("notes", "common", roots)
+        self.assertIsNone(project)
+        self.assertIn(".git", err)
+
+    def test_a_name_already_holding_a_symlink_out_of_the_root_is_refused(self):
+        os.symlink(self.outside, os.path.join(self.root, "away"))
+        project, err = create_child("away", "common", self.projects)
+        self.assertIsNone(project)
+        self.assertEqual(err, "that name is not a directory inside this root")
+
+
+class ContainerRootTests(unittest.TestCase):
+    """A root that is a place for projects rather than one to work in."""
+
+    def test_a_container_root_says_so_on_the_wire(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        path = write_config([{"id": "scratch", "label": "Scratch", "cwd": tmp,
+                              "children": True, "container": True}])
+        wire = public_projects(load_projects(path))
+        self.assertEqual(wire, [{"id": "scratch", "label": "Scratch", "host": "local",
+                                 "root": True, "container": True}])
+
+    def test_a_root_that_is_not_a_container_says_nothing(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        path = write_config([{"id": "scratch", "label": "Scratch", "cwd": tmp, "children": True}])
+        self.assertNotIn("container", public_projects(load_projects(path))[0])
+
+    def test_container_without_children_is_refused(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        path = write_config([{"id": "solo", "label": "Solo", "cwd": tmp, "container": True}])
+        with self.assertRaises(ProjectConfigError) as e:
+            load_projects(path)
+        self.assertIn("container means nothing without children", str(e.exception))
+
+    def test_container_must_be_a_boolean(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        path = write_config([{"id": "solo", "label": "Solo", "cwd": tmp,
+                              "children": True, "container": "yes"}])
+        with self.assertRaises(ProjectConfigError) as e:
+            load_projects(path)
+        self.assertIn("container must be true or false", str(e.exception))
+
+    def test_a_container_root_still_takes_children(self):
+        tmp = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        roots = [{"id": "scratch", "label": "Scratch", "cwd": tmp, "host": "local",
+                  "children": True, "marker": "", "container": True}]
+        project, err = create_child("notes", "scratch", roots)
+        self.assertIsNone(err)
+        self.assertEqual(project["id"], "scratch-notes")
 
 
 class ChildOnAStartTests(unittest.TestCase):

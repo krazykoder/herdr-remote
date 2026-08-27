@@ -188,8 +188,8 @@
             : '<p class="ql-none">This tile is a template — pick the Project to start it in.</p>')
           + launcherRosterHtml(tile)
           + '<div class="start-field">Project<div class="badge-strip">'
-          + (projects.length
-            ? projects.map(p => badgeHtml(p.label || p.id, p.id === tile.project_id,
+          + (projectsForPicking().length
+            ? projectsForPicking().map(p => badgeHtml(p.label || p.id, p.id === tile.project_id,
                 `launcherLaunchProject('${escapeHtml(p.id)}')`,
                 {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
             : '<span class="ql-none">This relay has no Projects configured.</span>')
@@ -430,8 +430,8 @@
         + '<div class="start-field">Project<div class="badge-strip">'
         + badgeHtml('Ask each time', !d.project_id, "launcherPickProject('')",
                     {title: 'A template — the Project is picked when the tile is pressed'})
-        + (projects.length
-          ? projects.map(p => badgeHtml(p.label || p.id, p.id === d.project_id,
+        + (projectsForPicking().length
+          ? projectsForPicking().map(p => badgeHtml(p.label || p.id, p.id === d.project_id,
               `launcherPickProject('${escapeHtml(p.id)}')`,
               {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
           : '<span class="ql-none">This relay has no Projects configured.</span>')

@@ -492,9 +492,10 @@
       row.hidden = !startAskProject;
       row.style.display = startAskProject ? '' : 'none';
       if (!startAskProject) return;
+      const pick = projectsForPicking();
       row.innerHTML = '<div class="start-field">Project<div class="badge-strip">'
-        + (projects.length
-          ? projects.map(p => badgeHtml(p.label || p.id, p.id === startProjectId,
+        + (pick.length
+          ? pick.map(p => badgeHtml(p.label || p.id, p.id === startProjectId,
               `startPickProject('${escapeHtml(p.id)}')`,
               {proj: true, title: p.host && p.host !== 'local' ? 'on ' + p.host : ''})).join('')
           : '<span class="field-note">This relay has no Projects configured.</span>')
@@ -606,6 +607,85 @@
       // live button that silently does nothing is worse than one that says it is not ready yet.
       if (!startProjectId) document.getElementById('startSubmit').disabled = true;
       document.getElementById('startSheet').style.display = 'block';
+    }
+
+    // --- New project ---
+    //
+    // A Project is a directory under a root, so making one is a mkdir the relay does and nothing
+    // more: the next scan lists the root, finds the directory, and derives the same row it would
+    // have derived for one made by hand. No pane, no agent, nothing to place.
+    let newProjectRoot = null;
+
+    function newProjectRoots() { return projects.filter(p => p.root); }
+
+    function renderNewProjectRoots() {
+      const row = document.getElementById('newProjectRootRow');
+      const roots = newProjectRoots();
+      // One root is not a question. Asking it anyway would be a tap that has one answer.
+      const show = roots.length > 1;
+      row.hidden = !show;
+      row.style.display = show ? '' : 'none';
+      row.innerHTML = show
+        ? '<div class="start-field">Under<div class="badge-strip">'
+          + roots.map(p => badgeHtml(p.label || p.id, p.id === newProjectRoot,
+              `pickNewProjectRoot('${escapeHtml(p.id)}')`, {proj: true})).join('')
+          + '</div></div>'
+        : '';
+    }
+
+    function pickNewProjectRoot(id) {
+      newProjectRoot = id;
+      renderNewProjectRoots();
+    }
+
+    function openNewProject(ev) {
+      if (ev) ev.stopPropagation();
+      const roots = newProjectRoots();
+      if (!roots.length) return;
+      // Opens under the Project being looked at when that Project is itself a root — the common
+      // case for "another one of these" — and on the first root otherwise.
+      const here = roots.find(p => p.id === activeProject);
+      newProjectRoot = (here || roots[0]).id;
+      document.getElementById('newProjectName').value = '';
+      setNewProjectError('');
+      document.getElementById('newProjectSubmit').disabled = false;
+      renderNewProjectRoots();
+      document.getElementById('newProjectSheet').style.display = 'block';
+      document.getElementById('newProjectName').focus();
+    }
+
+    function closeNewProject() {
+      document.getElementById('newProjectSheet').style.display = 'none';
+      newProjectRoot = null;
+    }
+
+    function setNewProjectError(text) {
+      const el = document.getElementById('newProjectError');
+      el.textContent = text || '';
+      el.style.display = text ? '' : 'none';
+    }
+
+    function submitNewProject() {
+      if (!ws || !newProjectRoot) return;
+      // Sent as typed once trimmed, and a field holding only spaces is sent as it stands: it
+      // looks empty and is not, and the relay is the one place that says which names are names.
+      const raw = document.getElementById('newProjectName').value || '';
+      const name = raw.trim() || raw;
+      if (!name) { setNewProjectError('Name the folder this project lives in'); return; }
+      setNewProjectError('');
+      document.getElementById('newProjectSubmit').disabled = true;
+      ws.send(JSON.stringify({type: 'create_project', project_id: newProjectRoot, name: name}));
+    }
+
+    // The roster arrives on its own `projects` broadcast, so there is nothing to add here: the
+    // sheet closes and the Project it made is selected, which the broadcast has already drawn.
+    function newProjectResult(msg) {
+      const el = document.getElementById('newProjectSheet');
+      if (!el || el.style.display === 'none') return;
+      document.getElementById('newProjectSubmit').disabled = false;
+      if (!msg.ok) { setNewProjectError(msg.error || 'Could not create that project'); return; }
+      closeNewProject();
+      if (msg.project_id) selectProject(msg.project_id);
     }
 
     function closeStart() {
