@@ -3518,13 +3518,11 @@ async def handle_client(ws, listener="lan"):
                 # client that asked can press what it just made: the answer to this message and
                 # the roster it changed arrive on the same socket in that order.
                 #
-                # ponytail: this is the second caller of refresh_projects, and the poll loop's
-                # call can overlap it in the thread pool. Both compute the same roster and each
-                # global it touches is replaced by a whole new object, so a reader sees the old
-                # one or the new one and the loser's stamp check makes its broadcast a no-op.
-                # A lock here if a third caller ever appears.
-                if await asyncio.to_thread(refresh_projects):
-                    await broadcast({"type": "projects", "projects": public_projects(PROJECTS)})
+                # A poll can win the refresh race and own the changed return value. Still send this
+                # roster before this request's result: the client selects project_id on success, so
+                # it must already know that row regardless of which refresh saw the directory first.
+                await asyncio.to_thread(refresh_projects)
+                await broadcast({"type": "projects", "projects": public_projects(PROJECTS)})
                 await ws.send(json.dumps({"type": "command_result", "command": "create_project",
                                           "ok": True, "project_id": project["id"],
                                           "label": project["label"]}))

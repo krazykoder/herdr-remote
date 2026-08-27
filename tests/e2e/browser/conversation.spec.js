@@ -4707,6 +4707,18 @@ test('a root takes a new project without starting anything in it', async ({page}
   await page.locator('#newProjectSubmit').click();
   expect(await page.evaluate(() => window.__sent.find(m => m.type === 'create_project')))
     .toEqual({type: 'create_project', project_id: 'box', name: 'notes'});
+  // The relay sends the refreshed roster before success. Without that order selectProject would
+  // clear this unknown id while rendering, leaving the newly made Project unopened.
+  await page.evaluate(() => {
+    handleMessage({type: 'projects', projects: [
+      {id: 'root1', label: 'Common', host: 'local', root: true},
+      {id: 'box', label: 'Box', host: 'local', root: true, container: true},
+      {id: 'box-notes', label: 'notes', host: 'local', parent: 'box'},
+    ]});
+    handleMessage({type: 'command_result', command: 'create_project', ok: true,
+                   project_id: 'box-notes', label: 'notes'});
+  });
+  await expect(page.locator('#projectChips .chip.active')).toHaveText('notes');
 });
 
 // Twenty projects on a phone is a strip you swipe rather than read. The button that opens it out
