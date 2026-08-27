@@ -681,11 +681,17 @@
       // Only when it is on. The relay's default is a session that asks before it acts, and saying
       // so on the wire would be a longer way of saying nothing.
       if (!terminal && startUnattendedOn()) msg.unattended = true;
-      // Only an agent start carries it, and only a root draws the field. Sent as typed: the relay
-      // refuses a name that is not one directory under that root rather than accepting a cleaned
-      // up version of it, so cleaning it here would only disagree with the answer.
+      // Only an agent start carries it, and only a root draws the field. Trimmed, like the Name
+      // field above: the spaces a phone keyboard puts either side of a word are not part of what
+      // anyone typed, and trimming cannot make an unacceptable name acceptable — whitespace is
+      // not in the charset the relay checks, so the same names are refused either way.
+      //
+      // A field holding *only* spaces is sent as it stands rather than trimmed away to nothing:
+      // it looks empty and is not, and dropping it would start the session in the root while the
+      // user believed they had named a folder. The relay refuses it and says so.
       const childField = terminal ? null : document.getElementById('startChild');
-      const child = childField ? (childField.value || '') : '';
+      const raw = childField ? (childField.value || '') : '';
+      const child = raw.trim() || raw;
       if (child) msg.child = child;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields

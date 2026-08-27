@@ -354,7 +354,10 @@ test('a start under a root can name the directory it makes', () => {
   assert.ok(/New folder/.test(el('startChildRow').innerHTML));
   el('startChild').value = ' notes ';
   run('submitStart()');
-  assert.equal(sent[0].child, ' notes ', 'the relay, not this form, refuses malformed names');
+  // Trimmed, like the Name field beside it. The relay refuses a name outside the charset either
+  // way — whitespace is not in it — so this only decides whether a phone's stray space costs a
+  // round trip and an error about a word that looks right on screen.
+  assert.equal(sent[0].child, 'notes');
   assert.equal(sent[0].project_id, 'root');
 });
 
@@ -375,6 +378,15 @@ test('an empty field is not a child, and a terminal never carries one', () => {
   el('startChild').value = '';
   run('submitStart()');
   assert.ok(!('child' in sent[0]), 'blank text is "start in the root itself"');
+
+  // Spaces are not blank. The field looks empty and is not, so it goes to the relay to be refused
+  // rather than being trimmed away into a start in the root nobody asked for.
+  const spaces = startCtx();
+  spaces.run("startAgentPick = 'claude'; startPickProject('root')");
+  spaces.el('startPlacement').value = 'new_workspace';
+  spaces.el('startChild').value = '   ';
+  spaces.run('submitStart()');
+  assert.equal(spaces.sent[0].child, '   ');
 
   // open_terminal refuses `child` as an unexpected field, so the field is not drawn and its value
   // is not read even if something left one behind.
