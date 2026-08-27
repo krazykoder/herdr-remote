@@ -296,6 +296,9 @@ def _placement_plan(msg, projects, panes, base_fields, default_label):
     plan = {
         "project_id": project["id"],
         "project_label": project["label"],
+        # Empty for a project the file wrote down. Present, it says this cwd was derived from a
+        # directory listing, which is the only cwd worth looking at twice — see _create_target_pane.
+        "parent": project.get("parent", ""),
         "cwd": project["cwd"],
         "remote": remote,
         "placement": placement,

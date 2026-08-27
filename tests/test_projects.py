@@ -578,12 +578,44 @@ class ChildPathGuardTests(unittest.TestCase):
         self.assertIn("no longer inside its root", err)
 
     def test_both_routes_still_work_before_the_swap(self):
-        # Or the two refusals above would pass against a guard that refuses everything.
-        for call, msg in (
-            (start_agent.validate_open_terminal,
+        # Or the two refusals above would pass against a guard that refuses everything — and a
+        # regression that broke *valid* derived starts would be invisible. Both routes, so both
+        # are covered going through as well as being stopped.
+        routes = (
+            (lambda m: start_agent.validate_start_request(m, self.projects, [], ["claude"]),
+             {"type": "start_agent", "name": "claude", "role": "agent",
+              "project_id": self.child()["id"], "placement": "new_workspace"}),
+            (lambda m: start_agent.validate_open_terminal(m, self.projects, []),
              {"type": "open_terminal", "project_id": self.child()["id"],
               "placement": "new_workspace"}),
-        ):
-            plan, err = call(msg, self.projects, [])
-            self.assertIsNone(err)
-            self.assertEqual(plan["cwd"], os.path.join(self.root, "webapp"))
+        )
+        for call, msg in routes:
+            with self.subTest(route=msg["type"]):
+                plan, err = call(msg)
+                self.assertIsNone(err)
+                self.assertEqual(plan["cwd"], os.path.join(self.root, "webapp"))
+                self.assertEqual(plan["parent"], "common")
+
+    def test_the_executor_looks_once_more_before_it_creates_anything(self):
+        # The gap validation cannot cover: a config line is built and the work is queued between
+        # the check and the spawn. Narrower, not closed — see the ponytail note at the call site.
+        plan, err = start_agent.validate_open_terminal(
+            {"type": "open_terminal", "project_id": self.child()["id"],
+             "placement": "new_workspace"}, self.projects, [])
+        self.assertIsNone(err)
+        self.swap_for_a_symlink()
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects):
+            pane, rollback, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("no longer inside its root", exec_err)
+
+    def test_the_executor_leaves_a_file_project_alone(self):
+        # It has no `parent`, so there is nothing derived to re-check and no herdr call is made
+        # here that was not made before.
+        plan = {"project_id": "common", "parent": "", "cwd": self.root,
+                "placement": "new_workspace", "project_label": "Common"}
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", self.projects), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json",
+                                           return_value=(None, "herdr not called for real")):
+            _, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertEqual(exec_err, "herdr not called for real")

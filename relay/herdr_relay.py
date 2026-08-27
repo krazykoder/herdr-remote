@@ -19,6 +19,7 @@ from projects import (
     ProjectConfigError,
     ambiguous_pane_ids,
     annotate_agents,
+    child_path_ok,
     child_projects,
     load_projects,
     public_projects,
@@ -1879,6 +1880,19 @@ def _create_target_pane(plan, remote):
     terminal. A new workspace or tab is born holding exactly one pane, so there is no idle shell
     left over to close. `rollback` is what to undo if the caller's next step fails.
     """
+    # The last look before the pathname is handed to herdr. Validation happened before a config
+    # line was built and before this call was queued, and a derived cwd is one an agent working in
+    # that root can replace with a symlink in between.
+    #
+    # ponytail: check-then-exec. This narrows the window to the herdr calls below; it does not
+    # close it, and nothing in this file can — herdr takes a pathname, so the relay cannot hand it
+    # a descriptor it opened with O_NOFOLLOW. Closing it means enforcing containment at the spawn
+    # boundary: a directory handle herdr creates from, or a no-follow guarantee inside herdr.
+    if plan.get("parent"):
+        project = next((p for p in PROJECTS if p["id"] == plan.get("project_id")), None)
+        if project is None or not child_path_ok(project, PROJECTS):
+            return None, None, "that project's directory is no longer inside its root"
+
     placement = plan["placement"]
     rollback = None
 
