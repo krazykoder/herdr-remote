@@ -253,7 +253,14 @@ class Capture(Log):
         after = "\n".join([together, "❯ carry on", ""])
         self.assertEqual(self.log.record_turn_end(PANE, after, "done", "idle"), [])
         rows, _ = self.log.query(last=50)
-        self.assertEqual(1, len([r for r in rows if _key(r["text"]) == _key(merged_text)]))
+        said = [r for r in rows if _key(r["text"]) == _key(merged_text)]
+        self.assertEqual(1, len(said))
+        # Not lost, though: the copy is in the record, marked with the row it repeats, and comes
+        # back only when a reader asks for it. The record is what was detected and received.
+        every, _ = self.log.query(last=50, dupes=True)
+        copies = [r for r in every if _key(r["text"]) == _key(merged_text)]
+        self.assertEqual(2, len(copies))
+        self.assertEqual(copies[1]["dupe_of"], said[0]["id"])
 
     def test_a_prompt_echoed_with_screen_under_it_is_still_the_prompt(self):
         # The 2946/2948 case. The relay's own send was 1023 characters; the pane echoed it with 80
@@ -277,6 +284,10 @@ class Capture(Log):
         self.assertEqual(1, len(said), [r["at_src"] for r in said])
         self.assertEqual("sent", said[0]["at_src"])
         self.assertTrue(any(r["text"] == "Good to go." for r in rows))
+        every, _ = self.log.query(last=50, dupes=True)
+        echo = [r for r in every if r["dupe_of"]]
+        self.assertEqual(1, len(echo))
+        self.assertEqual(echo[0]["dupe_of"], said[0]["id"])
 
     def test_a_prompt_typed_into_the_terminal_is_recorded_and_never_claims_a_person(self):
         # N4. The relay knows a person put those words in the pane and does not know which person;

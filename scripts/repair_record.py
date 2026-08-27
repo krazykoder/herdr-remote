@@ -27,7 +27,8 @@ mid-way through — these rows are minutes to weeks old.
     uv run scripts/repair_record.py --drop-echoes       # also drop rows that are *only* an echo
     uv run scripts/repair_record.py --dupes             # a third fault: the same message recorded
                                                         # twice on one pane, when a block boundary
-                                                        # moved between two reads. See `dupes`.
+                                                        # moved between two reads. Marks rather
+                                                        # than deletes. See `dupes`.
 """
 import argparse
 import collections
@@ -45,6 +46,7 @@ sys.path.insert(0, str(ROOT / "relay"))
 
 from conversation_log import (ANCHOR_CONTEXT, SENT_LOOKBACK,     # noqa: E402
                               _is_echo, _key, _split_echo, _who)
+from conv_query import _col                                     # noqa: E402
 from pane_summary import pane_messages                          # noqa: E402
 
 DEFAULT_DB = ROOT / ".herdr-remote" / "arbitration.sqlite3"
@@ -168,6 +170,10 @@ def dupes(conn):
 
     A row this relay *sent* is never a candidate: it is the relay's own record of what it typed,
     and it is the copy that should survive. The lowest id always wins.
+
+    Nothing is deleted. The copy is marked with the row it repeats, which takes it out of every
+    read that does not ask for it and leaves the record still holding everything that was ever
+    detected — the same thing the writer does with a copy today.
     """
     out = []
     kept = collections.defaultdict(
@@ -175,6 +181,8 @@ def dupes(conn):
     for row in conn.execute("SELECT * FROM turns WHERE text != '' ORDER BY id"):
         anchor, sent = kept[row["pane_id"]]
         who, key = _who(row["kind"]), _key(row["text"])
+        if _col(row, "dupe_of"):
+            continue        # already marked. A copy anchors nothing, and a second run is a no-op
         if row["at_src"] == "sent":
             if who == "user":
                 sent.append((key, row["id"], row["at"]))
@@ -186,7 +194,7 @@ def dupes(conn):
             # What it matched and how long ago, because that is the one thing the reviewer cannot
             # work out from the row itself — and the gap is what separates a window read twice in
             # one turn from an agent that really did say the same words again the next morning.
-            out.append(("dupe", row, f"id={hit[1]}, {round((row['at'] - hit[2]) / 1000)}s earlier"))
+            out.append(("dupe", row, hit[1], round((row["at"] - hit[2]) / 1000)))
             continue
         anchor.append(((who, key), row["id"], row["at"]))
     return out
@@ -202,20 +210,28 @@ def snapshot(conn, db):
 
 
 def show(actions):
-    for kind, row, new in actions:
+    for kind, row, new, *rest in actions:
         one = " ".join((row["text"] or "").split())
         print(f"  [{kind}] id={row['id']} {row['agent']} {row['pane_id']} "
               f"{row['label'] or '-'}  {one[:80]}")
-        if new:
-            print(f"          {'keeps' if kind == 'split' else 'matched'}: "
-                  f"{' '.join(new.split())[:80]}")
+        if kind == "dupe":
+            print(f"          copy of id={new}, {rest[0]}s earlier")
+        elif new:
+            print(f"          keeps: {' '.join(new.split())[:80]}")
 
 
 def apply(conn, actions):
+    have = {r[1] for r in conn.execute("PRAGMA table_info(turns)")}
+    if "dupe_of" not in have and any(a[0] == "dupe" for a in actions):
+        conn.execute("ALTER TABLE turns ADD COLUMN dupe_of INTEGER")
     with conn:
-        for kind, row, new in actions:
+        for kind, row, new, *_ in actions:
             if kind == "split":
                 conn.execute("UPDATE turns SET text = ? WHERE id = ?", (new, row["id"]))
+            elif kind == "dupe":
+                # Marked, never deleted: the record is what was detected, and a copy that is out of
+                # the way is out of the way.
+                conn.execute("UPDATE turns SET dupe_of = ? WHERE id = ?", (new, row["id"]))
             else:
                 conn.execute("DELETE FROM turns WHERE id = ?", (row["id"],))
 
@@ -355,7 +371,7 @@ def main():
     ap.add_argument("--drop-echoes", action="store_true",
                     help="also delete rows that are only a prompt echo, with nothing said under it")
     ap.add_argument("--dupes", action="store_true",
-                    help="delete rows the same pane already had, instead of the repairs above")
+                    help="mark rows the same pane already had, instead of the repairs above")
     ap.add_argument("--self-check", action="store_true", help="prove the rules and exit")
     ap.add_argument("--backfill", metavar="PANE_ID",
                     help="read this pane and add the messages the record has no row for")
@@ -375,9 +391,9 @@ def main():
         return
     if args.dupes:
         actions = dupes(conn)
-        print(f"{args.db}: {len(actions)} duplicate row(s)")
+        print(f"{args.db}: {len(actions)} duplicate row(s) to mark")
     else:
-        actions = plan(conn, args.drop_echoes)
+        actions = [(k, r, n, None) for k, r, n in plan(conn, args.drop_echoes)]
         counts = {k: sum(1 for a in actions if a[0] == k) for k in ("chrome", "split", "echo")}
         print(f"{args.db}: {counts['split']} merged, {counts['chrome']} chrome, "
               f"{counts['echo']} echo-only")

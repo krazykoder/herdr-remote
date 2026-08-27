@@ -34,7 +34,7 @@ COLUMNS = (
     "id", "pane_id", "host", "agent", "cwd", "label", "project",
     "kind", "origin", "text", "tail", "range_start", "range_end",
     "status_from", "status_to", "at", "at_src", "decision_id",
-    "branch", "commit_sha", "commits",
+    "branch", "commit_sha", "commits", "dupe_of",
 )
 
 
@@ -93,18 +93,27 @@ def open_ro(path):
 
 def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
           grep=None, since=None, until=None, since_id=None, until_id=None,
-          fingerprints=None, last=QUERY_ROWS_DEFAULT):
+          fingerprints=None, last=QUERY_ROWS_DEFAULT, dupes=False):
     """Turns matching the selectors, oldest first, bounded.
 
     Selectors are AND-ed. `fingerprints` is a list of (host, agent, cwd) triples — how a session
     asks for its roster, since a member is pinned by fingerprint and not by a pane id that herdr
     changes on every restart.
 
+    Rows the writer marked as a copy of another row are left out unless `dupes` asks for them. The
+    record keeps everything it detected; a copy is still not a second thing that was said, and a
+    reader deciding what happens next — a person or an arbitrator — must not be shown one twice.
+
     Returns (rows, truncated). The rows are the *newest* `last` matches, handed back in reading
     order: a conversation is read forwards, and the interesting end of a long one is the recent
     end.
     """
+    cols = _selectable(conn)
     where, args = [], []
+    # Guarded on the column: a record written before this existed has no copies marked in it, and
+    # naming the column would turn every read of an older file into an error.
+    if not dupes and "dupe_of" in cols:
+        where.append("dupe_of IS NULL")
     if pane:
         where.append("pane_id = ?")
         args.append(pane)
@@ -146,7 +155,7 @@ def query(conn, *, pane=None, host=None, agent=None, cwd=None, kind=None,
             args.extend([fp[0] or "local", fp[1] or "", fp[2] or ""])
 
     limit = max(1, min(int(last or QUERY_ROWS_DEFAULT), QUERY_ROWS_MAX))
-    sql = "SELECT " + ", ".join(_selectable(conn)) + " FROM turns"
+    sql = "SELECT " + ", ".join(cols) + " FROM turns"
     if where:
         sql += " WHERE " + " AND ".join(where)
     # Newest first to apply the limit, then reversed: ORDER BY at DESC with the tie broken by id
@@ -215,7 +224,9 @@ def format_text(rows, truncated):
     for row in rows:
         when = time.strftime("%H:%M:%S", time.localtime((row["at"] or 0) / 1000))
         who = " ".join(x for x in (row["agent"], row["cwd"], row["label"]) if x)
-        out.append(f"[{row['id']:04d}] {when}  {who}  {row['kind']}  ({row['at_src']})")
+        copy = _col(row, "dupe_of", None)
+        out.append(f"[{row['id']:04d}] {when}  {who}  {row['kind']}  ({row['at_src']})"
+                   + (f"  copy of {copy}" if copy else ""))
         out.append(row["text"] or (row["tail"] and "(no message detected; pane tail)\n" + row["tail"])
                    or "(nothing recorded)")
         # Where the work landed. Only when it moved: a line under every turn of a pane that never
@@ -263,6 +274,8 @@ def main(argv=None):
                    help="where to resolve --since-commit/--until-commit (default: here)")
     p.add_argument("--last", type=int, default=QUERY_ROWS_DEFAULT,
                    help=f"how many, newest kept (max {QUERY_ROWS_MAX})")
+    p.add_argument("--dupes", action="store_true",
+                   help="also show rows marked as a copy of another row (hidden by default)")
     p.add_argument("--format", choices=("text", "json"), default="text")
     args = p.parse_args(argv)
 
@@ -294,7 +307,7 @@ def main(argv=None):
         rows, truncated = query(
             conn, pane=args.pane, host=args.host, agent=args.agent, cwd=args.cwd,
             kind=args.kind, grep=args.grep, since=since, until=until,
-            since_id=args.since_id, until_id=args.until_id, last=args.last)
+            since_id=args.since_id, until_id=args.until_id, last=args.last, dupes=args.dupes)
     if args.format == "json":
         print(json.dumps({"turns": [as_wire(r) for r in rows], "truncated": truncated},
                          indent=2))

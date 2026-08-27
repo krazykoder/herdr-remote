@@ -202,7 +202,8 @@ CREATE TABLE IF NOT EXISTS turns (
   decision_id  INTEGER,
   branch       TEXT    NOT NULL DEFAULT '',
   commit_sha   TEXT    NOT NULL DEFAULT '',
-  commits      TEXT    NOT NULL DEFAULT ''
+  commits      TEXT    NOT NULL DEFAULT '',
+  dupe_of      INTEGER
 );
 CREATE INDEX IF NOT EXISTS turns_time ON turns(at, id);
 CREATE INDEX IF NOT EXISTS turns_fp   ON turns(host, agent, cwd, at, id);
@@ -217,6 +218,7 @@ ADDED_COLUMNS = (
     ("branch", "TEXT NOT NULL DEFAULT ''"),
     ("commit_sha", "TEXT NOT NULL DEFAULT ''"),
     ("commits", "TEXT NOT NULL DEFAULT ''"),
+    ("dupe_of", "INTEGER"),
 )
 
 
@@ -328,7 +330,7 @@ class ConversationLog:
     @_locked
     def record(self, *, agent, pane_id, kind, origin, at_src, host="local", cwd="", label="",
                project="", text="", tail="", span=None, status_from=None, status_to=None,
-               at=None, decision_id=None, git=None):
+               at=None, decision_id=None, git=None, dupe_of=None):
         """One turn. Returns its id, which is also its sequence.
 
         Enums are checked rather than trusted: this record is what an automated loop will later
@@ -351,14 +353,14 @@ class ConversationLog:
         row = self.conn.execute(
             "INSERT INTO turns (host, agent, cwd, pane_id, label, project, kind, origin,"
             " text, tail, range_start, range_end, status_from, status_to, at, at_src, decision_id,"
-            " branch, commit_sha, commits)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " branch, commit_sha, commits, dupe_of)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (host or "local", agent or "", cwd or "", pane_id, label or "", project or "",
              kind, origin, text, tail,
              span[0] if span else None, span[1] if span else None,
              status_from, status_to, at if at is not None else now_ms(), at_src, decision_id,
              git.get("branch") or "", git.get("commit") or "",
-             json.dumps(commits) if commits else ""))
+             json.dumps(commits) if commits else "", dupe_of))
         self.conn.commit()
         self._prune()
         return row.lastrowid
@@ -382,7 +384,7 @@ class ConversationLog:
             return 0
         if not self._has_record(pane):
             return len(fresh)
-        return len(self._messages_after_record(pane, fresh))
+        return len(self._messages_after_record(pane, fresh)[0])
 
     @_locked
     def record_turn_end(self, pane, content, status_from, status_to, at=None, git=None):
@@ -408,12 +410,13 @@ class ConversationLog:
         # claimed about it, which is what `backfill` means — the same answer the browser gives a
         # pane's first read. Anything after this is anchored against what this wrote.
         backfilled = bool(fresh) and not self._has_record(pane)
+        dupes = []
         if not fresh:
             new = []
         elif backfilled:
             new = fresh
         else:
-            new = self._messages_after_record(pane, fresh)
+            new, dupes = self._messages_after_record(pane, fresh)
         common = dict(
             agent=agent or "", pane_id=pane_id,
             host=pane.get("host") or "local", cwd=pane.get("cwd") or "",
@@ -461,6 +464,13 @@ class ConversationLog:
                     kind="agent_blocked" if i == last_agent and status_to == "blocked" else "agent_final",
                     origin="agent", text=text, span=span, at=when,
                     git=git_last if i == len(new) - 1 else git_head, **common))
+        # The copies, after the turn they were read alongside. Written with the same origin rule as
+        # anything else read off a pane, and dated at the read that found them — the row they
+        # repeat carries the time the thing was actually said.
+        for who, text, span, of in dupes:
+            self.record(kind="human_prompt" if who == "user" else "agent_final",
+                        origin="human_terminal" if who == "user" else "agent",
+                        text=text, span=span, at=base, dupe_of=of, git=git_head, **common)
         return out
 
     def _sent_texts(self, pane, limit=SENT_LOOKBACK):
@@ -468,6 +478,7 @@ class ConversationLog:
         where, params = self._scope(pane)
         rows = self.conn.execute(
             f"SELECT text FROM turns WHERE {where} AND at_src = 'sent' AND text != ''"
+            " AND dupe_of IS NULL"
             " ORDER BY at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()
         return [r["text"] for r in rows]
 
@@ -509,6 +520,9 @@ class ConversationLog:
         Where more than one position lines up, the newest wins: it is the one that recovers *less*,
         and a run short by a message is a smaller wrong than a run that duplicates what is already
         recorded, because the record is permanent and the duplicate is in it forever.
+
+        Returns `(new, dupes)` — see `_sift`. Nothing found in the window is thrown away; what is
+        already in the record is separated from what is not.
         """
         keys = self._anchor_keys(pane, ANCHOR_CONTEXT)
         if keys:
@@ -520,8 +534,7 @@ class ConversationLog:
             echoes = self._sent_keys(pane)
             for i in range(len(fresh) - 1, -1, -1):
                 if _aligns(fresh, i, keys, echoes):
-                    return [m for m in fresh[i + 1:]
-                            if not (m[0] == "user" and _is_echo(_key(m[1]), said))]
+                    return self._sift(pane, fresh[i + 1:], (), said)
         # The window cannot be placed against the record: a `/clear`, a record holding nothing read
         # off this pane, or a message whose text changed. The last-block rule cannot see an input
         # made mid-turn, but it does see the turn — and a turn recorded without its interruptions
@@ -534,9 +547,51 @@ class ConversationLog:
         # aligns, and without this the turn above is written a second time. Bounded to
         # ANCHOR_CONTEXT rows, which is what keeps an agent that genuinely repeats itself an hour
         # later recorded rather than swallowed.
-        return [m for m in turn_messages(fresh)
-                if (m[0], _key(m[1])) not in keys
-                and not (m[0] == "user" and _is_echo(_key(m[1]), said))]
+        return self._sift(pane, turn_messages(fresh), keys, said)
+
+    def _sift(self, pane, msgs, keys, said):
+        """The window's messages, split into what is new and what the record already holds.
+
+        Both halves are kept. A duplicate is a fact about what the pane showed — the record is what
+        was detected and received — so the copy is written, marked with the row it repeats, and
+        left out of every read that does not ask for it. What it must never be is *new*: a second
+        copy counted as a turn is a second trigger for the arbitrator, which is the fault this
+        pair was written for.
+
+        Two exact tests and no threshold. `keys` is the anchor — the last few messages read off
+        this pane — and a block reproducing one of them is that message again, whatever the window
+        did to the boundaries around it. `said` is the prompts the record ends on, matched by
+        prefix rather than equality because a pane echoes a prompt with whatever it drew underneath
+        it caught in the same block. Both are bounded by position in the record rather than by
+        elapsed time, so an agent that genuinely repeats itself forty turns later is new.
+        """
+        new, dupes = [], []
+        for who, text, span in msgs:
+            key = _key(text)
+            if (who, key) in keys or (who == "user" and _is_echo(key, said)):
+                dupes.append((who, text, span, self._dupe_of(pane, who, key)))
+            else:
+                new.append((who, text, span))
+        return new, dupes
+
+    def _dupe_of(self, pane, who, key):
+        """The row this message repeats, or None when it has already been pruned away.
+
+        Same bound as the sets that classified it, so this is a lookup rather than a search: the
+        row is one of the last few this pane wrote, and a copy that cannot name its original is
+        still a copy — it is marked either way.
+        """
+        where, params = self._scope(pane)
+        rows = self.conn.execute(
+            f"SELECT id, kind, text FROM turns WHERE {where} AND text != '' AND dupe_of IS NULL"
+            " ORDER BY at DESC, id DESC LIMIT ?", (*params, TRAILING_USER_MAX)).fetchall()
+        for r in rows:
+            if _who(r["kind"]) != who:
+                continue
+            other = _key(r["text"])
+            if other == key or (len(other) >= ECHO_EDGE and key.startswith(other)):
+                return r["id"]
+        return None
 
     @staticmethod
     def _fingerprint(pane):
@@ -568,7 +623,8 @@ class ConversationLog:
         where, params = self._scope(pane)
         rows = self.conn.execute(
             f"SELECT kind, text FROM turns WHERE {where}"
-            " AND at_src != 'sent' AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
+            " AND at_src != 'sent' AND text != '' AND dupe_of IS NULL"
+            " ORDER BY at DESC, id DESC LIMIT ?",
             (*params, limit)).fetchall()
         return [(_who(r["kind"]), _key(r["text"])) for r in reversed(rows)]
 
@@ -590,7 +646,8 @@ class ConversationLog:
         where, params = self._scope(pane)
         rows = self.conn.execute(
             f"SELECT kind, text FROM turns WHERE {where} AND text != '' AND at_src = 'sent'"
-            " ORDER BY at DESC, id DESC LIMIT ?", (*params, TRAILING_USER_MAX)).fetchall()
+            " AND dupe_of IS NULL ORDER BY at DESC, id DESC LIMIT ?",
+            (*params, TRAILING_USER_MAX)).fetchall()
         return {_key(r["text"]) for r in rows if _who(r["kind"]) == "user"}
 
     def _sent_after_read(self, pane):
@@ -603,7 +660,8 @@ class ConversationLog:
         where, params = self._scope(pane)
         rows = self.conn.execute(
             f"SELECT kind, text, at_src FROM turns WHERE {where} AND text != ''"
-            " ORDER BY at DESC, id DESC LIMIT ?", (*params, TRAILING_USER_MAX)).fetchall()
+            " AND dupe_of IS NULL ORDER BY at DESC, id DESC LIMIT ?",
+            (*params, TRAILING_USER_MAX)).fetchall()
         out = set()
         for r in rows:
             if r["at_src"] != "sent":
@@ -619,7 +677,7 @@ class ConversationLog:
         where, params = self._scope(pane)
         rows = self.conn.execute(
             f"SELECT kind, text FROM turns WHERE {where}"
-            " AND text != '' ORDER BY at DESC, id DESC LIMIT ?",
+            " AND text != '' AND dupe_of IS NULL ORDER BY at DESC, id DESC LIMIT ?",
             (*params, TRAILING_USER_MAX)).fetchall()
         out, seen_user = set(), False
         for r in rows:
@@ -633,7 +691,7 @@ class ConversationLog:
     def _last_tail(self, pane):
         where, params = self._scope(pane)
         row = self.conn.execute(
-            f"SELECT tail FROM turns WHERE {where} AND text = ''"
+            f"SELECT tail FROM turns WHERE {where} AND text = '' AND dupe_of IS NULL"
             " ORDER BY at DESC, id DESC LIMIT 1", params).fetchone()
         return row["tail"] if row else None
 
@@ -650,7 +708,9 @@ class ConversationLog:
         self.conn.execute(
             f"DELETE FROM turns WHERE id IN ("
             f"  SELECT id FROM turns WHERE kind NOT IN ({keep})"
-            f"  ORDER BY at ASC, id ASC LIMIT ?)",
+            # A copy goes before the oldest turn does: it is the one row in the table whose
+            # contents are already somewhere else in it.
+            f"  ORDER BY (dupe_of IS NULL) ASC, at ASC, id ASC LIMIT ?)",
             (*KEEP_ALWAYS, count - self.max_rows))
         self.conn.commit()
 
