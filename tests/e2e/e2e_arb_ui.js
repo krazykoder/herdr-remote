@@ -122,21 +122,33 @@ async function main() {
     // read and the decision sits on disk for ever.
     await endTurn('a1:p3');
 
-    await page.waitForFunction(() => /review ·/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 30000});
+    // The tray stopped carrying the decision itself: it is a row of icons, a state and a budget,
+    // and gate, target and why moved into the sheet the Log button opens. So "a decision arrived"
+    // is asked of the session the relay pushed, and what it says is read where it is now drawn.
+    await page.waitForFunction(
+      () => arbSession && (arbSession.last_decision || {}).gate === 'review', null, {timeout: 30000});
+    const last = await page.evaluate(() => arbSession.last_decision);
+    check('the decision reaches the client by gate, target and why',
+          last.to === 'member-2' && /Ready for review\./.test(last.why || ''), JSON.stringify(last));
     const decided = await page.textContent('#arbStrip .arb-strip');
-    check('the decision reaches the strip by gate, target and why', /review · Reviewer 1 · Ready for review\./.test(decided), decided);
-    check('and the budget it spent', /steps · \d+ min/.test(decided), decided);
+    check('and the strip says where it is and what is left of its budget',
+          /Arbitrating|Deciding/.test(decided) && /steps · \d+ min/.test(decided), decided);
 
     const herdr = fs.readFileSync(path.join(TMP, 'fake_herdr.log'), 'utf8');
     check('the instruction was typed at the member it named', herdr.includes('pane send-text a1:p2'), herdr.split('\n').slice(-4).join(' | '));
 
     // The sheet, over the wire: the relay answers `arb_detail` to this client alone, and what it
     // answers with is the only place the prompt the arbitrator was shown can be read back.
-    await page.click('#arbStrip .arb-last');
+    await page.locator('#arbStrip').getByRole('button', {name: 'Log'}).click();
+    // On the prose, not on the heading. The sheet draws immediately from the copy the thread's
+    // bubbles already hold, and that copy is `brief` — gate, target and why, no prompt and no
+    // instruction. Opening the sheet asks again without `brief`, and this waits for that answer.
     await page.waitForFunction(
-      () => /#1 · review/.test(document.querySelector('#arbDetailBody').textContent),
+      () => /Check the footer change on mobile\./.test(document.querySelector('#arbDetailBody').textContent),
       null, {timeout: 20000});
     const sheet = await page.textContent('#arbDetailBody');
+    check('the sheet says which decision it was, and to whom',
+          /#1 · review · Reviewer 1/.test(sheet), sheet.slice(0, 200));
     check('the sheet says what was decided and why', /Ready for review\./.test(sheet), sheet.slice(0, 200));
     check('what the arbitrator wrote', /Check the footer change on mobile\./.test(sheet), sheet.slice(0, 300));
     check('and where it was typed', /w?a1:p2/.test(sheet), sheet.slice(0, 300));
@@ -149,15 +161,24 @@ async function main() {
     await page.waitForFunction(
       () => /Check the footer change on mobile\./.test(document.querySelector('#convViewThread').textContent),
       null, {timeout: 20000});
-    const thread = await page.textContent('#convViewThread');
-    check('the prompt is badged as the arbitrator’s, not the reader’s', /⚖ arbitrator/.test(thread),
-          thread.replace(/\s+/g, ' ').slice(0, 300));
+    // Asserted as a mark rather than as text: the badge is `arbSign()` beside the word, so the
+    // thread's textContent says only "arbitrator" — which the session's own opening line in the
+    // thread also says. The `.via` wrapper is what makes it a badge on a bubble, and the
+    // arbitrator's own bubbles draw their sign outside it.
+    const badges = await page.evaluate(
+      () => document.querySelectorAll('#convViewThread .via .arb-sign').length);
+    check('the prompt is badged as the arbitrator’s, not the reader’s', badges === 1,
+          `${badges} arbitrator marks in the thread`);
 
     await page.getByRole('button', {name: 'Pause'}).click();
     await page.waitForFunction(() => /Paused/.test(document.querySelector('#arbStrip .arb-strip').textContent), null, {timeout: 15000});
     check('Pause stops it, from the page', true);
 
-    const end = page.locator('#arbStrip').getByRole('button', {name: /End/});
+    // Not on the strip: ending and re-briefing sit behind the Edit dialog, because the strip is a
+    // row of 28px squares over a thread being scrolled with a thumb. Still two presses — the
+    // button arms on the first.
+    await page.locator('#arbStrip').getByRole('button', {name: 'Edit'}).click();
+    const end = page.getByRole('button', {name: /End session/});
     await end.click(); await end.click();
     await page.waitForFunction(() => document.querySelector('#arbStrip').textContent === '', null, {timeout: 15000});
     check('and ending takes the strip with it', true);
