@@ -354,7 +354,7 @@ test('a start under a root can name the directory it makes', () => {
   assert.ok(/New folder/.test(el('startChildRow').innerHTML));
   el('startChild').value = ' notes ';
   run('submitStart()');
-  assert.equal(sent[0].child, 'notes');
+  assert.equal(sent[0].child, ' notes ', 'the relay, not this form, refuses malformed names');
   assert.equal(sent[0].project_id, 'root');
 });
 
@@ -372,7 +372,7 @@ test('an empty field is not a child, and a terminal never carries one', () => {
   const {el, sent, run} = startCtx();
   run("startAgentPick = 'claude'; startPickProject('root')");
   el('startPlacement').value = 'new_workspace';
-  el('startChild').value = '   ';
+  el('startChild').value = '';
   run('submitStart()');
   assert.ok(!('child' in sent[0]), 'blank text is "start in the root itself"');
 

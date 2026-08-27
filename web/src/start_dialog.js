@@ -685,7 +685,7 @@
       // refuses a name that is not one directory under that root rather than accepting a cleaned
       // up version of it, so cleaning it here would only disagree with the answer.
       const childField = terminal ? null : document.getElementById('startChild');
-      const child = childField ? (childField.value || '').trim() : '';
+      const child = childField ? (childField.value || '') : '';
       if (child) msg.child = child;
       if (placement !== 'split') msg.slot = slotFor();
       // A terminal takes the typed name too, and has no role to have been named after: startRoleFields

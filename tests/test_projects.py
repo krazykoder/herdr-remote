@@ -691,7 +691,7 @@ class ChildOnAStartTests(unittest.TestCase):
         self.assertEqual(plan["create_child"], "")
 
     def test_a_name_outside_the_charset_is_refused(self):
-        for name in ("..", ".", ".hidden", "a..b", "a/b", "/etc", "-x", "", None,
+        for name in ("..", ".", ".hidden", "a..b", "a/b", "/etc", "-x", " notes ", "", None,
                      7, "a\0b", "x" * 65):
             with self.subTest(child=name):
                 plan, err = self.start(child=name)
