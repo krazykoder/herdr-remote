@@ -99,6 +99,15 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 HERDR = os.environ.get("HERDR_BIN") or shutil.which("herdr") or "/opt/homebrew/bin/herdr"
 
 
+def is_test_relay():
+    """Is this relay running the fake herdr out of `tests/`?
+
+    Every suite that spawns a relay points HERDR_BIN there. It is the one reliable mark of a
+    process whose writes must not land on the running install's data.
+    """
+    return os.path.abspath(HERDR).startswith(os.path.join(PROJECT_ROOT, "tests") + os.sep)
+
+
 def own_db(var, default):
     """Where a database lives — and never the live one, for a relay running the fake herdr.
 
@@ -116,7 +125,7 @@ def own_db(var, default):
     got = os.environ.get(var)
     if got:
         return got
-    if os.path.abspath(HERDR).startswith(os.path.join(PROJECT_ROOT, "tests") + os.sep):
+    if is_test_relay():
         sys.exit(f"herdr-remote: HERDR_BIN is {HERDR}, so this is a test relay — set {var} to a "
                  f"path of its own rather than writing to {default}")
     return default
@@ -461,6 +470,58 @@ async def probe_git(pane):
 STATE_DB = own_db("HERDR_STATE_DB",
                   os.path.join(PROJECT_ROOT, ".herdr-remote", "state.sqlite3"))
 user_state = None
+
+# How often the relay takes a copy of its own state, in hours; `0` switches it off. Run by this
+# process and not by launchd or cron: a system-level job is a second thing to install, a second
+# thing to remember to remove, and on macOS a permission dialog about a program the person did not
+# start. The data being copied belongs to the relay, and so does the schedule.
+#
+# Never for a test relay. The script writes to the checkout's own `.herdr-remote/`, which is the
+# running install's — the same trap `own_db` exists for, and one a backup would spring on every
+# suite that spawns a relay.
+BACKUP_EVERY_H = 0 if is_test_relay() else float(os.environ.get("HERDR_BACKUP_HOURS") or 24)
+BACKUP_DIR = os.environ.get("HERDR_BACKUP_DIR") or os.path.join(
+    PROJECT_ROOT, ".herdr-remote", "backups")
+BACKUP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backup-state.sh")
+
+
+def last_backup_at():
+    """When the newest backup was taken, or 0 if there are none.
+
+    Read off the directories rather than kept in memory, so the schedule survives a restart: a
+    relay restarted six times a day still backs up once, and one that has been down for a week
+    backs up as soon as it is running again.
+    """
+    try:
+        return max((os.path.getmtime(os.path.join(BACKUP_DIR, n))
+                    for n in os.listdir(BACKUP_DIR)), default=0)
+    except OSError:
+        return 0
+
+
+async def backup_loop():
+    """A copy of the databases, taken by the relay itself. See `relay/backup-state.sh`.
+
+    Checked every ten minutes rather than slept for a day: a laptop that was closed at 03:00 has
+    no timer waiting for it when it opens, and "back up if the last one is old enough" is the same
+    rule whether the machine has been awake for an hour or a month.
+    """
+    while True:
+        try:
+            if time.time() >= last_backup_at() + BACKUP_EVERY_H * 3600:
+                # In a thread: it is a shell script that copies tens of megabytes, and the poll
+                # loop and every open socket are on this one event loop.
+                done = await asyncio.to_thread(
+                    subprocess.run, [BACKUP_SCRIPT],
+                    capture_output=True, text=True, timeout=600)
+                if done.returncode:
+                    log.warning("backup failed (%d): %s", done.returncode,
+                                (done.stderr or done.stdout or "").strip()[:400])
+                else:
+                    log.info("%s", (done.stdout or "").strip())
+        except Exception as e:                   # noqa: BLE001 — a backup is never worth a crash
+            log.warning("backup: %s", e)
+        await asyncio.sleep(600)
 try:
     user_state = UserState(STATE_DB)
 except (sqlite3.Error, OSError) as e:
@@ -3746,6 +3807,9 @@ async def main():
     # the same handle_client and read the same cached state.
     asyncio.create_task(poll_loop())
     asyncio.create_task(event_push())
+    if BACKUP_EVERY_H > 0:
+        asyncio.create_task(backup_loop())
+        log.info("state is backed up every %g h into %s", BACKUP_EVERY_H, BACKUP_DIR)
 
     servers = [await serve(
         functools.partial(handle_client, listener="lan"), LAN_BIND, WS_PORT,

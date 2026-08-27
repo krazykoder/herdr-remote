@@ -6,11 +6,13 @@
 # store keeps 200 revisions of each document. That window is about two hours at the rate the index
 # actually moves. Revision history is an undo, not a backup.
 #
-# Run it by hand, from the ops bot, or from the launchd job `--install` writes.
+# Takes no arguments and needs no schedule of its own: the relay runs it, every
+# HERDR_BACKUP_HOURS (24), and `/ops backup` in Telegram runs one now. Deliberately not a launchd
+# job or a cron line — a system-level schedule is a second thing to install, a second thing to
+# remember to remove, and on macOS a permission prompt about a program the person did not start.
+# The data belongs to the relay, so the schedule does too.
 #
-#   relay/backup-state.sh              one backup, then prune to the last KEEP
-#   relay/backup-state.sh --install    also install the daily launchd job (macOS)
-#   relay/backup-state.sh --uninstall  remove that job
+#   relay/backup-state.sh    one backup, then prune to the last HERDR_BACKUP_KEEP
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,39 +21,6 @@ BACKUPS="${HERDR_BACKUP_DIR:-$PROJECT_DIR/.herdr-remote/backups}"
 CONFIG_DIR="${HERDR_CONFIG_DIR:-$HOME/.config/herdr-remote}"
 LOG_DIR="${HERDR_LOG_DIR:-$HOME/Library/Logs/herdr-remote}"
 KEEP="${HERDR_BACKUP_KEEP:-14}"
-LABEL="com.herdr-remote.backup"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-
-install_job() {
-    mkdir -p "$(dirname "$PLIST")"
-    cat > "$PLIST" <<PLISTEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$SCRIPT_DIR/backup-state.sh</string></array>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
-  <key>StandardOutPath</key><string>$LOG_DIR/backup.log</string>
-  <key>StandardErrorPath</key><string>$LOG_DIR/backup.log</string>
-</dict>
-</plist>
-PLISTEOF
-    launchctl unload "$PLIST" 2>/dev/null || true
-    launchctl load "$PLIST"
-    echo "installed $LABEL — daily at 03:17, logging to $LOG_DIR/backup.log"
-}
-
-case "${1:-}" in
-    --install)   install_job ;;
-    --uninstall) launchctl unload "$PLIST" 2>/dev/null || true; rm -f "$PLIST"
-                 echo "removed $LABEL"; exit 0 ;;
-    "")          ;;
-    *)           echo "usage: backup-state.sh [--install|--uninstall]" >&2; exit 2 ;;
-esac
-
 DEST="$BACKUPS/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$DEST/config" "$DEST/logs"
 
