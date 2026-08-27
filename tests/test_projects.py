@@ -606,6 +606,35 @@ class ChildPathGuardTests(unittest.TestCase):
         self.assertIsNone(pane)
         self.assertIn("no longer inside its root", exec_err)
 
+    def test_the_executor_refuses_a_plan_whose_row_moved_under_its_id(self):
+        # A derived id folds the directory name, so two different directories can present the
+        # same id — here `webapp` and `webapp.`, which differ on disk and fold to one slug. The
+        # planned `webapp` is swapped for a symlink out of the root; the next scan skips the
+        # symlink and hands `common-webapp` to `webapp.`, which really is under the root. So the
+        # re-check passes on the new row while the herdr calls below still carry the old path.
+        # Both the check and the spawn must refuse, and neither directory may be started in.
+        plan, err = start_agent.validate_open_terminal(
+            {"type": "open_terminal", "project_id": self.child()["id"],
+             "placement": "new_workspace"}, self.projects, [])
+        self.assertIsNone(err)
+        planned_cwd = plan["cwd"]
+
+        os.makedirs(os.path.join(self.root, "webapp."))
+        self.swap_for_a_symlink()
+        roots = [p for p in self.projects if not p.get("parent")]
+        rescanned = roots + child_projects(roots)
+        stand_in = next(p for p in rescanned if p.get("parent"))
+        self.assertEqual(stand_in["id"], plan["project_id"])
+        self.assertNotEqual(stand_in["cwd"], planned_cwd)
+        self.assertTrue(child_path_ok(stand_in, rescanned))  # the new row is genuinely fine
+
+        with unittest.mock.patch.object(herdr_relay, "PROJECTS", rescanned), \
+                unittest.mock.patch.object(herdr_relay, "_herdr_json") as herdr_call:
+            pane, _, exec_err = herdr_relay._create_target_pane(plan, None)
+        self.assertIsNone(pane)
+        self.assertIn("changed since the start was planned", exec_err)
+        herdr_call.assert_not_called()
+
     def test_the_executor_leaves_a_file_project_alone(self):
         # It has no `parent`, so there is nothing derived to re-check and no herdr call is made
         # here that was not made before.

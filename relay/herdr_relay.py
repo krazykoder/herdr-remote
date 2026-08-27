@@ -1890,7 +1890,17 @@ def _create_target_pane(plan, remote):
     # boundary: a directory handle herdr creates from, or a no-follow guarantee inside herdr.
     if plan.get("parent"):
         project = next((p for p in PROJECTS if p["id"] == plan.get("project_id")), None)
-        if project is None or not child_path_ok(project, PROJECTS):
+        # The id is not the identity: a derived id folds a directory name, so a root that lost
+        # `webapp` and gained `web.app` presents a *different* directory under the same id. The
+        # row has to still be the row this plan was built from, or the check below would pass on
+        # one path while the herdr calls that follow spawn at the other. A plan whose row moved
+        # underneath it fails; retargeting it here would make this a second place that decides
+        # where a pane goes.
+        if (project is None
+                or project["cwd"] != plan["cwd"]
+                or project.get("parent", "") != plan["parent"]):
+            return None, None, "that project has changed since the start was planned"
+        if not child_path_ok(project, PROJECTS):
             return None, None, "that project's directory is no longer inside its root"
 
     placement = plan["placement"]
