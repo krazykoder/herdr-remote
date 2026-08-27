@@ -235,6 +235,6 @@ async function main() {
   // always deleted it, so the one run whose relay log is worth reading is the one that never had
   // one. A pass leaves nothing behind, as before.
   if (!fails) fs.rmSync(TMP, {recursive: true, force: true});
-  process.exit(fails ? 1 : 0);
+  process.exitCode = fails ? 1 : 0;
 }
 main();
