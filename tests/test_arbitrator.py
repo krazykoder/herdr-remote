@@ -28,6 +28,7 @@ SESSION = {
         "member-1": {"panes": 1, "status": "idle"},
         "member-2": {"panes": 1, "status": "done"},
         "member-busy": {"panes": 1, "status": "working"},
+        "member-blocked": {"panes": 1, "status": "blocked"},
         "member-gone": {"panes": 0, "status": ""},
         "member-twin": {"panes": 2, "status": "idle"},
     },
@@ -181,6 +182,12 @@ class Rejects(unittest.TestCase):
         # N7. Rejected, never queued: by the time it finishes, its state and the reason for this
         # decision have both moved, and a stale instruction is worse than none.
         self.assertCode("target_working", check(to="member-busy"))
+
+    def test_target_blocked(self):
+        # A blocked pane is sitting at a permission prompt, so a paste into it either answers that
+        # prompt or is swallowed by it. Refused here, and under the code that says the pane is
+        # there and unavailable rather than the one that says it has gone.
+        self.assertCode("target_working", check(to="member-blocked"))
 
     def test_instruction_empty(self):
         self.assertCode("instruction_empty", check(instruction="   \t \n "))

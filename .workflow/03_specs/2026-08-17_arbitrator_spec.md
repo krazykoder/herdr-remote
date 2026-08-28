@@ -775,7 +775,7 @@ Checked in order; the first failure is the `reject_code`.
 | `field_required` | An action gate is missing `to` or `instruction` |
 | `unknown_member` | `to` is a `member_id` on the roster |
 | `target_not_live` | `to` resolves to exactly one live pane (§5.2) |
-| `target_working` | The target's status is not `working` (N7) |
+| `target_working` | The target's status is neither `working` nor `blocked` (N7) |
 | `instruction_empty` | `instruction` is non-empty after stripping |
 | `instruction_too_long` | ≤ 4 000 characters — the relay's existing `send_text` bound |
 | `instruction_control_chars` | No control characters except `\n` and `\t` |

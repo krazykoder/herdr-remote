@@ -57,7 +57,12 @@ NO_SEND = (CALL_HUMAN, HOLD)
 
 # A pane acting on something is never written to (N7), and a decision naming one is rejected rather
 # than held: by the time it finished, its state and the reason for the decision have both moved.
-BUSY = "working"
+# `blocked` is here for the same reason and not because it is busy: that pane is sitting at a
+# permission prompt, so a paste into it either answers the prompt or is swallowed by it. The
+# executor stops it either way, but under `target_not_live` — which tells the arbitrator the pane
+# has gone when it is in fact right there, waiting for a person, and sends the correction after the
+# wrong problem.
+BUSY = ("working", "blocked")
 
 # Everything except \n and \t. An instruction is pasted into somebody's terminal, so an escape
 # sequence in it is not prose — it is control of that terminal.
@@ -148,7 +153,7 @@ def validate(raw, session):
         return None, "unknown_member"
     if member.get("panes") != 1:
         return None, "target_not_live"
-    if member.get("status") == BUSY:
+    if member.get("status") in BUSY:
         return None, "target_working"
 
     instruction = _prose(doc["instruction"])
