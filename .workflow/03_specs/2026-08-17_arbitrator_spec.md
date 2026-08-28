@@ -615,6 +615,14 @@ The arbitrator is an ordinary agent pane configured by prose. It receives:
 Splitting them keeps the per-trigger prompt short enough to stay legible in a pane and cheap enough
 to send on every turn.
 
+**Where the words live.** Every one of them is a markdown file under `relay/prompts/`, loaded by
+`relay/arb_prompts.py`: `starter.md`, `modes.md`, `roster.md`, `resume.md`. `## name` splits a file
+into sections and `$name` is substituted — `string.Template`, not `str.format`, because these
+prompts are about writing JSON and doubling every brace in prose a person edits by hand is a trap
+that gets sprung exactly once. The files are re-read on every send, so a change takes with no
+restart; a broken edit keeps the last copy that loaded, and a broken prompt directory fails the
+relay's boot rather than a session. The text below is normative; the file is where it is kept.
+
 ### 11.2 Starter prompt (normative content)
 
 ```
@@ -690,7 +698,8 @@ Implemented the mobile footer change. The composer now sits above the safe area�
 [human · web] 11:05:01
 Keep the footer compact.
 
-Allowed gates: implement, review, phase_plan, call_human
+Allowed gates: implement, review, phase_plan, hold, call_human
+Instruction style: minimal
 Budget: 7 steps left, 3 consecutive left, 44 minutes left
 Sequence: 7
 
@@ -704,6 +713,20 @@ against exactly what the arbitrator saw.
 
 Note `member-2  … working` in the roster: the arbitrator is told the live status of every member so
 it can avoid naming one that cannot be written to, rather than discovering it by rejection.
+
+### 11.4 Instruction style
+
+`minimal` or `detailed`, a column on `sessions`, defaulting to `detailed`. It governs **how much the
+arbitrator writes into `instruction`** and nothing else — not how hard it thinks, not how long it
+takes, not what goes in `why`. The person picks it per session because it is a fact about the
+members rather than about the work: a capable harness handed a paragraph of context it could have
+read for itself pays for the explanation twice, and a smaller one handed a single sentence does the
+wrong thing confidently.
+
+Both styles are described in the starter prompt; every trigger names the one in force. That split is
+what makes it editable mid-session — `arb_edit` changes the column, the next trigger carries the new
+word, and nothing is announced and nothing re-briefed, because a re-brief would throw away
+everything the arbitrator has decided so far.
 
 The label comes first because it is the name the entries below are headed with — `[member-1 ·
 Architect 1]` — and the roster line is the only thing that links the two. The roles follow it, and

@@ -670,6 +670,15 @@
     //
     // Pure, and given its lists rather than reading them, for the same reason the strip is: the
     // states worth asserting are the ones nobody is sitting in front of.
+    // How much the arbitrator writes into an instruction, and nothing else about how it decides.
+    // A fact about the members rather than about the work: claude and codex read a paragraph of
+    // context they could have read for themselves and pay for it twice, and a smaller harness
+    // handed one sentence does the wrong thing. The default is the one that is wrong for fewer
+    // harnesses; the person switches it per session, and may switch it mid-session — every trigger
+    // names the style in force, so the change takes without re-briefing the arbitrator.
+    const ARB_MODES = [['detailed', 'Detailed — instructions that stand on their own'],
+                       ['minimal', 'Minimal — one or two sentences, no restated context']];
+
     function arbSetupHtml(live, free, at, editing) {
       at = at || {};
       return '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
@@ -681,6 +690,12 @@
         arbPart('Arbitrator',
           arbSlot('arbWho', free, at.arbWho || (free[0] || {}).pane_id) +
           '<span class="arb-note">@arbitrator starter prompt — not defined yet.</span>' +
+          // Not folded into Clocks and limits: those are stops nobody touches, and this is a
+          // choice about the two agents in the room that a person makes every time.
+          '<label>Instructions<select id="arbMode">' +
+          ARB_MODES.map(([v, label]) =>
+            `<option value="${v}"${(at.arbMode || 'detailed') === v ? ' selected' : ''}>` +
+            `${escapeHtml(label)}</option>`).join('') + '</select></label>' +
           // §10's two clocks, off by default and folded away because of it. A turn ending is
           // always a trigger; these are for the two ways a conversation stops without anyone's
           // turn ending — a member that went quiet, and one that has been working long enough to
@@ -782,7 +797,7 @@
     function arbReadSetup() {
       const at = {};
       ['arbScope', 'arbWho', 'arbFirst', 'arbSecond', 'arbRoleFirst', 'arbRoleSecond',
-       'arbIdle', 'arbRuntime', 'arbSteps', 'arbRuns', 'arbMinutes'].forEach(id => {
+       'arbIdle', 'arbRuntime', 'arbSteps', 'arbRuns', 'arbMinutes', 'arbMode'].forEach(id => {
         at[id] = (document.getElementById(id) || {}).value || '';
       });
       // A checkbox answers with `checked`, not `value` — read the same way as the rest, every
@@ -870,6 +885,7 @@
         arbRuns: String(b.max_consecutive || ARB_LIMITS.arbRuns[0]),
         arbMinutes: String(b.max_minutes || ARB_LIMITS.arbMinutes[0]),
         arbWarmup: !!s.warmup,
+        arbMode: s.mode || 'detailed',
       };
     }
 
@@ -1166,6 +1182,7 @@
           max_wall_clock_ms: arbLimitValue('arbMinutes') * 60000,
         },
         warmup: !!at.arbWarmup,
+        mode: at.arbMode || 'detailed',
       };
     }
 
@@ -1183,6 +1200,7 @@
         triggers: { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime },
         budget: got.budget,
         warmup: got.warmup,
+        mode: got.mode,
         paused: arbStartPaused,
       });
       // The dialog is done — it asked its questions. Nothing is drawn in its place, though: the
@@ -1213,6 +1231,7 @@
         msg.triggers = { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime };
       }
       if (got.warmup !== was.arbWarmup) msg.warmup = got.warmup;
+      if (got.mode !== was.arbMode) msg.mode = got.mode;
       if (String(got.budget.max_steps) !== was.arbSteps ||
           String(got.budget.max_consecutive) !== was.arbRuns ||
           String(got.budget.max_wall_clock_ms / 60000) !== was.arbMinutes) {

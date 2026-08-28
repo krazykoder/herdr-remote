@@ -261,6 +261,10 @@ test('start sends pane ids and a scope, and no identity of its own', () => {
     // Off unless the box is ticked. agy is woken regardless, by the relay, because it is the one
     // that needs it — the box is for the rest.
     warmup: false,
+    // The instruction style, always sent. It is the one piece of session policy the arbitrator
+    // reads back off every trigger, so a form that left it out would hand the relay's default to a
+    // person who had a select in front of them saying something else.
+    mode: 'detailed',
     // Briefed and armed, which is the default. `Brief only` is the other half of that badge pair.
     paused: false,
   }]);
@@ -1271,6 +1275,38 @@ test('waking the members is off unless asked, and sent when it is', () => {
   g.document.getElementById('arbWarmup').checked = true;
   g.arbStart();
   assert.equal(sent.filter(m => m.type === 'arb_start').at(-1).warmup, true);
+});
+
+test('the instruction style is sent on a start and only when it moves on an edit', () => {
+  const {g, els, sent} = ctx();
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  // Detailed until somebody says otherwise: the style that is wrong for fewer harnesses.
+  assert.match(els.arbSetupBody.innerHTML, /id="arbMode"[\s\S]*?value="detailed" selected/);
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbMode').value = 'minimal';
+  g.arbStart();
+  assert.equal(sent.find(m => m.type === 'arb_start').mode, 'minimal');
+
+  // And on an edit it is one more field that is sent only when it changed, because naming a field
+  // that did not move is an interruption the members pay for.
+  sent.length = 0;
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: [{...SESSION, mode: 'minimal'}]});
+  g.arbEditHere();
+  assert.match(els.arbSetupBody.innerHTML, /id="arbMode"[\s\S]*?value="minimal" selected/);
+  Object.entries({arbScope: SESSION.scope, arbWho: 'w1:p3', arbFirst: 'w1:p1',
+                  arbSecond: 'w1:p2', arbMode: 'minimal'})
+    .forEach(([id, v]) => { g.document.getElementById(id).value = v; });
+  g.arbSave();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_edit'), [], 'nothing moved');
+
+  g.arbEditHere();
+  g.document.getElementById('arbMode').value = 'detailed';
+  g.arbSave();
+  assert.equal(sent.find(m => m.type === 'arb_edit').mode, 'detailed');
 });
 
 test('editing a session opens on the limits it has, and sends only what moved', () => {

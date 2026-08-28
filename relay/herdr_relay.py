@@ -2562,6 +2562,10 @@ def arb_session_message(session):
             # Relay-side policy like the clocks, and on this message for the same reason: the
             # dialog that edits a session has to open on what it already says.
             "warmup": bool(session["warmup"]),
+            # Which instruction style the arbitrator is writing under. Relay-side policy like the
+            # two above, and on this message for the same reason — but unlike them the arbitrator
+            # does see it, once per trigger, which is what lets a person change it mid-session.
+            "mode": session["mode"],
             "members": [{"id": mid, "label": m["label"], "agent": m["agent"], "role": m["role"],
                          "pane_id": m["pane_id"], "status": m["status"]}
                         for mid, m in roster.items()],
@@ -3204,6 +3208,9 @@ async def handle_client(ws, listener="lan"):
                                 # the person asked, and on regardless for the harnesses that need
                                 # it — see Arbitration.warm.
                                 warmup=bool(msg.get("warmup")),
+                                # How much the arbitrator writes into an instruction. A property
+                                # of the members, not of the work — see Arbitration.MODES.
+                                mode=msg.get("mode"),
                                 # Briefed but not armed: "initialised" and "started" are two
                                 # things, and a person assembling a room wants the first.
                                 paused=bool(msg.get("paused"))))
@@ -3230,7 +3237,8 @@ async def handle_client(ws, listener="lan"):
                             arbitration.edit, msg["session"],
                             scope=msg.get("scope"), members=msg.get("members"),
                             arbitrator=msg.get("arbitrator"), triggers=msg.get("triggers"),
-                            budget=msg.get("budget"), warmup=msg.get("warmup")))
+                            budget=msg.get("budget"), warmup=msg.get("warmup"),
+                            mode=msg.get("mode")))
                     elif msg_type == "arb_resume":
                         # `kick` is what happens first. Without it the loop is armed and waits for
                         # a trigger, which may be a very long time coming; with it the arbitrator is

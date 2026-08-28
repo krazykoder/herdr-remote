@@ -1728,6 +1728,61 @@ class Edits(Harness):
 
 
 
+class InstructionStyle(Harness):
+    """How much the arbitrator writes into an instruction: a session field, named in every trigger.
+
+    Named per trigger rather than only in the brief because it is the one piece of session policy a
+    person changes while the session is running, and the alternative — re-briefing to make the
+    change take — throws away everything the arbitrator has decided so far.
+    """
+
+    def test_a_session_starts_detailed_unless_asked_otherwise(self):
+        # The style that is wrong for fewer harnesses: too much context costs a read, too little is
+        # a member doing the wrong thing, and only the person knows which of their agents is which.
+        s = self.start()
+        self.assertEqual("detailed", s["mode"])
+
+    def test_the_brief_describes_both_styles(self):
+        self.start()
+        _, brief = self.sent[0]
+        self.assertIn("minimal", brief)
+        self.assertIn("detailed", brief)
+
+    def test_every_trigger_names_the_style_in_force(self):
+        s = self.start(mode="minimal")
+        self.sent.clear()
+        self.step(s["id"])
+        _, text = self.sent[0]
+        self.assertIn("Instruction style: minimal", text)
+
+    def test_a_correction_carries_it_too(self):
+        # A re-prompt is a trigger like any other. It used to be the one message that could arrive
+        # without the style, which is the message where the arbitrator is already off course.
+        s = self.start(mode="minimal")
+        self.step(s["id"])
+        self.write(s["id"], 1, to="member-9")
+        self.sent.clear()
+        self.arb.collect(s["id"], 1)
+        self.assertIn("Instruction style: minimal", self.sent[0][1])
+
+    def test_changing_it_takes_on_the_next_trigger_and_announces_nothing(self):
+        s = self.start(mode="detailed")
+        self.sent.clear()
+        self.arb.edit(s["id"], mode="minimal")
+        self.assertEqual([], self.sent)          # nothing to announce: the trigger carries it
+        self.step(s["id"])
+        self.assertIn("Instruction style: minimal", self.sent[0][1])
+
+    def test_a_style_nobody_defined_is_refused(self):
+        with self.assertRaises(ArbiterError) as caught:
+            self.start(mode="terse")
+        self.assertEqual("bad_mode", caught.exception.code)
+        s = self.start()
+        with self.assertRaises(ArbiterError) as caught:
+            self.arb.edit(s["id"], mode="")
+        self.assertEqual("bad_mode", caught.exception.code)
+
+
 class WakingTheMembers(Harness):
     """The warm-up: a first prompt into a long-idle agent is often answered with nothing.
 

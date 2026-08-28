@@ -31,6 +31,7 @@ import sqlite3
 import threading
 import time
 
+import arb_prompts
 from arbitrator import HOLD, MAX_INSTRUCTION, validate
 from start_agent import WARMUP_TEXT
 from pane_summary import ends_turn
@@ -82,6 +83,15 @@ DEFAULT_GATES = [
 # ever, and from outside that is indistinguishable from one that is working — "an unattended loop
 # that stops must not be discovered hours later" cuts both ways.
 MAX_HOLDS = 3
+# How much the arbitrator writes into an instruction, and nothing else about how it decides. The
+# person picks one per session because it is a fact about the members rather than about the work:
+# a capable harness handed a paragraph of context it could have read for itself pays for the
+# explanation twice. The rules for both live in `relay/prompts/modes.md`; every trigger names the one in
+# force, so a mid-session change takes without re-briefing the arbitrator.
+MODES = ("minimal", "detailed")
+# The one that is wrong for the fewest harnesses. Too much context is a cost; too little is a
+# member that does the wrong thing, and only the person knows which of their agents is which.
+DEFAULT_MODE = "detailed"
 
 # Conservative on purpose, and raised only on evidence from real sessions. The maxima are the point:
 # a person who wants a longer loop can have one, and cannot have an unbounded one by typo.
@@ -135,7 +145,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at        INTEGER NOT NULL,
   ended_at          INTEGER,
   ended_reason      TEXT,
-  warmup            INTEGER NOT NULL DEFAULT 0
+  warmup            INTEGER NOT NULL DEFAULT 0,
+  mode              TEXT NOT NULL DEFAULT 'detailed'
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -243,7 +254,8 @@ def fingerprint(pane):
 
 
 # Added to `sessions` after the first release — see the ALTER in `__init__`.
-ADDED_COLUMNS = (("warmup", "INTEGER NOT NULL DEFAULT 0"),)
+ADDED_COLUMNS = (("warmup", "INTEGER NOT NULL DEFAULT 0"),
+                 ("mode", "TEXT NOT NULL DEFAULT 'detailed'"))
 
 # Which harnesses are warmed whether or not anybody asked. A first prompt into an agent that has
 # been sitting idle for a long time is often answered with nothing at all — the harness wakes up,
@@ -400,73 +412,24 @@ def render(gates, gate, instruction):
     raise ArbiterError("unknown_gate", gate)
 
 
+def check_mode(value):
+    """One of `MODES`, or a refusal. `None` means "leave it alone" and never reaches here."""
+    mode = (value or "").strip().lower()
+    if mode not in MODES:
+        raise ArbiterError("bad_mode", str(value))
+    return mode
+
+
 def starter_prompt(scope, gates, query_path):
-    """Sent once, when the session starts. §11.2 — the normative content lives in the spec."""
-    names = ", ".join(g["name"] for g in gates)
-    return f"""You are the arbitrator for a conversation between two agents.
+    """Sent once, when the session starts. §11.2 — the normative content lives in the spec.
 
-Scope, from the person who started this session:
-{scope}
-
-Your job, once per trigger: read what just happened, decide the next step, and
-write one decision record. You choose the recipient and the words they receive.
-
-Recipients are the members listed in each trigger message, addressed by member id.
-The member that just finished is a valid recipient — sending work back to its
-author is an ordinary outcome.
-
-Every trigger message lists the roster, one line each:
-
-  <member id>  <label> / <roles> / <agent> / <status>
-
-The label is the name the turns quoted below it are headed with.
-
-Roles are what the person running this session wants that member to do —
-"review only", "no code writing", "minimal focused test", and whatever else
-they wrote. Read them as instructions about that member, not as a job title. They are the
-person's instruction about who does what, so choose the member whose roles cover
-the step you decided on. Roles may overlap: when more than one member fits, prefer
-the one that is not already working. A member shown as `-` has no role and is
-available for anything. A role is never a permission — it does not stop you
-addressing a member, it tells you who was meant to do this.
-
-Gates: {names}
-
-Write exactly one JSON object to the path named in the trigger message. Fields:
-  session_id           string, copy from the trigger
-  sequence             integer, copy from the trigger
-  gate                 one of the gates listed
-  to                   a member id from the roster
-  instruction          the words that member will receive (max {MAX_INSTRUCTION} characters)
-  why                  one short paragraph, for the person reading the thread
-  ambiguity            low | medium | high — does this turn leave the next step underdetermined
-  decision_complexity  low | medium | high — is this beyond what should be auto-continued
-
-For gate call_human, omit `to` and `instruction` entirely; `why` is still required,
-and it is what the person will read. call_human pauses the session — the person
-decides whether to resume it or end it.
-
-For gate hold, omit `to` and `instruction` entirely as well. A hold sends nothing
-and leaves the session armed for the next turn that ends, so it costs one step and
-nothing else. Choose it when the trigger carried nothing the previous turn had not
-already said, when the member you would write to is already working, or when the
-right next step is to wait for a turn that is still running. A hold is a decision,
-not a refusal to make one: say why. Three holds in a row stop the session.
-
-Do not write to a member merely to tell them there is nothing to do. That message
-ends their turn, which triggers you again, and the loop that follows spends the
-whole budget on saying nothing. Hold instead.
-
-Nothing else in your pane is read. Your reasoning, your tool calls and your prose
-are ignored by the relay. Only the file counts.
-
-To look further back than the trigger message shows:
-  python3 {query_path} --last 20
-  python3 {query_path} --grep "<text>"
-Read-only, and capped — it says so when it truncates.
-
-Choose call_human when ambiguity or decision complexity is high, when the scope
-does not cover what just happened, or when you would be guessing."""
+    Both instruction styles are described, not only the one in force: a person switching mode
+    mid-session edits a column in a row, and re-briefing the arbitrator to make that take would
+    throw away everything it has decided so far. The trigger names which one applies.
+    """
+    return arb_prompts.starter(
+        scope=scope, gates=", ".join(g["name"] for g in gates),
+        max_instruction=MAX_INSTRUCTION, query_path=query_path)
 
 
 def roster_prompt(roster, scope, moved=True, reroled=True, rescoped=False):
@@ -477,83 +440,39 @@ def roster_prompt(roster, scope, moved=True, reroled=True, rescoped=False):
     trigger, with no way to tell a swap from a mistake. This says a person did it, on purpose.
 
     Which of the two things changed is said out loud, because they mean different things to the
-    agent reading it. A pane that moved invalidates what it remembers about a member id; a role
-    that changed does not — the same colleague is still there and has been given a different job,
-    and telling it otherwise would have it distrust a member it has been working with all session.
+    agent reading it — see the note at the top of `relay/prompts/roster.md`.
 
     No decision is asked for and no drop path is named: nothing has happened yet that needs one.
     """
-    what = ("changed who is in it, and what each of them is for" if moved and reroled
-            else "changed who is in it" if moved
-            else "changed what each member is for" if reroled
-            else "changed what it is for")
-    lines = [f"The person running this session has {what}.",
+    lines = [arb_prompts.text("roster", "opening",
+                             what=arb_prompts.roster_what(bool(moved), bool(reroled))),
              "", "The roster is now:"]
     for member_id, m in roster.items():
         lines.append(f"  {member_id}  {m.get('label') or '-'} / {m.get('role') or '-'} / "
                      f"{m.get('agent') or '-'}")
-    lines.append("")
-    lines.append("The second column is the role: what the person wants that member to do. Address "
-                 "members by the id in the first column — the roles are how you choose between "
-                 "them, never how you name one.")
-    if moved:
-        lines.append("")
-        lines.append("Anyone not listed above has left and can no longer be addressed. Member ids "
-                     "are positional, so one you have used before may now be a different agent — "
-                     "read the roster in each trigger message rather than remembering it.")
-    else:
-        lines.append("")
-        lines.append("The same agents are still here. Only their roles changed, so a member id "
-                     "still means the agent it meant before.")
-    lines += ["", "The scope is unchanged:" if not rescoped else "The scope is now:", scope,
-              "", "Do not write a decision record for this message. Wait for the next trigger."]
+    lines += ["", arb_prompts.text("roster", "columns"),
+              "", arb_prompts.text("roster", "moved" if moved else "same"),
+              "", "The scope is unchanged:" if not rescoped else "The scope is now:", scope,
+              "", arb_prompts.text("roster", "closing")]
     return "\n".join(lines)
 
 
-# What a resume has to say before it asks for anything. A session comes back from a pause for a
-# reason, and two of those reasons change what the next decision may safely be:
-#
-#   * `send_unconfirmed` is the exactly-once problem in miniature. The relay pressed Enter and could
-#     not prove the pane took it, so the last instruction may have landed, twice or not at all. The
-#     only reader that can settle it is the one that can look at the pane, which is the arbitrator.
-#   * `call_human` means a person was asked for and has now answered — possibly by typing at a
-#     member themselves, which is a turn the arbitrator did not ask for and must read as one.
-#
-# Everything else is said plainly rather than dressed up: what stopped it, and that a person
-# started it again.
-RESUME_NOTES = {
-    "send_unconfirmed": "This session stopped because the relay could not confirm that its last "
-                        "instruction reached the pane it was typed into. It may have arrived, it "
-                        "may not. Read that member's recent turns below before repeating "
-                        "anything — a duplicated instruction is worse than a late one.",
-    "call_human": "This session stopped because you called for a person. They have read it and "
-                  "started the session again. Anything they said to a member themselves is in the "
-                  "turns below, under that member's name.",
-    "user": "A person paused this session by hand and has now started it again. Anything they did "
-            "in the meantime is in the turns below.",
-    "holding": "This session stopped because you held three times in a row without sending "
-               "anything. If the members really have nothing to do, call_human and say so. If "
-               "they do, write to one of them.",
-    "restart": "The relay was restarted while this session was running, which stops it: a send in "
-               "flight at that moment cannot be proven either way. Read the turns below before "
-               "repeating an instruction.",
-}
-
-
 def resume_note(reason):
-    known = RESUME_NOTES.get(reason or "")
-    if known:
-        return known
-    return ("This session stopped (" + str(reason or "unknown").replace("_", " ") +
-            ") and a person has started it again.")
+    return arb_prompts.resume_note(reason)
 
 
-def trigger_prompt(roster, trigger, entries, gates, left, sequence, drop_path, note=None):
+def trigger_prompt(roster, trigger, entries, gates, left, sequence, drop_path, note=None,
+                   mode=DEFAULT_MODE):
     """Sent on every trigger. Only the changing context — §11.3.
 
     The roster carries each member's live status so the arbitrator can avoid naming one that cannot
     be written to, rather than discovering it by rejection. Entries are carried verbatim: this
     function assembles prose, and reads none of it.
+
+    The instruction style is named here rather than only in the brief, because it is the one piece
+    of session policy a person changes while the session runs. Repeating one line per trigger is
+    what makes that edit take effect without re-briefing the arbitrator — and the rules behind the
+    word are in the brief, so this stays a selector rather than a second copy of them.
     """
     lines = ["Roster:"]
     for member_id, m in roster.items():
@@ -573,6 +492,7 @@ def trigger_prompt(roster, trigger, entries, gates, left, sequence, drop_path, n
         lines.append(e.get("text") or "")
         lines.append("")
     lines.append("Allowed gates: " + ", ".join(g["name"] for g in gates))
+    lines.append(arb_prompts.mode_line(mode or DEFAULT_MODE))
     lines.append(f"Budget: {left['steps']} steps left, {left['consecutive']} consecutive left, "
                  f"{left['ms'] // 60000} minutes left")
     lines.append(f"Sequence: {sequence}")
@@ -959,7 +879,7 @@ class Arbitration:
     # --- lifecycle ---
 
     def start(self, *, conversation, members, arbitrator, scope, gates=None, budget=None,
-              triggers=None, paused=False, warmup=False):
+              triggers=None, paused=False, warmup=False, mode=None):
         """Enrol a roster and arm the loop. Preconditions in §9.2's order, each with its own code.
 
         `members` and `arbitrator` are panes as herdr lists them; the front end chose them, because
@@ -990,6 +910,7 @@ class Arbitration:
         budget = check_budget(budget)
         triggers = check_triggers(triggers)
         warmup = bool(warmup)
+        mode = check_mode(mode or DEFAULT_MODE)
 
         at = self.clock()
         # Readable enough to recognise in a directory listing, and suffixed because the minute is
@@ -1000,7 +921,7 @@ class Arbitration:
         self.conn.execute(
             "INSERT INTO sessions (id, conversation, scope, gates_json, budget_json, "
             "triggers_json, arbitrator_fp, arbitrator_pane, state, pause_reason, window_at, "
-            "created_at, warmup) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "created_at, warmup, mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (session_id, conversation, scope, json.dumps(gates), json.dumps(budget),
              json.dumps(triggers),
              json.dumps(fingerprint(arbitrator)), arbitrator["pane_id"],
@@ -1008,7 +929,7 @@ class Arbitration:
              # goes out on every start; `paused` decides only whether the loop is armed behind it,
              # which is the difference between "this one is ready" and "this one is deciding".
              "paused" if paused else "active", "not_started" if paused else None, at, at,
-             1 if warmup else 0))
+             1 if warmup else 0, mode))
         self._write_members(session_id, members, at)
         self.conn.commit()
         os.makedirs(os.path.join(self.dir, session_id), mode=0o700, exist_ok=True)
@@ -1057,7 +978,7 @@ class Arbitration:
 
     @session_change
     def edit(self, session_id, *, scope=None, members=None, arbitrator=None, triggers=None,
-             budget=None, warmup=None):
+             budget=None, warmup=None, mode=None):
         """Change a running session without starting a new one. Every field, one set of rules.
 
         §14.1 still fixes the roster at two, so a roster edit is a replacement of the whole thing
@@ -1088,6 +1009,9 @@ class Arbitration:
             had no way out at all — `resume` deliberately does not raise a limit it was not asked
             to, so without this the only answer to `budget_steps` was to start a second session and
             throw away everything the first one had decided.
+          * **mode** — the instruction style. Every trigger names it, so a change takes on the
+            next decision with nothing announced and nothing re-briefed; the rules for both styles
+            were in the opening brief from the start.
           * **arbitrator** — not a field edit at all. A new pane has none of this session's
             context, so it is enrolled and then *briefed*, exactly as `reinit` briefs one: cleared,
             then given the starter prompt with the scope as it now stands. The pane it replaces is
@@ -1109,6 +1033,8 @@ class Arbitration:
             triggers = check_triggers(triggers)
         if budget is not None:
             budget = check_budget(budget)
+        if mode is not None:
+            mode = check_mode(mode)
 
         live = self.panes()
         was, _ = resolve(json.loads(s["arbitrator_fp"]), s["arbitrator_pane"], live)
@@ -1153,6 +1079,9 @@ class Arbitration:
         if warmup is not None:
             sets.append("warmup=?")
             args.append(1 if warmup else 0)
+        if mode is not None:
+            sets.append("mode=?")
+            args.append(mode)
         if swapped:
             sets.append("arbitrator_fp=?")
             args.append(json.dumps(fingerprint(chosen)))
@@ -1164,14 +1093,15 @@ class Arbitration:
         moved = ([m["pane_id"] for m in before.values()]
                  != [m["pane_id"] for m in roster.values()])
         reroled = [m["role"] for m in before.values()] != [m["role"] for m in roster.values()]
-        log.info("arbitration %s edited: roster %s%s%s%s%s", session_id,
+        log.info("arbitration %s edited: roster %s%s%s%s%s%s", session_id,
                  ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
                            f"{' [' + m['role'] + ']' if m.get('role') else ''}"
                            for mid, m in roster.items()),
                  f", arbitrator {was} -> {arb}" if swapped else "",
                  ", scope changed" if scope is not None else "",
                  ", triggers changed" if triggers is not None else "",
-                 ", budget changed" if budget is not None else "")
+                 ", budget changed" if budget is not None else "",
+                 f", instructions {mode}" if mode is not None else "")
 
         self._event(session_id, "edited", ", ".join(filter(None, [
             "roster " + ", ".join(f"{mid}={m.get('label') or m.get('pane_id')}"
@@ -1181,14 +1111,18 @@ class Arbitration:
             "scope changed" if scope is not None else "",
             "clocks changed" if triggers is not None else "",
             "budget changed" if budget is not None else "",
-            ("warm-up on" if warmup else "warm-up off") if warmup is not None else ""]))
+            ("warm-up on" if warmup else "warm-up off") if warmup is not None else "",
+            f"instructions {mode}" if mode is not None else ""]))
             or "nothing")
         if swapped:
             # A brief, not an announcement. The new pane was not here for any of this, so telling
             # it "the roster changed" would be telling it about a change from a state it never saw.
             return self._brief(session_id, arb, "arbitrator")
         if not moved and not reroled and scope is None:
-            return s              # clocks or budget only: nothing the arbitrator can act on
+            # Clocks, budget or instruction style only. The first two are relay-side
+            # accounting the arbitrator cannot act on; the third it reads off every trigger
+            # from now on, which is exactly why it is not announced.
+            return s
         body = roster_prompt(roster, s["scope"], moved, reroled, scope is not None)
         self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
@@ -1850,7 +1784,7 @@ class Arbitration:
         if os.path.exists(path):
             os.unlink(path)
         body = trigger_prompt(roster, trigger, entries, json.loads(s["gates_json"]),
-                              budget_left(s, now), sequence, path, note)
+                              budget_left(s, now), sequence, path, note, s["mode"])
         cur = self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
             (session_id, sequence, trigger, body, now))
@@ -1929,7 +1863,7 @@ class Arbitration:
         roster = self.roster(s["id"])
         body = trigger_prompt(roster, f"reprompt — {code}", [], json.loads(s["gates_json"]),
                               budget_left(s, self.clock()), s["sequence"],
-                              self.drop_path(s["id"], s["sequence"]))
+                              self.drop_path(s["id"], s["sequence"]), mode=s["mode"])
         body = f"Your decision was rejected: {code}. Correct the same file.\n\n{body}"
         cur = self.conn.execute(
             "INSERT INTO prompts (session_id, sequence, trigger, body, sent_at) VALUES (?,?,?,?,?)",
