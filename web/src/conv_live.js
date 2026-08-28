@@ -726,14 +726,35 @@
       // queried roster current — including the members it returned nothing for.
       let answeredThrough = 0;
       const touched = new Set();
+      // Which rows each fingerprint answered with, so the window ask below can drop what the relay
+      // no longer returns. The merge is otherwise append-only, and a row can stop being part of
+      // the record behind this browser's back — pruned, or marked as a copy of another row. Kept
+      // for ever, it is a duplicate bubble no reload and no refresh can clear.
+      const answered = new Map();
       for (const t of turns) {
         const fpKey = convFpKey([t.host, t.agent, t.cwd]);
         const bucket = convLiveBucket(fpKey);
         const seq = t.seq || 0;
         if (seq > answeredThrough) answeredThrough = seq;
+        if (!answered.has(fpKey)) answered.set(fpKey, new Set());
+        answered.get(fpKey).add(seq);
         if (seq && bucket.turns.some(x => x.seq === seq)) continue;
         bucket.turns.push(t);
         touched.add(fpKey);
+      }
+
+      // The window ask alone: a delta, a pane-scoped answer and a backfill each carry a slice of
+      // the record by design, and dropping what they did not name would delete the rest of it.
+      // Bounded below by the oldest row the answer carried, because everything under that is
+      // outside the window this query asked about — including whatever Load older fetched.
+      if (msg.since_id == null && !msg.pane && msg.until_id == null) {
+        for (const [fpKey, seqs] of answered) {
+          const bucket = convLiveCache.get(fpKey);
+          if (!bucket) continue;
+          const lo = Math.min(...seqs);
+          const kept = bucket.turns.filter(t => (t.seq || 0) < lo || seqs.has(t.seq || 0));
+          if (kept.length !== bucket.turns.length) { bucket.turns = kept; touched.add(fpKey); }
+        }
       }
 
       // Every fingerprint the query named, whether it answered with rows or with silence. The relay

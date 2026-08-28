@@ -3136,6 +3136,12 @@ async def handle_client(ws, listener="lan"):
                 # moves anything.
                 if msg.get("until_id") is not None:
                     out_msg["until_id"] = msg.get("until_id")
+                # And for a fourth: a delta carries only what came after an id, so a client cannot
+                # tell it from a window ask that answered with the same rows. It has to, because
+                # only the window ask names the whole record — a client dropping rows an answer
+                # left out would, off a delta, drop everything it holds.
+                if msg.get("since_id") is not None:
+                    out_msg["since_id"] = msg.get("since_id")
                 await ws.send(json.dumps(out_msg))
             elif msg_type.startswith("arb_"):
                 # One gate for the whole family. With arbitration off these are not merely

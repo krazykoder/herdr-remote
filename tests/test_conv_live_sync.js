@@ -263,6 +263,30 @@ test('the thread interleaves its members by time, not by which bucket they sat i
   assert.deepEqual(convLiveEntries([KEY_A, KEY_B]).map(e => e.member), [1, 0, 0]);
 });
 
+test('a row the record no longer returns is dropped by the window ask', () => {
+  reset();
+  // Two rows fetched, then one of them stops being part of the record — pruned, or marked as a
+  // copy of the other. The merge is append-only, so without this the reader keeps seeing it for
+  // as long as this browser keeps a cache: a duplicate bubble no reload can clear.
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A],
+                   turns: [turn(10, FP_A, 1000, 'said'), turn(11, FP_A, 1100, 'said again')]});
+  assert.deepEqual(convLiveEntries([KEY_A]).map(e => e.text), ['said', 'said again']);
+
+  convLiveReceive({fingerprints: [FP_A], turns: [turn(10, FP_A, 1000, 'said')]});
+  assert.deepEqual(convLiveEntries([KEY_A]).map(e => e.text), ['said']);
+});
+
+test('a delta drops nothing, because it never named the rest of the record', () => {
+  reset();
+  convLiveFetch([KEY_A]);
+  convLiveReceive({fingerprints: [FP_A],
+                   turns: [turn(10, FP_A, 1000, 'said'), turn(11, FP_A, 1100, 'said again')]});
+  // The rows after 11, and nothing else. Everything this browser holds is below that.
+  convLiveReceive({fingerprints: [FP_A], since_id: 11, turns: [turn(12, FP_A, 1200, 'and more')]});
+  assert.deepEqual(convLiveEntries([KEY_A]).map(e => e.text), ['said', 'said again', 'and more']);
+});
+
 test('a question in flight is not an empty record', () => {
   reset();
   convLiveFetch([KEY_A]);
