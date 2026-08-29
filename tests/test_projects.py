@@ -661,7 +661,12 @@ class CreateProjectTests(unittest.TestCase):
     """A Project made without starting anything: the directory is the whole registration."""
 
     def setUp(self):
-        self.root = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        # The root sits *inside* a temporary directory rather than being one. The swap test below
+        # renames it to a sibling, and a sibling of a system temp directory is a directory nothing
+        # cleans up — so that test passed once per machine and failed on every run afterwards, on
+        # the rename, with "Directory not empty".
+        base = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = os.path.join(base, "root")
         self.outside = os.path.realpath(self.enterContext(tempfile.TemporaryDirectory()))
         os.makedirs(os.path.join(self.root, "webapp"))
         self.roots = [{"id": "common", "label": "Common", "cwd": self.root, "host": "local",

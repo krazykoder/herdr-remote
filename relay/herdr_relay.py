@@ -9,7 +9,7 @@ import asyncio, functools, hmac, json, logging, os, re, shlex, shutil, signal, s
 from agent_state import complete_agent_update_message
 import git_probe
 from arbitration import (Arbitration, ArbiterError, budget_left, now_ms as arb_now,
-                         resolve as arb_resolve)
+                         resolve as arb_resolve, RUNNING as ARB_RUNNING)
 from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
@@ -2549,7 +2549,15 @@ def arb_session_message(session):
         "SELECT sequence, gate, to_member, why, ambiguity, at FROM decisions "
         "WHERE session_id=? AND valid=1 ORDER BY id DESC LIMIT 1", (session["id"],)).fetchone()
     arb_fp = json.loads(session["arbitrator_fp"])
-    arb_pane, _ = arb_resolve(arb_fp, session["arbitrator_pane"], live_panes())
+    # Re-resolved only while the session is one that could write to somebody. A fingerprint is
+    # (host, agent, cwd) and nothing more, so it cannot tell "the arbitrator came back" from "a
+    # different claude in the same directory" — and a session that has been paused for a week would
+    # otherwise adopt whichever pane a person next opens in that checkout, badge it as arbitrating
+    # and make them confirm every line they type at their own agent. A stopped session claims
+    # nobody: it publishes the pane it last used, which no longer exists after a herdr restart, and
+    # `resume` does the resolving where a person is watching and a refusal is visible.
+    arb_pane = (arb_resolve(arb_fp, session["arbitrator_pane"], live_panes())[0]
+                if session["state"] in ARB_RUNNING else session["arbitrator_pane"])
     return {
         "type": "arb_session",
         "session": {
