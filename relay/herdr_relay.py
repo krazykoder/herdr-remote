@@ -49,6 +49,8 @@ from start_agent import (
     plan_slot,
     slot_advice,
     validate_pane_label,
+    validate_start_aid,
+    validate_start_starter,
     validate_start_ref,
     tab_create_args,
     validate_open_terminal,
@@ -1067,6 +1069,10 @@ pane_config = {}
 # logged, never passed to a shell. In memory, like pane_config beside it — a relay restart drops it,
 # and by then no client is still waiting on that start.
 pane_ref = {}
+# What a start said about itself that herdr does not report back: the opening prompt's name and
+# the role. Memory, like pane_config beside it — the durable copy is the identity registry, which
+# picks these up off the snapshot on the next poll.
+pane_spawn = {}
 
 
 # Panes this relay started, watched briefly for a menu herdr does not call blocked. A codex opened
@@ -2349,6 +2355,14 @@ async def _poll_once():
             ref = pane_ref.get(a["pane_id"])
             if ref:
                 a["ref"] = ref
+            # And what the start said about itself that herdr does not report back. On the pane
+            # rather than passed alongside, because the identity pass persists exactly what the
+            # pane carries — after which these outlive this process, which the maps above do not.
+            said = pane_spawn.get(a["pane_id"])
+            if said:
+                for k, v in said.items():
+                    if v:
+                        a[k] = v
         # Which *agent* is in each pane, as opposed to which slot the pane is. Against the whole
         # roster in one call, because "who no longer has a pane" is only answerable against all of
         # it — half a roster would retire every agent on the other host. See relay/agent_ids.py.
@@ -3566,6 +3580,38 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
                                               "ok": False, "error": ref_err}))
                     return
+                # Which agent this start brings back, if the client knows. Refused rather than
+                # dropped for the same reason as the two beside it: a start that silently lost the
+                # agent it was continuing comes up as a stranger in a conversation of its own,
+                # while the thread it was for sits there looking dead.
+                aid, aid_err = validate_start_aid(msg.get("aid"))
+                if aid and not aid_err:
+                    if agent_ids is None:
+                        aid_err = "this relay does not track agent ids"
+                    elif not await asyncio.to_thread(agent_ids.get, aid):
+                        aid_err = "unknown agent id"
+                    elif not ref:
+                        # The binding is made against the start's own name, so there is nothing to
+                        # bind to without one. Every client that can send an `aid` sends a `ref`.
+                        aid_err = "an aid needs a ref to bind it to"
+                if aid_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": aid_err}))
+                    return
+                # Bound before the pane exists, not after it is made: a poll landing in between
+                # would resolve the new pane by inference and mint a stranger, and rule 1 would
+                # then have to move the agent onto it a poll later. A binding whose start goes on
+                # to fail is harmless — a ref is unique to one press, so no other pane wears it.
+                if aid:
+                    await asyncio.to_thread(agent_ids.bind_ref, aid, ref)
+                # Which opening prompt this session is started with. A name and never the text —
+                # the client types the prompt. Kept so a browser that never watched the start can
+                # still ask for the same opening when it restarts the agent.
+                starter, starter_err = validate_start_starter(msg.get("starter"))
+                if starter_err:
+                    await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
+                                              "ok": False, "error": starter_err}))
+                    return
                 plan, start_err = validate_start_request(msg, PROJECTS, latest_agents, START_AGENTS)
                 if start_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "start_agent",
@@ -3609,6 +3655,11 @@ async def handle_client(ws, listener="lan"):
                     return
                 if plan.get("config"):
                     pane_config[pane_id] = plan["config"]
+                # The two spawn details herdr has never heard of. Held here the way pane_config is,
+                # and persisted by the identity pass on the next poll — after which they outlive
+                # this process, which pane_config alone never did.
+                if starter or plan.get("role"):
+                    pane_spawn[pane_id] = {"starter": starter, "role": plan.get("role") or ""}
                 if ref:
                     pane_ref[pane_id] = ref
                 spawn_watch[pane_id] = time.monotonic() + SPAWN_WATCH_S

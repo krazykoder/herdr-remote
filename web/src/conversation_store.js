@@ -1234,6 +1234,70 @@
       }
     }
 
+    // One follow per agent at a time, for the same reason convLanding exists: convLandMember
+    // awaits a database and the poll is 3s.
+    const convFollowing = new Set();
+
+    // The member follows its agent, wherever herdr has put it.
+    //
+    // A pane id is a slot: herdr assigns it, herdr reuses it, and it changes on a respawn, a kill,
+    // a herdr restart, a reboot. The colleague in it does not change, and the relay now says so —
+    // every pane carries the id of the agent in it, minted once and kept across every pane that
+    // agent goes on to occupy.
+    //
+    // Two jobs, both of them on the ordinary snapshot:
+    //
+    //   the fold — a member whose key names a live pane takes that pane's agent id, which is how
+    //   a roster written before any of this existed acquires one without a migration step
+    //
+    //   the follow — a member whose pane is gone, whose agent is sitting in another one, is moved
+    //   onto it: the transcript carried over the seam, the pair repointed, the row moved. Exactly
+    //   what a restart the reader watched has always done, now done in every browser instead of
+    //   only in the one whose tab was open at the time
+    //
+    // Nothing here opens anything or says anything to a pane: the reader may be anywhere, and did
+    // not ask to be moved. See the identity decision log.
+    async function convFollowAids() {
+      if (!agents.length) return;
+      // Not against an index that has not arrived, for the same reason convLandPending waits.
+      if (typeof stateSyncPending === 'function' && stateSyncPending()) return;
+      const byAid = new Map();
+      for (const a of agents) if (a && a.aid) byAid.set(a.aid, a);
+      if (!byAid.size) return;   // a relay older than agent ids: nothing to fold and nothing to follow
+      const live = new Set(agents.map(x => convMemberKey(x)));
+      let folded = false;
+      const items = loadConvIndex();
+      const follow = [];
+      for (const c of items) {
+        const named = new Set((c.members || []).map(m => m && m.key));
+        for (const m of (c.members || [])) {
+          if (!m || !m.key) continue;
+          if (live.has(m.key)) {
+            const here = agents.find(x => convMemberKey(x) === m.key);
+            if (here && here.aid && m.aid !== here.aid) { m.aid = here.aid; folded = true; }
+            continue;
+          }
+          const moved = m.aid ? byAid.get(m.aid) : null;
+          // Not onto a pane this conversation already names. herdr recycles pane ids and a member
+          // may have been moved by something else a moment ago; two rows drawing one transcript is
+          // the failure convLandMember's own `already` guard exists for, reached from here.
+          if (moved && !named.has(convMemberKey(moved))) follow.push({conv: c.id, key: m.key, pane: moved});
+        }
+      }
+      if (folded) saveConvIndex(items);
+      for (const f of follow) {
+        if (convFollowing.has(f.key)) continue;
+        convFollowing.add(f.key);
+        try {
+          const conv = await convLandMember(f.pane, f.conv, f.key, '');
+          if (conv) {
+            renderConversations();
+            if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+          }
+        } finally { convFollowing.delete(f.key); }
+      }
+    }
+
     // --- Conversation membership ---
     // Which conversations a pane is in, and the two edits that answer it: join one, or name a new
     // one. Membership is the whole of "is this recorded" (§3), so this is the switch — and it is
@@ -1247,7 +1311,11 @@
 
     function convMemberOf(a) {
       return { key: convMemberKey(a), added: Date.now(), label: paneLabel(a),
-        agent: a.agent || '', project: a.project || '' };
+        agent: a.agent || '', project: a.project || '',
+        // The colleague, as opposed to the pane it is sitting in. `key` names a pane and is what
+        // the transcript is filed under; this is what says the member is still *there* after the
+        // pane it was in has been recycled. Empty against a relay that does not mint them.
+        aid: a.aid || '' };
     }
 
     function openConvDialog(paneId) {

@@ -991,6 +991,35 @@
       return roles.includes(spawn.role) ? spawn.role : roles[0];
     }
 
+    // What a member was started as, from wherever the answer still is.
+    //
+    // This browser's own transcript record first: it is the richer of the two and it is what has
+    // always been used. Then the relay's registry, which is the answer for a member whose pane
+    // ended before *this* browser ever recorded it — another browser started it, or this one had
+    // its storage cleared. Until the registry existed such a member could be offered nothing but
+    // "Restart as…", in every browser but the one that happened to be watching.
+    //
+    // Matched by agent id and by nothing else. A pane id is a slot herdr recycles, and resolving a
+    // dead member by resemblance is how one agent's history ends up in another's conversation.
+    function spawnOf(key) {
+      const recs = (typeof convViewRecs !== 'undefined' && convViewRecs) || [];
+      const own = (recs.find(r => r.key === key) || {}).spawn;
+      if (own && own.agent && own.project_id) return own;
+      const rows = (typeof retiredAgents !== 'undefined' && retiredAgents) || [];
+      if (!rows.length) return own || null;
+      const member = loadConvIndex().reduce(
+        (found, c) => found || (c.members || []).find(m => m && m.key === key), null);
+      const row = member && member.aid && rows.find(x => x.aid === member.aid);
+      if (!row) return own || null;
+      // The registry's fields under whatever the local record already knew, so a browser holding
+      // half an answer keeps its half.
+      return Object.assign({
+        agent: row.agent || '', project_id: row.project_id || '', project: row.project || '',
+        cwd: row.cwd || '', host: row.host || '', config: row.config || '',
+        role: row.role || '', starter: row.starter || '', label: row.label || '',
+      }, own || {});
+    }
+
     // canDuplicate's predicate, read off a record rather than off a pane: the relay willing to
     // start, a Project it still knows, and a harness inside the allowlist. Everything it refuses
     // gets no button rather than a refusal after the tap.
@@ -1013,7 +1042,7 @@
     // been repointed since, the two disagree, and pretending they agree is the one thing this
     // must not do.
     function respawnNote(key) {
-      const rec = convViewRecs.find(r => r.key === key), spawn = rec && rec.spawn;
+      const spawn = spawnOf(key);
       if (!canRespawn(spawn)) return '';
       const project = projects.find(p => p.id === spawn.project_id) || {};
       const where = agents.find(x => x.project_id === spawn.project_id && x.cwd);
@@ -1065,7 +1094,7 @@
     }
 
     function restartMenuHtml(key, rec, on) {
-      const again = canRespawn(rec.spawn);
+      const again = canRespawn(spawnOf(key));
       const other = canStartFromConv();
       if (!again && !other) return '';
       const k = escapeHtml(key);
@@ -1161,8 +1190,8 @@
 
     function convRespawn(key) {
       const conv = loadConvIndex().find(c => c.id === convViewId);
-      const rec = convViewRecs.find(r => r.key === key);
-      const spawn = rec && rec.spawn;
+      const rec = convViewRecs.find(r => r.key === key) || {};
+      const spawn = spawnOf(key);
       if (!ws || !conv || !canRespawn(spawn)) return;
       // This member's own restart, already in flight — the press before this one, whose answer went
       // down with the tab or was spent somewhere else. Continued onto the pane it made rather than
@@ -1224,6 +1253,16 @@
       // clears the same note.
       msg.ref = convRespawnRef();
       startIntent.ref = msg.ref;
+      // Which agent this start brings back, so the relay binds the new pane to it rather than
+      // inferring it from a seat. The inference is right most of the time and is what carries an
+      // agent across a herdr restart nobody asked for — but a restart *is* asked for, and the one
+      // moment it cannot infer is this one: the pane being replaced is quit and the new one
+      // started, and the relay can see both in a single poll.
+      const member = (conv.members || []).find(m => m.key === key);
+      if (member && member.aid) msg.aid = member.aid;
+      // And which opening prompt it is being started with, kept by the relay against that agent —
+      // so the next browser to restart it asks for the same one whether or not it watched this.
+      if (startStarter) msg.starter = startStarter;
       convNotePending(conv.id, msg.ref, key, '');
       ws.send(JSON.stringify(msg));
     }

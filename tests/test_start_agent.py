@@ -28,6 +28,7 @@ from start_agent import (
     unique_agent_name,
     validate_pane_label,
     validate_start_request,
+    validate_start_aid,
     validate_start_ref,
 )
 
@@ -426,6 +427,34 @@ class StartRefTests(unittest.TestCase):
         for bad in ("a b", "a\nb", "a;b", "<script>", "a\x7f"):
             self.assertEqual(validate_start_ref(bad)[1],
                              "ref may only hold letters, digits, '-' and '_'", bad)
+
+
+class StartAidTests(unittest.TestCase):
+    """The agent a start says it continues.
+
+    A pane id is a slot herdr recycles; an agent id outlives it. A client that knows which agent a
+    restart is bringing back says so, and the relay binds the new pane to it rather than inferring
+    it from a seat.
+    """
+
+    def test_absent_is_not_an_error(self):
+        for empty in (None, "", "   "):
+            self.assertEqual(validate_start_aid(empty), ("", ""))
+
+    def test_an_id_this_relay_could_have_issued_passes(self):
+        self.assertEqual(validate_start_aid("a_9k2m4x7qz10b"), ("a_9k2m4x7qz10b", ""))
+
+    def test_not_a_string(self):
+        self.assertEqual(validate_start_aid(7)[1], "aid must be a string")
+
+    def test_anything_the_relay_would_not_have_minted_is_refused(self):
+        # Shape only — whether this relay ever issued it is the registry's question. The point of
+        # the shape check is that a client cannot smuggle a pane id, a path or a fingerprint in
+        # here and have it treated as an identity.
+        for bad in ("a_UPPER1234567", "a_short", "b_9k2m4x7qz10b", "w1:p1", "a_9k2m4x7qz10bc",
+                    "../a_9k2m4x7qz10b"):
+            self.assertEqual(validate_start_aid(bad)[1],
+                             "aid is not an agent id this relay could have issued", bad)
 
 
 class DigTests(unittest.TestCase):

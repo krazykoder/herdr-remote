@@ -103,8 +103,14 @@ SIDEBAR_BOUNDS = (18, 36)
 # every "Start again" a conversation makes.
 # `child` is a start's alone: it makes a directory, and a terminal is not the thing to open a
 # new project with. An open_terminal naming one is refused as an unexpected field.
+# `aid` is the agent this start continues — the client naming a colleague rather than describing
+# one. Checked for shape here and for existence in the relay, which is the only place that holds
+# the registry.
+# `starter` is the client's own name for the opening prompt a session was started with — an
+# opaque token, kept so that starting the agent again starts it the same way. The relay never
+# reads it and never types it; the client does both.
 BASE_FIELDS = {"type", "name", "role", "project_id", "placement", "label", "slot", "config",
-               "unattended", "ref", "child"}
+               "unattended", "ref", "child", "aid", "starter"}
 # An agent config's id. Checked for shape here and for existence in the relay, which is the only
 # place that knows what the provider file authorised — this module stays free of files.
 CONFIG_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -621,6 +627,56 @@ def validate_start_ref(raw):
     if not all(c.isalnum() or c in "-_" for c in ref):
         return "", "ref may only hold letters, digits, '-' and '_'"
     return ref, ""
+
+
+# Minted by the relay: `a_` and twelve base36 characters. Shape only — whether this relay has ever
+# issued it is a question for the registry.
+AID_RE = re.compile(r"^a_[a-z0-9]{12}$")
+
+
+def validate_start_aid(raw):
+    """Return (aid, error) for the agent a start says it continues.
+
+    A pane id is a slot herdr recycles; an agent id outlives it. A client that knows which agent a
+    restart is bringing back says so here, and the relay binds the new pane to that agent instead
+    of inferring it from a seat. Refused rather than dropped, like the `ref` and the `config`
+    beside it: a start that quietly ignored this would come up as a stranger, in a conversation of
+    its own, and the thread it was started to continue would sit there looking dead.
+    """
+    if raw is None:
+        return "", ""
+    if not isinstance(raw, str):
+        return "", "aid must be a string"
+    aid = raw.strip()
+    if not aid:
+        return "", ""
+    if not AID_RE.match(aid):
+        return "", "aid is not an agent id this relay could have issued"
+    return aid, ""
+
+
+# The same shape as an agent config's id, and for the same reason: it is client text that is
+# stored, echoed to every other client, and never parsed here.
+STARTER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def validate_start_starter(raw):
+    """Return (starter, error) for the opening prompt a session is started with.
+
+    A name, not the text. The prompt itself is typed at the pane by the client that started it —
+    what is kept here is which one, so that a restart from a browser that never saw the original
+    start can ask for the same opening again instead of bringing the agent up silent.
+    """
+    if raw is None:
+        return "", ""
+    if not isinstance(raw, str):
+        return "", "starter must be a string"
+    starter = raw.strip()
+    if not starter:
+        return "", ""
+    if not STARTER_RE.match(starter):
+        return "", "starter may only hold lowercase letters, digits, '-' and '_'"
+    return starter, ""
 
 
 def dig(data, *path):

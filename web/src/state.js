@@ -4,6 +4,14 @@
     // continuous session to everything else. Cleared by the first snapshot after the reconnect,
     // which is the one place that has to read it.
     let wsDownSince = 0;
+    // The agents this relay knows that have no live pane, from the same snapshot as `agents`.
+    // Empty against a relay too old to mint agent ids, which sends no `retired` key at all — its
+    // presence is the feature gate, as `shells` is for terminal mode.
+    //
+    // This is what a member's Restart is built from when this browser never watched it start. The
+    // spawn details used to live only in the local transcript record, so a member whose pane died
+    // in another browser could be offered nothing but "Restart as…".
+    let retiredAgents = [];
     // The last text sent to each pane, for Resend. In memory and not persisted: a prompt worth
     // repeating is one from the session you are in, and a button that fires a week-old transfer
     // into a live agent on the first tap after a reload is a worse offer than no button.

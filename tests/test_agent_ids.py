@@ -57,7 +57,7 @@ class AgentIdsTest(unittest.TestCase):
         got = run(self.store(), [pane("p1"), pane("p2", cwd="/other")])
         self.assertEqual(len(set(got.values())), 2)
 
-    # --- rule 1: the same slot ---
+    # --- rule 2: the same slot ---
 
     def test_the_same_pane_keeps_its_id_across_polls(self):
         ids = self.store()
@@ -119,7 +119,7 @@ class AgentIdsTest(unittest.TestCase):
         self.assertEqual(got["p1"], first)
         self.assertNotEqual(got["p2"], first)
 
-    # --- rule 2: a start that named itself ---
+    # --- rule 1: a start that named itself ---
 
     def test_a_named_start_is_the_agent_it_says_it_is(self):
         # The explicit path. The client said which agent this start continues, so the harness and
@@ -204,6 +204,33 @@ class AgentIdsTest(unittest.TestCase):
         panes = [{"pane_id": "", "host": "local", "agent": "claude"}]
         self.assertEqual(self.store().resolve(panes), {})
         self.assertNotIn("aid", panes[0])
+
+
+    def test_a_named_start_outranks_the_pane_it_is_replacing(self):
+        # A restart ends the old pane and starts a new one, and the relay can see both in one
+        # poll. The old pane's slot claim is a guess about a number herdr recycles; the ref is the
+        # client saying which agent this is. The statement has to win, or the agent stays on the
+        # corpse and the new pane comes up a stranger.
+        ids = self.store()
+        aid = run(ids, [pane("p1")])["p1"]
+        ids.bind_ref(aid, "rABC")
+        got = run(ids, [pane("p1"), pane("p2", ref="rABC")])
+        self.assertEqual(got["p2"], aid)
+        self.assertNotEqual(got["p1"], aid)
+
+    def test_a_binding_is_spent_when_it_is_used(self):
+        # Otherwise the next poll moves the agent again, onto whichever pane still wears that ref.
+        ids = self.store()
+        aid = run(ids, [pane("p1")])["p1"]
+        ids.bind_ref(aid, "rABC")
+        run(ids, [pane("p2", ref="rABC")])
+        self.assertEqual(ids.get(aid)["ref"], "")
+        again = run(ids, [pane("p2", ref="rABC"), pane("p3", ref="rABC")])
+        self.assertEqual(again["p2"], aid, "and the pane it landed on keeps it, by its slot")
+        self.assertNotEqual(again["p3"], aid)
+
+    def test_binding_a_ref_to_an_unknown_agent_does_nothing(self):
+        self.assertFalse(self.store().bind_ref("a_nope", "rABC"))
 
 
 if __name__ == "__main__":

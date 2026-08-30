@@ -830,6 +830,7 @@
         // Not `msg.shells || []` — a relay with terminal mode off sends no key at all, and this
         // has to read as "no terminals" rather than crash the next .filter.
         shells = Array.isArray(msg.shells) ? msg.shells : [];
+        retiredAgents = Array.isArray(msg.retired) ? msg.retired : [];
         // A pane told to quit is only finished once it turns up as a shell, and a snapshot is the
         // only thing that says so. Before the render, so the pane it exits is gone from this one.
         if (typeof endTick === 'function') endTick();
@@ -874,6 +875,9 @@
         // by the id the start named itself with. After openPendingStart, so a start this tab does
         // still hold the answer for lands the ordinary way, with its opening words.
         if (typeof convLandPending === 'function') convLandPending();
+        // After the notes, which are the explicit half of the same job: a member a note already
+        // moved is on its pane by the time this looks, and this then finds nothing to do.
+        if (typeof convFollowAids === 'function') convFollowAids();
         // Restart all, one member per landing. After the two above, which are what clear the way
         // for the next one — see convRestartStep.
         if (typeof convRestartStep === 'function') convRestartStep();

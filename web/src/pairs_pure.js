@@ -275,15 +275,26 @@
       return 'p_' + Math.random().toString(36).slice(2, 10);
     }
 
-    // All four fields, because herdr reuses a pane_id after a pane closes. A matching pane_id
-    // with a different cwd is a different session, and pasting into it is the worst failure here.
+    // The agent, when both sides know one. A pair is two *colleagues* on one job, and a colleague
+    // outlives the pane it is sitting in — so a member pinned to an agent id survives the restart,
+    // the herdr reboot and the recycled pane id that used to take the pair down with them.
+    //
+    // Otherwise all four fields, because herdr reuses a pane_id after a pane closes: a matching
+    // pane_id with a different cwd is a different session, and pasting into it is the worst
+    // failure here. That is still the answer for a pair made before agent ids existed, and for a
+    // relay too old to send one — and `healPairs` writes the id in the first time it re-points,
+    // so a pair only stays on this path while nothing has moved.
     function memberMatches(m, a) {
+      if (m.aid && a.aid) return m.aid === a.aid;
       return a.pane_id === m.pane_id && (a.host || 'local') === (m.host || 'local') &&
         a.agent === m.agent && (a.cwd || '') === (m.cwd || '');
     }
 
     function recentFingerprint(a) {
-      return { pane_id: a.pane_id, host: a.host || 'local', agent: a.agent, cwd: a.cwd || '' };
+      return { pane_id: a.pane_id, host: a.host || 'local', agent: a.agent, cwd: a.cwd || '',
+               // The one field that is not a description of a pane. Empty against a relay that
+               // does not mint them, which is what keeps the fingerprint above the answer.
+               aid: a.aid || '' };
     }
 
     function pairHealth(pair, list) {

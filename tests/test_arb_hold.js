@@ -55,6 +55,10 @@ function ctx({live, members} = {}) {
     convMemberOf: a => ({key: key(a), added: 0, label: a.label}),
     convViewRecs: members.map(m => ({key: m.key, spawn: m.spawn || null})),
     canRespawn: spawn => !!spawn,
+    // What a member was started as, from the local record or from the relay's registry.
+    // arbCanWake asks this rather than reading convViewRecs itself, so that a member whose
+    // pane ended in another browser is still wakeable here.
+    spawnOf: key => ((g.convViewRecs || []).find(r => r.key === key) || {}).spawn,
     convMemberName: (k, ...rest) => rest.find(Boolean) || '',
     convKeyPaneId: k => JSON.parse(k)[1],
     convRestartQueue: [],

@@ -127,7 +127,11 @@ class SnapshotMessage(unittest.TestCase):
         herdr_relay.latest_shells = [{"pane_id": "w8:p2"}]
         msg = herdr_relay.snapshot_message()
         self.assertNotIn("shells", msg)
-        self.assertEqual(msg, {"type": "agents", "agents": [{"pane_id": "w8:p1"}]})
+        # `retired` rides on the same message and has a gate of its own — the identity registry
+        # rather than terminal mode. Absent means "this relay does not mint agent ids", which is
+        # what a client checks, exactly as `shells` says whether terminals are on.
+        self.assertEqual({k: v for k, v in msg.items() if k != "retired"},
+                         {"type": "agents", "agents": [{"pane_id": "w8:p1"}]})
 
     def test_on_with_no_shells_still_carries_the_key(self):
         herdr_relay.TERMINAL = True

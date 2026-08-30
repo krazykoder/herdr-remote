@@ -83,6 +83,10 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
     // it rather than re-deriving it — so the two controls can never disagree.
     convViewRecs: recs,
     canRespawn: spawn => !!spawn,
+    // What a member was started as, from the local record or from the relay's registry.
+    // arbCanWake asks this rather than reading convViewRecs itself, so that a member whose
+    // pane ended in another browser is still wakeable here.
+    spawnOf: key => ((g.convViewRecs || []).find(r => r.key === key) || {}).spawn,
     convMemberName: (k, ...rest) => {
       const at = live.find(x => key(x) === k);
       return (at && at.label) || rest.find(Boolean) || '';

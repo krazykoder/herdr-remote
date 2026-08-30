@@ -12,8 +12,10 @@ can be a single writer), and remembers what each one was started as.
 
 Four rules, first match wins, run once per poll against the whole pane list:
 
-1. the slot already carries an id and the seat still agrees
-2. the pane carries a `ref` an id is bound to — the client said which agent this start continues
+1. the pane carries a `ref` an agent is waiting on — the client said which agent this start
+   continues, and a statement outranks every inference below it. Spent on use: a `ref` names one
+   start, and a binding left lying about would move the agent again on the next poll
+2. the slot already carries an id and the seat still agrees
 3. exactly one retired agent has this seat and nothing else claims it — adoption
 4. otherwise, a new id
 
@@ -144,8 +146,8 @@ class AgentIds:
     def bind_ref(self, aid, ref):
         """Say that the start named `ref` is this agent coming back.
 
-        Written before the pane exists, which is the point: rule 2 then recognises it on the very
-        first poll that sees it, and no adoption guess is involved.
+        Written before the pane exists, which is the point: rule 1 then recognises it on the very
+        first poll that sees it, and no adoption guess is involved. Spent when it is used.
         """
         if not aid or not ref:
             return False
@@ -176,20 +178,26 @@ class AgentIds:
             if r["ref"]:
                 by_ref.setdefault(r["ref"], r)
 
-        out, taken, unresolved = {}, set(), []
+        out, taken, spent, unresolved = {}, set(), set(), []
+        # Rule 1, in a pass of its own and before every inference below. The client said which
+        # agent this start continues; a slot claim is a guess about a number herdr recycles, and a
+        # guess must never win against a statement. Order is the whole of the difference: a restart
+        # that ends the old pane and starts a new one can show the relay both in one poll.
         for p in panes:
             if not p.get("pane_id"):
                 continue
-            slot = slot_of(p)
-            row = by_slot.get(slot)
-            # Rule 1. The seat has to agree: a slot herdr recycled under a different harness or in
-            # a different directory is a different session wearing the same number.
-            if row and row["aid"] not in taken and (row["host"], row["agent"], row["cwd"]) == seat_of(p):
-                out[slot], _ = row["aid"], taken.add(row["aid"])
-                continue
-            # Rule 2. The client named the agent this start continues, so nothing is inferred.
             row = by_ref.get(p.get("ref") or "")
             if row and row["aid"] not in taken:
+                out[slot_of(p)], _ = row["aid"], taken.add(row["aid"])
+                spent.add(row["aid"])
+        for p in panes:
+            if not p.get("pane_id") or slot_of(p) in out:
+                continue
+            slot = slot_of(p)
+            row = by_slot.get(slot)
+            # Rule 2. The seat has to agree: a slot herdr recycled under a different harness or in
+            # a different directory is a different session wearing the same number.
+            if row and row["aid"] not in taken and (row["host"], row["agent"], row["cwd"]) == seat_of(p):
                 out[slot], _ = row["aid"], taken.add(row["aid"])
                 continue
             unresolved.append(p)
@@ -224,7 +232,7 @@ class AgentIds:
             out[slot_of(p)] = aid
             fresh.append(aid)
 
-        self._commit(panes, out, rows, now)
+        self._commit(panes, out, rows, spent, now)
         # Stamped on the pane itself, which is what the snapshot goes out carrying. The mapping is
         # returned as well, for a caller that has the slot but not the dict.
         for p in panes:
@@ -233,7 +241,7 @@ class AgentIds:
                 p["aid"] = aid
         return out
 
-    def _commit(self, panes, out, rows, now):
+    def _commit(self, panes, out, rows, spent, now):
         """Every claim and every retirement, in one transaction.
 
         One transaction because the two halves are one statement about the fleet: a row retired
@@ -262,7 +270,10 @@ class AgentIds:
                     "  role=excluded.role, starter=excluded.starter, label=excluded.label, "
                     "  last_seen=excluded.last_seen",
                     (aid, p.get("host") or "", p.get("agent") or "", p.get("cwd") or "",
-                     p.get("workspace_id") or "", p["pane_id"], p.get("ref") or old.get("ref") or "",
+                     p.get("workspace_id") or "", p["pane_id"],
+                     # Spent. A ref names one start, and a binding left lying about would move the
+                     # agent again on the next poll — onto whichever pane still wears that ref.
+                     "" if aid in spent else (p.get("ref") or old.get("ref") or ""),
                      vals["config"], vals["project_id"], vals["project"], vals["role"],
                      vals["starter"], vals["label"],
                      old.get("first_seen") or now, now))

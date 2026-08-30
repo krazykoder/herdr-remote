@@ -337,8 +337,8 @@
     // disagree about which members are recoverable. Guarded by `typeof` because this module is
     // drawn before the conversation window has ever loaded its records.
     function arbCanWake(key) {
-      if (typeof canRespawn !== 'function' || typeof convViewRecs === 'undefined') return false;
-      return canRespawn(((convViewRecs || []).find(r => r.key === key) || {}).spawn);
+      if (typeof canRespawn !== 'function' || typeof spawnOf !== 'function') return false;
+      return canRespawn(spawnOf(key));
     }
 
     // Whether the thread shows what the arbitrator decided, as bubbles among the messages. A
