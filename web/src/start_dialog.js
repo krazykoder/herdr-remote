@@ -100,6 +100,13 @@
       }
     }
 
+    // Whether the reader is in the conversation window. Read off the screen by openPanelId, which
+    // is what that function is for — and guarded, because this module loads before the one that
+    // defines it.
+    function convWindowOpen() {
+      return typeof openPanelId === 'function' && openPanelId() === 'convView';
+    }
+
     async function openPendingStart() {
       if (!pendingStart) return;
       // Both lists: an opened terminal arrives in `shells`, and looking only at `agents` would
@@ -163,69 +170,31 @@
         return;
       }
       // A respawn asked from a conversation replaces the ended member in that conversation. The
-      // old terminal is gone, but its local thread is continued under this new pane's key.
+      // old terminal is gone, but its local thread is continued under this new pane's key. The
+      // succession itself is convLandMember's — this is the fast path into it, and the only one
+      // that still holds the opening words.
       if (intent && intent.conv) {
-        const next = convMemberKey(a);
-        // The pair goes with it. A restart is the same colleague in a new pane, and the pair record
-        // names panes by id — so without this the strip in the surviving partner reported the pair
-        // stale and dropped the switch, the name and the badge.
-        if (intent.replace) repointPair(convKeyPaneId(intent.replace), a);
-        // The copy happens before the index is read, and the index is read again after it. The
-        // recorder writes members' previews on every poll, so an index loaded before an await and
-        // saved after it puts back a snapshot taken seconds ago — and the copy is the one step here
-        // that waits on a database. A refusal (quota, a blocked store) falls back to joining as a
-        // new member rather than dropping the pane out of the conversation altogether.
-        const replacing = ((loadConvIndex().find(c => c.id === intent.conv) || {}).members || [])
-          .find(m => m.key === intent.replace);
-        const continued = replacing &&
-          await convContinueTranscript(replacing.key, next, replacing.label).catch(() => false);
-        const items = loadConvIndex();
-        const conv = items.find(c => c.id === intent.conv);
-        if (conv) {
-          const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
-          // Whether this pane is already one of this conversation's members. The fallback below
-          // joins as a new member, which is right for a pane the conversation has never held and
-          // wrong for one it already names: herdr recycles pane ids, and a replace intent that no
-          // longer matches — a second landing, a member moved by the restart before it — would
-          // otherwise append a second row for a key that is already in the list. Two members, one
-          // pane, both drawing the same transcript.
-          const already = (conv.members || []).some(m => m.key === next);
-          conv.members = continued && prior
-            ? conv.members.map(m => m.key === prior.key
-              ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
-                  key: next, label: prior.label || paneLabel(a),
-                  // The pane this member continues. This is the only place a member's key moves
-                  // from one pane to another, so it is the only place succession is a fact rather
-                  // than a guess — and the guess it replaces handed a quit agent's words to every
-                  // conversation running the same harness in the same directory.
-                  was: (m.was || []).concat(convKeyPaneId(prior.key))
-                    .filter(Boolean).slice(-CONV_WAS_MAX),
-                  // convWasFpPatch above names the bucket the record kept this member in, where
-                  // the restart moved it to a different one — another harness, or another
-                  // checkout. The pane ids here cannot find those rows on their own: a pane id is
-                  // only ever looked up inside a fingerprint's bucket.
-                })
-              : m)
-            : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
-          saveConvIndex(items);
-          // This conversation and not merely "on": the new pane is a member of exactly one so far,
-          // but a respawn into a grouping the user chose must open on that grouping.
-          convSetView(a, conv.id);
-        }
-        openTerminal(a.pane_id);
+        const conv = await convLandMember(a, intent.conv, intent.replace || '', intent.ref || '');
         // Started with something to say to it. The send goes through the same path a typed message
         // does, so the conversation records it as the user's — it is, and a first instruction that
         // was missing from the thread would be a turn nobody could see the start of. After the
         // membership above, so the thread it is recorded into is the one it was started for.
         if (prompt) sendTextTo(a.pane_id, prompt);
+        // Not while the conversation window is up. A start made from a conversation is a request
+        // for another colleague in it, not a request to stop reading it — and the member has just
+        // appeared in the roster behind this.
+        if (!convWindowOpen()) openTerminal(a.pane_id);
+        else if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
         showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} continued "${conv.name}".`
           : `${a.label || a.agent || 'Session'} started.`, 'success');
         return;
       }
       // Never over a pane the user has since opened themselves — the start was a while ago in
       // phone terms, and yanking them out of what they are reading is worse than not landing.
+      // Nor out of the conversation window, which is the same rule about the same reader: a panel
+      // is not `activePane`, so without naming it here every start made from one navigated away.
       // Unless the start was a Duplicate, which is a request made from that very pane.
-      if (intent === 'open' || !activePane) openTerminal(a.pane_id);
+      if (intent === 'open' || (!activePane && !convWindowOpen())) openTerminal(a.pane_id);
       if (prompt) sendTextTo(a.pane_id, prompt);
       showSpawnStatus(`${a.label || a.agent || 'Session'} started.`, 'success');
     }
@@ -481,17 +450,17 @@
       return START_RETRYABLE.test(text) && !/try again/i.test(text) ? text + ' — try again.' : text;
     }
 
-    // The Project a press did not name, asked for in the sheet. Only when the dialog was opened
-    // without one: the landing page's two + New buttons stand in no Project, so the question they
-    // cannot answer is asked here instead of being guessed at.
-    let startAskProject = false;
-
+    // The Project this start lands in, always asked in the sheet — preselected when the press
+    // named one, empty when it did not. It used to be drawn only in the second case, which made
+    // the Project something you could choose from the landing page and could not change from a
+    // Project tab: a terminal opened in the wrong one meant closing the sheet, changing tab and
+    // starting over. One field, one place, whichever door was used — and the badge in the header
+    // still says which, because the row scrolls and the header does not.
     function renderStartProjects() {
       const row = document.getElementById('startProjectRow');
       if (!row) return;
-      row.hidden = !startAskProject;
-      row.style.display = startAskProject ? '' : 'none';
-      if (!startAskProject) return;
+      row.hidden = false;
+      row.style.display = '';
       const pick = projectsForPicking();
       row.innerHTML = '<div class="start-field">Project<div class="badge-strip">'
         + (pick.length
@@ -555,10 +524,9 @@
       startMode = mode === 'terminal' ? 'terminal' : 'agent';
       const terminal = startMode === 'terminal';
       if (terminal && !startOptions.terminal) return;
-      startProjectId = projectId;
-      // A Project the relay does not have is the same question as none at all — ask, rather than
-      // open the sheet pointed at something that is not there.
-      startAskProject = !projectId || !projects.some(x => x.id === projectId);
+      // A Project the relay does not have is the same as none at all: the picker opens on nothing
+      // rather than on something that is not there.
+      startProjectId = projectId && projects.some(x => x.id === projectId) ? projectId : null;
       syncStartProjectBadge();
       renderStartProjects();
       renderStartChild();

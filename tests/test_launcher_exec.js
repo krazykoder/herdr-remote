@@ -101,7 +101,7 @@ function press({tiles, answer = true, projects = PROJECTS, startOptions = OPTION
     endPane: id => { log.push(['endPane', id]); return true; },
     // shortcuts.js's note for a start that names itself, so a reload can find the pane again.
     convRespawnRef: () => 'r_test',
-    rememberConvRespawn: (conv, key, ref) => log.push(['rememberConvRespawn', conv, key, ref]),
+    convNotePending: (conv, ref, key) => log.push(['convNotePending', conv, ref, key]),
     startPrompt: '',
     startStarter: '',
     loadConvIndex: () => convs.slice(),
@@ -705,8 +705,9 @@ test('a bot whose pane has gone starts again into the thread it left', () => {
   assert.equal(p.sent[0].ref, 'r_test', 'named, so a reload can find the pane it makes');
   // The respawn intent and not the launcher's own: what lands is a replacement for a member of a
   // conversation that already exists, which is the path that copies the transcript across.
-  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1'});
-  assert.ok(p.log.some(l => l[0] === 'rememberConvRespawn' && l[3] === 'r_test'));
+  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1', ref: 'r_test'});
+  assert.ok(p.log.some(l => l[0] === 'convNotePending' && l[2] === 'r_test'),
+    'and what that name means is written where every tab can read it');
   assert.equal(p.convs.length, 1, 'and no second conversation is made for it');
 });
 
@@ -718,7 +719,7 @@ test('changing the harness ends the pane and carries the thread onto the new one
   assert.ok(p.log.some(l => l[0] === 'endPane' && l[1] === 'w1:p1'),
     'a pane runs one CLI, so a swap is Pause followed by Restart');
   assert.equal(p.sent[0].name, 'codex');
-  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1'});
+  assert.deepEqual(p.intent(), {conv: BOT_CONV, replace: 'k_w1:p1', ref: 'r_test'});
 });
 
 test('the confirm says the thread is kept, because that is what makes it a bot', () => {

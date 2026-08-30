@@ -157,13 +157,18 @@
       // Insecure first, and out of every other band: the whole point of the mark is that it is
       // read before the tile is pressed, and a warning mixed in among the Project it happens to
       // belong to is one more badge in a grid of badges.
-      const safe = tiles.filter(t => !launcherInsecure(t));
-      band('[insecure]', tiles.filter(launcherInsecure));
-      // Bots above the rest, and out of the Project bands: a bot is not one of the things the
-      // reader is choosing between — it is the one row that is always the same room, and it is
-      // read past rather than read through.
-      band('Bots', safe.filter(launcherIsBot));
-      const rest = safe.filter(t => !launcherIsBot(t));
+      // Bots first, above the insecure band as well: a bot is the one row that is always the same
+      // room rather than one of the things the reader is choosing between, and it is the row they
+      // came here to press. A bot carrying an insecure payload still wears its own badge, so the
+      // warning is where it is read — on the tile — rather than in the band it was sorted into.
+      band('Bots', tiles.filter(launcherIsBot));
+      const others = tiles.filter(t => !launcherIsBot(t));
+      // Then the insecure ones, out of every other band: the whole point of the mark is that it is
+      // read before the tile is pressed, and a warning mixed in among the Project it happens to
+      // belong to is one more badge in a grid of badges.
+      const safe = others.filter(t => !launcherInsecure(t));
+      band('[insecure]', others.filter(launcherInsecure));
+      const rest = safe;
       band('Templates', rest.filter(t => !t.project_id));
       projects.forEach(p => band(p.label || p.id, rest.filter(t => t.project_id === p.id)));
       // Tiles pointing at a Project this relay does not have. Last, and still drawn: they are the

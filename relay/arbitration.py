@@ -831,6 +831,12 @@ class Arbitration:
         """
         if not all(isinstance(p, dict) for p in participants):
             raise ArbiterError("bad_participant")
+        # Two slots holding one terminal. The app used to draw the arbitrator from panes *outside*
+        # the conversation, so this could only catch a client bug; now that every pane in the
+        # project is offerable — which pane is well placed to referee is the person's judgement —
+        # it is the rule that stops an agent arbitrating itself. A session where one pane is both a
+        # member being written to and the thing deciding who is written to next deadlocks on its
+        # own first trigger.
         ids = [p.get("pane_id") for p in participants]
         if len(set(ids)) != len(ids) or not all(ids):
             raise ArbiterError("duplicate_participant")

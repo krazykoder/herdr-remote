@@ -179,12 +179,17 @@
       if (at) { openTerminal(at); return; }
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
       if (!conv) return;
-      const live = arbLiveMembers(conv), free = arbCandidates(conv);
+      const live = arbMemberRows(conv, ''), free = arbArbiterRows(conv, undefined, '');
       // Refused only when the dialog could do nothing about it. A missing member or a missing
       // arbitrator is a slot away now that each one can start its own — what is not answerable
       // from here is a relay that will not start agents at all, or a conversation whose own
       // members are in two projects, which no new pane fixes.
-      if (!arbCanSpawn() && (live.length < 2 || !free.length)) {
+      // Three distinct agents, counted as agents rather than as slots: this conversation's own
+      // members are offerable as the arbitrator now, so a two-member room with no third pane
+      // draws three full selects that can only ever be refused for naming one agent twice.
+      const roster = new Set(live.map(r => r.key));
+      free.forEach(r => roster.add(r.key));
+      if (!arbCanSpawn() && (live.length < 2 || roster.size < 3)) {
         showToast(arbWhyNot(live, free, arbProject(conv)));
         return;
       }
@@ -222,21 +227,25 @@
       return false;
     }
 
-    // The panes of this conversation that are live right now, in the conversation's own order.
-    // A member that has exited is a member nothing can be typed at, so it is not a candidate.
-    function arbLiveMembers(conv) {
-      const live = new Map(agents.map(x => [convMemberKey(x), x]));
-      return (conv.members || []).map(m => live.get(m.key)).filter(Boolean);
+    // Which project a member is in — off its pane while it has one, and off the record it would be
+    // restarted from once it has not. A conversation whose panes have all been closed still has a
+    // project; it is the one every restart in it would land in.
+    function arbMemberProject(m) {
+      const live = agents.find(x => convMemberKey(x) === m.key);
+      if (live) return live.project_id || '';
+      if (typeof convViewRecs === 'undefined') return null;
+      const rec = (convViewRecs || []).find(r => r.key === m.key);
+      return rec && rec.spawn ? (rec.spawn.project_id || '') : null;
     }
 
-    // The project everyone in this session has to be in, or null if the conversation's own live
-    // members do not agree on one. The relay refuses a roster that spans two projects — an
-    // arbitrator reading agents in an unrelated checkout is deciding about work it cannot see —
-    // so a picker that offered one would be offering a refusal.
+    // The project everyone in this session has to be in, or null if the conversation's members do
+    // not agree on one. The relay refuses a roster that spans two projects — an arbitrator reading
+    // agents in an unrelated checkout is deciding about work it cannot see — so a picker that
+    // offered one would be offering a refusal. A member nothing knows anything about is not a
+    // disagreement, so it is left out of the count rather than answered `null`.
     function arbProject(conv) {
-      const live = arbLiveMembers(conv);
-      const ids = new Set(live.map(x => x.project_id || ''));
-      return ids.size === 1 ? (live[0].project_id || '') : null;
+      const ids = new Set((conv.members || []).map(arbMemberProject).filter(p => p !== null));
+      return ids.size === 1 ? [...ids][0] : null;
     }
 
     // Panes another session already holds, as the arbitrator or as a member. Two arbitrators
@@ -273,23 +282,63 @@
     // ⚖ button asks about.
     function arbPickedProject(conv, at) {
       const picked = [(at || {}).arbFirst, (at || {}).arbSecond]
+        .map(v => (arbResolvePick(v) || {}).pane_id)
         .map(id => id && agents.find(x => x.pane_id === id)).filter(Boolean);
       if (!picked.length) return arbProject(conv);
       const ids = new Set(picked.map(x => x.project_id || ''));
       return ids.size === 1 ? (picked[0].project_id || '') : null;
     }
 
-    // Everything live that is not in this conversation, and is in the roster's project. The
-    // arbitrator is deliberately outside the conversation: it is not a participant in it, it is the
-    // thing deciding what happens in it — but it is in the same repository, or it cannot read the
-    // work.
+    // Every pane in the roster's project. Not filtered by status and not filtered by membership of
+    // this conversation: which pane is well placed to referee is the person's judgement, and a pane
+    // that went `working` for one poll used to vanish from the list under their thumb. What it
+    // cannot be is a pane another session already holds — two arbitrators typing into one terminal
+    // — and that is a fact rather than a status three seconds old.
+    //
+    // Whether the pane can actually take the brief is still the relay's answer: it refuses a busy
+    // arbitrator (N7) at the moment of the send, which is the only moment the answer is true. And
+    // a pane that is also a member is refused there too (`duplicate_participant`), which is why
+    // offering it here costs nothing — A2 says the same thing earlier, for a readable message.
     function arbCandidates(conv, project, except) {
-      const taken = new Set((conv.members || []).map(m => m.key));
       if (project === undefined) project = arbProject(conv);
       if (project === null) return [];
-      return arbUntaken(agents.filter(x => convMemberKey(x) && !taken.has(convMemberKey(x)) &&
-        (x.project_id || '') === project &&
-        x.status !== 'working' && x.status !== 'blocked'), except);
+      return arbUntaken(agents.filter(x => convMemberKey(x) &&
+        (x.project_id || '') === project), except);
+    }
+
+    // The conversation's roster as pickable rows: the live pane where there is one, and the member
+    // itself where there is not. A conversation whose panes have all been closed is exactly the one
+    // somebody opens this dialog on, and until now it offered them nothing. A paused member with no
+    // record to restart from is still left out — the slot would name something nothing can bring
+    // back.
+    function arbMemberRows(conv, except) {
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
+      const taken = arbTakenPanes(except);
+      return (conv.members || []).map(m => {
+        const pane = live.get(m.key) || null;
+        if (pane && taken.has(pane.pane_id)) return null;
+        if (!pane && !arbCanWake(m.key)) return null;
+        return {key: m.key, pane: pane, label: pane ? paneLabel(pane)
+          : `${convMemberName(m.key, m.label, 'Former pane')} — paused`};
+      }).filter(Boolean);
+    }
+
+    // The arbitrator's rows: every pane in the project, plus this conversation's own paused members
+    // — a session assembled from nothing is three restarts, not two and a hunt for a third pane.
+    function arbArbiterRows(conv, project, except) {
+      const rows = arbCandidates(conv, project, except)
+        .map(x => ({key: convMemberKey(x), pane: x, label: paneLabel(x)}));
+      const have = new Set(rows.map(r => r.key));
+      return rows.concat(arbMemberRows(conv, except).filter(r => !r.pane && !have.has(r.key)));
+    }
+
+    // Whether a paused member can be brought back at all — the same record-shaped question the
+    // roster's own Restart asks, borrowed rather than re-derived, so the two controls can never
+    // disagree about which members are recoverable. Guarded by `typeof` because this module is
+    // drawn before the conversation window has ever loaded its records.
+    function arbCanWake(key) {
+      if (typeof canRespawn !== 'function' || typeof convViewRecs === 'undefined') return false;
+      return canRespawn(((convViewRecs || []).find(r => r.key === key) || {}).spawn);
     }
 
     // Whether the thread shows what the arbitrator decided, as bubbles among the messages. A
@@ -679,7 +728,7 @@
     const ARB_MODES = [['detailed', 'Detailed — instructions that stand on their own'],
                        ['minimal', 'Minimal — one or two sentences, no restated context']];
 
-    function arbSetupHtml(live, free, at, editing) {
+    function arbSetupHtml(rows, free, at, editing, holding) {
       at = at || {};
       return '<label>Scope<textarea id="arbScope" rows="2" maxlength="4000"' +
         ' placeholder="What this session is for, and when it should stop.">' +
@@ -688,7 +737,7 @@
         // participant in it, it is the thing deciding what happens in it — so its list is the panes
         // outside the conversation and inside its project.
         arbPart('Arbitrator',
-          arbSlot('arbWho', free, at.arbWho || (free[0] || {}).pane_id) +
+          arbSlot('arbWho', free, at.arbWho || (free[0] && arbPickValue(free[0]))) +
           '<span class="arb-note">@arbitrator starter prompt — not defined yet.</span>' +
           // Not folded into Clocks and limits: those are stops nobody touches, and this is a
           // choice about the two agents in the room that a person makes every time.
@@ -728,19 +777,23 @@
         // are the only answer and the selects say so by having one option each; past two they are
         // the question the strip used to refuse to ask.
         arbPart('Agent 1',
-          arbSlot('arbFirst', live, at.arbFirst || (live[0] || {}).pane_id) +
+          arbSlot('arbFirst', rows, at.arbFirst || (rows[0] && arbPickValue(rows[0]))) +
           arbRoleField('arbRoleFirst', at.arbRoleFirst)) +
         arbPart('Agent 2',
-          arbSlot('arbSecond', live, at.arbSecond || (live[1] || {}).pane_id) +
+          arbSlot('arbSecond', rows, at.arbSecond || (rows[1] && arbPickValue(rows[1]))) +
           arbRoleField('arbRoleSecond', at.arbRoleSecond)) +
         // Only when appointing one. A session that is already running has been armed or not
         // armed already, and the strip's Pause and Resume are where that is changed.
         (editing ? arbSessionActionsHtml() : arbArmChoiceHtml()) +
+        // A roster that is still coming up says so where the button that is waiting for it is,
+        // and the button is disabled rather than hidden: it is the same form, mid-answer.
         '<div class="arb-form-actions">' +
+        (holding ? `<span class="arb-hold-note">${escapeHtml(holding)}</span>` : '') +
         '<button class="arb-btn" onclick="closeArbSetup()">Cancel</button>' +
         (editing
-          ? '<button class="arb-btn go" onclick="arbSave()">Save</button>'
-          : '<button class="arb-btn go" onclick="arbStart()">Start</button>') + '</div>';
+          ? `<button class="arb-btn go"${holding ? ' disabled' : ''} onclick="arbSave()">Save</button>`
+          : `<button class="arb-btn go"${holding ? ' disabled' : ''} onclick="arbStart()">Start</button>`) +
+        '</div>';
     }
 
     // The two that empty or end something. They used to sit on the strip, one tap from a thread
@@ -773,8 +826,8 @@
     // something to decide between them — and leaving this dialog to start each one loses every
     // answer already in it. So each slot can start its own, and the new pane lands *here*: it is
     // chosen in the slot that asked for it and the page does not move.
-    function arbSlot(id, panes, selected) {
-      return '<div class="arb-slot">' + arbPaneSelect(id, panes, selected, '') +
+    function arbSlot(id, rows, selected) {
+      return '<div class="arb-slot">' + arbPaneSelect(id, rows, selected, '') +
         (arbCanSpawn()
           ? `<button type="button" class="badge pick proj" onclick="arbSpawnFor('${id}')"` +
             ' title="Start a new agent and put it in this slot">+ New</button>' : '') +
@@ -840,19 +893,16 @@
     // Drawn once, on open, and left alone after — see `arbSetupConv`. `at` is what the dialog was
     // holding, passed back in on the two redraws there are: a pane that went busy while the scope
     // was being written, and a pane started from a slot.
-    function arbDrawSetup(conv, at) {
+    function arbDrawSetup(conv, at, holding) {
       const el = document.getElementById('arbSetupBody');
       // The session being edited is not a conflict with itself: its own three panes are the
       // answer to the question this dialog is asking, not a clash with it.
       const mine = arbSetupSession;
-      const free = arbWithPick(arbCandidates(conv, arbPickedProject(conv, at), mine),
-                               (at || {}).arbWho);
+      const free = arbArbiterRows(conv, arbPickedProject(conv, at), mine);
       // Members too, and for the same reason: a member of another session is a pane that session
       // is deciding about, and enrolling it here would put two arbitrators over one terminal.
-      const live = arbWithPick(arbUntaken(arbLiveMembers(conv), mine), (at || {}).arbFirst);
-      if (el) {
-        el.innerHTML = arbSetupHtml(arbWithPick(live, (at || {}).arbSecond), free, at, !!mine);
-      }
+      const rows = arbMemberRows(conv, mine);
+      if (el) el.innerHTML = arbSetupHtml(rows, free, at, !!mine, holding || arbHoldNote());
       const name = document.getElementById('arbSetupConvName');
       if (name) name.textContent = conv.name || '';
       arbSetupConv = conv.id;
@@ -894,16 +944,6 @@
     function arbEditHere() {
       const s = arbSessionHere();
       if (s) openArbSetup(s);
-    }
-
-    // An arbitrator started from this dialog a second ago is `working` while its TUI comes up, and
-    // `arbCandidates` drops a working pane — so the slot the person just filled would empty itself
-    // under them. Held in the list by name. Whether it can actually take the brief is still the
-    // relay's answer, and it refuses a busy arbitrator (N7).
-    function arbWithPick(list, paneId) {
-      if (!paneId || list.some(x => x.pane_id === paneId)) return list;
-      const a = agents.find(x => x.pane_id === paneId);
-      return a ? list.concat([a]) : list;
     }
 
     function closeArbSetup() {
@@ -1031,17 +1071,40 @@
       return ((document.getElementById(id) || {}).value || '').trim();
     }
 
+    // What a slot is holding. Two kinds, because a roster may now name something that is not
+    // running: a live pane is its own id, and a paused member is the key the conversation knows it
+    // by. Prefixed rather than sniffed — a pane id and a member key are both opaque strings, and
+    // guessing which one a value is would be a guess made on every read of the form.
+    const ARB_PAUSED = 'paused:';
+
+    function arbPickValue(row) {
+      return row.pane ? row.pane.pane_id : ARB_PAUSED + row.key;
+    }
+
+    // A slot's value as something to act on: a pane to enrol, or a member to wake first.
+    function arbResolvePick(v) {
+      const s = String(v || '');
+      if (!s) return null;
+      if (s.indexOf(ARB_PAUSED) === 0) return {key: s.slice(ARB_PAUSED.length), pane_id: ''};
+      return {key: '', pane_id: s};
+    }
+
+    // Whether two slots are pointing at the same agent, across both kinds of value.
+    function arbSamePick(a, b) { return !!a && !!b && String(a) === String(b); }
+
     // One pane select. Every picker here is the same question — which of these panes — and the
     // three of them differing only in their id is what keeps the markup honest about that.
     //
     // An empty label draws no label: in the dialog the section heading above it already says which
     // pane is being picked, and a row reading "Pane" under one reading "① Agent 1" is a line of
     // height spent saying nothing.
-    function arbPaneSelect(id, panes, selected, label) {
+    function arbPaneSelect(id, rows, selected, label) {
       return `<label>${label ? escapeHtml(label) : ''}<select id="${id}">` +
-        panes.map(x => `<option value="${escapeHtml(x.pane_id)}"` +
-          `${x.pane_id === selected ? ' selected' : ''}>${escapeHtml(paneLabel(x))}</option>`)
-          .join('') + '</select></label>';
+        rows.map(r => {
+          const v = arbPickValue(r);
+          return `<option value="${escapeHtml(v)}"` +
+            `${arbSamePick(v, selected) ? ' selected' : ''}>${escapeHtml(r.label)}</option>`;
+        }).join('') + '</select></label>';
     }
 
     // Why the ⚖ did not open anything, instead of a tap that did nothing. A conversation with
@@ -1050,11 +1113,10 @@
     function arbWhyNot(live, free, project) {
       const why = live.length < 2
         ? 'Arbitration watches two agents talk. This conversation has ' +
-          (live.length === 1 ? 'one live member.' : 'none live.')
+          (live.length === 1 ? 'one agent in it.' : 'none in it.')
         : project === null
         ? 'Arbitration needs everyone in one project, and this conversation spans more than one.'
-        : 'Arbitration needs a third agent in this project to decide, and every other pane here ' +
-          'is busy right now.';
+        : 'Arbitration needs a third agent in this project to decide.';
       return why;
     }
 
@@ -1130,25 +1192,42 @@
       // Not filtered by what other sessions hold: an empty count here would say "start one" about
       // a conversation whose panes are taken, and the taken check below is the sentence that
       // actually names the problem.
-      const live = arbLiveMembers(conv);
-      const free = arbCandidates(conv, arbPickedProject(conv, at), except);
+      // Members that can be woken, not panes that are running. A conversation whose sessions have
+      // all been paused is exactly the one somebody opens this dialog on, and counting live panes
+      // told them it had none in it — about a roster every row of which has a Restart.
+      const live = arbMemberRows(conv, except);
       const scope = at.arbScope.trim();
       const picks = [at.arbFirst, at.arbSecond];
       const roles = ['arbRoleFirst', 'arbRoleSecond'].map(arbRoleValue);
       if (!scope) { showToast('Say what this session is for.'); return null; }
-      if (live.length < 2 || !picks[0] || !picks[1] || !who) {
+      if (!picks[0] || !picks[1] || !who) {
         // Sayable now that a slot can fill itself: an empty one used to mean the conversation was
         // short a member and there was nothing to be done about it from here.
         showToast('Two agents and one to decide between them — + New starts a missing one.');
         return null;
       }
-      if (picks[0] === picks[1]) {
-        showToast('Two different panes — one agent has nobody to talk to.');
+      if (arbSamePick(picks[0], picks[1])) {
+        showToast('Two different agents — one has nobody to talk to.');
         return null;
       }
+      // The picker offers this conversation's own members as arbitrators now, so one agent can be
+      // named twice. Said here for a readable message; refused again by the relay, which is where
+      // it is law — see `duplicate_participant`.
+      if (picks.some(p => arbSamePick(p, who))) {
+        showToast('An agent cannot arbitrate itself.');
+        return null;
+      }
+      const want = [picks[0], picks[1], who].map(arbResolvePick);
       const taken = arbTakenPanes(except);
-      if ([picks[0], picks[1], who].some(id => taken.has(id))) {
+      if (want.some(w => w.pane_id && taken.has(w.pane_id))) {
         showToast('One of those is already in another arbitration session.');
+        return null;
+      }
+      // After the check above, which is the sentence that names the problem: a conversation whose
+      // members are all held by another session has no pickable roster *because of* that session,
+      // and "start one" would be the wrong thing to say about it.
+      if (live.length < 2) {
+        showToast('Two agents and one to decide between them — + New starts a missing one.');
         return null;
       }
       // A slot may have started an agent in another Project. Said here, about the three panes
@@ -1156,25 +1235,18 @@
       // the conversation, whose other members it does not ask about. Before this the roster went
       // out to be refused, or worse came back called "busy": with no single project, there were no
       // candidates at all and the arbitrator pick failed the liveness test below.
-      const chosen = [picks[0], picks[1], who].map(id => agents.find(x => x.pane_id === id));
-      if (new Set(chosen.map(x => (x || {}).project_id || '')).size > 1) {
+      //
+      // Only what is running can be asked what project it is in; a paused member is restarted into
+      // the Project its own record names, which is that same project. The relay checks the roster
+      // it is finally handed, which is the one that matters.
+      const chosen = want.map(w => w.pane_id && agents.find(x => x.pane_id === w.pane_id))
+        .filter(Boolean);
+      if (new Set(chosen.map(x => x.project_id || '')).size > 1) {
         showToast('Arbitration needs every selected agent in the same project.');
         return null;
       }
-      // The frozen list is what was on screen; this is the live one. A pane that started working
-      // while the scope was being written is said out loud rather than swallowed, and the form is
-      // redrawn on what is free now — with the scope kept, because that is the part worth keeping.
-      if (!free.some(x => x.pane_id === who)) {
-        // Held in the list it was just dropped from, so the answer is still on screen while the
-        // sentence explaining it is read. An arbitrator started from this dialog a moment ago is
-        // the common case: it is `working` until its TUI comes up, and the relay refuses a busy
-        // one (N7) rather than briefing something that is not listening yet.
-        arbDrawSetup(conv, at);
-        showToast('That pane is not free — if it has just started, give it a moment.');
-        return null;
-      }
       return {
-        scope: scope, picks: picks, who: who, roles: roles,
+        scope: scope, picks: picks, who: who, want: want, roles: roles,
         idle: arbClockValue('arbIdle'), runtime: arbClockValue('arbRuntime'),
         budget: {
           max_steps: arbLimitValue('arbSteps'),
@@ -1190,13 +1262,22 @@
     // its own pane list, because a fingerprint this browser supplies is one it can have stale.
     function arbStart() {
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
-      if (!conv) return;
+      if (!conv || arbHold) return;
       const got = arbCheckSetup(conv, arbReadSetup(), '');
       if (!got) return;
+      if (got.want.some(w => !w.pane_id)) { arbBeginHold(conv, got, ''); return; }
+      arbSendRoster(conv, got, '');
+    }
+
+    // The send itself, shared by the press and by the hold that resolved. Reads pane ids off
+    // `got.want`, which is where a woken member's new pane lands — `got.picks` is what the form
+    // said, and a paused pick's value there names a member rather than a terminal.
+    function arbSendRoster(conv, got, editing) {
+      if (editing) { arbSendEdit(conv, got, editing); return; }
       arbSend({
         type: 'arb_start', conversation: conv.id, scope: got.scope,
-        members: got.picks.map((pane_id, i) => ({ pane_id: pane_id, role: got.roles[i] })),
-        arbitrator: { pane_id: got.who },
+        members: [0, 1].map(i => ({ pane_id: got.want[i].pane_id, role: got.roles[i] })),
+        arbitrator: { pane_id: got.want[2].pane_id },
         triggers: { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime },
         budget: got.budget,
         warmup: got.warmup,
@@ -1209,24 +1290,107 @@
       closeArbSetup();
     }
 
+    // A roster with something paused in it. `Start` is one press for "wake what is missing and then
+    // begin", because the alternative is a trip to the roster panel, three restarts by hand, and
+    // the scope retyped when the person comes back. It is also the trio start — three paused
+    // members woken and enrolled — arrived at without a second mechanism.
+    //
+    // The restarts are ordinary restarts: the same press, the same durable note, the same
+    // one-at-a-time queue, and they land as members whether or not this dialog is still open. What
+    // is held here is only the sending of `arb_start`, and only until every slot has a pane.
+    let arbHold = null;
+    const ARB_HOLD_MS = 120000;
+
+    function arbHoldNote() {
+      if (!arbHold) return '';
+      const n = arbHold.want.filter(w => !w.pane_id).length;
+      return n ? `Waiting for ${n} agent${n === 1 ? '' : 's'} to come up…` : 'Starting…';
+    }
+
+    // Every paused pick, queued through the conversation's own restart queue — which exists
+    // precisely because one start's binding must land before the next one goes out.
+    function arbBeginHold(conv, got, editing) {
+      // `got.want` itself, not a copy: it is what the send reads, and resolving a woken member
+      // has to be visible there.
+      arbHold = {conv: conv.id, got: got, editing: editing || '', at: Date.now(),
+                 want: got.want};
+      const waking = arbHold.want.filter(w => !w.pane_id).map(w => w.key);
+      for (const key of waking) {
+        if (!arbCanWake(key)) {
+          arbEndHold(`${convMemberName(key, 'That member')} cannot be restarted — nothing was ` +
+                     'started.');
+          return;
+        }
+      }
+      convRestartQueue = (convRestartQueue || []).concat(waking);
+      convRestartStep();
+      if (arbSetupOpen()) arbDrawSetup(conv, arbReadSetup());
+    }
+
+    function arbEndHold(why) {
+      const conv = arbHold && loadConvIndex().find(c => c.id === arbHold.conv);
+      arbHold = null;
+      if (why) showToast(why);
+      if (conv && arbSetupOpen()) arbDrawSetup(conv, arbReadSetup());
+    }
+
+    // Called on every snapshot. Resolves each waking pick against the roster — the member's key has
+    // moved to the new pane by then, which is what the landing does — and sends once they are all
+    // there. The dialog may well have been closed in the meantime; the session still starts, which
+    // is the whole point of holding the send rather than the person.
+    function arbHoldStep() {
+      if (!arbHold) return;
+      if (Date.now() - arbHold.at > ARB_HOLD_MS) {
+        arbEndHold('That did not come up in time — nothing was started.');
+        return;
+      }
+      const conv = loadConvIndex().find(c => c.id === arbHold.conv);
+      if (!conv) { arbHold = null; return; }
+      const live = new Map(agents.map(x => [convMemberKey(x), x]));
+      for (const w of arbHold.want) {
+        if (w.pane_id || !w.key) continue;
+        // The member's key is the *old* pane's until the landing moves it, so the row is found by
+        // walking the roster rather than by looking the old key up in the live map.
+        const m = (conv.members || []).find(x => x.key === w.key)
+          || (conv.members || []).find(x => (x.was || []).includes(convKeyPaneId(w.key)));
+        const pane = m && live.get(m.key);
+        if (pane) { w.pane_id = pane.pane_id; w.key = m.key; }
+      }
+      if (arbHold.want.some(w => !w.pane_id)) {
+        if (arbSetupOpen()) arbDrawSetup(conv, arbReadSetup());
+        return;
+      }
+      const got = arbHold.got, editing = arbHold.editing;
+      arbHold = null;
+      arbSendRoster(conv, got, editing);
+    }
+
     // The same form, against a session that already exists. Only what moved is sent: the relay
     // announces a roster change to the members and re-briefs a swapped arbitrator, so naming a
     // field that did not change is an interruption nobody asked for.
     function arbSave() {
       const s = arbSessions.find(x => x.id === arbSetupSession);
       const conv = loadConvIndex().find(c => c.id === convCurrentId());
-      if (!s || !conv) return;
-      const at = arbReadSetup();
-      const got = arbCheckSetup(conv, at, s.id);
+      if (!s || !conv || arbHold) return;
+      const got = arbCheckSetup(conv, arbReadSetup(), s.id);
       if (!got) return;
+      if (got.want.some(w => !w.pane_id)) { arbBeginHold(conv, got, s.id); return; }
+      arbSendEdit(conv, got, s.id);
+    }
+
+    // What moved, against the session as the form would have described it.
+    function arbSendEdit(conv, got, sessionId) {
+      const s = arbSessions.find(x => x.id === sessionId);
+      if (!s) return;
       const was = arbSetupOf(s), t = s.triggers || {};
+      const panes = got.want.map(w => w.pane_id);
       const msg = { type: 'arb_edit', session: s.id };
       if (got.scope !== was.arbScope) msg.scope = got.scope;
-      if (got.picks[0] !== was.arbFirst || got.picks[1] !== was.arbSecond ||
+      if (panes[0] !== was.arbFirst || panes[1] !== was.arbSecond ||
           got.roles[0] !== was.arbRoleFirst || got.roles[1] !== was.arbRoleSecond) {
-        msg.members = got.picks.map((pane_id, i) => ({ pane_id: pane_id, role: got.roles[i] }));
+        msg.members = [0, 1].map(i => ({ pane_id: panes[i], role: got.roles[i] }));
       }
-      if (got.who !== was.arbWho) msg.arbitrator = { pane_id: got.who };
+      if (panes[2] !== was.arbWho) msg.arbitrator = { pane_id: panes[2] };
       if (got.idle !== (t.idle_ms || 0) || got.runtime !== (t.runtime_ms || 0)) {
         msg.triggers = { on_turn_end: true, idle_ms: got.idle, runtime_ms: got.runtime };
       }

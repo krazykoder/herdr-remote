@@ -185,12 +185,12 @@
       // two-minute window, as Restart in a conversation.
       const ref = typeof convRespawnRef === 'function' ? convRespawnRef() : '';
       const msg = launcherSpawnMsg(tile, member, ref);
-      startIntent = {conv: conv.id, replace: key};
+      startIntent = {conv: conv.id, replace: key, ref: ref};
       // Nothing is said to it. A bot is a room the user comes back to, and an opening prompt typed
       // at every press would be the one line in the thread nobody wrote.
       startPrompt = '';
       startStarter = member.at || NO_STARTER;
-      if (ref && typeof rememberConvRespawn === 'function') rememberConvRespawn(conv.id, key, ref);
+      if (ref && typeof convNotePending === 'function') convNotePending(conv.id, ref, key, '');
       showSpawnStatus(`Continuing ${tile.label}…`, 'busy');
       ws.send(JSON.stringify(msg));
       return true;

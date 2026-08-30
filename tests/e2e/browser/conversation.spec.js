@@ -899,7 +899,9 @@ test('an ended session restarts under its name and continues its member thread',
   // pane's interim narration after the copied record, never try to align this fresh terminal to
   // the dead one's output.
   const continued = await page.evaluate(async () => {
-    const pane = activePane;
+    // The member's own pane, not activePane: a restart pressed from the conversation window leaves
+    // the reader in it now, so there is no pane view to read this off.
+    const pane = convKeyPaneId(loadConvIndex()[0].members[0].key);
     noteStatus(pane, 'working');
     await new Promise(resolve => setTimeout(resolve, 2));
     noteStatus(pane, 'idle');
@@ -908,8 +910,11 @@ test('an ended session restarts under its name and continues its member thread',
     return (await convGet([convMemberKey(paneOf(pane))]))[0].entries.map(e => e.text);
   });
   expect(continued).toEqual(expect.arrayContaining(['history before restart', 'First step.', 'Finished.']));
-  // And it opens on the thread — continuing a conversation is asking to say the next thing in it.
-  await expect(page.locator('#convThread')).toBeVisible();
+  // And the reader is still in the conversation. A restart pressed here used to jump to the new
+  // pane's own thread, which threw away the window the person was reading and, worse, threw away
+  // the spawn's binding with it if they navigated again before it landed.
+  await expect(page.locator('#convView')).toBeVisible();
+  await expect(page.locator('#convThread')).toBeHidden();
 });
 
 test('the Restart menu survives the redraws that arrive while it is open', async ({page}) => {

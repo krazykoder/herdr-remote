@@ -104,6 +104,24 @@ test('starting names two pane ids, an arbitrator and a scope — and nothing els
   await expect(page.locator('#toast')).toContainText('send_unconfirmed', {timeout: 20000});
 });
 
+test('the arbitrator may be a member of the room it is deciding about', async ({page}) => {
+  // The picker used to offer only panes outside the conversation and only ones that were idle at
+  // that moment. Which pane is well placed to referee is the person's judgement; what is refused
+  // is one agent in two slots, and that is refused where it is law — the relay's _enrol.
+  await openConv(page);
+  await captureSends(page);
+  await page.locator('#convArbitrator').click();
+  const options = await page.locator('#arbWho option').allTextContents();
+  expect(options).toContain(ARBITER);
+  expect(options).toContain(MEMBERS[0]);
+
+  await page.locator('#arbScope').fill('Get the footer reviewed, then stop.');
+  await page.locator('#arbWho').selectOption({label: MEMBERS[0]});
+  await page.locator('#arbSetupBody .arb-btn.go').click();
+  await expect(page.locator('#toast')).toContainText('cannot arbitrate itself');
+  expect(await sent(page)).toHaveLength(0);
+});
+
 test('a role badge writes a phrase, and the phrase is what the relay is asked for', async ({page}) => {
   await openConv(page);
   await captureSends(page);

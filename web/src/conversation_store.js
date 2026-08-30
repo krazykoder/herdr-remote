@@ -1013,6 +1013,214 @@
       if (typeof stateSyncMark === 'function') stateSyncMark('conversations');
     }
 
+    // --- A start in flight ---
+    // Which pane a start will land on is the relay's answer to one socket, and which *member* it
+    // was for is this browser's own memory of the press. Neither survives what readers actually do
+    // between the two — change view, open another agent, open the Start dialog, reload, or press
+    // Restart on a second member. So the memory is written where conversations already live: in
+    // the index, on the member it will continue, synced with it. Any tab that then sees a pane
+    // carrying the noted `ref` finishes the job.
+    //
+    // A note is about membership and nothing else. The opening words stay on the fast path, where
+    // the tab that asked still holds them — two tabs holding one note must not both speak.
+    const CONV_PENDING_MS = 120000;
+
+    function convPendingLive(p) {
+      return !!(p && p.ref && Date.now() - (Number(p.at) || 0) <= CONV_PENDING_MS);
+    }
+
+    // Every expired note gone, in one pass. Called by the writers below, so a note whose start
+    // never produced a pane leaves on the next press rather than sitting in a synced document for
+    // ever. Mutates in place: the caller is about to save the same array.
+    function convPrunePending(items) {
+      for (const c of items || []) {
+        if (!c) continue;
+        for (const m of c.members || []) {
+          if (m && m.pending && !convPendingLive(m.pending)) delete m.pending;
+        }
+        if (Array.isArray(c.pending)) {
+          c.pending = c.pending.filter(convPendingLive);
+          if (!c.pending.length) delete c.pending;
+        }
+      }
+      return items;
+    }
+
+    // Written before the send, never after: the answer is the thing a reload loses, so the note has
+    // to be stored by the time there is anything to lose. `key` names the member this start
+    // continues; without one the start joins as a new member and the note goes on the conversation.
+    function convNotePending(convId, ref, key, label) {
+      if (!convId || !ref) return false;
+      const items = convPrunePending(loadConvIndex());
+      const conv = items.find(c => c.id === convId);
+      if (!conv) return false;
+      if (key) {
+        const m = (conv.members || []).find(x => x.key === key);
+        if (!m) return false;
+        m.pending = {ref: ref, at: Date.now()};
+      } else {
+        conv.pending = (conv.pending || [])
+          .concat([{ref: ref, at: Date.now(), label: label || ''}]);
+      }
+      saveConvIndex(items);
+      return true;
+    }
+
+    // The note for a ref, wherever it is. `key` is empty for one that joins rather than continues.
+    function convFindPending(ref) {
+      if (!ref) return null;
+      for (const c of loadConvIndex()) {
+        for (const m of (c && c.members) || []) {
+          if (m && convPendingLive(m.pending) && m.pending.ref === ref) {
+            return {conv: c, key: m.key};
+          }
+        }
+        for (const p of (c && c.pending) || []) {
+          if (convPendingLive(p) && p.ref === ref) return {conv: c, key: ''};
+        }
+      }
+      return null;
+    }
+
+    // This member's own note, so a second press can tell the first one is still in flight.
+    function convMemberPending(convId, key) {
+      const conv = loadConvIndex().find(c => c.id === convId);
+      const m = conv && (conv.members || []).find(x => x.key === key);
+      return m && convPendingLive(m.pending) ? m.pending : null;
+    }
+
+    // Every ref anything is waiting on. Read by convStartClaimed — a pane a start is about to
+    // continue a thread onto is not a fresh pane — and by the restart queue's gate.
+    function convPendingRefs() {
+      const out = new Set();
+      for (const c of loadConvIndex()) {
+        for (const m of (c && c.members) || []) {
+          if (m && convPendingLive(m.pending)) out.add(m.pending.ref);
+        }
+        for (const p of (c && c.pending) || []) if (convPendingLive(p)) out.add(p.ref);
+      }
+      return out;
+    }
+
+    // Drop one note by ref, wherever it is, expiring the rest on the way past. Called by whoever
+    // gave up on it; the landing below clears its own in the same write as the succession.
+    function convDropPending(ref) {
+      if (!ref) return false;
+      const items = loadConvIndex();
+      let hit = false;
+      for (const c of items) {
+        for (const m of (c && c.members) || []) {
+          if (m && m.pending && m.pending.ref === ref) { delete m.pending; hit = true; }
+        }
+        if (Array.isArray(c.pending) && c.pending.some(p => p && p.ref === ref)) {
+          c.pending = c.pending.filter(p => p && p.ref !== ref);
+          if (!c.pending.length) delete c.pending;
+          hit = true;
+        }
+      }
+      if (hit) saveConvIndex(convPrunePending(items));
+      return hit;
+    }
+
+    // One landing per ref at a time. convLandMember awaits a database and the poll is 3s, so a
+    // second snapshot would otherwise start the same succession over the top of the first.
+    const convLanding = new Set();
+
+    // A pane joins a conversation as the member a start was made for: the transcript carried over
+    // the seam, the pair repointed, the roster's row moved from the old key to this pane's.
+    //
+    // The whole of the succession and nothing about what happens on screen. Its two callers
+    // disagree about that — one is a press the reader just made, the other a recovery that must
+    // never move anybody — so neither the opening prompt, the toast, nor opening the terminal
+    // belongs here.
+    async function convLandMember(a, convId, replaceKey, ref) {
+      const next = a && convMemberKey(a);
+      if (!next || !convId) return null;
+      // The pair goes with it. A restart is the same colleague in a new pane, and the pair record
+      // names panes by id — so without this the strip in the surviving partner reported the pair
+      // stale and dropped the switch, the name and the badge.
+      if (replaceKey) repointPair(convKeyPaneId(replaceKey), a);
+      // The copy happens before the index is read, and the index is read again after it. The
+      // recorder writes members' previews on every poll, so an index loaded before an await and
+      // saved after it puts back a snapshot taken seconds ago — and the copy is the one step here
+      // that waits on a database. A refusal (quota, a blocked store) falls back to joining as a
+      // new member rather than dropping the pane out of the conversation altogether.
+      const replacing = ((loadConvIndex().find(c => c.id === convId) || {}).members || [])
+        .find(m => m.key === replaceKey);
+      const continued = replacing &&
+        await convContinueTranscript(replacing.key, next, replacing.label).catch(() => false);
+      const items = loadConvIndex();
+      const conv = items.find(c => c.id === convId);
+      if (!conv) return null;
+      const prior = (conv.members || []).find(m => m.key === (replacing || {}).key);
+      // Whether this pane is already one of this conversation's members. The fallback below joins
+      // as a new member, which is right for a pane the conversation has never held and wrong for
+      // one it already names: herdr recycles pane ids, and a replace intent that no longer matches
+      // — a second landing, a member moved by the restart before it — would otherwise append a
+      // second row for a key that is already in the list. Two members, one pane, both drawing the
+      // same transcript.
+      const already = (conv.members || []).some(m => m.key === next);
+      conv.members = continued && prior
+        ? conv.members.map(m => m.key === prior.key
+          ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
+              key: next, label: prior.label || paneLabel(a),
+              // The pane this member continues. This is the only place a member's key moves from
+              // one pane to another, so it is the only place succession is a fact rather than a
+              // guess — and the guess it replaces handed a quit agent's words to every
+              // conversation running the same harness in the same directory.
+              was: (m.was || []).concat(convKeyPaneId(prior.key))
+                .filter(Boolean).slice(-CONV_WAS_MAX),
+              // convWasFpPatch above names the bucket the record kept this member in, where the
+              // restart moved it to a different one — another harness, or another checkout. The
+              // pane ids here cannot find those rows on their own: a pane id is only ever looked
+              // up inside a fingerprint's bucket.
+            })
+          : m)
+        : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
+      // The note is spent. Cleared in the same write as the succession it described, so no tab can
+      // read an index where the member has moved and the note still says it is coming.
+      if (ref) {
+        for (const m of conv.members) if (m && m.pending && m.pending.ref === ref) delete m.pending;
+        if (Array.isArray(conv.pending)) {
+          conv.pending = conv.pending.filter(p => p && p.ref !== ref);
+          if (!conv.pending.length) delete conv.pending;
+        }
+      }
+      saveConvIndex(convPrunePending(items));
+      // This conversation and not merely "on": the new pane is a member of exactly one so far, but
+      // a respawn into a grouping the user chose must open on that grouping.
+      convSetView(a, conv.id);
+      return conv;
+    }
+
+    // Every note against every live pane, on every snapshot. Does nothing on almost all of them:
+    // there is a note only in the couple of minutes after a start was made for a conversation.
+    //
+    // Never opens anything and never says anything to the pane. This is the path taken when the
+    // press that made the note is no longer on screen — a different view, a different agent, a
+    // different tab, or a reload — and in every one of those the reader is somewhere else and did
+    // not ask to be moved. The opening words belong to the fast path, which still has them.
+    async function convLandPending() {
+      if (!agents.length) return;
+      // Not before the relay has answered with the shared index, for the same reason convAutoJoin
+      // waits: a note read out of an empty index is a note that has not arrived yet.
+      if (typeof stateSyncPending === 'function' && stateSyncPending()) return;
+      for (const a of agents) {
+        if (!a || !a.ref || convLanding.has(a.ref)) continue;
+        const found = convFindPending(a.ref);
+        if (!found) continue;
+        convLanding.add(a.ref);
+        try {
+          const conv = await convLandMember(a, found.conv.id, found.key, a.ref);
+          if (conv) {
+            showSpawnStatus(`${paneLabel(a)} continued "${conv.name}".`, 'success');
+            renderConversations();
+            if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
+          }
+        } finally { convLanding.delete(a.ref); }
+      }
+    }
+
     // --- Conversation membership ---
     // Which conversations a pane is in, and the two edits that answer it: join one, or name a new
     // one. Membership is the whole of "is this recorded" (§3), so this is the switch — and it is

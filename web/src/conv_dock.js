@@ -1009,6 +1009,16 @@
       // pair a respawn sets, which is what makes the new pane open on the thread and speak into it.
       startIntent = newAgentFor
         ? {arb: {slot: newAgentFor, conv: convViewId}} : {conv: convViewId};
+      // A member started into a conversation is bound to it the same way a restart is: the start
+      // names itself and the conversation writes down what that name means. Without it this was
+      // the one start with no durable binding at all — leave the window before it lands and the
+      // pane was filed into an auto conversation of its own.
+      // Not for the arbitration slot: that start is adopted by the dialog, not by the roster.
+      if (!newAgentFor && convViewId && typeof convRespawnRef === 'function') {
+        msg.ref = convRespawnRef();
+        startIntent.ref = msg.ref;
+        convNotePending(convViewId, msg.ref, '', msg.label || newAgentKind);
+      }
       // The arbitrator is briefed by the session, and that brief is the only thing that tells it
       // what it is. A role's opening prompt would have it doing the work it is there to referee.
       startPrompt = newAgentFor === 'arbWho' ? '' : roleStarter(role, newAgentKind);

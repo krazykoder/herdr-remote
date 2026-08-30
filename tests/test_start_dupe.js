@@ -70,6 +70,8 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     renderStartTarget() {},
     agentColor: () => 'var(--blue)',
     badgeHtml: () => '',
+    // The Project row is drawn on every open now, from whichever door.
+    projectsForPicking: () => g.projects || [],
     renderStartProjects() {},
     setStartError() {},
     escapeHtml: t => String(t),
@@ -91,6 +93,19 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     startRoleOf: () => ({at: 'architect', role: 'architect'}),
     roleStarter: () => '', NO_STARTER: 'none', startMode: 'agent',
     endPane: id => { calls.push(['end', id]); return true; },
+    // agent_order.js's, which this slice does not load. Which panel is up decides whether a start
+    // that lands moves the reader — '' is "none", which is what the old behaviour assumed always.
+    openPanelId: () => g.panel || '',
+    panel: '',
+    // conversation_store's succession, stubbed to the one thing this block does with it: hand it
+    // the pane and the intent, and draw whatever it answers. The succession itself is covered in
+    // tests/test_conv_pending.js.
+    convLandMember: (a, conv, replace, ref) => {
+      calls.push(['land', a.pane_id, conv, replace, ref]);
+      return Promise.resolve({name: 'Charts'});
+    },
+    renderConvStandalone: () => calls.push(['redraw']),
+    sendTextTo: (id, text) => calls.push(['say', id, text]),
   };
   const ctx = vm.createContext(g);
   vm.runInContext(PAIRS_PURE, ctx);
@@ -505,4 +520,49 @@ test('projects are offered most recently picked first, and a container is not of
   // "All" is not a Project and never displaces one.
   run('noteProjectUse(null)');
   assert.deepEqual(run('projectsForPicking().map(p => p.id)'), ['b', 'a']);
+});
+
+
+// --- A start that lands while a conversation is being read ----------------------------------
+//
+// A start made from the conversation window is a request for another colleague in it, not a
+// request to stop reading it. The window is a panel rather than an open pane, so `activePane` is
+// null there and every start used to navigate away from it — including the restart the reader had
+// pressed two seconds earlier, which yanked them out of the thread they pressed it from.
+
+test('a start for a conversation opens the pane when the window is not up', async () => {
+  const {calls, run, g} = startCtx();
+  run("startIntent = {conv: 'c1', replace: 'k1', ref: 'rABC'}");
+  run("agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2';");
+  await run('openPendingStart()');
+  assert.deepEqual(calls, [['land', 'w1:p2', 'c1', 'k1', 'rABC'], ['open', 'w1:p2']]);
+  assert.equal(g.panel, '', 'the reader was not in the window');
+});
+
+test('a start for a conversation stays put while the window is up', async () => {
+  const {calls, run, g} = startCtx();
+  g.panel = 'convView';
+  run("startIntent = {conv: 'c1', replace: 'k1', ref: 'rABC'}");
+  run("agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2';");
+  await run('openPendingStart()');
+  assert.deepEqual(calls, [['land', 'w1:p2', 'c1', 'k1', 'rABC'], ['redraw']],
+    'the member appears in the roster behind the press, and nothing moves');
+});
+
+test('a plain start does not yank the reader out of the conversation window either', async () => {
+  // `activePane` is null in a panel, so the old rule — "open it if no pane is open" — treated the
+  // window as nowhere and navigated away from it.
+  const {calls, run, g} = startCtx();
+  g.panel = 'convView';
+  run("activePane = null; agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2';");
+  await run('openPendingStart()');
+  assert.deepEqual(calls, []);
+});
+
+test('a Duplicate still lands, because it was asked for from the pane it came from', async () => {
+  const {calls, run, g} = startCtx();
+  g.panel = 'convView';
+  run("startIntent = 'open'; agents.push({pane_id: 'w1:p2'}); pendingStart = 'w1:p2';");
+  await run('openPendingStart()');
+  assert.deepEqual(calls, [['open', 'w1:p2']]);
 });

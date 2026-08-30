@@ -34,7 +34,7 @@ const SESSION = {
 };
 
 function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
-              canStart = false} = {}) {
+              canStart = false, recs = []} = {}) {
   const els = {};
   const el = id => {
     if (els[id]) return els[id];
@@ -48,7 +48,7 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
     }};
     return (els[id] = out);
   };
-  const sent = [], toasts = [], opened = [], spawned = [];
+  const sent = [], toasts = [], opened = [], spawned = [], restarts = [];
   let tabSyncs = 0;
   const g = {
     document: {getElementById: el},
@@ -79,6 +79,17 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
     openNewAgent: slot => spawned.push(slot),
     convMemberOf: a => ({key: key(a), added: 0, label: a.label}),
     saveConvIndex: () => {},
+    // The roster's own Restart answers "can this member be brought back", and arbitration borrows
+    // it rather than re-deriving it — so the two controls can never disagree.
+    convViewRecs: recs,
+    canRespawn: spawn => !!spawn,
+    convMemberName: (k, ...rest) => {
+      const at = live.find(x => key(x) === k);
+      return (at && at.label) || rest.find(Boolean) || '';
+    },
+    convKeyPaneId: k => JSON.parse(k)[1],
+    convRestartQueue: [],
+    convRestartStep: () => restarts.push([...g.convRestartQueue]),
     sendTextTo() {},
     // The real one lives in start_dialog.js, which drags half the app in behind it. What this file
     // asserts about a badge is the two things arbitration puts there — which call it makes and
@@ -91,11 +102,11 @@ function ctx({live = [PANE_A, PANE_B, PANE_C], convs = [CONV], ready = 1,
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(SRC, g);
-  return {g, els, sent, toasts, opened, spawned, tabSyncs: () => tabSyncs};
+  return {g, els, sent, toasts, opened, spawned, restarts, tabSyncs: () => tabSyncs};
 }
 
 const setupHtml = (g, conv = CONV) =>
-  g.arbSetupHtml(g.arbLiveMembers(conv), g.arbCandidates(conv), '');
+  g.arbSetupHtml(g.arbMemberRows(conv, ''), g.arbArbiterRows(conv, undefined, ''), '');
 
 const classed = (el, name) => el.className.split(/\s+/).includes(name);
 
@@ -214,7 +225,7 @@ test('a conversation that cannot be arbitrated says which half is missing', () =
   const one = ctx({live: [PANE_A, PANE_C]});
   one.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   one.g.arbOpenFromConv();
-  assert.match(one.toasts.at(-1), /one live member/);
+  assert.match(one.toasts.at(-1), /one agent in it/);
   assert.equal(one.g.document.getElementById('arbSetupBody').innerHTML, '',
                'and no dialog it would refuse');
 
@@ -435,8 +446,10 @@ test('the roster is what has to agree on a project, not the conversation around 
   g.document.getElementById('arbSecond').value = 'w1:p2';
   g.document.getElementById('arbScope').value = 'Review the footer.';
   g.document.getElementById('arbWho').value = 'w1:p3';
-  assert.deepEqual(g.arbCandidates(three, g.arbPickedProject(three, g.arbReadSetup()))
-    .map(x => x.pane_id), ['w1:p3']);
+  // Everything in the picked roster's project, members included — which pane is well placed to
+  // referee is the person's judgement — and nothing from the other checkout.
+  assert.deepEqual(g.arbArbiterRows(three, g.arbPickedProject(three, g.arbReadSetup()), '')
+    .map(r => r.pane.pane_id), ['w1:p1', 'w1:p2', 'w1:p3']);
   g.arbStart();
   assert.equal(sent.length, 1, 'and the roster goes');
   assert.equal(sent[0].arbitrator.pane_id, 'w1:p3');
@@ -513,9 +526,13 @@ test('an open form is not rebuilt when a candidate changes status under it', () 
   assert.equal(els.arbSetupBody.innerHTML, drawn);
 });
 
-test('an arbitrator that went busy while the scope was written is said out loud', () => {
+test('an arbitrator that went busy while the scope was written is still sent', () => {
+  // This used to be refused here — the picker dropped a `working` pane, so a pane that went busy
+  // for one poll emptied the slot under the person's thumb and the roster came back "not free".
+  // A busy arbitrator is the relay's refusal (N7), at the moment of the send, which is the only
+  // moment the answer is true.
   const live = [PANE_A, PANE_B, {...PANE_C}];
-  const {g, els, sent, toasts} = ctx({live});
+  const {g, sent, toasts} = ctx({live});
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   g.openArbSetup();
   g.document.getElementById('arbScope').value = 'Review the footer.';
@@ -524,10 +541,8 @@ test('an arbitrator that went busy while the scope was written is said out loud'
   g.document.getElementById('arbSecond').value = 'w1:p2';
   live[2].status = 'working';
   g.arbStart();
-  assert.deepEqual(sent, []);
-  assert.equal(toasts.length, 1);
-  assert.match(els.arbSetupBody.innerHTML, /Review the footer\./,
-               'and the scope is written back into the dialog it redrew');
+  assert.deepEqual(toasts, []);
+  assert.equal(sent.filter(m => m.type === 'arb_start').length, 1);
 });
 
 test('pause, resume and cancel name the session the relay assigned', () => {
@@ -915,8 +930,11 @@ test('an arbitrator started for the slot stands outside the conversation, and is
 
   assert.equal(conv.members.length, 2,
                'the arbitrator is not a participant — it decides what happens between them');
-  // Still `working` while its TUI comes up, which is what drops a pane out of the candidate list.
-  assert.deepEqual(g.arbCandidates(conv).map(x => x.pane_id), ['w1:p3']);
+  // Still `working` while its TUI comes up, and still offered: a status three seconds old is not
+  // a reason to take the slot the person just filled away from them. Whether it can take the
+  // brief is the relay's answer, at the moment of the send.
+  assert.deepEqual(g.arbArbiterRows(conv, undefined, '').map(r => r.pane.pane_id),
+                   ['w1:p1', 'w1:p2', 'w1:p3', 'w1:p4']);
   assert.match(els.arbSetupBody.innerHTML, /id="arbWho"[\s\S]*?value="w1:p4" selected/,
                'but the slot the person just filled does not empty itself under them');
 });
@@ -926,7 +944,7 @@ test('an empty conversation can still be assembled, and two projects still canno
   const cannot = ctx({convs: [empty]});
   cannot.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   cannot.g.arbOpenFromConv();
-  assert.match(cannot.toasts.at(-1), /none live/, 'with no way to start one, that is the answer');
+  assert.match(cannot.toasts.at(-1), /none in it/, 'with no way to start one, that is the answer');
 
   const can = ctx({convs: [empty], canStart: true});
   can.g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
@@ -1195,7 +1213,8 @@ test('a thread with no answer yet draws no arbitrator rather than an empty one',
 test('an arbitrator is only offered from the conversation’s own project', () => {
   const p = (a, id) => Object.assign({}, a, {project_id: id});
   const {g, toasts} = ctx({live: [p(PANE_A, 'proj-a'), p(PANE_B, 'proj-a'), p(PANE_C, 'proj-b')]});
-  assert.deepEqual(g.arbCandidates(CONV), [], 'the only free pane is in another repository');
+  assert.deepEqual(g.arbArbiterRows(CONV, undefined, '').map(r => r.pane.pane_id),
+                   ['w1:p1', 'w1:p2'], 'the only pane outside the room is in another repository');
   g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
   g.arbOpenFromConv();
   assert.match(toasts.at(-1), /third agent in this project/);
@@ -1212,7 +1231,7 @@ test('a conversation that spans two projects says so instead of offering a sessi
 
 test('with no projects configured every free pane is still a candidate', () => {
   const {g} = ctx();
-  assert.deepEqual(g.arbCandidates(CONV).map(x => x.pane_id), ['w1:p3']);
+  assert.deepEqual(g.arbCandidates(CONV).map(x => x.pane_id), ['w1:p1', 'w1:p2', 'w1:p3']);
 });
 
 // --- the hard stops -------------------------------------------------------------------
@@ -1520,4 +1539,72 @@ test('the steps mark where it is stopped, not simply where they end', () => {
   // And the poll loop's own repeats are never rows here: this table is the last few things that
   // happened, not a reading of the whole path.
   assert.equal(drawn.includes('no decision file yet'), false);
+});
+
+// --- A roster that can be woken --------------------------------------------------------------
+//
+// The three slots used to offer only what was running, and only from outside the conversation.
+// Both filters hid the state somebody actually opens this dialog in: a room whose panes have all
+// been closed, and a room of two where the obvious referee is one of the members' neighbours.
+
+const PAUSED_CONV = {
+  id: 'c-1', name: 'Footer',
+  members: [{key: key(PANE_A), label: 'Architect 1'}, {key: key(PANE_B), label: 'Reviewer 1'}],
+};
+const RECS = [{key: key(PANE_A), spawn: {agent: 'claude'}},
+              {key: key(PANE_B), spawn: {agent: 'codex'}}];
+
+test('a member with no pane is offered, named by the key the conversation knows it by', () => {
+  const {g} = ctx({live: [PANE_A, PANE_C], convs: [PAUSED_CONV], recs: RECS});
+  const rows = g.arbMemberRows(PAUSED_CONV, '');
+  assert.deepEqual(rows.map(r => g.arbPickValue(r)), ['w1:p1', 'paused:' + key(PANE_B)]);
+  assert.match(rows[1].label, /Reviewer 1 — paused$/);
+});
+
+test('a member nothing can bring back is not offered', () => {
+  // The record is what a restart is made from. Without one the slot would name something that
+  // cannot be woken, and the hold would sit there until its deadline.
+  const {g} = ctx({live: [PANE_A, PANE_C], convs: [PAUSED_CONV],
+                   recs: [{key: key(PANE_A), spawn: {agent: 'claude'}}]});
+  assert.deepEqual(g.arbMemberRows(PAUSED_CONV, '').map(r => r.key), [key(PANE_A)]);
+});
+
+test('a member of this conversation is offered as the arbitrator', () => {
+  const {g} = ctx({convs: [PAUSED_CONV], recs: RECS});
+  assert.deepEqual(g.arbArbiterRows(PAUSED_CONV, undefined, '').map(r => r.pane.pane_id),
+                   ['w1:p1', 'w1:p2', 'w1:p3']);
+});
+
+test('a conversation with nothing running still opens, on the members it can wake', () => {
+  const {g, els} = ctx({live: [PANE_C], convs: [PAUSED_CONV], recs: RECS});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.arbOpenFromConv();
+  assert.match(els.arbSetupBody.innerHTML, /Architect 1 — paused/);
+  assert.match(els.arbSetupBody.innerHTML, /Reviewer 1 — paused/);
+});
+
+test('an agent cannot arbitrate itself, said here before the relay says it', () => {
+  const {g, sent, toasts} = ctx({convs: [PAUSED_CONV], recs: RECS});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbFirst').value = 'w1:p1';
+  g.document.getElementById('arbSecond').value = 'w1:p2';
+  g.document.getElementById('arbWho').value = 'w1:p1';
+  g.arbStart();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_start'), []);
+  assert.match(toasts.at(-1), /cannot arbitrate itself/);
+});
+
+test('two slots holding one paused member are refused across the value space too', () => {
+  const {g, sent, toasts} = ctx({live: [PANE_C], convs: [PAUSED_CONV], recs: RECS});
+  g.arbReceiveSessions({type: 'arb_sessions', sessions: []});
+  g.openArbSetup();
+  g.document.getElementById('arbScope').value = 'Review the footer.';
+  g.document.getElementById('arbFirst').value = 'paused:' + key(PANE_A);
+  g.document.getElementById('arbSecond').value = 'paused:' + key(PANE_A);
+  g.document.getElementById('arbWho').value = 'w1:p3';
+  g.arbStart();
+  assert.deepEqual(sent.filter(m => m.type === 'arb_start'), []);
+  assert.match(toasts.at(-1), /Two different agents/);
 });

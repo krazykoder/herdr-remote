@@ -865,13 +865,17 @@
           }
         }
         openPendingStart();
-        // A restart whose answer was lost with the tab that asked for it, picked up by the id that
-        // start named itself with. After openPendingStart, so a start this tab is still holding
-        // the answer for lands the ordinary way.
-        if (typeof convResumeRespawn === 'function') convResumeRespawn();
+        // Any start made for a conversation whose answer this tab is not holding — because the
+        // reader changed view, opened another agent, reloaded, or is in a second tab — picked up
+        // by the id the start named itself with. After openPendingStart, so a start this tab does
+        // still hold the answer for lands the ordinary way, with its opening words.
+        if (typeof convLandPending === 'function') convLandPending();
         // Restart all, one member per landing. After the two above, which are what clear the way
         // for the next one — see convRestartStep.
         if (typeof convRestartStep === 'function') convRestartStep();
+        // A session whose roster was still coming up. After the restart queue, which is what
+        // brings it up.
+        if (typeof arbHoldStep === 'function') arbHoldStep();
         openNotificationPane();
       }
       else if (msg.type === 'agent_update') {

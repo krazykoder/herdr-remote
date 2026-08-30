@@ -107,64 +107,89 @@ test('a member of no conversation, or a relay that starts nothing, swaps nothing
 
 // --- Picking a restarted member back up ---
 //
-// The relay's answer to a start names the pane it made, and it arrives on one socket, once. Reload
-// the tab in between and the agent is running with nothing tying it to the conversation it was
-// started for. So the start names itself: the relay stamps that id on the pane and carries it on
-// every snapshot, and what follows is an equality rather than a guess at which pane this was.
-
-const HELD = 'herdr_conv_respawn';
-
-function held(e) { return JSON.parse(e.store[HELD] || 'null'); }
-
-test('the pane a restart names itself with is the one it is found by', () => {
-  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}, {pane_id: 'w1:p8', ref: 'rXYZ'}]});
-  assert.equal(e.run("(convRespawnPane('rABC') || {}).pane_id"), 'w1:p9');
-  assert.equal(e.run("convRespawnPane('rNOPE')"), null);
-  assert.equal(e.run("convRespawnPane('')"), null, 'a pane carrying no ref matches no start');
-});
-
-test('a note older than the window names a pane somebody else is using by now', () => {
-  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
-  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
-    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now() - 130000}))`);
-  assert.equal(e.run('JSON.stringify(heldConvRespawn())'), 'null');
-  assert.equal(held(e), null, 'and it is dropped rather than reconsidered on the next snapshot');
-});
+// The relay's answer to a start names the pane it made, and it arrives on one socket, once. Change
+// view, open another agent, or reload the tab in between and the agent is running with nothing
+// tying it to the conversation it was started for. So the start names itself, the relay stamps
+// that id on the pane and carries it on every snapshot, and what the id *means* is written into
+// the conversation index — which every tab reads and the relay syncs. The note store itself is
+// conversation_store's and is covered in tests/test_conv_pending.js; what is pinned here is what
+// shortcuts.js does with it.
 
 test('a pane a start in flight will land on is not filed as a fresh one', () => {
   // convAutoJoin files every unreferenced pane into a conversation of its own on the next
   // snapshot. A key some conversation names is one convContinueTranscript refuses to write over,
   // so filing this pane would split the thread it was started to continue into two members.
   const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
-  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
-    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
+  e.run("convPendingRefs = () => new Set(['rABC']);");
   assert.equal(e.run("convStartClaimed({pane_id: 'w1:p9', ref: 'rABC'})"), true);
   assert.equal(e.run("convStartClaimed({pane_id: 'w1:p8', ref: 'rXYZ'})"), false,
     'and every other pane is filed exactly as before');
+  assert.equal(e.run("convStartClaimed({pane_id: 'w1:p8'})"), false,
+    'a pane carrying no ref matches no start');
 });
 
-test('the note is written before the start goes out, and cleared once it is acted on', () => {
+test('a relay too old to answer with a note leaves every pane unclaimed', () => {
+  // convPendingRefs lives in a later script. A page that has not loaded it yet must file panes the
+  // way it always did rather than throw on the first snapshot.
   const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
-  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
-    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
-  assert.equal(held(e).ref, 'rABC');
-  e.run('forgetConvRespawn()');
-  assert.equal(held(e), null);
+  e.run('convPendingRefs = undefined;');
+  assert.equal(e.run("convStartClaimed({pane_id: 'w1:p9', ref: 'rABC'})"), false);
 });
 
-test('only one snapshot resumes a restart while its record is loading', async () => {
-  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC'}]});
-  e.run(`sessionStorage.setItem('${HELD}', JSON.stringify(
-    {conv: 'c1', key: 'k1', ref: 'rABC', at: Date.now()}))`);
-  e.run(`let opens = 0;
-    openPendingStart = () => { opens += 1; };
+test('a second press on a member already restarting starts nothing', () => {
+  // The note is the record that the first press happened. Without reading it, a reader who pressed
+  // Restart, walked away and came back pressed it again and got two agents for one member.
+  const e = boot({live: [], recs: [REC]});
+  e.run(`let sent = 0;
+    ws = {send: () => { sent += 1; }};
     showSpawnStatus = () => {};
-    paneLabel = a => a.label || a.agent || a.pane_id;
-    convGet = () => new Promise(resolve => setTimeout(
-      () => resolve([{spawn: {starter: 'architect'}}]), 0));`);
-  await e.run('Promise.all([convResumeRespawn(), convResumeRespawn()])');
-  assert.equal(e.run('opens'), 1);
-  assert.equal(held(e), null);
+    paneLabel = a => a.label || a.pane_id;
+    convMemberPending = () => ({ref: 'rABC', at: Date.now()});`);
+  e.run("convRespawn('k1')");
+  assert.equal(e.run('sent'), 0, 'nothing goes out while the first one is still on its way');
+});
+
+test('a second press lands the pane the first one already made', () => {
+  const e = boot({live: [{pane_id: 'w1:p9', ref: 'rABC', label: 'ARCH'}], recs: [REC]});
+  e.run(`let landed = null, sent = 0;
+    ws = {send: () => { sent += 1; }};
+    showSpawnStatus = () => {};
+    paneLabel = a => a.label || a.pane_id;
+    convMemberPending = () => ({ref: 'rABC', at: Date.now()});
+    renderConvStandalone = () => {};
+    convLandMember = (a, id, key, ref) => {
+      landed = [a.pane_id, id, key, ref];
+      return Promise.resolve({name: 'C'});
+    };`);
+  e.run("convRespawn('k1')");
+  assert.equal(e.run('sent'), 0);
+  assert.deepEqual(JSON.parse(e.run('JSON.stringify(landed)')), ['w1:p9', 'c1', 'k1', 'rABC'],
+    'continued onto the pane the earlier press made, rather than beside it');
+});
+
+test('a restart names itself and writes the note before it sends', () => {
+  const e = boot({live: [], recs: [REC]});
+  e.run(`let order = [];
+    ws = {send: m => order.push(['send', JSON.parse(m).ref])};
+    showSpawnStatus = () => {};
+    convMemberPending = () => null;
+    convNotePending = (id, ref, key) => { order.push(['note', id, ref, key]); return true; };
+    respawnStarter = () => null;
+    respawnRole = () => 'agent';
+    slotFor = () => '';
+    agentConfigLive = () => true;
+    roleStarter = () => '';
+    NO_STARTER = 'none';`);
+  e.run("convRespawn('k1')");
+  const order = JSON.parse(e.run('JSON.stringify(order)'));
+  assert.equal(order.length, 2);
+  assert.equal(order[0][0], 'note', 'the note is stored before there is anything to lose');
+  assert.equal(order[0][1], 'c1');
+  assert.equal(order[0][3], 'k1', 'against the member the start continues');
+  assert.equal(order[1][0], 'send');
+  assert.equal(order[1][1], order[0][2], 'and the start carries the id the note names');
+  assert.equal(JSON.parse(e.intent()).ref, order[0][2],
+    'the intent carries it too, so the fast path clears the same note');
 });
 
 
