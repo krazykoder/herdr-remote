@@ -176,6 +176,19 @@ test('landing with no member to replace joins as a new one', () => {
     });
 });
 
+test('a move-only landing with nobody to move changes nothing', () => {
+  // The bookkeeping caller — the follow — must never *add* a member. Joining as a new one is the
+  // right fallback for a press, where the reader asked for this pane to be in this conversation
+  // and a fresh thread beats no pane at all. Reached from the follow it grew a second row for one
+  // colleague: the dead pane and the live one side by side, both wearing the same name.
+  const e = boot({conv: CONV});
+  return e.run("convLandMember({pane_id: 'w1:p9'}, 'c1', 'k_gone', '', true)")
+    .then(conv => {
+      assert.equal(conv, null, 'and says so, rather than reporting a landing that did not happen');
+      assert.deepEqual(e.read()[0].members.map(m => m.key), ['k_w1:p1']);
+    });
+});
+
 test('landing the same pane twice does not add a second row', () => {
   // herdr recycles pane ids, and a replace key that no longer matches would otherwise append a
   // second member for a key already in the list: two rows, one pane, both drawing one transcript.

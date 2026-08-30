@@ -140,6 +140,20 @@ test('a member is never moved onto a pane its conversation already names', () =>
   });
 });
 
+test('a member is never moved onto a pane another member already is', () => {
+  // Two rows for one colleague. The conversation names the agent twice — once on the pane it used
+  // to be in and once on the pane it is in now — so the follow has a live pane to aim at and a
+  // dead member pointing at it. Moving again would keep both rows for ever.
+  const e = boot({
+    conv: {id: 'c1', name: 'Charts', members: [
+      {key: keyFor(OLD), aid: 'a_abc123abc123', label: 'ARCH'},
+      {key: keyFor(pane('w1:p5')), aid: 'a_abc123abc123', label: 'ARCH'},
+    ]},
+    agents: [pane('w1:p9', {aid: 'a_abc123abc123'})]});
+  const before = JSON.stringify(e.read());
+  return e.run('convFollowAids()').then(() => assert.equal(JSON.stringify(e.read()), before));
+});
+
 test('nothing happens before the shared index has arrived', () => {
   // The same reason convLandPending waits: a roster read out of an empty index is one that has
   // not arrived, and moving members against it writes a fabricated one back.

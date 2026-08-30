@@ -291,7 +291,16 @@
       // A pane the index already files is not fresh, whoever filed it. The seen list is this
       // browser's own memory and a second browser has none of it, so membership is what survives
       // being handed an index built somewhere else.
-      for (const c of items) for (const m of (c && c.members) || []) if (m && m.key) had.add(m.key);
+      // And the same test on the agent rather than the slot. A pane id is a slot herdr recycles, so
+      // an agent that moved between polls arrives here wearing a key no conversation names while
+      // being, in every sense that matters, already filed. Without this it was filed again, and
+      // again on the next poll — which is how one restart left three auto conversations behind.
+      const hadAid = new Set();
+      for (const c of items) for (const m of (c && c.members) || []) {
+        if (!m) continue;
+        if (m.key) had.add(m.key);
+        if (m.aid) hadAid.add(m.aid);
+      }
       // Only a pane an agent is running in has messages to record — the same gate the menu item
       // uses, so a harness the app cannot read is not filed under a record it can never write to.
       // A pane a restart in flight is about to continue a thread onto is not a fresh pane. Filing
@@ -299,6 +308,7 @@
       // is one convContinueTranscript refuses to write over — so the thread it was started to
       // continue would gain a second member instead of carrying on.
       const fresh = agents.filter(a => convMemberKey(a) && !had.has(convMemberKey(a))
+        && !(a.aid && hadAid.has(a.aid))
         && profileFor(a.agent)
         && !(typeof convStartClaimed === 'function' && convStartClaimed(a)));
       if (!fresh.length) return;

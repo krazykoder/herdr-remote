@@ -96,3 +96,24 @@ test('a browser that holds conversations files against them however many the rel
   assert.equal(e.saved.length, 1, 'the guard is about emptiness, not about agreeing with the relay');
   assert.equal(e.saved[0].length, 3);
 });
+
+test('a pane whose agent is already a member is not fresh, whatever its pane id', () => {
+  // A pane id is a slot herdr recycles. An agent that moved between polls arrives wearing a key no
+  // conversation names while being, in every sense that matters, already filed — and was filed
+  // again, and again on the next poll. One restart left three auto conversations behind.
+  const filed = JSON.stringify({version: 1, items: [
+    {id: 'c1', name: 'c1', members: [{key: 'k_w1:p1', aid: 'a_abc123abc123'}]}]});
+  const e = boot({agents: [{pane_id: 'w1:p9', agent: 'claude', aid: 'a_abc123abc123'}],
+                  stored: {[IDX]: filed}});
+  e.run('convAutoJoin()');
+  assert.deepEqual(e.saved, []);
+});
+
+test('a pane carrying an agent id nobody has filed is still filed', () => {
+  const filed = JSON.stringify({version: 1, items: [
+    {id: 'c1', name: 'c1', members: [{key: 'k_w1:p1', aid: 'a_abc123abc123'}]}]});
+  const e = boot({agents: [{pane_id: 'w1:p9', agent: 'claude', aid: 'a_zzz999zzz999'}],
+                  stored: {[IDX]: filed}});
+  e.run('convAutoJoin()');
+  assert.equal(e.saved.length, 1);
+});

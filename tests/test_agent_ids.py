@@ -228,6 +228,14 @@ class AgentIdsTest(unittest.TestCase):
         again = run(ids, [pane("p2", ref="rABC"), pane("p3", ref="rABC")])
         self.assertEqual(again["p2"], aid, "and the pane it landed on keeps it, by its slot")
         self.assertNotEqual(again["p3"], aid)
+        # And it stays spent. The relay keeps a pane's ref for as long as the pane lives — that is
+        # what lets a reloaded browser find the pane its start made — so the pane goes on carrying
+        # it poll after poll. Writing that back onto the row re-armed the binding one poll after
+        # the one that spent it, and the third pane below would then have taken the agent.
+        self.assertEqual(ids.get(aid)["ref"], "", "spent once, not spent and re-armed every poll")
+        third = run(ids, [pane("p2", ref="rABC"), pane("p4", ref="rABC")])
+        self.assertEqual(third["p2"], aid)
+        self.assertNotEqual(third["p4"], aid, "a start that already happened claims nothing again")
 
     def test_binding_a_ref_to_an_unknown_agent_does_nothing(self):
         self.assertFalse(self.store().bind_ref("a_nope", "rABC"))

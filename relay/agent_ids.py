@@ -271,9 +271,15 @@ class AgentIds:
                     "  last_seen=excluded.last_seen",
                     (aid, p.get("host") or "", p.get("agent") or "", p.get("cwd") or "",
                      p.get("workspace_id") or "", p["pane_id"],
-                     # Spent. A ref names one start, and a binding left lying about would move the
-                     # agent again on the next poll — onto whichever pane still wears that ref.
-                     "" if aid in spent else (p.get("ref") or old.get("ref") or ""),
+                     # Spent, and staying spent. A ref names one start.
+                     #
+                     # Never the *pane's* ref, only the row's own: the relay keeps a pane's ref for
+                     # as long as the pane lives — that is what lets a reloaded browser find the
+                     # pane its start made — so writing it back here re-armed the binding on the
+                     # poll after the one that spent it, and the row sat there permanently claiming
+                     # a start that had already happened. A row's ref is put there by bind_ref and
+                     # taken away here, and by nothing else.
+                     "" if aid in spent else (old.get("ref") or ""),
                      vals["config"], vals["project_id"], vals["project"], vals["role"],
                      vals["starter"], vals["label"],
                      old.get("first_seen") or now, now))

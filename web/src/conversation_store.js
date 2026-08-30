@@ -1146,7 +1146,13 @@
     // disagree about that — one is a press the reader just made, the other a recovery that must
     // never move anybody — so neither the opening prompt, the toast, nor opening the terminal
     // belongs here.
-    async function convLandMember(a, convId, replaceKey, ref) {
+    // `moveOnly` is for the caller nobody pressed. The fallback below — join as a new member when
+    // the transcript could not be carried — is right for a press: the reader asked for this pane to
+    // be in this conversation, and a thread that starts fresh is better than no pane at all. It is
+    // wrong for the follow, which is bookkeeping: a member that cannot be *moved* must be left
+    // exactly where it is, or the conversation grows a second row for one agent — the dead pane and
+    // the live one, side by side, both wearing the same name.
+    async function convLandMember(a, convId, replaceKey, ref, moveOnly) {
       const next = a && convMemberKey(a);
       if (!next || !convId) return null;
       // The pair goes with it. A restart is the same colleague in a new pane, and the pair record
@@ -1173,6 +1179,8 @@
       // second row for a key that is already in the list. Two members, one pane, both drawing the
       // same transcript.
       const already = (conv.members || []).some(m => m.key === next);
+      // Nothing to do rather than something to regret. See moveOnly above.
+      if (moveOnly && !(continued && prior)) return null;
       conv.members = continued && prior
         ? conv.members.map(m => m.key === prior.key
           ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
@@ -1281,7 +1289,13 @@
           // Not onto a pane this conversation already names. herdr recycles pane ids and a member
           // may have been moved by something else a moment ago; two rows drawing one transcript is
           // the failure convLandMember's own `already` guard exists for, reached from here.
-          if (moved && !named.has(convMemberKey(moved))) follow.push({conv: c.id, key: m.key, pane: moved});
+          // And not where some *other* member of this conversation is already that agent: two rows
+          // for one colleague — the dead pane and the live one, both wearing the same name — is
+          // the thing this whole mechanism exists to prevent.
+          const twice = moved && (c.members || []).some(o => o !== m && o && o.aid === moved.aid);
+          if (moved && !twice && !named.has(convMemberKey(moved))) {
+            follow.push({conv: c.id, key: m.key, pane: moved});
+          }
         }
       }
       if (folded) saveConvIndex(items);
@@ -1289,7 +1303,7 @@
         if (convFollowing.has(f.key)) continue;
         convFollowing.add(f.key);
         try {
-          const conv = await convLandMember(f.pane, f.conv, f.key, '');
+          const conv = await convLandMember(f.pane, f.conv, f.key, '', true);
           if (conv) {
             renderConversations();
             if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
