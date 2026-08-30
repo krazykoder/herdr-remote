@@ -32,7 +32,17 @@
       let moved = false;
       for (const pair of pairs) {
         pair.members = pair.members.map(m => {
-          if (agents.some(a => memberMatches(m, a))) return m;
+          const live = agents.find(a => memberMatches(m, a));
+          if (live) {
+            // Found — but not necessarily where it is recorded. memberMatches pins the *agent*, and
+            // an agent moves between panes; everything else here finds a member by pane id, so a
+            // member matched on its id alone is one pairFor, memberOf and the strip cannot look up.
+            // The pair reads healthy and draws on nothing. Re-stamped instead, which is also how an
+            // id gets into a pair written before the relay minted any.
+            if (live.pane_id === m.pane_id && !(live.aid && m.aid !== live.aid)) return m;
+            moved = true;
+            return Object.assign({}, m, recentFingerprint(live));
+          }
           const same = agents.filter(a => !claimed.has(a.pane_id) &&
             (a.host || 'local') === (m.host || 'local') &&
             a.agent === m.agent && (a.cwd || '') === (m.cwd || ''));

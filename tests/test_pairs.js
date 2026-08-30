@@ -841,6 +841,46 @@ test('a member whose pane came back under a new id is re-pointed at it, and save
   assert.match(out.saved, /w1:p9/);
 });
 
+test('a member found by its agent id is moved onto the pane that agent is in', () => {
+  // memberMatches pins the agent, and an agent moves between panes. Everything else here finds a
+  // member by pane id — pairFor, memberOf, the strip — so a member matched on its id alone while
+  // still recorded against a dead pane is one nothing can look up: the pair reads healthy and
+  // draws on neither pane.
+  const moved = member({pane_id: 'w1:p1', aid: 'a_abc123abc123'});
+  const still = member({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'});
+  const out = runHealPairs([pair(moved, still)], [
+    agent({pane_id: 'w1:p9', aid: 'a_abc123abc123'}),
+    agent({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'})]);
+  assert.equal(out.moved, true);
+  assert.equal(out.pairs[0].members[0].pane_id, 'w1:p9');
+  assert.equal(out.pairs[0].members[0].aid, 'a_abc123abc123', 'and keeps the agent it was for');
+  assert.equal(out.pairs[0].members[1].pane_id, 'w1:p2', 'the one that did not move is not rewritten');
+});
+
+test('a pair written before agent ids existed takes them from the panes it names', () => {
+  // No migration step and nothing to run by hand: the id lands the first time the strip is drawn
+  // against a relay that mints them, and from then on the pair follows the agent rather than
+  // the slot.
+  const a1 = member({pane_id: 'w1:p1'});
+  const a2 = member({pane_id: 'w1:p2', agent: 'codex'});
+  const out = runHealPairs([pair(a1, a2)], [
+    agent({pane_id: 'w1:p1', aid: 'a_abc123abc123'}),
+    agent({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'})]);
+  assert.equal(out.moved, true);
+  assert.deepEqual(out.pairs[0].members.map(m => m.aid), ['a_abc123abc123', 'a_def456def456']);
+  assert.deepEqual(out.pairs[0].members.map(m => m.pane_id), ['w1:p1', 'w1:p2'], 'in the same panes');
+});
+
+test('a pair whose panes and agents are both unchanged is not rewritten', () => {
+  const a1 = member({pane_id: 'w1:p1', aid: 'a_abc123abc123'});
+  const a2 = member({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'});
+  const out = runHealPairs([pair(a1, a2)], [
+    agent({pane_id: 'w1:p1', aid: 'a_abc123abc123'}),
+    agent({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'})]);
+  assert.equal(out.moved, false);
+  assert.equal(out.saved, undefined, 'and nothing is pushed to the fleet');
+});
+
 test('two candidates for one seat are left alone rather than guessed between', () => {
   // Two claude panes in one directory are two colleagues; picking either would put one agent's
   // work in the other's terminal.
