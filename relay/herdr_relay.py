@@ -14,6 +14,7 @@ from conversation_log import ConversationLog
 from conv_query import (QUERY_ROWS_DEFAULT as CONV_LOG_ROWS_DEFAULT, as_wire as conv_as_wire,
                         fingerprints_from as conv_fingerprints)
 from pane_summary import ends_turn, summary_body
+from agent_ids import AgentIds, RETIRED_MAX
 from user_state import UserState, Conflict as StateConflict, DOC_NAMES as STATE_DOCS
 from projects import (
     ProjectConfigError,
@@ -530,6 +531,21 @@ except (sqlite3.Error, OSError) as e:
     # Same posture as the record above: a relay that will not start because a file is unwritable is
     # a worse failure than one that says so and leaves every browser on its own state.
     print(f"herdr-remote: shared state disabled: {e}", file=sys.stderr)
+
+# Who is in each pane, as opposed to which pane it is. The same file as the shared state above:
+# both are facts about the work rather than about one browser, and an identity registry in a
+# database of its own is a third thing to back up and a third thing to lose.
+agent_ids = None
+try:
+    agent_ids = AgentIds(STATE_DB)
+except (sqlite3.Error, OSError) as e:
+    # A relay with no registry still lists panes, still reads them and still starts sessions. The
+    # clients fall back to the pane fingerprint they used before this existed.
+    print(f"herdr-remote: agent ids disabled: {e}", file=sys.stderr)
+
+# The agents this relay knows that have no live pane, as the last poll left them. Held rather than
+# queried per connect: it is answered into every snapshot, and a snapshot goes out every poll.
+latest_retired = []
 
 
 def start_options_message():
@@ -1089,6 +1105,11 @@ def snapshot_message():
     msg = {"type": "agents", "agents": latest_agents}
     if TERMINAL:
         msg["shells"] = latest_shells
+    # The agents with no pane, so a client can offer to restart one from any browser rather than
+    # only from the one that happened to watch it start. Present whenever the registry is, empty
+    # list included — its presence is the client's gate, as `shells` is for terminal mode.
+    if agent_ids is not None:
+        msg["retired"] = latest_retired
     return msg
 
 
@@ -2297,7 +2318,7 @@ def open_terminal_exec(plan):
 
 
 async def _poll_once():
-        global latest_agents, latest_shells
+        global latest_agents, latest_shells, latest_retired
         # Before the panes, so the snapshot they are annotated with is the roster this cycle knows
         # about: a child directory made a moment ago is a Project on the same poll that first sees
         # a pane in it, rather than one poll later.
@@ -2322,6 +2343,23 @@ async def _poll_once():
         # Before the snapshot goes out, so a pane's first appearance after a restart carries the
         # branch the record already knows rather than nothing.
         await seed_branches(agents)
+        # Before the identity pass, which reads it: a start that named itself is the one case where
+        # the client has already said which agent this pane continues, and rule 2 needs it stamped.
+        for a in agents:
+            ref = pane_ref.get(a["pane_id"])
+            if ref:
+                a["ref"] = ref
+        # Which *agent* is in each pane, as opposed to which slot the pane is. Against the whole
+        # roster in one call, because "who no longer has a pane" is only answerable against all of
+        # it — half a roster would retire every agent on the other host. See relay/agent_ids.py.
+        if agent_ids is not None:
+            try:
+                # Stamps `aid` on each pane in place, which is what the snapshot goes out carrying.
+                await asyncio.to_thread(agent_ids.resolve, agents)
+                latest_retired = await asyncio.to_thread(agent_ids.retired, RETIRED_MAX)
+            except sqlite3.Error as e:
+                # A registry that will not answer is not worth a poll that does not happen.
+                log.warning("agent ids: %s", e)
         for a in agents:
             agent_cache[a["pane_id"]] = a
             # Where this pane's work is landing, carried on the snapshot so the app can say so
@@ -2336,11 +2374,13 @@ async def _poll_once():
             config = pane_config.get(a["pane_id"])
             if config:
                 a["config"] = config
-            # The id the client that started this pane gave it, so the browser that asked can find
-            # it again after a reload has thrown away the answer it was given.
-            ref = pane_ref.get(a["pane_id"])
-            if ref:
-                a["ref"] = ref
+            # The id the client that started this pane gave it is stamped above, before the
+            # identity pass that reads it.
+            #
+            # And the agent in this pane — minted once, kept across every pane it goes on to
+            # occupy — is stamped by that same pass. A pane id is herdr's slot and is recycled;
+            # `aid` is the colleague.
+
             # The newest row this pane's record holds, so a thread on screen can tell it is behind.
             # Only ever set by this relay's own writes, which is all a client compares it against.
             turn = pane_turn_ids.get(a["pane_id"])

@@ -167,6 +167,19 @@ async def gate_on_run():
             check("allowlist is the relay's, in order", opts["agents"] == ["claude", "codex"], opts)
             check("roles are fixed", opts["roles"] == ["architect", "reviewer", "agent"], opts)
 
+            # --- Identity. A pane id is herdr's slot and is recycled; `aid` is the agent in it,
+            # minted by the relay and kept across every pane that agent goes on to occupy. Every
+            # pane carries one, not only the ones this app started, and `retired` is what makes a
+            # dead agent restartable from a browser that never watched it run.
+            check("every pane carries an agent id",
+                  all(str(a.get("aid", "")).startswith("a_") for a in snap["agents"]),
+                  [a.get("aid") for a in snap["agents"]])
+            check("one agent id per pane",
+                  len({a["aid"] for a in snap["agents"]}) == len(snap["agents"]),
+                  [a["aid"] for a in snap["agents"]])
+            check("the retired list is present, and empty while every agent has a pane",
+                  snap.get("retired") == [], snap.get("retired"))
+
             # --- W1 pane width. The browser lays unwrapped output out at `cols`, so a wrong
             # number scales every glyph to the wrong pane. It is measured from the wrapped
             # scrollback, not from `pane layout`, whose rect reports a pane's birth width
