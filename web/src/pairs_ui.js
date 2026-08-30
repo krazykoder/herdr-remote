@@ -39,9 +39,13 @@
             // member matched on its id alone is one pairFor, memberOf and the strip cannot look up.
             // The pair reads healthy and draws on nothing. Re-stamped instead, which is also how an
             // id gets into a pair written before the relay minted any.
-            if (live.pane_id === m.pane_id && !(live.aid && m.aid !== live.aid)) return m;
+            // Compared as whole fingerprints, not pane id alone: an agent that moved *hosts* can
+            // keep its pane id, since those are per-server counters. Left as it was, the member
+            // still names the old host and every lookup goes to the wrong machine.
+            const fp = recentFingerprint(live), was = recentFingerprint(m);
+            if (Object.keys(fp).every(k => fp[k] === was[k])) return m;
             moved = true;
-            return Object.assign({}, m, recentFingerprint(live));
+            return Object.assign({}, m, fp);
           }
           const same = agents.filter(a => !claimed.has(a.pane_id) &&
             (a.host || 'local') === (m.host || 'local') &&
@@ -92,8 +96,10 @@
     // a restart elsewhere is not a reason to rewrite it.
     function repointPair(oldPaneId, next) {
       if (!oldPaneId || !next || oldPaneId === next.pane_id) return false;
-      const pair = pairFor(pairs, oldPaneId);
-      if (!pair || pairFor(pairs, next.pane_id)) return false;
+      // By pane id: `oldPaneId` names a pane that has gone, so there is no live agent for pairFor
+      // to match it with. This is the pre-`aid` repair.
+      const pair = pairNaming(pairs, oldPaneId);
+      if (!pair || pairNaming(pairs, next.pane_id)) return false;
       pair.members = pair.members.map(m => m.pane_id === oldPaneId
         ? Object.assign({}, m, recentFingerprint(next)) : m);
       savePairs();

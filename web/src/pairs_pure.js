@@ -297,22 +297,48 @@
                aid: a.aid || '' };
     }
 
+    // One clause, and it is the whole of what stale means: a member no live pane answers to.
+    //
+    // There used to be a second — a pane id reported by more than one host — because every lookup
+    // below was keyed on that bare id and would have picked whichever host sorted first. The
+    // lookups take an agent now and resolve through memberMatches, and the relay accepts an `aid`
+    // as an address, so there is nothing left for it to stand in for. It went in the same change
+    // that made them unambiguous and not before; see the decision log, the agent is the address.
     function pairHealth(pair, list) {
       for (const m of pair.members) {
-        if (list.filter(a => a.pane_id === m.pane_id).length > 1)
-          return { state: 'stale', reason: `${m.pane_id} is reported by more than one host` };
         if (!list.some(a => memberMatches(m, a)))
           return { state: 'stale', reason: `${m.role || m.agent} (${m.pane_id}) is no longer running` };
       }
       return { state: 'healthy', reason: '' };
     }
 
-    function pairFor(list, paneId) {
+    // All three take a live agent, not a pane id. A pane id is herdr's per-server counter and two
+    // hosts report the same ones, so a pair found by one is whichever pair was written first.
+    // memberMatches prefers the agent id and falls back to the four-field fingerprint, which is
+    // host-qualified either way.
+    function pairFor(list, agent) {
+      if (!agent) return null;
+      return list.find(p => p.members.some(m => memberMatches(m, agent))) || null;
+    }
+
+    // "Does any pair name this pane slot" — a different question from which pair a live agent is
+    // in, and the only one two callers can ask. savePair drops by pane id so that a stale pair over
+    // the same slot goes with it, and the warning shown before it does has to see what it will
+    // drop; repointPair names a pane that has already gone, which no live agent answers to.
+    function pairNaming(list, paneId) {
       return list.find(p => p.members.some(m => m.pane_id === paneId)) || null;
     }
 
-    function memberOf(pair, paneId) { return pair.members.find(m => m.pane_id === paneId); }
-    function partnerOf(pair, paneId) { return pair.members.find(m => m.pane_id !== paneId); }
+    function memberOf(pair, agent) { return pair.members.find(m => memberMatches(m, agent)); }
+
+    // The other member, by position. A pair is exactly two (parsePairs enforces it), so this is
+    // total where "the first member that is not this agent" is not: an agent both members match —
+    // a degenerate pair over one pane — would find nothing and the strip would read `.pane_id` off
+    // undefined. An agent in neither answers the first member, which is what a pane id nobody
+    // recognised always did.
+    function partnerOf(pair, agent) {
+      return pair.members[pair.members.indexOf(memberOf(pair, agent)) === 0 ? 1 : 0];
+    }
 
     // Same host only: a bare pane_id cannot be routed unambiguously across hosts.
     function pairCandidates(list, source) {

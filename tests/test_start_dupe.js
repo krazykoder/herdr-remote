@@ -55,6 +55,9 @@ function startCtx({pane = PANE, options = {roles: ['architect', 'reviewer', 'age
     shells: [],
     startOptions: options,
     activePane: pane ? pane.pane_id : null,
+    // From state.js. The suite drives `activePane` directly, so this reads it back out of the
+    // context rather than being pinned at build time.
+    activeAgent: () => g.agents.find(a => a.pane_id === g.activePane) || null,
     slotFor: () => 'wide',
     paneOf: id => live.find(a => a.pane_id === id) || null,
     openTerminal: id => calls.push(['open', id]),

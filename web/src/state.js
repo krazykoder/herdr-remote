@@ -1,4 +1,24 @@
     let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
+    // Which *agent* the open pane is, as opposed to which pane it is. A pane id is herdr's
+    // per-server counter, so two hosts polled by one relay both report w1:p1 and `activePane`
+    // alone cannot say which of them was tapped. Set beside it, cleared with it.
+    let activeAid = null;
+
+    // The agent in the open pane. Every caller used to write this find itself, keyed on the pane
+    // id, and so every caller picked whichever host sorted first. The fallback is not decoration:
+    // a relay too old to mint ids sends none, and there behaviour is exactly what it always was.
+    function activeAgent() {
+      if (!activePane) return null;
+      return agents.find(a => activeAid ? a.aid === activeAid : a.pane_id === activePane) || null;
+    }
+
+    // How a pane is named on the wire. Both fields when there is an id to send: `aid` is what the
+    // relay routes on when two hosts' pane counters collide, `pane_id` is what a relay too old to
+    // read the field still needs. Takes an agent, or the pane id of one this browser cannot name.
+    function paneAddr(a) {
+      if (typeof a === 'string' || !a) return { pane_id: a || null };
+      return a.aid ? { pane_id: a.pane_id, aid: a.aid } : { pane_id: a.pane_id };
+    }
     // When the socket went down, or 0 while it is up. The only record this app has that it was away:
     // `prevStatuses` survives a dropped socket, so a long outage with no reload looks like a
     // continuous session to everything else. Cleared by the first snapshot after the reconnect,

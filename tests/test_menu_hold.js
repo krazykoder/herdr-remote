@@ -23,6 +23,12 @@ function harness(agents) {
   const wire = [];
   let now = 1000;
   const ctx = vm.createContext({
+    // From state.js: how a pane is named on the wire. Both fields when the agent carries an id —
+    // `aid` is what the relay routes on when two hosts report the same pane id.
+    paneAddr: a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+      : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id}),
+    // Nothing is open in these suites; the paths under test all name their pane explicitly.
+    activeAgent: () => null,
     console, agents, shells: [], startOptions: {agents: ['codex']}, activePane: null,
     paneOf: id => agents.find(a => a.pane_id === id) || null,
     isShell: () => false,

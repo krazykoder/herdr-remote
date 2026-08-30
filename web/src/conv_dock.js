@@ -129,8 +129,8 @@
     // otherwise defaulting to whichever member happened to sort first — which is a fact about the
     // row, not about the message.
     function dockPairTarget(source, list) {
-      const pair = source && pairFor(pairs, source.pane_id);
-      const partner = pair && partnerOf(pair, source.pane_id);
+      const pair = source && pairFor(pairs, source);
+      const partner = pair && partnerOf(pair, source);
       return partner && list.some(a => a.pane_id === partner.pane_id) ? partner.pane_id : '';
     }
 
@@ -248,7 +248,7 @@
       const to = paneOf(dockAddressed());
       if (!to) return '';
       const name = escapeHtml(paneLabel(to));
-      const pair = pairFor(pairs, to.pane_id);
+      const pair = pairFor(pairs, to);
       const open = `closeDockMenu('optMenu'); openPairDialog('${escapeHtml(to.pane_id)}')`;
       if (!pair) {
         return `<button class="menu-item" role="menuitem" onclick="${open}" ` +

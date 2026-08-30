@@ -243,8 +243,8 @@
       // Said apart to a screen reader too: "needs you" on a finished pane is a false alarm that
       // costs more when the colour and the blink are not there to correct it.
       const note = kind === 'blocked' ? ', needs you' : kind === 'done' ? ', finished' : '';
-      const paired = pairFor(pairs, a.pane_id);
-      return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+      const paired = pairFor(pairs, a);
+      return `<div class="agent${kind ? ' attention' : ''}${kind === 'done' ? ' alert-done' : ''}" role="button" tabindex="0" aria-label="${label}, ${a.status}${note}" onclick="openTerminal('${a.pane_id}','${a.aid || ''}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}','${a.aid || ''}')}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${paneChrome(a, false)}${host}</div><div class="meta">${paneBadge(a).trimStart()} ${cwd}</div></div>
     ${endBtnHtml({cls: 'end-btn', key: 'end-pane:' + a.pane_id, pane: a.pane_id, stop: true,
@@ -1752,7 +1752,7 @@
       const shownKeys = shown.map(m => m.key);
       const openKey = activePane ? convMemberKey(paneOf(activePane)) : '';
       const twoCol = shownKeys.length === 2 && !!(conv.pair_id ||
-        agents.some(x => shownKeys.includes(convMemberKey(x)) && pairFor(pairs, x.pane_id)));
+        agents.some(x => shownKeys.includes(convMemberKey(x)) && pairFor(pairs, x)));
       const rightKey = shownKeys.includes(openKey) ? openKey : shownKeys[1];
       const visible = e => !hidden.has(e.key || keys[0]);
       const entries = hidden.size ? composed.entries.filter(visible) : composed.entries;
@@ -1897,12 +1897,16 @@
       if (typeof syncBranchBadges === 'function') syncBranchBadges();
     }
 
-    function openTerminal(paneId) {
+    // `aid` is optional and is the caller's answer to "which agent is this", which a pane id
+    // cannot give when two hosts report the same one. Callers holding the agent pass it; the ones
+    // resuming from a stored pane id — a notification, a transfer target, an arbitration link —
+    // have only the id, and get exactly the behaviour they always had.
+    function openTerminal(paneId, aid) {
       // Opening over an already-open pane leaves the old poller running otherwise, and every
       // switch adds another read_pane every 3s. Cleared here rather than in each caller, because
       // switchToPartner and the header chips both land straight on this without closing first.
       clearInterval(refreshInterval);
-      activePane = paneId; paneLines = 200; userScrolledUp = false;
+      activePane = paneId; activeAid = aid || null; paneLines = 200; userScrolledUp = false;
       paneSource = 'recent-unwrapped';  // a clear belongs to the pane it was made on
       noteRecent(paneId);
       noteVisit(paneId);
@@ -1957,7 +1961,7 @@
     }
 
     function closeTerminal() {
-      activePane = null; clearInterval(refreshInterval);
+      activePane = null; activeAid = null; clearInterval(refreshInterval);
       syncPaneLoading();  // after activePane, so a pane closed mid-wait takes the pill with it
       closeFireMenu();
       disarmClear();

@@ -153,7 +153,9 @@
         // right edge carries what only matters here — the pair this pane is already in, which is
         // what makes choosing it a replacement rather than an addition.
         groups: () => [{head: 'Partner', rows: pairCandidates(agents, pairSource).map(a => {
-          const existing = pairFor(pairs, a.pane_id);
+          // By pane id: the note says what choosing this row would replace, and saving
+          // replaces by pane id.
+          const existing = pairNaming(pairs, a.pane_id);
           return pickPaneRow(a, existing ? {note: `in "${existing.name}"`} : null);
         })}],
         extra: pairStartRow,
@@ -214,7 +216,9 @@
       document.getElementById('pairRoleB').value = paneLabel(pairPartner);
       document.getElementById('pairFields').style.display = 'flex';
       // Name what is being replaced — a silent replacement is how a user loses a pair they meant to keep.
-      const clashes = [pairSource, pairPartner].map(p => pairFor(pairs, p.pane_id)).filter(Boolean);
+      // By pane id, because savePair drops by pane id: the warning has to name exactly what
+      // saving will replace, stale pairs over these slots included.
+      const clashes = [pairSource, pairPartner].map(p => pairNaming(pairs, p.pane_id)).filter(Boolean);
       const names = [...new Set(clashes.map(p => p.name))];
       setPairError(names.length ? `Saving replaces the existing pair ${names.map(n => `"${n}"`).join(' and ')}.` : '', true);
       renderPicker();
@@ -246,7 +250,7 @@
     // is not always the pane being read. Unset means the open pane, which is what the pane menu asks
     // about.
     function unpair(paneId) {
-      const pair = pairFor(pairs, paneId || activePane);
+      const pair = pairFor(pairs, paneId ? paneOf(paneId) : activeAgent());
       if (!pair) return;
       // The arm is what asked; the menu it was armed in is still open behind it. Both menus, because
       // either can be the one holding the armed button.
@@ -271,8 +275,8 @@
       // After the healing and never before: a pair whose member was restarted is healthy again the
       // moment healPairs re-points it, and ageing it first would count that restart as absence.
       agePairs();
-      const pair = activePane ? pairFor(pairs, activePane) : null;
-      const mineLive = activePane ? agents.find(a => a.pane_id === activePane) : null;
+      const mineLive = activeAgent();
+      const pair = pairFor(pairs, mineLive);
       // Which pane you are in, by name and harness. Not a pair fact — the answer is the same
       // whether this pane is paired, whether the pair is healthy, and whether the composer is
       // unfolded, so it is shown on all of them. Pairing state is told by the controls beside it.
@@ -298,7 +302,7 @@
         return;
       }
       const health = pairHealth(pair, agents);
-      const partner = partnerOf(pair, activePane);
+      const partner = partnerOf(pair, mineLive);
       const ok = health.state === 'healthy';
       // Read the partner's name from the live snapshot, not from the pair record: the record holds
       // the name captured at pin time, so renaming a pane would leave a stale name on this button.
@@ -345,7 +349,7 @@
       // nagging about it is worse than treating a blank field as "leave it alone".
       if (!label || label === a.label) return;
       if (label.length > 32) { showToast('Name must be 32 characters or fewer.'); return; }
-      ws.send(JSON.stringify({ type: 'rename_pane', pane_id: activePane, label: label }));
+      ws.send(JSON.stringify(Object.assign({ type: 'rename_pane', label: label }, paneAddr(activeAgent() || activePane))));
       // Nothing is applied here — the command_result branch does it once herdr has accepted the
       // rename, and an `error` reply surfaces instead if the relay is too old to know the message.
     }
@@ -353,13 +357,17 @@
     // Jump to the other half of the pair without going back through the agent list. Refuses on a
     // stale pair for the same reason transfer does — the target has not been verified.
     function switchToPartner() {
-      const pair = activePane ? pairFor(pairs, activePane) : null;
+      const mine = activeAgent();
+      const pair = pairFor(pairs, mine);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return;
       const keepComposer = document.activeElement === document.getElementById('termInput');
-      const to = partnerOf(pair, activePane).pane_id;
+      // The live agent behind the partner member, not the pane id recorded on it: that is where
+      // the partner *is*, and it is what carries the aid the new pane is then opened under.
+      const to = agents.find(x => memberMatches(partnerOf(pair, mine), x));
+      if (!to) return;
       // Before the switch, because the thread the partner opens on is read during it.
-      carryConvToPane(paneOf(activePane), paneOf(to));
-      openTerminal(to);
+      carryConvToPane(mine, to);
+      openTerminal(to.pane_id, to.aid);
       if (keepComposer) document.getElementById('termInput').focus();
       if (window.cue) cue('page');
     }

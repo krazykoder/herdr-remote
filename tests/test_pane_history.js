@@ -40,6 +40,13 @@ function historyCtx({stored = null, paneLines = 200, status = 'working', now = 1
     // waiting on it.
     Date: {now: () => clock.at},
   });
+  // From state.js, attached after the context exists so they read it live: the tests
+  // reassign `agents` and `activePane` on it, and a value captured in the literal would
+  // be the one the harness was built with. `agents` is absent in harnesses that open no
+  // pane, hence the empty default.
+  ctx.activeAgent = () => (ctx.agents || []).find(a => a.pane_id === ctx.activePane) || null;
+  ctx.paneAddr = a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+    : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id});
   const from = SRC.indexOf("const HISTORY_KEY = 'herdr_pane_history';");
   vm.runInContext(SRC.slice(from), ctx);
   // A tick of the real 3s interval, wherever the clock currently is.
@@ -54,6 +61,13 @@ function approvalHtml(choice) {
     escapeHtml: s => String(s).replace(/[&<>\"]/g,
       c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])),
   });
+  // From state.js, attached after the context exists so they read it live: the tests
+  // reassign `agents` and `activePane` on it, and a value captured in the literal would
+  // be the one the harness was built with. `agents` is absent in harnesses that open no
+  // pane, hence the empty default.
+  ctx.activeAgent = () => (ctx.agents || []).find(a => a.pane_id === ctx.activePane) || null;
+  ctx.paneAddr = a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+    : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id});
   vm.runInContext(SRC.slice(from, to) + '\n;__out = approvalHtml;', ctx);
   return ctx.__out(choice);
 }

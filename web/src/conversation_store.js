@@ -665,7 +665,7 @@
       // Fixed source and length. `visible` is the live frame with the terminal's own breaks left in
       // and they land mid-word, so a turn read that way records a message no reader would recognise.
       ws.send(JSON.stringify(
-        { type: 'read_pane', pane_id: paneId, lines: 200, source: 'recent-unwrapped' }));
+        Object.assign({ type: 'read_pane', lines: 200, source: 'recent-unwrapped' }, paneAddr(a))));
     }
 
     // T2 — the recovery nobody asks for (§2.4).
@@ -795,7 +795,7 @@
       // (§2.5), and the recorder does not care which of the two brought the rows.
       if (a.pane_id === activePane) { paneLines = lines; refreshPane(); }
       else ws.send(JSON.stringify(
-        { type: 'read_pane', pane_id: a.pane_id, lines: lines, source: 'recent-unwrapped' }));
+        Object.assign({ type: 'read_pane', lines: lines, source: 'recent-unwrapped' }, paneAddr(a))));
       return true;
     }
 
@@ -1365,9 +1365,9 @@
       // The pair is offered as a second member only while it is healthy: a stale pair's partner is
       // a pane this browser has not verified, and seeding a member from it would record a
       // fingerprint nothing on the other end matches.
-      const pair = pairFor(pairs, paneId);
+      const pair = pairFor(pairs, convSource);
       const partner = pair && pairHealth(pair, agents).state === 'healthy'
-        ? agents.find(x => x.pane_id === partnerOf(pair, paneId).pane_id) : null;
+        ? agents.find(x => memberMatches(partnerOf(pair, convSource), x)) : null;
       const row = document.getElementById('convPairRow');
       row.hidden = !partner;
       row.style.display = partner ? 'flex' : 'none';
@@ -1451,10 +1451,10 @@
         setConvError(`Already at ${CONV_CONV_MAX} conversations — leave one first.`); return;
       }
       const members = [convMemberOf(convSource)];
-      const pair = pairFor(pairs, convSource.pane_id);
+      const pair = pairFor(pairs, convSource);
       const row = document.getElementById('convPairRow');
       if (!row.hidden && document.getElementById('convPair').checked && pair) {
-        const partner = agents.find(x => x.pane_id === partnerOf(pair, convSource.pane_id).pane_id);
+        const partner = agents.find(x => memberMatches(partnerOf(pair, convSource), x));
         if (partner) members.push(convMemberOf(partner));
       }
       saveConvIndex([{

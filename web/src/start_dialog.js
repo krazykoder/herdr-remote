@@ -145,7 +145,7 @@
         // Not when either pane is in a pair already: savePair drops it, and the warning
         // choosePartner has just written is the one thing that must not be auto-answered.
         // Nor when saving refuses — at the pair ceiling the dialog stays up holding the reason.
-        if (![intent.pair, a.pane_id].some(id => pairFor(pairs, id))) savePair();
+        if (![intent.pair, a.pane_id].some(id => pairNaming(pairs, id))) savePair();
         const paired = !pairSource;   // savePair closes the dialog; a refusal leaves it open
         if (prompt) sendTextTo(a.pane_id, prompt);
         showSpawnStatus(`${a.label || a.agent || 'Session'} started` +
@@ -183,7 +183,7 @@
         // Not while the conversation window is up. A start made from a conversation is a request
         // for another colleague in it, not a request to stop reading it — and the member has just
         // appeared in the roster behind this.
-        if (!convWindowOpen()) openTerminal(a.pane_id);
+        if (!convWindowOpen()) openTerminal(a.pane_id, a.aid);
         else if (typeof renderConvStandalone === 'function') renderConvStandalone(false);
         showSpawnStatus(conv ? `${a.label || a.agent || 'Session'} continued "${conv.name}".`
           : `${a.label || a.agent || 'Session'} started.`, 'success');
@@ -194,7 +194,7 @@
       // Nor out of the conversation window, which is the same rule about the same reader: a panel
       // is not `activePane`, so without naming it here every start made from one navigated away.
       // Unless the start was a Duplicate, which is a request made from that very pane.
-      if (intent === 'open' || (!activePane && !convWindowOpen())) openTerminal(a.pane_id);
+      if (intent === 'open' || (!activePane && !convWindowOpen())) openTerminal(a.pane_id, a.aid);
       if (prompt) sendTextTo(a.pane_id, prompt);
       showSpawnStatus(`${a.label || a.agent || 'Session'} started.`, 'success');
     }
@@ -219,7 +219,7 @@
     // Same harness, same Project, same tab, no dialog. Everything the dialog would have asked is
     // answered from the pane it was asked from — which is the whole point of the item.
     function duplicatePane() {
-      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const a = activeAgent();
       if (!ws || !canDuplicate(a)) return;
       // Same agent means the same agent config — and an alias the relay no longer offers is not a
       // reason to quietly bring the copy up on the stock endpoint under the same name. The dialog
@@ -261,7 +261,7 @@
     // Spawn into the Project the open pane belongs to, without going back to the list to find
     // the card for it. Same dialog, same validation — only the Project is answered in advance.
     function startInThisProject() {
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activeAgent();
       if (!a || !a.project_id) return;
       openStartDialog(a.project_id);
     }

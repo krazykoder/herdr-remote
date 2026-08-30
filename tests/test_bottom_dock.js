@@ -62,6 +62,13 @@ function dockCtx({status = 'idle', store = {}, convs = [], threaded = false, opt
     // rather than the composer that would have filled this in.
     lastSentText: {}, escapeHtml: s => s,
   });
+  // From state.js, attached after the context exists so they read it live: the tests
+  // reassign `agents` and `activePane` on it, and a value captured in the literal would
+  // be the one the harness was built with. `agents` is absent in harnesses that open no
+  // pane, hence the empty default.
+  ctx.activeAgent = () => (ctx.agents || []).find(a => a.pane_id === ctx.activePane) || null;
+  ctx.paneAddr = a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+    : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id});
   el('convThread').hidden = !threaded;
   vm.runInContext(HISTORY, ctx);
   return {el, store, run: src => vm.runInContext(src, ctx)};

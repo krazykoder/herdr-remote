@@ -120,7 +120,7 @@
         !!paneProfile && !blockContaining(paneRows, agentOf(activePane), a);
       // Transfer is the reason this feature exists, but the button only means something while
       // this pane is half of a live pair.
-      document.getElementById('selTransfer').hidden = !pairFor(pairs, activePane);
+      document.getElementById('selTransfer').hidden = !pairFor(pairs, activeAgent());
     }
 
     // A handle whose end scrolled out of view stops at the edge rather than leaving with it.
@@ -385,7 +385,7 @@
       enter.textContent = enterSendsOn() ? 'Enter inserts a newline' : 'Enter sends the line';
       document.getElementById('tabScope').value = tabScope();
       renderTabScopeHint();
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activeAgent();
       const start = document.getElementById('menuStart');
       // Absent, not disabled, when the pane's Project is unknown or Projects are off: a start
       // needs a project_id, and there is nothing useful to open the dialog on without one.

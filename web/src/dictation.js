@@ -151,11 +151,11 @@
     function respond(t) {
       if (!ws || !activePane) return;
       if (window.cue) cue('success');
-      ws.send(JSON.stringify({ type: 'respond', pane_id: activePane, text: t }));
+      ws.send(JSON.stringify(Object.assign({ type: 'respond', text: t }, paneAddr(activeAgent() || activePane))));
       // Optimistic, and corrected by the next poll: the prompt has been answered, so the approval
       // buttons go now rather than lingering for up to three seconds over an agent that is
       // already working. Re-rendered rather than emptied, so back and forward survive it.
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activeAgent();
       if (a) a.status = 'busy';
       renderQuickActions();
       setTimeout(refreshPane, 500);
@@ -180,7 +180,7 @@
     // whether or not the composer has focus.
     document.addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
-        if (!activePane || !pairFor(pairs, activePane)) return;
+        if (!activePane || !pairFor(pairs, activeAgent())) return;
         e.preventDefault();
         switchToPartner();
       }

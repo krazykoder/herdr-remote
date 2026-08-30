@@ -42,7 +42,7 @@
     // What the bottom right says about the open pane, and whether that reads as good news.
     // Returns [word, tone] where tone is '' | 'on' | 'alert'.
     function paneStatusWord() {
-      const agent = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const agent = activeAgent();
       if (agent && AGENT_WORDS.includes(agent.status)) {
         return [agent.status, agent.status === 'blocked' ? 'alert'
           : agent.status === 'working' ? 'on' : ''];

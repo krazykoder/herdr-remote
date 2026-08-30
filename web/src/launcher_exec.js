@@ -151,7 +151,7 @@
       const live = agents.find(x => convMemberKey(x) === held.key);
       if (live && live.agent === member.name) {
         openConversation(conv.id);
-        openTerminal(live.pane_id);
+        openTerminal(live.pane_id, live.aid);
         showSpawnStatus(`${tile.label} is already running.`, 'success');
         return true;
       }
@@ -290,7 +290,7 @@
       // a `term` carries none by definition, and testing for the text sent it down the agent path,
       // where it was adopted into a batch that does not exist.
       if (launcherIsTerm(ql.tile)) {
-        openTerminal(a.pane_id);
+        openTerminal(a.pane_id, a.aid);
         if (ql.command) sendTextTo(a.pane_id, ql.command);
         // The same note sendText makes for anything typed at a shell, so the command shows up in
         // the terminal's own history. A launcher press is still a command the user ran.
@@ -307,7 +307,7 @@
       // returned from quietly: the card at the foot is still spinning on this start, and nothing
       // else is coming to stop it.
       if (!batch || batch !== launcherLive) {
-        openTerminal(a.pane_id);
+        openTerminal(a.pane_id, a.aid);
         showSpawnStatus(`${a.label || a.agent || 'Session'} started — on its own, the launch it `
                         + 'belonged to is over.', 'warning');
         return;
@@ -322,7 +322,7 @@
       // Only a tile with no roster at all, which launcherValid already refuses. Kept as the guard
       // it is: everything below assumes there is something to put in the conversation.
       if (!launcherWantsConv(batch.tile)) {
-        openTerminal(a.pane_id);
+        openTerminal(a.pane_id, a.aid);
         showSpawnStatus(`${batch.tile.label} started.`, 'success');
         return;
       }
@@ -330,7 +330,7 @@
       // At the conversation ceiling. launcherMakeConv has already said why in a toast; this is the
       // other half of it, because the card is still spinning on a start that has in fact landed.
       if (!conv) {
-        openTerminal(a.pane_id);
+        openTerminal(a.pane_id, a.aid);
         showSpawnStatus(`${batch.tile.label} started — ungrouped.`, 'warning');
         return;
       }

@@ -388,9 +388,9 @@
     // is left.
     function convPairMembers(a, conv) {
       const members = conv.members || [];
-      const pair = pairFor(pairs, a.pane_id);
+      const pair = pairFor(pairs, a);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return null;
-      const partner = agents.find(x => memberMatches(partnerOf(pair, a.pane_id), x));
+      const partner = agents.find(x => memberMatches(partnerOf(pair, a), x));
       if (!partner || !convsForPane(partner).length) return null;
       const key = convMemberKey(partner);
       // Roster order, not pair order: it is what the two columns are assigned from, so narrowing
@@ -553,7 +553,7 @@
       const entries = hidden.size ? composed.entries.filter(shows) : composed.entries;
       const all = hidden.size ? composed.all.filter(shows) : composed.all;
       const thread = members === conv.members ? conv : Object.assign({}, conv, {members});
-      const paired = joint && (conv.pair_id || pairFor(pairs, a.pane_id)) && members.length === 2;
+      const paired = joint && (conv.pair_id || pairFor(pairs, a)) && members.length === 2;
       // Nobody else is speaking here, so the bubbles take the width back off the empty column.
       box.classList.toggle('conv-solo', !joint);
       // While the panel is open it is this conversation the actions act on. convViewId is "the
@@ -771,7 +771,7 @@
       const live = agents.find(x => convMemberKey(x) === key);
       if (!ws || !live || live.status !== 'working') return;
       armButton(btn, 'Esc?', () => {
-        ws.send(JSON.stringify({ type: 'send_keys', pane_id: live.pane_id, keys: ['Escape'] }));
+        ws.send(JSON.stringify(Object.assign({ type: 'send_keys', keys: ['Escape'] }, paneAddr(live))));
         showToast(`Sent Escape to ${paneLabel(live)}`, 'info');
         burstPoll();
       });
@@ -1073,7 +1073,7 @@
       // Learn teaches a gutter glyph and a trim from pane lines. A bubble has neither.
       document.getElementById('selLearn').hidden = true;
       // The sheet's own gate: it is the prefill-and-stop path, and that path is built on a pair.
-      const pair = pairFor(pairs, activePane);
+      const pair = pairFor(pairs, activeAgent());
       document.getElementById('selTransfer').hidden =
         !pair || pairHealth(pair, agents).state !== 'healthy';
     }

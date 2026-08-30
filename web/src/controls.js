@@ -6,7 +6,7 @@
     function adjustPane() {
       if (!ws || !activePane) return;
       showToast('Adjusting pane…');
-      ws.send(JSON.stringify({ type: 'set_slot', pane_id: activePane, slot: slotFor() }));
+      ws.send(JSON.stringify(Object.assign({ type: 'set_slot', slot: slotFor() }, paneAddr(activeAgent()))));
     }
     // --- Clear screen, and Quit ---
     // Both send a line to whatever is running in the pane, and which line depends on the kind:
@@ -290,14 +290,19 @@
         // Dropped before the send: a second refusal puts it straight back, and holding it in two
         // places at once is how a message gets sent twice.
         menuHeld.delete(a.pane_id);
-        submitText(a.pane_id, text);
+        submitText(a, text);
       }
       // A pane that is no longer in the snapshot has ended, and text held for one is not going
       // anywhere. Dropped here rather than left to accumulate for the life of the page.
       for (const id of Array.from(menuHeld.keys())) if (!seen.has(id)) menuHeld.delete(id);
     }
 
-    function submitText(paneId, text) {
+    // Takes an agent or a bare pane id. The maps below key on the pane id either way — they record
+    // what this browser sent where, which is a fact about the pane — while the wire gets the fuller
+    // address, so a send still reaches the right host when two of them report this pane id.
+    function submitText(pane, text) {
+      const addr = paneAddr(pane === activePane ? (activeAgent() || pane) : pane);
+      const paneId = addr.pane_id;
       if (!text || !paneId || !ws || ws.readyState !== 1) return false;
       lastSubmitted.set(paneId, text);
       // One message per chunk. Nothing before the last one submits, so they land in the agent's
@@ -306,7 +311,7 @@
       if (!parts.length) return false;
       try {
         parts.forEach((part, i) => ws.send(JSON.stringify(
-          { type: 'send_text', pane_id: paneId, text: part, submit: i === parts.length - 1 })));
+          Object.assign({ type: 'send_text', text: part, submit: i === parts.length - 1 }, addr))));
       } catch (e) {
         // A socket that closed between the guard above and the write. Nothing was submitted.
         showToast('Not connected — that was not sent.');
@@ -376,8 +381,8 @@
       i.focus();
       closeFireMenu();
     }
-    function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: [k] })); setTimeout(refreshPane, 300); }
-    function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify({ type: 'send_keys', pane_id: activePane, keys: k })); setTimeout(refreshPane, 300); }
+    function sendKey(k) { if (!ws || !activePane) return; ws.send(JSON.stringify(Object.assign({ type: 'send_keys', keys: [k] }, paneAddr(activeAgent() || activePane)))); setTimeout(refreshPane, 300); }
+    function sendKeys(k) { if (!ws || !activePane) return; ws.send(JSON.stringify(Object.assign({ type: 'send_keys', keys: k }, paneAddr(activeAgent() || activePane)))); setTimeout(refreshPane, 300); }
 
     // --- Nav Tray (collie-style) ---
     let keyQueue = [], armedMod = null, ctrlConfirm = null;

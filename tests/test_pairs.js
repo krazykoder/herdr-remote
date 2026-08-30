@@ -21,7 +21,7 @@ const START_DIALOG = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 's
 const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
 
 const NAMES = ['parsePairs', 'newPairId', 'memberMatches', 'pairHealth', 'pairFor', 'memberOf',
-               'partnerOf', 'pairCandidates', 'composeTransfer',
+               'partnerOf', 'pairNaming', 'pairCandidates', 'composeTransfer',
                'recentFingerprint', 'agentSlash', 'reanchorSel', 'navStep', 'navPush',
                'SHORTCUTS', 'START_ROLES', 'roleStarter', 'startRoleOf', 'startRoleFromLabel',
                'MAX_PAIRS', 'SEND_TEXT_MAX', 'chunkText',
@@ -39,7 +39,7 @@ const ctx = vm.createContext({});
 // it, and the app loads the two together. Nothing here calls into the section it draws.
 vm.runInContext(AGENT_CONFIGS + '\n' + PAIRS_PURE + `\n;__out = {${NAMES.join(', ')}};`, ctx);
 const {parsePairs, newPairId, memberMatches, pairHealth, pairFor, memberOf, partnerOf,
-       pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
+       pairNaming, pairCandidates, composeTransfer, recentFingerprint, agentSlash, reanchorSel,
        navStep, navPush, SHORTCUTS, START_ROLES, roleStarter, startRoleOf, startRoleFromLabel,
        MAX_PAIRS, SEND_TEXT_MAX, chunkText,
        parseTermShortcuts, DEFAULT_TERM_SHORTCUTS, MAX_TERM_SHORTCUTS, escapeHtml,
@@ -112,12 +112,33 @@ test('a member whose agent changed is stale', () => {
   assert.equal(pairHealth(p, list).state, 'stale');
 });
 
-test('a pane_id reported by two hosts is stale', () => {
+// A pane id reported by two hosts used to be stale on its own, because every lookup below was
+// keyed on that bare id. They take an agent now and the relay accepts an `aid` as an address, so
+// the pair is exactly as healthy as its members are — the second host is simply another agent.
+test('a pane_id two hosts report is not by itself stale', () => {
   const list = [agent(), agent({host: 'box'}), agent({pane_id: 'w1:p2', agent: 'codex'})];
   const p = pair(member(), member({pane_id: 'w1:p2', agent: 'codex'}));
-  const h = pairHealth(p, list);
-  assert.equal(h.state, 'stale');
-  assert.match(h.reason, /more than one host/);
+  assert.equal(pairHealth(p, list).state, 'healthy');
+});
+
+test('a pair across two hosts whose ids collide is healthy', () => {
+  const p = pair(member({host: 'box', aid: 'a_box22222222'}),
+                 member({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'}));
+  const list = [agent({aid: 'a_local1111111'}), agent({host: 'box', aid: 'a_box22222222'}),
+                agent({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'})];
+  assert.equal(pairHealth(p, list).state, 'healthy');
+});
+
+// The reason the health clause could go: the lookup itself now tells the two hosts apart, so the
+// second host's agent finds its own pair rather than whichever was written first.
+test('a colliding pane id finds the pair of the host that was asked for', () => {
+  const here = pair(member({aid: 'a_local1111111'}), member({pane_id: 'w1:p2', agent: 'codex'}));
+  here.id = 'p_here';
+  const there = pair(member({host: 'box', aid: 'a_box22222222'}),
+                     member({pane_id: 'w1:p3', agent: 'codex', host: 'box'}));
+  there.id = 'p_there';
+  assert.equal(pairFor([here, there], agent({aid: 'a_box22222222', host: 'box'})).id, 'p_there');
+  assert.equal(pairFor([here, there], agent({aid: 'a_local1111111'})).id, 'p_here');
 });
 
 test('a recent fingerprint does not match a reused pane ID', () => {
@@ -135,13 +156,28 @@ test('transfer rechecks pair health immediately before it prefills', () => {
 
 // --- lookup ---
 
+// All three take a live agent, not a pane id, and match it through memberMatches.
 test('pairFor, memberOf and partnerOf resolve from either side', () => {
   const p = pair(member(), member({pane_id: 'w1:p2', role: 'reviewer', agent: 'codex'}));
-  assert.equal(pairFor([p], 'w1:p2'), p);
-  assert.equal(pairFor([p], 'w9:p9'), null);
-  assert.equal(memberOf(p, 'w1:p2').role, 'reviewer');
-  assert.equal(partnerOf(p, 'w1:p2').role, 'architect');
-  assert.equal(partnerOf(p, 'w1:p1').pane_id, 'w1:p2');
+  const reviewer = agent({pane_id: 'w1:p2', agent: 'codex'});
+  assert.equal(pairFor([p], reviewer), p);
+  assert.equal(pairFor([p], agent({pane_id: 'w9:p9'})), null);
+  assert.equal(pairFor([p], null), null);
+  assert.equal(memberOf(p, reviewer).role, 'reviewer');
+  assert.equal(partnerOf(p, reviewer).role, 'architect');
+  assert.equal(partnerOf(p, agent()).pane_id, 'w1:p2');
+});
+
+// pairFor asks which pair a live agent is in; pairNaming asks whether any pair names a pane slot.
+// They are different questions and savePair answers the second — it drops by pane id, stale pairs
+// over the same slot included — so the warning shown before it does has to ask the second too.
+test('pairNaming finds a pair over a slot no live agent answers to', () => {
+  // Written by hand and by a repair that has not run: a member with the pane id and nothing else.
+  const p = pair(member(), member({pane_id: 'w1:p2', agent: 'codex'}));
+  p.members[0] = {pane_id: 'w1:p1'};
+  assert.equal(pairNaming([p], 'w1:p1'), p);
+  assert.equal(pairFor([p], agent()), null, 'the live agent does not match that member');
+  assert.equal(pairNaming([p], 'w9:p9'), null);
 });
 
 // --- candidates ---
@@ -855,6 +891,16 @@ test('a member found by its agent id is moved onto the pane that agent is in', (
   assert.equal(out.pairs[0].members[0].pane_id, 'w1:p9');
   assert.equal(out.pairs[0].members[0].aid, 'a_abc123abc123', 'and keeps the agent it was for');
   assert.equal(out.pairs[0].members[1].pane_id, 'w1:p2', 'the one that did not move is not rewritten');
+});
+
+test('an agent moving hosts with the same pane id re-stamps its pair member', () => {
+  const moved = member({aid: 'a_abc123abc123'});
+  const still = member({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'});
+  const out = runHealPairs([pair(moved, still)], [
+    agent({host: 'box', aid: 'a_abc123abc123'}),
+    agent({pane_id: 'w1:p2', agent: 'codex', aid: 'a_def456def456'})]);
+  assert.equal(out.moved, true);
+  assert.equal(out.pairs[0].members[0].host, 'box');
 });
 
 test('a pair written before agent ids existed takes them from the panes it names', () => {

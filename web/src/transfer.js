@@ -14,7 +14,7 @@
       if (keys.size > 1) { showToast('Select messages from one agent to transfer.'); return null; }
       const source = keys.size ? agents.find(a => convMemberKey(a) === keys.values().next().value) : paneOf(activePane);
       if (!source) return null;
-      const pair = pairFor(pairs, source.pane_id);
+      const pair = pairFor(pairs, source);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') return null;
       // The ruler's range wins when there is one: it is the deliberate selection, and on a phone
       // the native one is usually empty anyway. Capture before anything can steal it — switching
@@ -27,8 +27,8 @@
     function openTransfer() {
       const source = claimTransfer();
       if (!source) return;
-      const pair = pairFor(pairs, source.pane_id);
-      const partner = partnerOf(pair, transferSource);
+      const pair = pairFor(pairs, source);
+      const partner = partnerOf(pair, source);
       const live = agents.find(a => a.pane_id === partner.pane_id);
       document.getElementById('transferTarget').textContent =
         (live ? paneLabel(live) : '') || partner.role || partner.pane_id;
@@ -65,12 +65,12 @@
     // context, so it must never end in a send. The sheet's path, and the pane view's.
     function doTransfer(shortcutIndex) {
       const source = paneOf(transferSource || activePane);
-      const pair = source && pairFor(pairs, source.pane_id);
+      const pair = source && pairFor(pairs, source);
       if (!pair || pairHealth(pair, agents).state !== 'healthy') {
         document.getElementById('transferPreview').textContent = 'Pair is no longer live; reopen it after choosing a live partner.';
         return;
       }
-      const partner = partnerOf(pair, source.pane_id);
+      const partner = partnerOf(pair, source);
       return prefillTransfer(source, partner.pane_id,
         transferInstruction(shortcutIndex >= 0 ? [shortcutIndex] : [], partner.pane_id),
         err => { document.getElementById('transferPreview').textContent = err; });
@@ -86,8 +86,8 @@
     // Everything both paths share, and the only place that writes the composer. `onError` is how
     // the two differ: the sheet has a preview to put the reason in, a chip has a toast.
     function prefillTransfer(source, targetPaneId, instruction, onError) {
-      const pair = pairFor(pairs, source.pane_id);
-      const mine = pair ? memberOf(pair, source.pane_id) : null;
+      const pair = pairFor(pairs, source);
+      const mine = pair ? memberOf(pair, source) : null;
       // The role when the pair sheet was given one, the pane's live label when it was not. A pair
       // built by the Start dialog carries a bare fingerprint with no role at all
       // (recentFingerprint), and the receiving agent was being told the text came from "undefined".

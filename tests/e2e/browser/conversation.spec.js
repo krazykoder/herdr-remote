@@ -1803,7 +1803,8 @@ test('a turn ending reads that pane, wherever the app is looking', async ({page}
   await read(page);
   await tapWire(page);
   await page.evaluate(() => convReadTurnEnd('w8:p1', 'done'));
-  const reads = await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane'));
+  const reads = (await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane')))
+    .map(({aid, ...m}) => m);   // see withoutAid below: minted per run, so not asserted here
   expect(reads).toEqual([{type: 'read_pane', pane_id: 'w8:p1', lines: 200, source: 'recent-unwrapped'}]);
 });
 
@@ -3173,8 +3174,13 @@ const age = (page, key, stale) => page.evaluate(async ([k, stale]) => {
 // and a real 40-minute outage is not something a test can wait for.
 const wasAway = (page, ms) => page.evaluate(ms => { wsDownSince = ms ? Date.now() - ms : 0; }, ms);
 const snapshot = page => page.evaluate(() => handleMessage({type: 'agents', agents: agents}));
-const deepReads = page => page.evaluate(() =>
-  window.__sent.filter(m => m.type === 'read_pane' && m.lines > 1000));
+// Without the `aid`. Every pane command carries one — it is what the relay routes on when two
+// hosts report the same pane id — and it is minted per run, so a list asserted whole cannot name
+// it. What these tests are about is which pane was read and how deeply.
+const withoutAid = ({aid, ...m}) => m;
+const readsOf = page => page.evaluate(() =>
+  window.__sent.filter(m => m.type === 'read_pane')).then(r => r.map(withoutAid));
+const deepReads = page => readsOf(page).then(r => r.filter(m => m.lines > 1000));
 
 test('a session that never dropped pulls no history it was not asked for', async ({page}) => {
   await open(page);
@@ -3318,7 +3324,8 @@ test('the turn-end read stands aside while a recovery is in flight', async ({pag
     convRecoverStart(a, false);
     convReadTurnEnd(a.pane_id, 'idle');       // the turn that ended mid-recovery
   }, key);
-  expect(await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane')))
+  expect((await page.evaluate(() => window.__sent.filter(m => m.type === 'read_pane')))
+    .map(withoutAid))
     .toEqual([{type: 'read_pane', pane_id: pane, lines: 5000, source: 'recent-unwrapped'}]);
 });
 

@@ -24,6 +24,13 @@ assert.ok(from !== -1 && to > from, 'fmtStamp/fmtAgo not found in status_bar.js'
 const ctx = vm.createContext({
   Date, activePane: null, agents: [], paneStampAt: null, LIVE_MS: 5 * 60 * 1000,
 });
+// From state.js, attached after the context exists so they read it live: the tests
+// reassign `agents` and `activePane` on it, and a value captured in the literal would
+// be the one the harness was built with. `agents` is absent in harnesses that open no
+// pane, hence the empty default.
+ctx.activeAgent = () => (ctx.agents || []).find(a => a.pane_id === ctx.activePane) || null;
+ctx.paneAddr = a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+  : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id});
 vm.runInContext(STATUS_BAR.slice(from, to), ctx);
 const {fmtAgo, fmtStamp} = ctx;
 
@@ -113,6 +120,13 @@ assert.ok(dotFrom !== -1 && dotTo > dotFrom, 'activityBucket/statusColor not fou
 const dotCtx = vm.createContext({
   Date, lastSeen: {}, LIVE_MS: 5 * 60 * 1000, RECENT_MS: 60 * 60 * 1000,
 });
+// From state.js, attached after the context exists so they read it live: the tests
+// reassign `agents` and `activePane` on it, and a value captured in the literal would
+// be the one the harness was built with. `agents` is absent in harnesses that open no
+// pane, hence the empty default.
+dotCtx.activeAgent = () => (dotCtx.agents || []).find(a => a.pane_id === dotCtx.activePane) || null;
+dotCtx.paneAddr = a => (typeof a === 'string' || !a) ? {pane_id: a || null}
+  : (a.aid ? {pane_id: a.pane_id, aid: a.aid} : {pane_id: a.pane_id});
 vm.runInContext(UTILS.slice(dotFrom, dotTo), dotCtx);
 
 // Colour for an agent with the given herdr status that last moved `agoMs` ago.

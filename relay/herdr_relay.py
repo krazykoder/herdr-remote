@@ -745,6 +745,10 @@ pane_remote_map = {}
 known_panes = set()
 agent_cache = {}
 ambiguous_panes = set()  # bare pane IDs seen on >1 host this poll; every pane command refuses them
+# The other way to name a pane: by the agent in it. Rebuilt each poll from the roster the
+# identity pass has just stamped, so it holds live panes only — an aid whose agent has ended
+# is absent, which is what makes "unknown aid" the honest answer rather than a stale route.
+pane_by_aid = {}
 latest_agents = []  # last full snapshot, replayed to each client on connect
 latest_shells = []  # shell panes from the same snapshot; empty and unused when TERMINAL is off
 shell_panes = set()  # pane IDs in latest_shells: the respond refusal, and submit_paste's shortcut
@@ -1566,12 +1570,42 @@ def pane_guard(pane_id):
 
     Bare pane IDs are per-server counters, so the same ID on two hosts routes to
     whichever was polled last. Refuse rather than guess (D6); clears within one poll.
+
+    The bare-ID path only. A message naming its pane by `aid` never reaches this — see
+    pane_target, which is what every handler actually calls.
     """
     if pane_id not in known_panes:
         return "unknown pane_id"
     if pane_id in ambiguous_panes:
         return "ambiguous pane_id (same id on multiple hosts)"
     return None
+
+
+def pane_target(msg):
+    """Resolve a client's pane address to (pane_id, remote, error).
+
+    Two ways to name a pane. `aid` is this relay's own agent id: unique by construction, so it
+    names one pane on one host and the collision above cannot arise for it. A bare `pane_id` is
+    herdr's per-server counter and is guarded as it always has been.
+
+    `aid` wins when both are present. A client sends the pair out of one snapshot, so the
+    `pane_id` in it is where that agent *was*; if they have since disagreed the agent moved, and
+    the id that follows it is the fresher of the two.
+
+    An `aid` whose agent has no live pane answers "unknown aid" rather than being looked up in the
+    registry. This addresses panes that exist, not agents that once did.
+    """
+    aid = msg.get("aid")
+    if aid:
+        pane = pane_by_aid.get(aid)
+        if pane is None:
+            return None, None, "unknown aid"
+        return pane["pane_id"], pane.get("remote"), None
+    pane_id = msg.get("pane_id")
+    err = pane_guard(pane_id)
+    # Nothing on the failing path. Every caller returns on the error, and handing one a pane id it
+    # was just told not to use is an invitation to use it anyway.
+    return (None, None, err) if err else (pane_id, pane_remote_map.get(pane_id), None)
 
 
 def _herdr_reason(result):
@@ -2374,6 +2408,10 @@ async def _poll_once():
             except sqlite3.Error as e:
                 # A registry that will not answer is not worth a poll that does not happen.
                 log.warning("agent ids: %s", e)
+        # Rebuilt rather than updated: an agent that has ended must stop being addressable this
+        # poll, and the roster is the only thing that says which ones are still here.
+        pane_by_aid.clear()
+        pane_by_aid.update({a["aid"]: a for a in agents if a.get("aid")})
         for a in agents:
             agent_cache[a["pane_id"]] = a
             # Where this pane's work is landing, carried on the snapshot so the app can say so
@@ -3097,8 +3135,7 @@ async def handle_client(ws, listener="lan"):
         # socket to which listener the client came through, is what it closed over inline.
         async def handle_message(msg, msg_type):
             if msg_type == "respond":
-                pane_id = msg["pane_id"]
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     return
@@ -3116,7 +3153,6 @@ async def handle_client(ws, listener="lan"):
                 if digit is None and text.strip().lower() not in SAFE_RESPONSES:
                     await ws.send(json.dumps({"type": "error", "message": "response not in allowlist"}))
                     return
-                remote = pane_remote_map.get(pane_id)
                 # The allowlist name, not free text: a response is one of SAFE_RESPONSES by the
                 # check above, so this says everything the console needs without echoing input.
                 log.info("Response from %s (%s): pane=%s", ip, device, pane_id)
@@ -3325,13 +3361,11 @@ async def handle_client(ws, listener="lan"):
                 audit(msg_type, ip, device, session["id"], f"state={session['state']}")
                 await broadcast(await asyncio.to_thread(arb_session_message, session))
             elif msg_type == "read_pane":
-                pane_id = msg["pane_id"]
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     return
                 lines = read_pane_lines(msg.get("lines"))
-                remote = pane_remote_map.get(pane_id)
                 # recent-unwrapped, not recent: it drops the line breaks the terminal itself
                 # inserted, leaving only the ones the agent wrote. cols lets the client lay the
                 # result out at the pane's true width instead of guessing.
@@ -3351,8 +3385,7 @@ async def handle_client(ws, listener="lan"):
                     "type": "pane_content", "pane_id": pane_id, "content": content,
                     "source": source, "cols": cols}))
             elif msg_type == "send_keys":
-                pane_id = msg["pane_id"]
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     return
@@ -3360,7 +3393,6 @@ async def handle_client(ws, listener="lan"):
                 if not all(k in SAFE_KEYS for k in keys):
                     await ws.send(json.dumps({"type": "error", "message": "keys contain disallowed values"}))
                     return
-                remote = pane_remote_map.get(pane_id)
                 log.info("Keys from %s (%s): pane=%s keys=%s", ip, device, pane_id, keys)
                 audit("send_keys", ip, device, pane_id, f"keys={keys}")
                 try:
@@ -3376,8 +3408,7 @@ async def handle_client(ws, listener="lan"):
                     return
                 await ws.send(json.dumps({"type": "command_result", "command": "send_keys", "ok": True}))
             elif msg_type == "send_text":
-                pane_id = msg["pane_id"]
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     return
@@ -3386,7 +3417,6 @@ async def handle_client(ws, listener="lan"):
                 if not text or len(text) > SEND_TEXT_MAX:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     return
-                remote = pane_remote_map.get(pane_id)
                 # `submit` asks the relay to submit the text, rather than the client sending its own
                 # `send_keys ["Enter"]` behind this message. Two separate reasons, and both of them
                 # were bugs first:
@@ -3497,8 +3527,7 @@ async def handle_client(ws, listener="lan"):
                 # Not behind HERDR_ENABLE_WRITE_EXT: that gate exists for spawning processes.
                 # Relabelling an existing pane is strictly weaker than send_text and send_keys,
                 # which are already open, so gating it here and not those would be theatre.
-                pane_id = msg["pane_id"]
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "error", "message": pane_err}))
                     return
@@ -3506,7 +3535,6 @@ async def handle_client(ws, listener="lan"):
                 if label_err:
                     await ws.send(json.dumps({"type": "error", "message": label_err}))
                     return
-                remote = pane_remote_map.get(pane_id)
                 audit("rename_pane", ip, device, pane_id, f"label={label!r}")
                 try:
                     result = await asyncio.to_thread(
@@ -3529,14 +3557,12 @@ async def handle_client(ws, listener="lan"):
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": "write extensions disabled"}))
                     return
-                pane_id = msg.get("pane_id", "")
-                pane_err = pane_guard(pane_id)
+                pane_id, remote, pane_err = pane_target(msg)
                 if pane_err:
                     await ws.send(json.dumps({"type": "command_result", "command": "set_slot",
                                               "ok": False, "error": pane_err}))
                     return
                 slot = msg.get("slot")
-                remote = pane_remote_map.get(pane_id)
                 log.info("Set slot from %s (%s): pane=%s slot=%s", ip, device, pane_id, slot)
                 audit("set_slot", ip, device, pane_id, f"slot={slot}")
                 slot_err = await asyncio.to_thread(slot_exec, pane_id, slot, remote)

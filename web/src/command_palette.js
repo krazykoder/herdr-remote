@@ -75,7 +75,7 @@
     };
 
     function getAgentCommands() {
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activeAgent();
       if (!a) return [];
       const key = (a.agent || '').toLowerCase();
       if (COMMANDS[key]) return COMMANDS[key];

@@ -444,8 +444,11 @@ test('Esc hangs off a working bubble, and takes two taps like CLS', async ({page
   expect(sent.filter(m => m.type === 'send_keys')).toEqual([]);
 
   await esc.click();
+  // objectContaining, because a pane command also carries the `aid` the relay minted for it and
+  // that string is generated per run. That it is there at all is pinned below.
   await expect.poll(() => sent).toContainEqual(
-    {type: 'send_keys', pane_id: 'w8:p1', keys: ['Escape']});
+    expect.objectContaining({type: 'send_keys', pane_id: 'w8:p1', keys: ['Escape']}));
+  expect(sent.find(m => m.type === 'send_keys').aid).toMatch(/^a_/);
   await expect(esc).toHaveText('Esc');
 });
 
@@ -482,7 +485,8 @@ test('CLS submits its line with Enter rather than after it', async ({page}) => {
     armClear(); armClear();
     return out;
   });
-  expect(sent).toContainEqual({type: 'send_text', pane_id: 'w8:p1', text: '/clear', submit: true});
+  expect(sent).toContainEqual(
+    expect.objectContaining({type: 'send_text', pane_id: 'w8:p1', text: '/clear', submit: true}));
   expect(sent.filter(m => m.type === 'send_keys')).toHaveLength(0);
 });
 

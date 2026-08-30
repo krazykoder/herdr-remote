@@ -210,7 +210,11 @@
       // The open pane, when it is in no pair. Same rule the project scope already follows: a strip
       // that cannot show the pane on screen is worse than one carrying an extra tab. Untinted, so
       // it reads as the exception it is.
-      const openPane = activePane && !out.some(a => a.pane_id === activePane) ? paneOf(activePane) : null;
+      // activeAgent first: paneOf is keyed on the pane id and would answer the wrong host's row
+      // for the open pane when two of them report the same id. paneOf still covers a shell,
+      // which has no agent and so no id to be found by.
+      const openPane = activePane && !out.some(a => a.pane_id === activePane)
+        ? (activeAgent() || paneOf(activePane)) : null;
       if (openPane) out.push(openPane);
       return out;
     }

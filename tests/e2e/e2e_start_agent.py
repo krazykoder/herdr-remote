@@ -180,6 +180,45 @@ async def gate_on_run():
             check("the retired list is present, and empty while every agent has a pane",
                   snap.get("retired") == [], snap.get("retired"))
 
+            # --- The agent is the address. Both hosts report an agent pane called w8:p1, so the
+            # bare id routes to whichever was polled last and is refused. An `aid` is minted by
+            # this relay and names one agent, so it reaches the right host — which is the whole
+            # point of the id being an address and not only an identity.
+            by_pane = [a for a in snap["agents"] if a["pane_id"] == "w8:p1"]
+            check("both hosts report an agent pane with the same id",
+                  {a.get("host", "local") for a in by_pane} == {"local", "box"}, by_pane)
+            open(LOG, "w").close()
+            r = await rpc(ws, {"type": "read_pane", "pane_id": "w8:p1", "lines": 5})
+            check("the bare colliding agent id is still refused",
+                  r.get("message") == "ambiguous pane_id (same id on multiple hosts)", r)
+            await asyncio.sleep(0.3)
+            check("and reached no herdr call", not log_lines("w8:p1"), log_lines("w8:p1"))
+
+            for a in by_pane:
+                host = a.get("host", "local")
+                open(LOG, "w").close()
+                await ws.send(json.dumps(
+                    {"type": "read_pane", "aid": a["aid"], "pane_id": "w8:p1", "lines": 5}))
+                while True:
+                    m = json.loads(await ws.recv())
+                    if m["type"] == "pane_content":
+                        break
+                await asyncio.sleep(0.3)
+                reads = log_lines("pane read")
+                check(f"an aid reaches the {host} pane behind the colliding id",
+                      any(line.startswith(f"{host} pane read w8:p1") for line in reads), reads)
+                # One read is two herdr calls — the content, and the wrapped copy `cols` is
+                # measured from. Both must have gone to the same host and only that one.
+                check(f"and no other host was asked for the {host} one",
+                      reads and all(line.startswith(f"{host} ") for line in reads), reads)
+
+            # An aid this relay has never minted is refused rather than falling back to the
+            # pane_id beside it, which would be the collision again wearing a fresh name.
+            r = await rpc(ws, {"type": "read_pane", "aid": "a_nosuchagent0", "pane_id": "w1:p1",
+                               "lines": 5})
+            check("an unknown aid is refused, and does not fall back to the pane id",
+                  r.get("message") == "unknown aid", r)
+
             # --- W1 pane width. The browser lays unwrapped output out at `cols`, so a wrong
             # number scales every glyph to the wrong pane. It is measured from the wrapped
             # scrollback, not from `pane layout`, whose rect reports a pane's birth width

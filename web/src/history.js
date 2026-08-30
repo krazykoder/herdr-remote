@@ -348,7 +348,7 @@
       const qa = document.getElementById('quickActions');
       if (!activePane) { setQuickActions(qa, ''); return; }
       syncResend();
-      const a = agents.find(x => x.pane_id === activePane);
+      const a = activeAgent();
       const blocked = a && a.status === 'blocked';
       // The nav row carries the fold control, so it also has to survive the bar being switched
       // off — folded with an empty bar would leave no way back to the composer.
@@ -503,7 +503,7 @@
     const POLL_MS = 3000, IDLE_POLL_MS = 12000;
     let lastPaneRead = 0;
     function paneIsIdle() {
-      const a = activePane ? agents.find(x => x.pane_id === activePane) : null;
+      const a = activeAgent();
       return !!a && a.status === 'idle';
     }
     // auto=true is the interval. Every other caller — the refresh button, Load more, a key that
@@ -518,6 +518,7 @@
       if (ws && activePane) {
         lastPaneRead = Date.now();
         ws.send(JSON.stringify(
-          { type: 'read_pane', pane_id: activePane, lines: paneLines, source: paneSource }));
+          Object.assign({ type: 'read_pane', lines: paneLines, source: paneSource },
+                        paneAddr(activeAgent() || activePane))));
       }
     }

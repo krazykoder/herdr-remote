@@ -117,7 +117,11 @@ test('starting a session to pair with it makes the pair, not a form', async ({pa
 
   const after = await page.evaluate(() => {
     const source = agents.find(a => paneLabel(a) === 'Architect 1');
-    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2'});
+    // No `aid`: the relay mints one per live pane and the identity pass has not seen this one
+    // yet, which is exactly the state a just-started pane is in. Cloning the source's id would
+    // make two live panes one agent, which the relay never reports — and healPairs, which follows
+    // the agent, would rightly fold the new member back onto the pane it was cloned from.
+    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2', aid: ''});
     startIntent = {pair: source.pane_id};
     pendingStart = 'w1:pNew';
     openPendingStart();
@@ -139,7 +143,11 @@ test('a pane already paired is not re-paired behind the user', async ({page}) =>
   await setup(page);
   const after = await page.evaluate(() => {
     const source = agents.find(a => paneLabel(a) === 'Architect 1');
-    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2'});
+    // No `aid`: the relay mints one per live pane and the identity pass has not seen this one
+    // yet, which is exactly the state a just-started pane is in. Cloning the source's id would
+    // make two live panes one agent, which the relay never reports — and healPairs, which follows
+    // the agent, would rightly fold the new member back onto the pane it was cloned from.
+    agents.push({...source, pane_id: 'w1:pNew', label: 'Reviewer 2', aid: ''});
     startIntent = {pair: source.pane_id};
     pendingStart = 'w1:pNew';
     openPendingStart();
