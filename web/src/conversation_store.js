@@ -1023,7 +1023,14 @@
     //
     // A note is about membership and nothing else. The opening words stay on the fast path, where
     // the tab that asked still holds them — two tabs holding one note must not both speak.
-    const CONV_PENDING_MS = 120000;
+    // How long a note is worth acting on. Ten minutes rather than two: the pane a start makes is
+    // not visible to anybody until `start_agent` has finished, and finishing means herdr has waited
+    // out the agent's own startup — a cold agy or a machine under load takes minutes, and two
+    // restarts pressed back to back are two of those waits in a row. A deadline shorter than the
+    // thing it is timing turned every slow start into a pane nothing was waiting for, which the
+    // recorder then filed into an auto conversation of its own. The cost of the longer window is a
+    // stale note in a synced document; the cost of the shorter one was the feature.
+    const CONV_PENDING_MS = 600000;
 
     function convPendingLive(p) {
       return !!(p && p.ref && Date.now() - (Number(p.at) || 0) <= CONV_PENDING_MS);
@@ -1063,6 +1070,12 @@
           .concat([{ref: ref, at: Date.now(), label: label || ''}]);
       }
       saveConvIndex(items);
+      // Pushed now, not after the half-second every other edit is batched behind. A note exists
+      // precisely because the page it was written on may be gone in a moment — reloaded, closed,
+      // navigated away from — and a note that is still sitting in a debounce timer when that
+      // happens is a note no other tab and no later page ever sees. Cheap: this fires once per
+      // restart, and the flush is a no-op if the socket is not live.
+      if (typeof stateSyncFlush === 'function') stateSyncFlush('conversations');
       return true;
     }
 

@@ -28,7 +28,7 @@ function boot({conv = null, agents = []} = {}) {
   const store = {};
   if (conv) store[KEY] = JSON.stringify({version: 1, items: [conv]});
   const log = [];
-  const ctx = vm.createContext({
+  const sandbox = {
     console, JSON, Math, Date, Object, Array, Set, Map, String, Number, Promise,
     setTimeout, clearTimeout,
     localStorage: {
@@ -57,7 +57,11 @@ function boot({conv = null, agents = []} = {}) {
     showSpawnStatus: (t, s) => log.push(['status', t, s]),
     renderConversations: () => log.push(['renderConversations']),
     stateSyncMark: () => {},
-  });
+    // The immediate push a note asks for, recorded so a test can see it happened.
+    flushed: [],
+    stateSyncFlush: name => sandbox.flushed.push(name),
+  };
+  const ctx = vm.createContext(sandbox);
   vm.runInContext(src, ctx);
   return {
     log,
@@ -94,8 +98,8 @@ test('a note against a conversation or a member that is gone is not written', ()
 });
 
 test('an expired note is ignored, and pruned by the next write', () => {
-  // Two minutes, because a start that has not produced a pane by then failed and the pane running
-  // an hour later is somebody else's.
+  // Ten minutes — long enough for herdr to wait out a cold agent's own startup twice over, and
+  // short enough that the pane running an hour later is somebody else's.
   const stale = {id: 'c1', name: 'Charts',
                  members: [{key: 'k_w1:p1', pending: {ref: 'rOLD', at: 1}}],
                  pending: [{ref: 'rALSOOLD', at: 1}]};
@@ -198,4 +202,14 @@ test('a snapshot with nothing pending writes nothing', () => {
     assert.deepEqual(e.read()[0].members.map(m => m.key), ['k_w1:p1']);
     assert.deepEqual(e.log, []);
   });
+});
+
+test('a note is pushed to the relay immediately, not after the batching delay', () => {
+  // The whole point of a note is that the page it was written on may be gone in a moment. One
+  // still sitting in a debounce timer when the tab reloads is a note nothing ever sees — and the
+  // pane it was waiting for is then filed into an auto conversation of its own.
+  const e = boot({conv: CONV});
+  assert.deepEqual(e.run('flushed'), []);
+  e.run("convNotePending('c1', 'rNEW', 'k_w1:p1', '')");
+  assert.deepEqual(e.run('flushed'), ['conversations']);
 });
