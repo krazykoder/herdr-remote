@@ -833,6 +833,10 @@
         // A pane told to quit is only finished once it turns up as a shell, and a snapshot is the
         // only thing that says so. Before the render, so the pane it exits is gone from this one.
         if (typeof endTick === 'function') endTick();
+        // Before anything reads a document: storage can be cleared under a page that is still
+        // connected, and every conversation, pair and tile this browser then decides anything
+        // from would be decided against an emptiness nobody asserted.
+        if (typeof stateSyncHeal === 'function') stateSyncHeal();
         // Before the render, so a pane's first snapshot and the card for it arrive together.
         convAutoJoin();
         // Which member is ended is a question only a snapshot answers, so the prune rides on one.

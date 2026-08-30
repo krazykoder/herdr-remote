@@ -45,6 +45,14 @@
     // only correct source is the relay we just reconnected to.
     let stateRev = {};
     let stateSeeded = false;
+    // name -> the body the relay last told us it holds. Memory only, and its one job is to tell
+    // "this browser has no such document" from "this browser had it and lost it". Storage can go
+    // out from under a page that is still connected — the DevTools clear-site-data button, a
+    // privacy extension, an eviction — and the app then reads an emptiness that is not a fact
+    // about the fleet. Anything manufactured from that absence and pushed replaces the real
+    // document for every browser, which is exactly the wipe stateSyncPending guards the *boot*
+    // against. This is the same guard for a page already running.
+    let stateHeld = {};
     const stateDirty = new Set();
     const stateTimers = {};
     const stateInFlight = new Set();
@@ -190,6 +198,7 @@
       stateMode = 'pulling';
       stateSeeded = false;
       stateRev = {};
+      stateHeld = {};
       try { stateSocket.send(JSON.stringify({ type: 'state_get' })); }
       catch (e) { stateMode = 'off'; }
     }
@@ -301,6 +310,8 @@
         const rev = doc.rev || 0;
         stateRev[name] = rev;
         const body = doc.body == null ? null : doc.body;
+        // Whatever this browser then decides to do with it, this is what the relay holds.
+        if (rev > 0) stateHeld[name] = body;
         if (first) {
           const local = stateRead(name);
           const pending = statePending(name);
@@ -366,6 +377,8 @@
       stateRev[name] = msg.rev || 0;
       stateInFlight.delete(name);
       stateClearPending(name, stateSent[name]);
+      // Accepted, so what we sent is now what the relay holds.
+      if (stateSent[name] != null) stateHeld[name] = stateSent[name];
       delete stateSent[name];
       if (stateDirty.has(name)) stateSyncFlush(name);
     }
@@ -382,6 +395,7 @@
       const pending = statePending(name);
       const merged = pending ? stateMerge(name, remote, stateRead(name), pending) : null;
       stateRev[name] = msg.rev || 0;
+      stateHeld[name] = remote;
       stateInFlight.delete(name);
       delete stateSent[name];
       clearTimeout(stateTimers[name]);
@@ -406,6 +420,35 @@
     // about to be filled.
     function stateSyncPending() { return stateMode === 'pulling'; }
 
+    // What the relay holds for a document, as far as this socket has been told. The one caller is
+    // convAutoJoin, which must not mint an index out of an emptiness the relay is holding a real
+    // document for.
+    function stateSyncHeld(name) {
+      const held = stateHeld[name];
+      return held === undefined ? null : held;
+    }
+
+    // A document this browser held and no longer does, written back. Storage clearing under a live
+    // page is not an edit — nobody asserted the empty list it leaves behind — and a quota-refused
+    // adopt leaves the same absence by the other door. Restoring is safe precisely because it
+    // changes nothing anyone can see but this browser: the relay already holds this body, so
+    // nothing is marked dirty and nothing is sent.
+    //
+    // Only a key that is *gone*. A document written since is this browser's own state, however
+    // small, and overwriting it here would be the mirror image of the bug.
+    function stateSyncHeal() {
+      let healed = 0;
+      for (const name in STATE_DOCS) {
+        if (stateHeld[name] == null) continue;
+        let cur = null;
+        try { cur = localStorage.getItem(STATE_DOCS[name].key); }
+        catch (e) { continue; }   // private mode: nothing to heal into
+        if (cur !== null) continue;
+        if (stateSyncApply(name, stateHeld[name])) healed++;
+      }
+      return healed;
+    }
+
     // A relay older than this client answers state_get with its unknown-message-type error. That is
     // a fact about the relay, not a failure to put in front of the user — swallow it once, run
     // local-only for the life of this socket, and never send a state_put it cannot answer.
@@ -426,4 +469,6 @@
     window.stateSyncConflict = stateSyncConflict;
     window.stateSyncNoteError = stateSyncNoteError;
     window.stateSyncPending = stateSyncPending;
+    window.stateSyncHeld = stateSyncHeld;
+    window.stateSyncHeal = stateSyncHeal;
     window.stateMerge = stateMerge;

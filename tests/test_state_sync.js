@@ -20,7 +20,8 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'web', 'src', 'state_sync
 
 const NAMES = ['stateSyncPlan', 'stateMerge', 'STATE_DOCS', 'STATE_DEBOUNCE', 'stateSyncOpen',
                'stateSyncClose', 'stateSyncMark', 'stateSyncReceive', 'stateSyncAck',
-               'stateSyncConflict', 'stateSyncNoteError', 'stateSyncFlushAll'];
+               'stateSyncConflict', 'stateSyncNoteError', 'stateSyncFlushAll', 'stateSyncHeld',
+               'stateSyncHeal'];
 
 const EXPORT = `\n;__out = {${NAMES.join(', ')}};`;
 
@@ -579,4 +580,74 @@ test('launcher: it round-trips through seed, ack and adopt like any other docume
   s.stateSyncAck({type: 'state_ack', name: 'launcher', rev: 1});
   s.stateSyncReceive(answer({launcher: doc(2, tileDoc('t1', 't2'))}));
   assert.deepEqual(tileIdsOf(s.store.herdr_launcher), ['t1', 't2']);
+});
+
+// --- storage cleared under a live page ---
+//
+// The user pressed clear-site-data in one browser and every conversation vanished from every
+// browser. The page was still connected and still holding the relay's revision, so the next
+// snapshot filed each live pane into an auto conversation of its own, pushed that at the
+// revision it already knew, and the relay accepted it: 152 conversations replaced by 7.
+
+const IDX = 'herdr_conversations';
+const idx = n => JSON.stringify(
+  {version: 1, items: Array.from({length: n}, (_, i) => ({id: 'c' + i, name: 'C' + i,
+                                                         members: []}))});
+
+test('the relay\'s document is remembered, so an emptiness can be told from a document', () => {
+  const e = boot();
+  e.stateSyncOpen();
+  assert.equal(e.stateSyncHeld('conversations'), null, 'nothing known before the answer');
+  e.stateSyncReceive(answer({conversations: doc(6816, idx(152))}));
+  assert.equal(e.stateSyncHeld('conversations'), idx(152));
+});
+
+test('a document cleared under a live page is written back, and nothing is sent', () => {
+  const e = boot();
+  e.stateSyncOpen();
+  e.stateSyncReceive(answer({conversations: doc(6816, idx(152))}));
+  const before = e.sent.length;
+  delete e.store[IDX];                       // the clear-site-data button
+  assert.equal(e.stateSyncHeal(), 1);
+  assert.equal(e.store[IDX], idx(152));
+  assert.equal(e.sent.length, before, 'the relay already holds this — healing is not an edit');
+});
+
+test('a document written since is this browser\'s own, and is left alone', () => {
+  const e = boot();
+  e.stateSyncOpen();
+  e.stateSyncReceive(answer({conversations: doc(6816, idx(152))}));
+  e.store[IDX] = idx(1);                     // the user left 151 conversations
+  assert.equal(e.stateSyncHeal(), 0);
+  assert.equal(e.store[IDX], idx(1));
+});
+
+test('healing knows what this browser wrote, not only what it adopted', () => {
+  // The ack is the other way a body becomes the relay's. Without it a browser that seeded the
+  // document would have nothing to heal from until its next reconnect.
+  const e = boot({[IDX]: idx(3)});
+  e.stateSyncOpen();
+  e.stateSyncReceive(answer({conversations: doc(0, null)}));   // relay holds nothing: upload
+  e.stateSyncAck({type: 'state_ack', name: 'conversations', rev: 1});
+  delete e.store[IDX];
+  assert.equal(e.stateSyncHeal(), 1);
+  assert.equal(e.store[IDX], idx(3));
+});
+
+test('a losing write leaves the winner as what is held', () => {
+  const e = boot({[IDX]: idx(3)});
+  e.stateSyncOpen();
+  e.stateSyncReceive(answer({conversations: doc(5, idx(9))}));
+  e.stateSyncConflict({type: 'state_conflict', name: 'conversations', rev: 6, body: idx(9)});
+  delete e.store[IDX];
+  e.stateSyncHeal();
+  assert.equal(e.store[IDX], idx(9));
+});
+
+test('a new socket forgets what the last relay held', () => {
+  const e = boot();
+  e.stateSyncOpen();
+  e.stateSyncReceive(answer({conversations: doc(6816, idx(152))}));
+  e.stateSyncOpen();
+  assert.equal(e.stateSyncHeld('conversations'), null, 'the revision is gone, so this must be too');
 });

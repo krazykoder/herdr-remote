@@ -281,6 +281,13 @@
       if (typeof stateSyncPending === 'function' && stateSyncPending()) return;
       const seen = convAutoSeen(), had = new Set(seen);
       const items = loadConvIndex();
+      // The relay holds an index and this browser reads none. Nobody emptied it: storage was
+      // cleared under a page that stayed connected, or the adopt was refused for space. Either
+      // way the emptiness is this browser's accident and not a fact about the fleet, and filing
+      // every live pane against it mints a copy of the index that then replaces the real one for
+      // every browser. stateSyncHeal writes the document back on the next snapshot.
+      if (!items.length && typeof stateSyncHeld === 'function'
+          && parseConvIndex(stateSyncHeld('conversations')).length) return;
       // A pane the index already files is not fresh, whoever filed it. The seen list is this
       // browser's own memory and a second browser has none of it, so membership is what survives
       // being handed an index built somewhere else.
