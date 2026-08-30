@@ -268,6 +268,9 @@
       // Before the lookup: a pair whose panes have been restarted is found by this and by nothing
       // else, and being asked "is this pane paired" is the moment to answer it honestly.
       healPairs();
+      // After the healing and never before: a pair whose member was restarted is healthy again the
+      // moment healPairs re-points it, and ageing it first would count that restart as absence.
+      agePairs();
       const pair = activePane ? pairFor(pairs, activePane) : null;
       const mineLive = activePane ? agents.find(a => a.pane_id === activePane) : null;
       // Which pane you are in, by name and harness. Not a pair fact — the answer is the same
@@ -313,6 +316,12 @@
           `onclick="switchToPartner()">⇄ ${escapeHtml(partnerName)}</button>` : '') +
         center +
         (ok ? `<button class="transfer" onclick="openTransfer()">Transfer ›</button>` : '') +
+        // A stale strip with no control on it is a dead end: it says the pair is broken and offers
+        // nothing to do about it, and the way out is buried in the gear menu. Keyed, because the
+        // strip is redrawn on the poll and an arm that did not survive that redraw could never be
+        // reached a second time. Still armed — unpairing is not undoable.
+        (ok ? '' : menuItemHtml({cls: 'unpair', key: pair.id, arm: 'unpair-stale:' + pair.id,
+          rest: 'Unpair\u2026', ask: 'Unpair?', fire: 'unpair()'})) +
         (ok ? '' : `<span class="pair-reason">${escapeHtml(health.reason)}</span>`);
       strip.style.display = 'flex';
       // Edit and Unpair live in the gear menu: the strip is for the two controls used while

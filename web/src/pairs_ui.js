@@ -46,6 +46,38 @@
       return moved;
     }
 
+    // How long a pair whose partner never came back is kept. A pair is two panes on one job; once
+    // one of them has been gone a week the pinned fingerprint names no colleague — herdr has
+    // handed that pane id to somebody else several times over by then. Until the week is up it is
+    // left exactly as it is: a partner can be down for a day and still be the pair, and healPairs
+    // above is what brings it back when it returns.
+    const PAIR_STALE_MS = 7 * 24 * 3600 * 1000;
+
+    // Judged only against a roster. An empty `agents` is "the relay has not answered yet", not
+    // "every pane is gone", and reading it as the latter would stamp every pair stale on a
+    // reconnect and delete the lot a week later. The clock is wall time and not uptime on purpose
+    // — a laptop shut for a fortnight has genuinely lost those panes.
+    function agePairs() {
+      if (!agents.length) return false;
+      const now = Date.now();
+      const kept = [];
+      let changed = false;
+      for (const p of pairs) {
+        if (pairHealth(p, agents).state === 'healthy') {
+          if (p.stale) { delete p.stale; changed = true; }
+          kept.push(p);
+          continue;
+        }
+        if (!p.stale) { p.stale = now; changed = true; }
+        if (now - p.stale > PAIR_STALE_MS) { changed = true; continue; }
+        kept.push(p);
+      }
+      if (!changed) return false;
+      pairs = kept;
+      savePairs();
+      return true;
+    }
+
     // Never over a pane that is already in a pair of its own: that is a pairing the user made, and
     // a restart elsewhere is not a reason to rewrite it.
     function repointPair(oldPaneId, next) {

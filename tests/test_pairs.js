@@ -869,3 +869,68 @@ test('a host or cwd that does not match is not the same seat', () => {
     assert.equal(out.moved, false, `${JSON.stringify(differs)} must not be adopted`);
   }
 });
+
+// --- Ageing a pair out ---
+// A pair pinned to a pane that never came back is not a pair. It stayed on the strip for ever
+// instead: healPairs deliberately refuses to guess a replacement, nothing else removed one, and
+// repointPair kept moving the *surviving* member onto each new pane — so the pair stayed anchored
+// to a live pane with a corpse on the other end, announcing "… is no longer running" in every
+// browser, since pairs are shared state.
+
+function runAgePairs(pairsIn, agentsIn, now) {
+  const store = {};
+  const c = vm.createContext({
+    pairs: pairsIn, agents: agentsIn,
+    localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
+  });
+  if (now) c.Date = Object.assign(Object.create(null), {now: () => now});
+  vm.runInContext(PAIRS_PURE + '\n' + PAIRS_UI + '\n;__changed = agePairs();', c);
+  return {changed: c.__changed, pairs: c.pairs, saved: store['herdr_pairs']};
+}
+
+const WEEK = 7 * 24 * 3600 * 1000;
+const stalePair = () => pair(member({pane_id: 'w3H:p1', agent: 'codex'}), member({pane_id: 'w1:p2'}));
+const live = [agent({pane_id: 'w1:p2'})];
+
+test('a stale pair is stamped, not dropped, the first time it is seen', () => {
+  const out = runAgePairs([stalePair()], live, 1000);
+  assert.equal(out.changed, true);
+  assert.equal(out.pairs.length, 1, 'a partner down for an hour is still the pair');
+  assert.equal(out.pairs[0].stale, 1000);
+  assert.match(out.saved, /"stale":1000/, 'and the stamp is shared, or every browser starts its own clock');
+});
+
+test('a stale pair already stamped is left alone until the week is up', () => {
+  const p = Object.assign(stalePair(), {stale: 1000});
+  const out = runAgePairs([p], live, 1000 + WEEK - 1);
+  assert.equal(out.changed, false);
+  assert.equal(out.saved, undefined, 'nothing changed, so nothing is written');
+});
+
+test('a pair stale for longer than a week is dropped', () => {
+  const p = Object.assign(stalePair(), {stale: 1000});
+  const out = runAgePairs([p], live, 1000 + WEEK + 1);
+  assert.equal(out.changed, true);
+  assert.deepEqual(out.pairs, []);
+});
+
+test('a partner that came back clears the clock', () => {
+  // healPairs runs first and re-points the member; what arrives here is a healthy pair wearing a
+  // stamp from before the restart. Leaving it would age out a working pair a week later.
+  const p = Object.assign(pair(member({pane_id: 'w1:p1'}), member({pane_id: 'w1:p2', agent: 'codex'})),
+                          {stale: 1000});
+  const out = runAgePairs([p], [agent({pane_id: 'w1:p1'}), agent({pane_id: 'w1:p2', agent: 'codex'})],
+                          1000 + WEEK + 1);
+  assert.equal(out.changed, true);
+  assert.equal(out.pairs.length, 1);
+  assert.equal(out.pairs[0].stale, undefined);
+});
+
+test('an empty roster is not evidence about anything', () => {
+  // "The relay has not answered yet", not "every pane is gone". Judging pairs against it would
+  // stamp the lot on a reconnect and delete them a week later.
+  const p = Object.assign(stalePair(), {stale: 1000});
+  const out = runAgePairs([p], [], 1000 + WEEK + 1);
+  assert.equal(out.changed, false);
+  assert.equal(out.pairs.length, 1);
+});
