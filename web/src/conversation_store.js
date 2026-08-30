@@ -1179,25 +1179,49 @@
       // second row for a key that is already in the list. Two members, one pane, both drawing the
       // same transcript.
       const already = (conv.members || []).some(m => m.key === next);
+      // The row moves when the transcript was carried over, and also when it could not be but the
+      // relay says this is the same agent. A refusal there is not evidence of a different
+      // colleague: it means the new pane already has a thread of its own that something else still
+      // names, which is a fact about storage, not about who is sitting in the pane. Joining as a
+      // second member on that basis gave one agent two rows in one conversation — its dead pane and
+      // its live one, side by side under the same name. One agent is one member, and the id is what
+      // says so.
+      const move = prior && (continued || (a.aid && prior.aid === a.aid));
       // Nothing to do rather than something to regret. See moveOnly above.
-      if (moveOnly && !(continued && prior)) return null;
-      conv.members = continued && prior
-        ? conv.members.map(m => m.key === prior.key
-          ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
-              key: next, label: prior.label || paneLabel(a),
-              // The pane this member continues. This is the only place a member's key moves from
-              // one pane to another, so it is the only place succession is a fact rather than a
-              // guess — and the guess it replaces handed a quit agent's words to every
-              // conversation running the same harness in the same directory.
-              was: (m.was || []).concat(convKeyPaneId(prior.key))
-                .filter(Boolean).slice(-CONV_WAS_MAX),
-              // convWasFpPatch above names the bucket the record kept this member in, where the
-              // restart moved it to a different one — another harness, or another checkout. The
-              // pane ids here cannot find those rows on their own: a pane id is only ever looked
-              // up inside a fingerprint's bucket.
-            })
-          : m)
-        : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
+      if (moveOnly && !move) return null;
+      if (move && already) {
+        // The row it was going to become is already in the list: the conversation is holding both
+        // halves of one agent, which is the state the fallback below used to leave behind. The
+        // merge keeps the live row and folds the dead one's history of panes into it, so a landing
+        // is also the repair for a duplicate an older build wrote.
+        conv.members = conv.members
+          .map(m => (m.key === next
+            ? Object.assign({}, m, {
+                label: m.label || prior.label || paneLabel(a),
+                was: (prior.was || []).concat(convKeyPaneId(prior.key), m.was || [])
+                  .filter(Boolean).slice(-CONV_WAS_MAX),
+              })
+            : m))
+          .filter(m => m !== prior);
+      } else {
+        conv.members = move
+          ? conv.members.map(m => m.key === prior.key
+            ? Object.assign({}, m, convWasFpPatch(m, prior.key, next), {
+                key: next, label: prior.label || paneLabel(a),
+                // The pane this member continues. This is the only place a member's key moves from
+                // one pane to another, so it is the only place succession is a fact rather than a
+                // guess — and the guess it replaces handed a quit agent's words to every
+                // conversation running the same harness in the same directory.
+                was: (m.was || []).concat(convKeyPaneId(prior.key))
+                  .filter(Boolean).slice(-CONV_WAS_MAX),
+                // convWasFpPatch above names the bucket the record kept this member in, where the
+                // restart moved it to a different one — another harness, or another checkout. The
+                // pane ids here cannot find those rows on their own: a pane id is only ever looked
+                // up inside a fingerprint's bucket.
+              })
+            : m)
+          : (already ? conv.members : (conv.members || []).concat(convMemberOf(a)));
+      }
       // The note is spent. Cleared in the same write as the succession it described, so no tab can
       // read an index where the member has moved and the note still says it is coming.
       if (ref) {

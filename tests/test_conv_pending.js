@@ -176,6 +176,33 @@ test('landing with no member to replace joins as a new one', () => {
     });
 });
 
+test('a landing whose agent is already a member merges rather than adding a second row', () => {
+  // One agent, two rows: its dead pane and its live one, side by side under the same name. The
+  // fallback that joins as a new member is right for a pane the conversation has never held, and
+  // wrong here — the transcript was refused because the new pane already has a thread something
+  // else names, which is a fact about storage and not about who is sitting in the pane.
+  const both = {id: 'c1', name: 'Charts', members: [
+    {key: 'k_w1:p1', label: 'ARCH', aid: 'a_abc123abc123', was: ['w1:p0']},
+    {key: 'k_w1:p9', label: 'ARCH', aid: 'a_abc123abc123'}]};
+  const e = boot({conv: both});
+  return e.run("convLandMember({pane_id: 'w1:p9', aid: 'a_abc123abc123'}, 'c1', 'k_w1:p1', '')")
+    .then(() => {
+      const m = e.read()[0].members;
+      assert.equal(m.length, 1, 'one agent is one member');
+      assert.equal(m[0].key, 'k_w1:p9', 'the live pane survives');
+      assert.deepEqual(m[0].was, ['w1:p0', 'w1:p1'], 'and inherits where it has been');
+    });
+});
+
+test('a landing onto a pane a different agent is on still joins as a new member', () => {
+  // The fallback is not deleted. A pane the conversation has never held, whose agent is nobody
+  // it already names, joins — which is what a restart did before it could continue anything.
+  const e = boot({conv: {id: 'c1', name: 'Charts',
+                         members: [{key: 'k_w1:p1', aid: 'a_abc123abc123'}]}});
+  return e.run("convLandMember({pane_id: 'w1:p9', aid: 'a_zzz999zzz999'}, 'c1', 'k_gone', '')")
+    .then(() => assert.deepEqual(e.read()[0].members.map(m => m.key), ['k_w1:p1', 'k_w1:p9']));
+});
+
 test('a move-only landing with nobody to move changes nothing', () => {
   // The bookkeeping caller — the follow — must never *add* a member. Joining as a new one is the
   // right fallback for a press, where the reader asked for this pane to be in this conversation
